@@ -4,21 +4,31 @@
     ".write": false,
     "liveMarkets": {
       "$marketId": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('meta/ownerUid').val() === auth.uid",
         ".write": "auth != null && ((!data.exists() && newData.child('meta/ownerUid').val() === auth.uid) || (data.exists() && data.child('meta/ownerUid').val() === auth.uid))",
         "meta": {
+          ".read": "auth != null",
           "ownerUid": { ".validate": "(!data.exists() && newData.val() === auth.uid) || newData.val() === data.val()" },
           "capacity": { ".validate": "(!data.exists() && newData.val() === 80) || newData.val() === data.val()" },
           "visibility": { ".validate": "(!data.exists() && (newData.val() === 'private' || newData.val() === 'ranking_only' || newData.val() === 'public')) || newData.val() === data.val()" }
         },
-        "participants": { "$participantId": { ".write": "auth != null && root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid" } },
+        "teams": { ".read": "auth != null" },
+        "participants": {
+          "$participantId": {
+            ".read": "auth != null && (data.child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
+            ".write": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === data.child('uid').val() && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('teamId').val() === data.child('teamId').val()))",
+            ".validate": "root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (newData.hasChildren(['uid','sessionId','displayName','teamId','connected','lastSeenAtMillis']) && newData.child('uid').isString() && newData.child('sessionId').isString() && newData.child('displayName').isString() && newData.child('connected').isBoolean() && newData.child('lastSeenAtMillis').isNumber() && $participantId === newData.child('uid').val() + '_' + newData.child('sessionId').val())",
+            "connected": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()" },
+            "lastSeenAtMillis": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isNumber()" }
+          }
+        },
         "joinRequests": {
           "$requestId": {
-            ".write": "auth != null && ((!data.exists() && newData.child('uid').val() === auth.uid && newData.child('connected').val() === true) || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === auth.uid && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('requestedTeamId').val() === data.child('requestedTeamId').val() && newData.hasChildren(['uid','sessionId','displayName','requestedTeamId','connected','requestedAtMillis'])))",
-            ".validate": "newData.child('uid').val() === auth.uid",
-            "connected": {
-              ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()"
-            }
+            ".read": "auth != null && (data.child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
+            ".write": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (!data.exists() && newData.child('uid').val() === auth.uid && newData.child('connected').val() === true) || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === data.child('uid').val() && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('requestedTeamId').val() === data.child('requestedTeamId').val() && newData.child('requestedAtMillis').val() === data.child('requestedAtMillis').val() && newData.child('approvedAtMillis').val() === data.child('approvedAtMillis').val()))",
+            ".validate": "root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (newData.hasChild('uid') && newData.hasChild('sessionId') && newData.hasChild('displayName') && newData.hasChild('connected') && newData.hasChild('requestedAtMillis') && newData.child('uid').isString() && newData.child('sessionId').isString() && newData.child('displayName').isString() && (newData.child('requestedTeamId').val() === null || newData.child('requestedTeamId').isString()) && newData.child('connected').isBoolean() && newData.child('requestedAtMillis').isNumber() && $requestId === newData.child('uid').val() + '_' + newData.child('sessionId').val())",
+            "connected": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()" },
+            "lastSeenAtMillis": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isNumber()" }
           }
         }
       }

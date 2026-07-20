@@ -47,9 +47,15 @@ service cloud.firestore {
       allow get, list: if teacher() && resource.data.ownerUid == request.auth.uid;
       allow create: if teacher()
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.capacity == 80;
-      allow update, delete: if teacher() && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid;
+        && request.resource.data.capacity == 80
+        && request.resource.data.creationStatus == 'CREATING';
+      allow update: if teacher() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.capacity == resource.data.capacity
+        && request.resource.data.templateSnapshot == resource.data.templateSnapshot
+        && request.resource.data.visibility == resource.data.visibility
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['creationStatus', 'initializedAt']);
+      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
     }
 
     match /marketJoinCodes/{code} {

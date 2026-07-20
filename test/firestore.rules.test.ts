@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
@@ -50,6 +50,15 @@ describe('market Firestore rules', () => {
     const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
     await assertSucceeds(setDoc(doc(owner, 'marketJoinCodes', 'OWNED'), { marketId: 'market-a', ownerUid: 'teacher-a' }))
     await assertFails(setDoc(doc(other, 'marketJoinCodes', 'FORGED'), { marketId: 'market-a', ownerUid: 'teacher-b' }))
+  })
+
+  it('keeps old market ownership, capacity, and snapshot immutable during creation recovery', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertSucceeds(updateDoc(doc(owner, 'markets', 'market-a'), { creationStatus: 'READY' }))
+    await assertFails(updateDoc(doc(owner, 'markets', 'market-a'), { ownerUid: 'teacher-b' }))
+    await assertFails(updateDoc(doc(owner, 'markets', 'market-a'), { capacity: 79 }))
+    await assertFails(updateDoc(doc(owner, 'markets', 'market-a'), { templateSnapshot: { changed: true } }))
+    await assertSucceeds(deleteDoc(doc(owner, 'markets', 'market-a')))
   })
 })
 afterAll(async () => environment?.cleanup())
