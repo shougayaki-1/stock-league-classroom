@@ -14,7 +14,7 @@ export class MarketCreationError extends Error {
 const root = (marketId: string) => `liveMarkets/${marketId}`
 const normalizeCode = (code: string) => code.trim().toUpperCase()
 
-const initialLiveState = (input: CreateMarketInput) => ({
+export const initialLiveState = (input: CreateMarketInput) => ({
   meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now(), startingCash: input.template.startingCash },
   teams: Object.fromEntries(input.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
   companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),

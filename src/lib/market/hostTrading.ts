@@ -28,7 +28,7 @@ export const acquireHostLease = async (database: Database, marketId: string, own
 /** Renewal is lease-ID-bound: an older browser session can never reclaim a newer lease. */
 export const renewHostLease = async (database: Database, marketId: string, ownerUid: string, leaseId: string, ttlMillis = 15_000, atMillis = now()) => {
   const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
-    if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis)) return
+    if (!raw || raw.meta.status === 'ENDED' || !ownsLiveLease(raw, ownerUid, leaseId, atMillis)) return
     raw.hostLease!.expiresAtMillis = atMillis + ttlMillis; return raw
   })
   return result.committed
@@ -140,7 +140,7 @@ export const runHostTick = async (firestore: Firestore, database: Database, mark
   if (!await renewHostLease(database, marketId, ownerUid, leaseId, 15_000, atMillis)) return false
   await publishPrices(database, marketId, ownerUid, leaseId, stocks, atMillis)
   const snapshot = (await get(ref(database, root(marketId)))).val() as LiveMarketState | null
-  if (!snapshot || !ownsLiveLease(snapshot, ownerUid, leaseId, atMillis)) return false
+  if (!snapshot || snapshot.meta.status === 'ENDED' || !ownsLiveLease(snapshot, ownerUid, leaseId, atMillis)) return false
   for (const participantId of Object.keys(snapshot.orders ?? {})) await processPendingOrder(database, marketId, ownerUid, leaseId, participantId, atMillis)
   if (snapshot.meta.status === 'ENDING') await finalizeEnding(firestore, database, marketId, ownerUid, leaseId, atMillis)
   return true
