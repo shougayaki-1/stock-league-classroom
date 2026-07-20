@@ -61,6 +61,11 @@ describe('market Firestore rules', () => {
     await assertSucceeds(deleteDoc(doc(owner, 'markets', 'market-a')))
   })
 
+  it('prevents a non-owning teacher from deleting another teacher\'s market', async () => {
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertFails(deleteDoc(doc(other, 'markets', 'market-a')))
+  })
+
   it('allows the owner to checkpoint results and only the matching student to read them', async () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).firestore()
