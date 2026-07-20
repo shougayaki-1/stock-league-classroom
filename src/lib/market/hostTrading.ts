@@ -4,12 +4,12 @@ import { clampToBounds, createPhaseRuntime, getActivePhase } from '../pricing/pr
 import type { StockPricePhase } from '../pricing/types'
 import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio } from './liveMarketTypes'
 
-const root = (marketId: string) => `liveMarkets/${marketId}`
+export const root = (marketId: string) => `liveMarkets/${marketId}`
 const now = () => Date.now()
 const clone = <T>(value: T): T => structuredClone(value)
 export const hostLeasePath = (marketId: string) => `${root(marketId)}/hostLease`
 export const hostDisconnectPath = (marketId: string, leaseId: string) => `${root(marketId)}/hostDisconnects/${leaseId}`
-const ownsLiveLease = (raw: LiveMarketState, ownerUid: string, leaseId: string, atMillis: number) => raw.meta.ownerUid === ownerUid && raw.hostLease?.leaseId === leaseId && !raw.hostLease.paused && raw.hostLease.expiresAtMillis > atMillis
+export const ownsLiveLease = (raw: LiveMarketState, ownerUid: string, leaseId: string, atMillis: number) => raw.meta.ownerUid === ownerUid && raw.hostLease?.leaseId === leaseId && !raw.hostLease.paused && raw.hostLease.expiresAtMillis > atMillis
 /** Kept pure so the L1 -> L2 -> L1-disconnect safety invariant is directly testable. */
 export const shouldPauseLease = (raw: LiveMarketState, ownerUid: string, leaseId: string, atMillis: number) => ownsLiveLease(raw, ownerUid, leaseId, atMillis) && Boolean(raw.hostDisconnects?.[leaseId])
 

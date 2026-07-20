@@ -8,7 +8,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/testSetup.ts',
-    // Security tests require the Firestore emulator and run only via test:rules.
+    // Security/emulator tests require the RTDB or Firestore emulator and run only via test:rules.
     include: ['src/**/*.test.{ts,tsx}'],
+    exclude: ['**/node_modules/**', 'src/lib/market/signageWriter.test.ts'],
   },
 })

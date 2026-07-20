@@ -40,6 +40,8 @@ export interface LiveMarketState {
   transactions?: Record<string, Record<string, OrderResult>>
   news?: Record<string, { message: string; publishedAtMillis: number }>
   finalization?: { status: 'PENDING' | 'WRITING_RESULTS' | 'COMPLETED'; checkpointId: string; startedAtMillis: number; completedAtMillis?: number }
+  /** Host-authored, pre-aggregated projection for the physical signage display. Never raw portfolios. */
+  signage?: import('./signageWriter').SignageData
 }
 export interface LiveMarketPaths {
   market: `liveMarkets/${string}`
