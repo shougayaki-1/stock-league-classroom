@@ -1,4 +1,4 @@
-import { MarketVisibility } from '../market/liveMarketTypes'
+import type { MarketVisibility } from '../market/liveMarketTypes'
 
 /**
  * Determines if a viewer can see another person's portfolio based on market visibility.
