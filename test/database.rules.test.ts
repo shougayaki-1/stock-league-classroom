@@ -116,6 +116,10 @@ describe('live market RTDB rules', () => {
     await assertFails(other.ref(`liveMarkets/${rankingMarket}/portfolios/student-a_session`).once('value'))
   })
 
+  // liveMarkets/{marketId}/leaderboard is a separate node from the signage node's own
+  // leaderboard array (src/lib/market/signageWriter.ts) — this one is keyed by participantId
+  // and includes rank, for authenticated students viewing ranking_only/public markets directly;
+  // the signage one is an unranked array for the public display. No producer writes this node yet.
   it('allows any authenticated student to read the leaderboard when the market is ranking_only', async () => {
     const rankingMarket = 'market-ranking'
     await environment.withSecurityRulesDisabled(async (context) =>

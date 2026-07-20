@@ -6,6 +6,7 @@ export interface SignageData {
   prices: { stockId: string; stockName: string; price: number }[]
   publicNews: string[]
   phase: MarketStatus
+  // Distinct from the liveMarkets/{marketId}/leaderboard RTDB node (database.rules.json) — this is the signage-display projection (no per-entry rank); do not assume the two are interchangeable.
   leaderboard: { name: string; valuation: number }[]
 }
 
