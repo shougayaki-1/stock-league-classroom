@@ -55,7 +55,10 @@
           }
         },
         "portfolios": {
-          "$participantId": { ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)" }
+          "$participantId": { ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/visibility').val() === 'public')" }
+        },
+        "leaderboard": {
+          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/visibility').val() === 'ranking_only' || root.child('liveMarkets').child($marketId).child('meta/visibility').val() === 'public')"
         },
         "transactions": {
           "$participantId": { ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)" }

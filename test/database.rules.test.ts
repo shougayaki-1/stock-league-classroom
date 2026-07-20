@@ -81,4 +81,67 @@ describe('live market RTDB rules', () => {
     await assertFails(student.ref(pending).set({ orderId: 'twice', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 3 }))
     await assertFails(student.ref(`liveMarkets/${market}/portfolios/student-a_session`).set({ cash: 0, holdings: {}, updatedAtMillis: 1 }))
   })
+
+  it('exposes portfolios to any authenticated student only when the market is public', async () => {
+    const publicMarket = 'market-public'
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${publicMarket}`).set({
+        meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'public', status: 'SETUP', createdAtMillis: 1, startingCash: 10000 },
+        teams: { red: { id: 'red', name: '赤' } },
+        portfolios: { 'student-a_session': { cash: 100, holdings: {}, updatedAtMillis: 1 } },
+      })
+    )
+    const other = environment.authenticatedContext('student-b').database()
+    await assertSucceeds(other.ref(`liveMarkets/${publicMarket}/portfolios/student-a_session`).once('value'))
+  })
+
+  it('does not expose another participant portfolio when the market is private (regression guard)', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/portfolios/student-a_session`).set({ cash: 100, holdings: {}, updatedAtMillis: 1 })
+    )
+    const other = environment.authenticatedContext('student-b').database()
+    await assertFails(other.ref(`liveMarkets/${market}/portfolios/student-a_session`).once('value'))
+  })
+
+  it('does not expose raw portfolios to other students when the market is ranking_only', async () => {
+    const rankingMarket = 'market-ranking'
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${rankingMarket}`).set({
+        meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'ranking_only', status: 'SETUP', createdAtMillis: 1, startingCash: 10000 },
+        teams: { red: { id: 'red', name: '赤' } },
+        portfolios: { 'student-a_session': { cash: 100, holdings: {}, updatedAtMillis: 1 } },
+      })
+    )
+    const other = environment.authenticatedContext('student-b').database()
+    await assertFails(other.ref(`liveMarkets/${rankingMarket}/portfolios/student-a_session`).once('value'))
+  })
+
+  it('allows any authenticated student to read the leaderboard when the market is ranking_only', async () => {
+    const rankingMarket = 'market-ranking'
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${rankingMarket}`).set({
+        meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'ranking_only', status: 'SETUP', createdAtMillis: 1, startingCash: 10000 },
+        teams: { red: { id: 'red', name: '赤' } },
+        leaderboard: { p1: { name: 'A', rank: 1, valuation: 1000 } },
+      })
+    )
+    const other = environment.authenticatedContext('student-b').database()
+    await assertSucceeds(other.ref(`liveMarkets/${rankingMarket}/leaderboard`).once('value'))
+  })
+
+  it('does not expose the leaderboard to non-owner students when the market is private', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/leaderboard`).set({ p1: { name: 'A', rank: 1, valuation: 1000 } })
+    )
+    const other = environment.authenticatedContext('student-b').database()
+    await assertFails(other.ref(`liveMarkets/${market}/leaderboard`).once('value'))
+  })
+
+  it('always allows the market owner to read the leaderboard regardless of visibility', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/leaderboard`).set({ p1: { name: 'A', rank: 1, valuation: 1000 } })
+    )
+    const owner = environment.authenticatedContext('teacher-a').database()
+    await assertSucceeds(owner.ref(`liveMarkets/${market}/leaderboard`).once('value'))
+  })
 })
