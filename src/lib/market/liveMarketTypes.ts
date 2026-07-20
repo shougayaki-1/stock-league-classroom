@@ -21,7 +21,7 @@ export interface LiveMarketParticipant {
   connected: boolean; lastSeenAtMillis: number
 }
 export interface HostLease { ownerUid: string; leaseId: string; expiresAtMillis: number; paused?: boolean }
-export interface LivePrice { price: number; updatedAtMillis: number }
+export interface LivePrice { price: number; updatedAtMillis: number; runtime?: import('../pricing/types').PriceRuntimeState }
 export interface PendingOrder { orderId: string; stockId: string; side: 'BUY' | 'SELL'; quantity: number; submittedAtMillis: number }
 export interface Portfolio { cash: number; holdings: Record<string, number>; updatedAtMillis: number }
 export interface OrderResult { orderId: string; stockId: string; side: 'BUY' | 'SELL'; requestedQuantity: number; filledQuantity: number; price: number; processedAtMillis: number }
@@ -31,6 +31,7 @@ export interface LiveMarketState {
   joinRequests?: Record<string, JoinRequest>
   participants?: Record<string, LiveMarketParticipant>
   hostLease?: HostLease
+  hostDisconnects?: Record<string, { ownerUid: string; disconnectedAtMillis: number }>
   prices?: Record<string, LivePrice>
   orders?: Record<string, { pending?: PendingOrder }>
   portfolios?: Record<string, Portfolio>

@@ -74,6 +74,8 @@ describe('live market RTDB rules', () => {
     const owner = environment.authenticatedContext('teacher-a').database()
     const student = environment.authenticatedContext('student-a').database()
     await assertSucceeds(owner.ref(`liveMarkets/${market}/participants/student-a_session`).set({ uid: 'student-a', sessionId: 'session', displayName: '生徒', teamId: 'red', connected: true, lastSeenAtMillis: 1 }))
+    await assertFails(student.ref(`liveMarkets/${market}/orders/student-a_session/pending`).set({ orderId: 'closed', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 1 }))
+    await assertSucceeds(owner.ref(`liveMarkets/${market}/meta/status`).set('OPEN'))
     const pending = `liveMarkets/${market}/orders/student-a_session/pending`
     await assertSucceeds(student.ref(pending).set({ orderId: 'once', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 2 }))
     await assertFails(student.ref(pending).set({ orderId: 'twice', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 3 }))
