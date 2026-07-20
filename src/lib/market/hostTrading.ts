@@ -39,6 +39,12 @@ export const openMarket = async (database: Database, marketId: string, ownerUid:
   raw.meta.status = 'OPEN'; return raw
 })
 
+/** A reachable host action transitions OPEN to ENDING; the tick performs/retries finalization. */
+export const requestMarketEnding = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
+  if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.meta.status !== 'OPEN') return
+  raw.meta.status = 'ENDING'; raw.finalization ??= { status: 'PENDING', checkpointId: `ending-${atMillis}`, startedAtMillis: atMillis }; return raw
+})
+
 /** A disconnect writes a lease-specific marker; a later root transaction pauses only if it is still current. */
 export const armHostLeaseDisconnect = async (database: Database, marketId: string, lease: HostLease) => {
   await onDisconnect(ref(database, hostDisconnectPath(marketId, lease.leaseId))).set({ ownerUid: lease.ownerUid, disconnectedAtMillis: now() })

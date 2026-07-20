@@ -7,7 +7,7 @@ const projectId = 'demo-stock-league-classroom'
 let environment: RulesTestEnvironment
 const market = 'market-a'
 const seed = {
-  meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'private', status: 'SETUP', createdAtMillis: 1 },
+  meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'private', status: 'SETUP', createdAtMillis: 1, startingCash: 10000 },
   teams: { red: { id: 'red', name: '赤' } },
 }
 

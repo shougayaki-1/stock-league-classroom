@@ -15,8 +15,9 @@ const root = (marketId: string) => `liveMarkets/${marketId}`
 const normalizeCode = (code: string) => code.trim().toUpperCase()
 
 const initialLiveState = (input: CreateMarketInput) => ({
-  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now() },
+  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now(), startingCash: input.template.startingCash },
   teams: Object.fromEntries(input.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
+  companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),
 })
 
 /** Idempotently completes a CREATING market after any Firestore/RTDB partial failure. */
@@ -96,6 +97,8 @@ export const approveJoinRequest = async (database: Database, marketId: string, i
     const teamId = chooseTeam(raw, request, mode, manualTeamId)
     const participant: LiveMarketParticipant = { uid: request.uid, sessionId: request.sessionId, displayName: request.displayName, teamId, connected: true, lastSeenAtMillis: Date.now() }
     raw.participants[id] = participant
+    raw.portfolios ??= {}
+    raw.portfolios[id] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: Date.now() }
     raw.joinRequests[id] = { ...request, approvedAtMillis: Date.now() }
     return raw
   })

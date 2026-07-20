@@ -9,6 +9,7 @@ export interface LiveMarketMetadata {
   visibility: MarketVisibility
   status: MarketStatus
   createdAtMillis: number
+  startingCash: number
 }
 
 export interface LiveMarketTeam { id: string; name: string }
@@ -28,6 +29,7 @@ export interface OrderResult { orderId: string; stockId: string; side: 'BUY' | '
 export interface LiveMarketState {
   meta: LiveMarketMetadata
   teams: Record<string, LiveMarketTeam>
+  companies?: Record<string, { id: string; basePrice: number; phases?: import('../pricing/types').StockPricePhase[] }>
   joinRequests?: Record<string, JoinRequest>
   participants?: Record<string, LiveMarketParticipant>
   hostLease?: HostLease

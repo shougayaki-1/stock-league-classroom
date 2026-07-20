@@ -10,6 +10,7 @@
           ".read": "auth != null",
           "ownerUid": { ".validate": "(!data.exists() && newData.val() === auth.uid) || newData.val() === data.val()" },
           "capacity": { ".validate": "(!data.exists() && newData.val() === 80) || newData.val() === data.val()" },
+          "startingCash": { ".validate": "(!data.exists() && newData.isNumber() && newData.val() >= 0) || newData.val() === data.val()" },
           "visibility": { ".validate": "(!data.exists() && (newData.val() === 'private' || newData.val() === 'ranking_only' || newData.val() === 'public')) || newData.val() === data.val()" }
         },
         "teams": { ".read": "auth != null" },

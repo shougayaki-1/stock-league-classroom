@@ -20,7 +20,7 @@ describe('phase runtime', () => {
 
 describe('lease-specific disconnect markers', () => {
   it('does not let old connection A pause same-owner lease L2 after L1 was replaced', () => {
-    const state: LiveMarketState = { meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'OPEN', createdAtMillis: 1 }, teams: {}, hostLease: { ownerUid: 'teacher', leaseId: 'L2', expiresAtMillis: 2_000, paused: false }, hostDisconnects: { L1: { ownerUid: 'teacher', disconnectedAtMillis: 2 } } }
+    const state: LiveMarketState = { meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'OPEN', createdAtMillis: 1, startingCash: 10000 }, teams: {}, hostLease: { ownerUid: 'teacher', leaseId: 'L2', expiresAtMillis: 2_000, paused: false }, hostDisconnects: { L1: { ownerUid: 'teacher', disconnectedAtMillis: 2 } } }
     expect(shouldPauseLease(state, 'teacher', 'L1', 100)).toBe(false)
     expect(shouldPauseLease(state, 'teacher', 'L2', 100)).toBe(false)
     state.hostDisconnects!.L2 = { ownerUid: 'teacher', disconnectedAtMillis: 3 }
