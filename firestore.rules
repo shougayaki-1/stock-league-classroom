@@ -1,6 +1,45 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    // Email-link users are represented by Firebase Auth's password provider.
+    function teacher() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    function operator() { return teacher() && request.auth.token.operator == true; }
+
+    match /templates/{templateId} {
+      // A personal template can never be fetched or enumerated by another user.
+      allow get: if teacher() && resource.data.ownerUid == request.auth.uid;
+      // Firestore evaluates this against every possible returned document, so
+      // callers must constrain their query to their own ownerUid.
+      allow list: if teacher() && resource.data.ownerUid == request.auth.uid;
+      allow create: if teacher()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.visibility == 'private';
+      allow update: if teacher()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.visibility == 'private';
+      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /officialTemplates/{templateId} {
+      allow get, list: if teacher() || operator();
+      allow create, update, delete: if operator();
+    }
+
+    match /templateShares/{shareId} {
+      // Capability links are deliberately unlistable; their snapshot is write-once.
+      allow get: if teacher();
+      allow list: if false;
+      allow create: if teacher()
+        && request.resource.data.createdByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }
