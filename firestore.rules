@@ -43,6 +43,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /markets/{marketId} {
+      allow get, list: if teacher() && resource.data.ownerUid == request.auth.uid;
+      allow create: if teacher()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.capacity == 80;
+      allow update, delete: if teacher() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    match /marketJoinCodes/{code} {
+      // A code is a capability: authenticated anonymous students may direct-get
+      // it, but nobody can enumerate all active classrooms.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if teacher()
+        && request.resource.data.ownerUid == request.auth.uid
+        && get(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.ownerUid == request.auth.uid;
+      allow update, delete: if teacher()
+        && resource.data.ownerUid == request.auth.uid;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

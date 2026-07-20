@@ -25,6 +25,31 @@ beforeEach(async () => {
     await setDoc(doc(context.firestore(), 'templateShares', 'capability'), {
       snapshot: { title: '固定コピー', description: '公開', startingCash: 10000, companies: [] }, createdByUid: 'teacher-a', createdAt: 1,
     })
+    await setDoc(doc(context.firestore(), 'markets', 'market-a'), { ownerUid: 'teacher-a', templateSnapshot: template, capacity: 80, visibility: 'private' })
+    await setDoc(doc(context.firestore(), 'marketJoinCodes', 'ABC123'), { marketId: 'market-a', ownerUid: 'teacher-a' })
+  })
+})
+
+describe('market Firestore rules', () => {
+  it('allows only the owning teacher to access a market document', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(owner, 'markets', 'market-a')))
+    await assertFails(getDoc(doc(other, 'markets', 'market-a')))
+    await assertFails(getDocs(collection(other, 'markets')))
+  })
+
+  it('makes join codes direct-get-only for anonymous students', async () => {
+    const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).firestore()
+    await assertSucceeds(getDoc(doc(student, 'marketJoinCodes', 'ABC123')))
+    await assertFails(getDocs(collection(student, 'marketJoinCodes')))
+  })
+
+  it('lets a teacher create a code only for a market they own', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(setDoc(doc(owner, 'marketJoinCodes', 'OWNED'), { marketId: 'market-a', ownerUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(other, 'marketJoinCodes', 'FORGED'), { marketId: 'market-a', ownerUid: 'teacher-b' }))
   })
 })
 afterAll(async () => environment?.cleanup())

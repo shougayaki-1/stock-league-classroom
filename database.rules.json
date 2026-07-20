@@ -1,1 +1,27 @@
-{ "rules": { ".read": false, ".write": false } }
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "liveMarkets": {
+      "$marketId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('meta/ownerUid').val() === auth.uid) || (data.exists() && data.child('meta/ownerUid').val() === auth.uid))",
+        "meta": {
+          "ownerUid": { ".validate": "(!data.exists() && newData.val() === auth.uid) || newData.val() === data.val()" },
+          "capacity": { ".validate": "(!data.exists() && newData.val() === 80) || newData.val() === data.val()" },
+          "visibility": { ".validate": "(!data.exists() && (newData.val() === 'private' || newData.val() === 'ranking_only' || newData.val() === 'public')) || newData.val() === data.val()" }
+        },
+        "participants": { "$participantId": { ".write": "auth != null && root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid" } },
+        "joinRequests": {
+          "$requestId": {
+            ".write": "auth != null && ((!data.exists() && newData.child('uid').val() === auth.uid && newData.child('connected').val() === true) || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === auth.uid && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('requestedTeamId').val() === data.child('requestedTeamId').val() && newData.hasChildren(['uid','sessionId','displayName','requestedTeamId','connected','requestedAtMillis'])))",
+            ".validate": "newData.child('uid').val() === auth.uid",
+            "connected": {
+              ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

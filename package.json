@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:rules": "firebase emulators:exec --project demo-stock-league-classroom --only firestore \"vitest --config vite.rules.config.ts run\""
+    "test:rules": "firebase emulators:exec --project demo-stock-league-classroom --only firestore,database \"vitest --config vite.rules.config.ts run\""
   },
   "dependencies": {
     "firebase": "^12.16.0",
