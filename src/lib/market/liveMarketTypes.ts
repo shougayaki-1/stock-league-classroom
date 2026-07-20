@@ -20,11 +20,23 @@ export interface LiveMarketParticipant {
   uid: string; sessionId: string; displayName: string; teamId: string | null
   connected: boolean; lastSeenAtMillis: number
 }
+export interface HostLease { ownerUid: string; leaseId: string; expiresAtMillis: number; paused?: boolean }
+export interface LivePrice { price: number; updatedAtMillis: number }
+export interface PendingOrder { orderId: string; stockId: string; side: 'BUY' | 'SELL'; quantity: number; submittedAtMillis: number }
+export interface Portfolio { cash: number; holdings: Record<string, number>; updatedAtMillis: number }
+export interface OrderResult { orderId: string; stockId: string; side: 'BUY' | 'SELL'; requestedQuantity: number; filledQuantity: number; price: number; processedAtMillis: number }
 export interface LiveMarketState {
   meta: LiveMarketMetadata
   teams: Record<string, LiveMarketTeam>
   joinRequests?: Record<string, JoinRequest>
   participants?: Record<string, LiveMarketParticipant>
+  hostLease?: HostLease
+  prices?: Record<string, LivePrice>
+  orders?: Record<string, { pending?: PendingOrder }>
+  portfolios?: Record<string, Portfolio>
+  transactions?: Record<string, Record<string, OrderResult>>
+  news?: Record<string, { message: string; publishedAtMillis: number }>
+  finalization?: { status: 'PENDING' | 'WRITING_RESULTS' | 'COMPLETED'; checkpointId: string; startedAtMillis: number; completedAtMillis?: number }
 }
 export interface LiveMarketPaths {
   market: `liveMarkets/${string}`

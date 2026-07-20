@@ -60,6 +60,16 @@ describe('market Firestore rules', () => {
     await assertFails(updateDoc(doc(owner, 'markets', 'market-a'), { templateSnapshot: { changed: true } }))
     await assertSucceeds(deleteDoc(doc(owner, 'markets', 'market-a')))
   })
+
+  it('allows the owner to checkpoint results and only the matching student to read them', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).firestore()
+    const other = environment.authenticatedContext('student-b', { firebase: { sign_in_provider: 'anonymous' as const } }).firestore()
+    const result = doc(owner, 'marketResults', 'market-a', 'participants', 'student-a_session')
+    await assertSucceeds(setDoc(result, { ownerUid: 'teacher-a', participantId: 'student-a_session', participantUid: 'student-a', checkpointId: 'ending-1' }))
+    await assertSucceeds(getDoc(doc(student, 'marketResults', 'market-a', 'participants', 'student-a_session')))
+    await assertFails(getDoc(doc(other, 'marketResults', 'market-a', 'participants', 'student-a_session')))
+  })
 })
 afterAll(async () => environment?.cleanup())
 

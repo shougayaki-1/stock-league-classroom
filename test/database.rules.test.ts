@@ -69,4 +69,14 @@ describe('live market RTDB rules', () => {
     await assertFails(student.ref(path).update({ teamId: 'blue' }))
     await assertFails(environment.authenticatedContext('student-b').database().ref(`${path}/connected`).set(false))
   })
+
+  it('allows a participant to submit one well-formed pending order but not mutate portfolios', async () => {
+    const owner = environment.authenticatedContext('teacher-a').database()
+    const student = environment.authenticatedContext('student-a').database()
+    await assertSucceeds(owner.ref(`liveMarkets/${market}/participants/student-a_session`).set({ uid: 'student-a', sessionId: 'session', displayName: '生徒', teamId: 'red', connected: true, lastSeenAtMillis: 1 }))
+    const pending = `liveMarkets/${market}/orders/student-a_session/pending`
+    await assertSucceeds(student.ref(pending).set({ orderId: 'once', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 2 }))
+    await assertFails(student.ref(pending).set({ orderId: 'twice', stockId: 'acme', side: 'BUY', quantity: 2, submittedAtMillis: 3 }))
+    await assertFails(student.ref(`liveMarkets/${market}/portfolios/student-a_session`).set({ cash: 0, holdings: {}, updatedAtMillis: 1 }))
+  })
 })

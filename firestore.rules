@@ -70,6 +70,20 @@ service cloud.firestore {
         && resource.data.ownerUid == request.auth.uid;
     }
 
+    match /marketResults/{marketId}/participants/{participantId} {
+      // The host writes deterministic finalization checkpoints. Students may
+      // only read their own participant result; market ownership is immutable.
+      allow get: if signedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.participantUid == request.auth.uid);
+      allow list: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
+      allow create: if teacher()
+        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if teacher()
+        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

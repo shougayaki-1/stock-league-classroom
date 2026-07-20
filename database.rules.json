@@ -31,6 +31,28 @@
             "lastSeenAtMillis": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isNumber()" }
           }
         }
+        ,
+        "hostLease": {
+          ".read": "auth != null && data.child('ownerUid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['ownerUid','leaseId','expiresAtMillis','paused']) && newData.child('ownerUid').val() === root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() && newData.child('leaseId').isString() && newData.child('expiresAtMillis').isNumber() && newData.child('paused').isBoolean()"
+        },
+        "prices": { ".read": "auth != null" },
+        "news": { ".read": "auth != null" },
+        "orders": {
+          "$participantId": {
+            ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
+            "pending": {
+              ".write": "auth != null && !data.exists() && root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid",
+              ".validate": "newData.hasChildren(['orderId','stockId','side','quantity','submittedAtMillis']) && newData.child('orderId').isString() && newData.child('stockId').isString() && (newData.child('side').val() === 'BUY' || newData.child('side').val() === 'SELL') && newData.child('quantity').isNumber() && newData.child('quantity').val() > 0 && newData.child('submittedAtMillis').isNumber()"
+            }
+          }
+        },
+        "portfolios": {
+          "$participantId": { ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)" }
+        },
+        "transactions": {
+          "$participantId": { ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)" }
+        }
       }
     }
   }
