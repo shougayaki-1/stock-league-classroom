@@ -33,7 +33,6 @@ export interface OfficialTemplate extends TemplateSpec {
 
 export interface TemplateShare {
   id: string
-  templateId: string
   /** Immutable copy: resolving a link never reads a private template. */
   snapshot: TemplateSpec
   createdByUid: string

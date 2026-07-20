@@ -23,7 +23,7 @@ beforeEach(async () => {
     await setDoc(doc(context.firestore(), 'templates', 'other'), { ...template, ownerUid: 'teacher-b' })
     await setDoc(doc(context.firestore(), 'officialTemplates', 'seed'), { ...template, visibility: 'official' })
     await setDoc(doc(context.firestore(), 'templateShares', 'capability'), {
-      templateId: 'owned', snapshot: { title: '固定コピー', description: '公開', startingCash: 10000, companies: [] }, createdByUid: 'teacher-a', createdAt: 1,
+      snapshot: { title: '固定コピー', description: '公開', startingCash: 10000, companies: [] }, createdByUid: 'teacher-a', createdAt: 1,
     })
   })
 })
@@ -55,6 +55,15 @@ describe('template Firestore rules', () => {
     const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     await assertSucceeds(getDoc(doc(db, 'templateShares', 'capability')))
     await assertFails(getDocs(collection(db, 'templateShares')))
-    await assertFails(setDoc(doc(db, 'templateShares', 'capability'), { templateId: 'owned', snapshot: {}, createdByUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(db, 'templateShares', 'capability'), { snapshot: {}, createdByUid: 'teacher-a' }))
+  })
+
+  it('permits only a teacher to create a snapshot-only share', async () => {
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const anonymous = environment.unauthenticatedContext().firestore()
+    await assertSucceeds(setDoc(doc(teacher, 'templateShares', 'new-share'), { snapshot: { title: 'コピー', description: '', startingCash: 1, companies: [] }, createdByUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(anonymous, 'templateShares', 'claimed'), { snapshot: {}, createdByUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(teacher, 'templateShares', 'foreign-source'), { templateId: 'other', snapshot: {}, createdByUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(teacher, 'templateShares', 'forged-owner'), { snapshot: {}, createdByUid: 'teacher-b' }))
   })
 })

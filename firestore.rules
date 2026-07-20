@@ -36,7 +36,10 @@ service cloud.firestore {
       allow get: if teacher();
       allow list: if false;
       allow create: if teacher()
-        && request.resource.data.createdByUid == request.auth.uid;
+        && request.resource.data.createdByUid == request.auth.uid
+        // A share is a self-contained, non-claimable capability. In particular,
+        // it must not retain a private template ID that could name another user.
+        && request.resource.data.keys().hasOnly(['snapshot', 'createdByUid', 'createdAt']);
       allow update, delete: if false;
     }
 
