@@ -7,7 +7,7 @@ import { get, ref, set } from 'firebase/database'
 import { deleteMarketCompletely, isDeleteRecommended } from './marketDeletion'
 
 const projectId = 'market-deletion-test'
-const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'password' as const } }
+const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'google.com' as const } }
 
 describe('isDeleteRecommended', () => {
   const dayMs = 24 * 60 * 60 * 1000
@@ -39,8 +39,9 @@ describe('deleteMarketCompletely', () => {
     await environment.clearDatabase()
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'markets', 'm1'), {
-        ownerUid: 'teacher-1', capacity: 80, visibility: 'private', templateSnapshot: {}, createdAt: new Date(),
+        ownerUid: 'teacher-1', capacity: 80, visibility: 'private', joinCode: 'ABC123', templateSnapshot: {}, createdAt: new Date(),
       })
+      await setDoc(doc(context.firestore(), 'marketJoinCodes', 'ABC123'), { marketId: 'm1', ownerUid: 'teacher-1' })
       await setDoc(doc(context.firestore(), 'marketResults', 'm1', 'participants', 'p1'), {
         ownerUid: 'teacher-1', participantId: 'p1', participantUid: 'student-1', checkpointId: 'c1',
         portfolio: { cash: 1000, holdings: {} }, transactions: {}, finalizedAtMillis: 1,
@@ -50,7 +51,7 @@ describe('deleteMarketCompletely', () => {
         portfolio: { cash: 500, holdings: {} }, transactions: {}, finalizedAtMillis: 1,
       })
       await set(ref(context.database(), 'liveMarkets/m1'), {
-        meta: { ownerUid: 'teacher-1', capacity: 80, visibility: 'private', status: 'ENDED', createdAtMillis: 1, startingCash: 10000 },
+        meta: { ownerUid: 'teacher-1', capacity: 80, visibility: 'private', status: 'ENDED', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC123' },
       })
     })
   })

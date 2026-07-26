@@ -1,5 +1,10 @@
 export type TemplateVisibility = 'private' | 'official'
 
+export interface TemplateTeam {
+  id: string
+  name: string
+}
+
 export interface TemplateCompany {
   id: string
   name: string
@@ -15,6 +20,7 @@ export interface TemplateSpec {
   title: string
   description: string
   startingCash: number
+  teams: TemplateTeam[]
   companies: TemplateCompany[]
 }
 

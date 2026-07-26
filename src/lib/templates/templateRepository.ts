@@ -14,11 +14,12 @@ import {
 } from 'firebase/firestore'
 import type { OfficialTemplate, PersonalTemplate, TemplateShare, TemplateSpec } from './types'
 import { officialTemplateSeeds } from './officialSeeds'
+import { assertValidTemplate } from './templateValidation'
 
 const personalTemplates = (db: Firestore) => collection(db, 'templates')
 const officialTemplates = (db: Firestore) => collection(db, 'officialTemplates')
 
-const asTemplateSpec = (template: TemplateSpec): TemplateSpec => structuredClone(template)
+const asTemplateSpec = (template: TemplateSpec): TemplateSpec => structuredClone(assertValidTemplate(template))
 export const toTimestampMillis = (value: unknown): number => {
   if (typeof value === 'number') return value
   if (value && typeof (value as Timestamp).toMillis === 'function') return (value as Timestamp).toMillis()

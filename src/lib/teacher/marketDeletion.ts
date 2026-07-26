@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDocs, type Firestore } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, type Firestore } from 'firebase/firestore'
 import { ref, remove, type Database } from 'firebase/database'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -20,19 +20,23 @@ export const isDeleteRecommended = (
  * authorize each delete. Once the market doc is gone, that lookup returns a non-existent document and
  * every remaining result-doc delete is denied.
  *
- * Known gap: `marketJoinCodes/{code}` docs are not cleaned up here (no reverse index from market to
- * join code, and `marketJoinCodes` disallows `list` entirely) — a deleted market's join code becomes a
- * harmless dead end, not a security issue. See task-8-report.md for detail.
+ * The market record stores its immutable join code, so the capability document is removed without
+ * ever listing the otherwise-unlistable marketJoinCodes collection.
  */
 export const deleteMarketCompletely = async (
   firestore: Firestore,
   rtdb: Database,
   marketId: string
 ): Promise<void> => {
+  const marketRef = doc(firestore, 'markets', marketId)
+  const market = await getDoc(marketRef)
+  if (!market.exists()) return
+  const joinCode = typeof market.data().joinCode === 'string' ? market.data().joinCode : ''
   const participantsSnapshot = await getDocs(collection(firestore, 'marketResults', marketId, 'participants'))
-  for (const participantDoc of participantsSnapshot.docs) await deleteDoc(participantDoc.ref)
-
-  await deleteDoc(doc(firestore, 'markets', marketId))
+  const teamsSnapshot = await getDocs(collection(firestore, 'marketResults', marketId, 'teams'))
+  await Promise.all([...participantsSnapshot.docs, ...teamsSnapshot.docs].map((resultDoc) => deleteDoc(resultDoc.ref)))
 
   await remove(ref(rtdb, `liveMarkets/${marketId}`))
+  if (joinCode) await deleteDoc(doc(firestore, 'marketJoinCodes', joinCode))
+  await deleteDoc(marketRef)
 }

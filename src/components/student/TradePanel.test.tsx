@@ -24,7 +24,7 @@ describe('TradePanel', () => {
         stockName="開成テック"
         currentPrice={1500}
         onSubmitOrder={vi.fn()}
-        latestResult={{ orderId: 'o1', stockId: 's1', side: 'BUY', requestedQuantity: 5, filledQuantity: 3, price: 1550, processedAtMillis: 0 }}
+        latestResult={{ orderId: 'o1', participantId: 'p1', teamId: 'red', stockId: 's1', side: 'BUY', requestedQuantity: 5, filledQuantity: 3, price: 1550, processedAtMillis: 0 }}
       />
     )
     expect(screen.getByText(/価格が変更されたため/)).toBeInTheDocument()
@@ -38,7 +38,7 @@ describe('TradePanel', () => {
         stockName="開成テック"
         currentPrice={1500}
         onSubmitOrder={vi.fn()}
-        latestResult={{ orderId: 'o2', stockId: 's1', side: 'BUY', requestedQuantity: 5, filledQuantity: 0, price: 1550, processedAtMillis: 0 }}
+        latestResult={{ orderId: 'o2', participantId: 'p1', teamId: 'red', stockId: 's1', side: 'BUY', requestedQuantity: 5, filledQuantity: 0, price: 1550, processedAtMillis: 0 }}
       />
     )
     expect(screen.getByText(/約定できませんでした/)).toBeInTheDocument()

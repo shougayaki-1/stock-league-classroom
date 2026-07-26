@@ -10,6 +10,8 @@ export interface LiveMarketMetadata {
   status: MarketStatus
   createdAtMillis: number
   startingCash: number
+  joinCode: string
+  openedAtMillis?: number
 }
 
 export interface LiveMarketTeam { id: string; name: string }
@@ -25,23 +27,45 @@ export interface HostLease { ownerUid: string; leaseId: string; expiresAtMillis:
 export interface LivePrice { price: number; updatedAtMillis: number; runtime?: import('../pricing/types').PriceRuntimeState }
 export interface PendingOrder { orderId: string; stockId: string; side: 'BUY' | 'SELL'; quantity: number; submittedAtMillis: number }
 export interface Portfolio { cash: number; holdings: Record<string, number>; updatedAtMillis: number }
-export interface OrderResult { orderId: string; stockId: string; side: 'BUY' | 'SELL'; requestedQuantity: number; filledQuantity: number; price: number; processedAtMillis: number }
+export interface OrderResult {
+  orderId: string
+  participantId: string
+  teamId: string
+  stockId: string
+  side: 'BUY' | 'SELL'
+  requestedQuantity: number
+  filledQuantity: number
+  price: number
+  processedAtMillis: number
+}
+export interface MarketMember { teamId: string }
+export interface TeamLeaderboardEntry { teamId: string; name: string; valuation: number; rank: number }
+/** Host-authored projection exposed to classroom signage; never contains raw portfolios. */
+export interface SignageData {
+  joinCode: string
+  prices: { stockId: string; stockName: string; price: number }[]
+  publicNews: string[]
+  phase: MarketStatus
+  leaderboard: { name: string; valuation: number; rank: number }[]
+}
 export interface LiveMarketState {
   meta: LiveMarketMetadata
   teams: Record<string, LiveMarketTeam>
-  companies?: Record<string, { id: string; basePrice: number; phases?: import('../pricing/types').StockPricePhase[] }>
+  companies?: Record<string, { id: string; name: string; symbol: string; basePrice: number; phases?: import('../pricing/types').StockPricePhase[] }>
+  members?: Record<string, MarketMember>
   joinRequests?: Record<string, JoinRequest>
   participants?: Record<string, LiveMarketParticipant>
   hostLease?: HostLease
   hostDisconnects?: Record<string, { ownerUid: string; disconnectedAtMillis: number }>
   prices?: Record<string, LivePrice>
   orders?: Record<string, { pending?: PendingOrder }>
-  portfolios?: Record<string, Portfolio>
+  teamPortfolios?: Record<string, Portfolio>
   transactions?: Record<string, Record<string, OrderResult>>
+  teamLeaderboard?: Record<string, TeamLeaderboardEntry>
   news?: Record<string, { message: string; publishedAtMillis: number }>
   finalization?: { status: 'PENDING' | 'WRITING_RESULTS' | 'COMPLETED'; checkpointId: string; startedAtMillis: number; completedAtMillis?: number }
   /** Host-authored, pre-aggregated projection for the physical signage display. Never raw portfolios. */
-  signage?: import('./signageWriter').SignageData
+  signage?: SignageData
 }
 export interface LiveMarketPaths {
   market: `liveMarkets/${string}`

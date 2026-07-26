@@ -2,11 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    // Email-link users are represented by Firebase Auth's password provider.
     function teacher() {
       return signedIn()
         && request.auth.token.email_verified == true
-        && request.auth.token.firebase.sign_in_provider == 'password';
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
     function operator() { return teacher() && request.auth.token.operator == true; }
 
@@ -48,10 +47,13 @@ service cloud.firestore {
       allow create: if teacher()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.capacity == 80
+        && request.resource.data.joinCode is string
+        && request.resource.data.joinCode.size() == 6
         && request.resource.data.creationStatus == 'CREATING';
       allow update: if teacher() && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == resource.data.ownerUid
         && request.resource.data.capacity == resource.data.capacity
+        && request.resource.data.joinCode == resource.data.joinCode
         && request.resource.data.templateSnapshot == resource.data.templateSnapshot
         && request.resource.data.visibility == resource.data.visibility
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['creationStatus', 'initializedAt']);
@@ -65,7 +67,8 @@ service cloud.firestore {
       allow list: if false;
       allow create: if teacher()
         && request.resource.data.ownerUid == request.auth.uid
-        && get(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.ownerUid == request.auth.uid;
+        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.joinCode == code;
       allow update, delete: if teacher()
         && resource.data.ownerUid == request.auth.uid;
     }
@@ -82,6 +85,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == resource.data.ownerUid;
       allow delete: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /marketResults/{marketId}/teams/{teamId} {
+      allow get, list, create, update, delete: if teacher()
+        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
     }
 
     match /{document=**} { allow read, write: if false; }

@@ -1,65 +1,61 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { onValue, ref, type Unsubscribe } from 'firebase/database'
 import { bootstrapFirebase } from '../lib/firebase/bootstrap'
+import { signInTeacherWithGoogle } from '../lib/auth/teacherAuth'
+import { getOrCreateStudentUid } from '../lib/auth/studentAuth'
 import { isTeacherIdentity } from '../lib/auth/roles'
-import { approveJoinRequest, createMarket, resolveJoinCode } from '../lib/market/marketRepository'
-import type { JoinRequest, LiveMarketState, MarketVisibility, TeamAssignmentMode } from '../lib/market/liveMarketTypes'
+import { approveJoinRequest, createMarket, listOwnedMarkets, requestToJoinMarket, resolveJoinCode, type MarketRecord } from '../lib/market/marketRepository'
+import { participantId, type LiveMarketState, type MarketVisibility, type TeamAssignmentMode } from '../lib/market/liveMarketTypes'
 import { listPersonalTemplates } from '../lib/templates/templateRepository'
 import type { PersonalTemplate } from '../lib/templates/types'
+import { deleteMarketCompletely } from '../lib/teacher/marketDeletion'
+import { getStudentSessionId, readActiveStudentSession, saveActiveStudentSession } from '../lib/students/studentSession'
 
-const code = () => Math.random().toString(36).slice(2, 8).toUpperCase()
-const teams = [{ id: 'red', name: '赤チーム' }, { id: 'blue', name: '青チーム' }]
+const googleSignInErrorMessage = (error: unknown): string => {
+  const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
+  if (code === 'auth/operation-not-allowed') return 'Google ログインが有効ではありません。Firebase Authentication の Google プロバイダを有効にしてください。'
+  if (code === 'auth/popup-blocked') return 'ログイン用ポップアップがブロックされました。ブラウザでこのサイトのポップアップを許可してください。'
+  if (code === 'auth/unauthorized-domain') return 'この公開URLが承認済みドメインに登録されていません。Authentication の設定を確認してください。'
+  return `Google ログインを完了できませんでした${code ? `（${code}）` : ''}。もう一度お試しください。`
+}
 
 export const TeacherMarketDashboard = () => {
   const services = bootstrapFirebase()
-  const [user, setUser] = useState<User | null>(services.auth.currentUser)
-  const [templates, setTemplates] = useState<PersonalTemplate[]>([])
-  const [selectedId, setSelectedId] = useState('')
-  const [visibility, setVisibility] = useState<MarketVisibility>('private')
-  const [marketId, setMarketId] = useState('')
-  const [joinCode, setJoinCode] = useState('')
-  const [state, setState] = useState<LiveMarketState | null>(null)
-  const [notice, setNotice] = useState('')
-  const [mode, setMode] = useState<TeamAssignmentMode>('random')
+  const [user, setUser] = useState<User | null>(services.auth.currentUser), [authNotice, setAuthNotice] = useState('')
+  const [templates, setTemplates] = useState<PersonalTemplate[]>([]), [selectedId, setSelectedId] = useState(''), [visibility, setVisibility] = useState<MarketVisibility>('private')
+  const [markets, setMarkets] = useState<MarketRecord[]>([])
+  const [marketId, setMarketId] = useState(''), [joinCode, setJoinCode] = useState(''), [state, setState] = useState<LiveMarketState | null>(null), [notice, setNotice] = useState(''), [mode, setMode] = useState<TeamAssignmentMode>('random'), [creating, setCreating] = useState(false)
   useEffect(() => onAuthStateChanged(services.auth, setUser), [services.auth])
   const teacher = Boolean(user && isTeacherIdentity(user))
-  useEffect(() => {
-    if (!teacher || !user) return
-    void listPersonalTemplates(services.firestore, user.uid).then((items) => { setTemplates(items); setSelectedId(items[0]?.id ?? '') }).catch(() => setNotice('テンプレートを読み込めませんでした。'))
-  }, [services.firestore, teacher, user])
-  useEffect(() => {
-    if (!marketId) return
-    let stop: Unsubscribe | undefined
-    stop = onValue(ref(services.database, `liveMarkets/${marketId}`), (snapshot) => setState(snapshot.val() as LiveMarketState | null))
-    return () => stop?.()
-  }, [services.database, marketId])
+  const refreshOwned = useCallback(async (uid: string) => {
+    const [items, owned] = await Promise.all([listPersonalTemplates(services.firestore, uid), listOwnedMarkets(services.firestore, uid)])
+    setTemplates(items); setSelectedId((current) => current || items[0]?.id || ''); setMarkets(owned)
+  }, [services.firestore])
+  useEffect(() => { if (!teacher || !user) return; void refreshOwned(user.uid).catch(() => setNotice('テンプレートまたは市場を読み込めませんでした。')) }, [refreshOwned, teacher, user])
+  useEffect(() => { if (!marketId) return; const stop: Unsubscribe = onValue(ref(services.database, `liveMarkets/${marketId}`), (snapshot) => setState(snapshot.val() as LiveMarketState | null)); return () => stop() }, [services.database, marketId])
   const selected = useMemo(() => templates.find((item) => item.id === selectedId), [selectedId, templates])
-  if (!teacher || !user) return <main><h1>教師ダッシュボード</h1><p>市場を作成するには教師用メールリンクでログインしてください。</p></main>
-  const create = async () => {
-    if (!selected) return setNotice('先にテンプレートを作成してください。')
-    const nextCode = code()
-    const id = await createMarket(services.firestore, services.database, { ownerUid: user.uid, template: selected, visibility, joinCode: nextCode, teams })
-    setMarketId(id); setJoinCode(nextCode); setNotice('市場を作成しました。')
+  const requests = Object.entries(state?.joinRequests ?? {}).filter(([, request]) => request.connected && !state?.participants?.[participantId(request.uid, request.sessionId)])
+  const activeCount = Object.values(state?.participants ?? {}).filter((item) => item.connected).length
+  const signInWithGoogle = async () => { try { await signInTeacherWithGoogle(services.auth); setAuthNotice('Google アカウントでログインしました。') } catch (error) { setAuthNotice(googleSignInErrorMessage(error)) } }
+  const create = async () => { if (!selected || !user) return setNotice('先にテンプレートを作成してください。'); setCreating(true); try { const result = await createMarket(services.firestore, services.database, { ownerUid: user.uid, template: selected, visibility }); setMarketId(result.marketId); setJoinCode(result.joinCode); await refreshOwned(user.uid); setNotice('市場を作成しました。参加コードを生徒に共有してください。') } catch (error) { setNotice(error instanceof Error ? error.message : '市場を作成できませんでした。接続と権限を確認してください。') } finally { setCreating(false) } }
+  const removeMarket = async (market: MarketRecord) => {
+    if (!user || !window.confirm(`市場「${market.templateSnapshot.title}」を削除しますか？結果と参加コードも削除されます。`)) return
+    await deleteMarketCompletely(services.firestore, services.database, market.id)
+    if (marketId === market.id) { setMarketId(''); setJoinCode(''); setState(null) }
+    await refreshOwned(user.uid)
+    setNotice('市場を削除しました。')
   }
-  const requests = Object.entries(state?.joinRequests ?? {}).filter(([, request]) => request.connected && !state?.participants?.[request.uid + '_' + request.sessionId])
-  return <main>
-    <h1>教師ダッシュボード</h1>{notice && <p role="status">{notice}</p>}
-    <label>テンプレート <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{templates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
-    <label>公開範囲 <select value={visibility} onChange={(event) => setVisibility(event.target.value as MarketVisibility)}><option value="private">非公開</option><option value="ranking_only">順位のみ</option><option value="public">公開</option></select></label>
-    <button type="button" onClick={() => void create().catch(() => setNotice('市場を作成できませんでした。'))}>市場を作成</button>
-    {marketId && <section aria-labelledby="active-market"><h2 id="active-market">進行中の市場</h2><p>参加コード: <strong>{joinCode}</strong></p><p>定員: {state?.meta.capacity ?? 80}人 / 接続中: {Object.values(state?.participants ?? {}).filter((item) => item.connected).length}人</p>
-      <label>チーム割当 <select value={mode} onChange={(event) => setMode(event.target.value as TeamAssignmentMode)}><option value="random">最少人数へ自動割当</option><option value="student_choice">生徒の希望を優先</option><option value="manual">手動</option></select></label>
-      <h3>参加承認待ち</h3><ul>{requests.map(([id, request]) => <JoinRequestRow key={id} id={id} request={request} mode={mode} marketId={marketId} onApprove={() => approveJoinRequest(services.database, marketId, id, mode).then((ok) => setNotice(ok ? '参加を承認しました。' : '承認できませんでした。'))} />)}</ul>
-    </section>}
-  </main>
+  if (!teacher || !user) return <main className="portal-page"><section className="portal-auth"><a className="portal-brand" href="/">← Stock League Classroom</a><p className="portal-eyebrow">TEACHER PORTAL</p><h1>授業の市場を、<br />ここから準備。</h1><p>Google アカウントでログインすると、テンプレートの編集、市場の作成、参加状況の管理ができます。</p><button className="portal-button google-sign-in" type="button" onClick={() => void signInWithGoogle()}><b>G</b> Google でログイン <span>→</span></button>{authNotice && <p className="form-notice" role="status">{authNotice}</p>}<p className="portal-help">教師用の Google アカウントを選択してください。</p></section><aside className="portal-aside"><p>CLASSROOM MARKET</p><strong>準備から振り返りまで、<br />一つの教室で。</strong><ul><li>授業テーマに合うテンプレート</li><li>生徒の参加をその場で承認</li><li>市場の進行をリアルタイムで管理</li></ul></aside></main>
+  return <main className="teacher-page"><header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><div><a href="/templates">テンプレートを管理</a><span className="teacher-avatar">{(user.email ?? 'T').slice(0, 1).toUpperCase()}</span></div></header><section className="teacher-hero"><div><p className="portal-eyebrow">TEACHER PORTAL</p><h1>今日の授業を、<br /><em>市場にしよう。</em></h1><p>テンプレートを選んで市場を作成し、参加コードを生徒へ共有します。</p></div><div className="teacher-stats"><div><span>作成済みテンプレート</span><strong>{templates.length}</strong></div><div><span>市場の定員</span><strong>80 <small>人</small></strong></div><div><span>現在の参加者</span><strong>{activeCount}</strong></div></div></section><section className="teacher-workspace"><div className="create-market-card"><div className="card-heading"><div><p className="section-kicker">NEW MARKET</p><h2>市場を作成</h2></div><a href="/templates">テンプレートを編集 →</a></div>{notice && <p className="form-notice" role="status">{notice}</p>}<div className="field-grid"><label>使うテンプレート<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">選択してください</option>{templates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><label>公開範囲<select value={visibility} onChange={(event) => setVisibility(event.target.value as MarketVisibility)}><option value="private">参加者のみ</option><option value="ranking_only">順位のみ公開</option><option value="public">価格・ニュース・順位を公開</option></select></label></div>{templates.length === 0 && <div className="empty-panel"><strong>まずはテンプレートを作成しましょう。</strong><p>会社や初期資金を設定すると、授業に合った市場を作れます。</p><a className="inline-link" href="/templates">テンプレートを作成 →</a></div>}<button className="portal-button" type="button" disabled={!selected || creating} onClick={() => void create()}>{creating ? '市場を準備中…' : '参加コードを発行して市場を作成'} <span>→</span></button></div>{marketId && <section className="active-market-card"><div className="active-head"><div><p className="section-kicker">ACTIVE MARKET</p><h2>生徒の参加を待っています</h2></div><div><a className="host-link" href={`/teacher/markets/${marketId}/host`}>ホスト画面 →</a> <a className="host-link" href={`/markets/${marketId}/signage`}>教室画面 →</a></div></div><div className="join-code"><span>参加コード</span><strong>{joinCode}</strong><button type="button" onClick={() => void navigator.clipboard.writeText(joinCode).then(() => setNotice('参加コードをコピーしました。'))}>コピー</button></div><div className="market-meta"><span>参加者 <b>{activeCount} / 80</b></span><label>チーム編成<select value={mode} onChange={(event) => setMode(event.target.value as TeamAssignmentMode)}><option value="random">人数が少ないチームへ自動割当</option><option value="student_choice">生徒の希望を優先</option><option value="manual">手動で割り当て</option></select></label></div><div className="request-list"><h3>参加承認待ち <span>{requests.length}</span></h3>{requests.length ? <ul>{requests.map(([id, request]) => <li key={id}><div><strong>{request.displayName}</strong><small>{mode === 'student_choice' && request.requestedTeamId ? `希望: ${request.requestedTeamId}` : '参加を待っています'}</small></div><button type="button" onClick={() => void approveJoinRequest(services.database, marketId, id, mode).then((ok) => setNotice(ok ? `${request.displayName} さんを承認しました。` : '承認できませんでした。'))}>承認</button></li>)}</ul> : <p className="empty-copy">まだ参加申請はありません。参加コードを生徒に共有してください。</p>}</div></section>}<section className="template-section"><div className="template-section-head"><div><p className="section-kicker">MARKET HISTORY</p><h2>作成済み市場</h2></div><span>{markets.length} 件</span></div>{markets.length ? <ul className="template-list">{markets.map((market) => <li key={market.id}><div><strong>{market.templateSnapshot.title}</strong><p>参加コード {market.joinCode} ・ {market.creationStatus}</p></div><div className="template-actions"><a href={`/teacher/markets/${market.id}/host`}>ホスト</a><a href={`/markets/${market.id}/signage`}>教室画面</a><button className="danger-button" onClick={() => void removeMarket(market).catch(() => setNotice('市場を削除できませんでした。'))}>削除</button></div></li>)}</ul> : <p className="empty-copy">まだ市場はありません。</p>}</section></section></main>
 }
-
-const JoinRequestRow = ({ id, request, mode, marketId, onApprove }: { id: string; request: JoinRequest; mode: TeamAssignmentMode; marketId: string; onApprove: () => Promise<void> }) => <li>{request.displayName} {mode === 'student_choice' && request.requestedTeamId ? `（希望: ${request.requestedTeamId}）` : ''}<button type="button" data-market-id={marketId} data-request-id={id} onClick={() => void onApprove()}>承認</button></li>
 
 export const StudentMarketJoin = () => {
   const services = bootstrapFirebase()
-  const [joinCode, setJoinCode] = useState('')
-  const [result, setResult] = useState('')
-  return <main><h1>市場に参加</h1><label>参加コード <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} /></label><button type="button" onClick={() => void resolveJoinCode(services.firestore, joinCode).then((id) => setResult(id ? `市場を見つけました: ${id}` : '市場が見つかりません。')).catch(() => setResult('参加コードを確認できません。'))}>確認</button>{result && <p role="status">{result}</p>}</main>
+  const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('code')?.toUpperCase() ?? ''), [displayName, setDisplayName] = useState(''), [marketId, setMarketId] = useState(''), [requestId, setRequestId] = useState('')
+  const [status, setStatus] = useState<'entry' | 'requesting' | 'waiting' | 'approved' | 'error'>('entry'), [message, setMessage] = useState('参加コードを入力して、先生の市場に参加しましょう。')
+  const activeSession = readActiveStudentSession()
+  useEffect(() => { if (!marketId || !requestId) return; const stop = onValue(ref(services.database, `liveMarkets/${marketId}/joinRequests/${requestId}`), (snapshot) => { if (snapshot.val()?.approvedAtMillis) { const active = { marketId, requestId, sessionId: getStudentSessionId() }; saveActiveStudentSession(active); setStatus('approved'); setMessage('参加が承認されました。市場画面へ移動します。'); window.location.assign(`/markets/${marketId}/play`) } }); return () => stop() }, [marketId, requestId, services.database])
+  const join = async () => { if (!joinCode.trim() || !displayName.trim()) { setStatus('error'); return setMessage('参加コードと表示名を入力してください。') }; setStatus('requesting'); try { const uid = await getOrCreateStudentUid(services.auth); const resolved = await resolveJoinCode(services.firestore, joinCode); if (!resolved) throw new Error('NOT_FOUND'); const id = await requestToJoinMarket(services.database, resolved, { uid, sessionId: getStudentSessionId(), displayName: displayName.trim(), requestedTeamId: null }); setMarketId(resolved); setRequestId(id); setStatus('waiting'); setMessage('参加を申請しました。先生の承認をお待ちください。') } catch (error) { setStatus('error'); setMessage(error instanceof Error && error.message === 'NOT_FOUND' ? '市場が見つかりません。参加コードを確認してください。' : 'この市場は参加受付を終了しているか、接続できません。') } }
+  return <main className="student-page"><header><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>STUDENT ENTRY</span></header><section className="student-card"><div className="student-icon">↗</div><p className="portal-eyebrow">JOIN A MARKET</p><h1>市場に参加</h1><p>先生から受け取った参加コードを入力してください。</p>{activeSession && <a className="inline-link" href={`/markets/${activeSession.marketId}/play`}>前回の市場へ戻る →</a>}{status === 'approved' ? <div className="approved-state"><span>✓</span><h2>参加準備ができました</h2><p>{message}</p></div> : <><label>参加コード<input value={joinCode} maxLength={6} placeholder="例: A1B2C3" onChange={(event) => setJoinCode(event.target.value.toUpperCase())} disabled={status === 'waiting' || status === 'requesting'} /></label><label>表示名<input value={displayName} maxLength={20} placeholder="例: 山田 太郎" onChange={(event) => setDisplayName(event.target.value)} disabled={status === 'waiting' || status === 'requesting'} /></label><button className="portal-button" type="button" onClick={() => void join()} disabled={status === 'waiting' || status === 'requesting'}>{status === 'requesting' ? '市場を確認中…' : status === 'waiting' ? '先生の承認を待っています' : '参加を申請する'} <span>→</span></button><p className={`student-message ${status}`} role="status">{message}</p></>}</section><footer>投資はシミュレーションです。実際のお金は使用しません。</footer></main>
 }

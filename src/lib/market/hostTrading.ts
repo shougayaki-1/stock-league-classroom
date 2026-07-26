@@ -1,8 +1,8 @@
 import { doc, setDoc, type Firestore } from 'firebase/firestore'
 import { get, onDisconnect, ref, runTransaction, type Database } from 'firebase/database'
-import { clampToBounds, createPhaseRuntime, getActivePhase } from '../pricing/pricingCore'
+import { clampToBounds, createPhaseRuntime, elapsedMarketMinute, getActivePhase } from '../pricing/pricingCore'
 import type { StockPricePhase } from '../pricing/types'
-import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio } from './liveMarketTypes'
+import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio, TeamLeaderboardEntry } from './liveMarketTypes'
 
 export const root = (marketId: string) => `liveMarkets/${marketId}`
 const now = () => Date.now()
@@ -36,7 +36,7 @@ export const renewHostLease = async (database: Database, marketId: string, owner
 
 export const openMarket = async (database: Database, marketId: string, ownerUid: string, leaseId: string) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
   if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, now()) || raw.meta.status !== 'SETUP') return
-  raw.meta.status = 'OPEN'; return raw
+  raw.meta.status = 'OPEN'; raw.meta.openedAtMillis ??= now(); return raw
 })
 
 /** A reachable host action transitions OPEN to ENDING; the tick performs/retries finalization. */
@@ -62,8 +62,9 @@ export const publishPrices = async (database: Database, marketId: string, ownerU
     for (const stock of stocks) {
       const existing = raw.prices[stock.id]
       const current = existing?.price ?? stock.basePrice
-      const phase = getActivePhase(stock.phases ?? [], atMillis)
-      const runtime = existing?.runtime && existing.runtime.phaseId === phase.id && existing.runtime.endAtMillis > atMillis ? existing.runtime : createPhaseRuntime(current, phase, atMillis, stock.basePrice, 0)
+      const openedAtMillis = raw.meta.openedAtMillis ?? atMillis
+      const phase = getActivePhase(stock.phases ?? [], elapsedMarketMinute(openedAtMillis, atMillis))
+      const runtime = existing?.runtime && existing.runtime.phaseId === phase.id && existing.runtime.endAtMillis > atMillis ? existing.runtime : createPhaseRuntime(current, phase, openedAtMillis, atMillis, stock.basePrice, 0)
       raw.prices[stock.id] = { price: priceAtRuntime(runtime, stock.basePrice, atMillis), updatedAtMillis: atMillis, runtime }
     }
     return raw
@@ -75,10 +76,10 @@ export const submitOrder = async (database: Database, marketId: string, particip
   runTransaction(ref(database, `${root(marketId)}/orders/${participantId}/pending`), (current: PendingOrder | null) => current?.orderId === order.orderId ? current : current ? undefined : order)
 
 /** Pure order policy: host price wins and a request is reduced, never rejected, for insufficient funds/holdings. */
-export const calculateOrderFill = (order: PendingOrder, price: number, portfolio: Portfolio, atMillis: number): OrderResult => {
-  const requested = Math.max(0, Math.floor(order.quantity)); const held = portfolio.holdings[order.stockId] ?? 0
+export const calculateOrderFill = (order: PendingOrder, price: number, portfolio: Portfolio, atMillis: number, participantId = '', teamId = ''): OrderResult => {
+  const requested = Math.max(0, Math.floor(order.quantity)); const held = portfolio.holdings?.[order.stockId] ?? 0
   const filled = order.side === 'BUY' ? Math.min(requested, Math.floor(portfolio.cash / price)) : Math.min(requested, held)
-  return { orderId: order.orderId, stockId: order.stockId, side: order.side, requestedQuantity: requested, filledQuantity: filled, price, processedAtMillis: atMillis }
+  return { orderId: order.orderId, participantId, teamId, stockId: order.stockId, side: order.side, requestedQuantity: requested, filledQuantity: filled, price, processedAtMillis: atMillis }
 }
 
 export const priceAtRuntime = (runtime: { startPrice: number; endPrice: number; startAtMillis: number; endAtMillis: number }, basePrice: number, atMillis: number) => {
@@ -95,18 +96,58 @@ export const processPendingOrder = async (database: Database, marketId: string, 
     const raw = clone(input); const order = raw.orders?.[participantId]?.pending
     if (!order) return raw
     if (raw.transactions?.[participantId]?.[order.orderId]) { delete raw.orders?.[participantId]?.pending; return raw }
+    const participant = raw.participants?.[participantId]
+    const teamId = participant?.teamId
     const price = raw.prices?.[order.stockId]?.price
+    if (!participant || !teamId) { delete raw.orders?.[participantId]?.pending; return raw }
     if (!price || price <= 0) return raw
-    raw.portfolios ??= {}; const portfolio = raw.portfolios[participantId] ?? { cash: 0, holdings: {}, updatedAtMillis: atMillis }
-    const orderResult = calculateOrderFill(order, price, portfolio, atMillis); processed = orderResult
+    raw.teamPortfolios ??= {}; const portfolio = raw.teamPortfolios[teamId] ?? { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: atMillis }
+    portfolio.holdings ??= {}
+    const orderResult = calculateOrderFill(order, price, portfolio, atMillis, participantId, teamId); processed = orderResult
     if (order.side === 'BUY') { portfolio.cash -= orderResult.filledQuantity * price; portfolio.holdings[order.stockId] = (portfolio.holdings[order.stockId] ?? 0) + orderResult.filledQuantity }
     else { portfolio.cash += orderResult.filledQuantity * price; portfolio.holdings[order.stockId] = Math.max(0, (portfolio.holdings[order.stockId] ?? 0) - orderResult.filledQuantity) }
-    portfolio.updatedAtMillis = atMillis; raw.portfolios[participantId] = portfolio
+    portfolio.updatedAtMillis = atMillis; raw.teamPortfolios[teamId] = portfolio
     raw.transactions ??= {}; raw.transactions[participantId] ??= {}; raw.transactions[participantId][order.orderId] = orderResult
     delete raw.orders?.[participantId]?.pending
     return raw
   })
   return { committed: result.committed, result: processed }
+}
+
+export const rankTeams = (
+  state: Pick<LiveMarketState, 'teams' | 'participants' | 'teamPortfolios' | 'prices'>,
+): Record<string, TeamLeaderboardEntry> => {
+  const activeTeamIds = new Set(Object.values(state.participants ?? {}).map((participant) => participant.teamId).filter((teamId): teamId is string => Boolean(teamId)))
+  const entries = [...activeTeamIds].map((teamId) => {
+    const portfolio = state.teamPortfolios?.[teamId] ?? { cash: 0, holdings: {}, updatedAtMillis: 0 }
+    const valuation = Math.round(portfolio.cash + Object.entries(portfolio.holdings ?? {}).reduce((sum, [stockId, quantity]) => sum + quantity * (state.prices?.[stockId]?.price ?? 0), 0))
+    return { teamId, name: state.teams[teamId]?.name ?? teamId, valuation, rank: 0 }
+  }).sort((a, b) => b.valuation - a.valuation || a.name.localeCompare(b.name, 'ja'))
+  let previousValuation: number | undefined
+  let previousRank = 0
+  entries.forEach((entry, index) => {
+    if (entry.valuation !== previousValuation) previousRank = index + 1
+    entry.rank = previousRank
+    previousValuation = entry.valuation
+  })
+  return Object.fromEntries(entries.map((entry) => [entry.teamId, entry]))
+}
+
+export const publishMarketProjections = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) => {
+  const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
+    if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis)) return
+    raw.teamLeaderboard = rankTeams(raw)
+    const leaderboard = Object.values(raw.teamLeaderboard).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'ja')).map(({ name, valuation, rank }) => ({ name, valuation, rank }))
+    raw.signage = {
+      joinCode: raw.meta.joinCode,
+      prices: raw.meta.visibility === 'public' ? Object.entries(raw.prices ?? {}).map(([stockId, value]) => ({ stockId, stockName: raw.companies?.[stockId]?.name ?? stockId, price: value.price })) : [],
+      publicNews: raw.meta.visibility === 'public' ? Object.values(raw.news ?? {}).sort((a, b) => a.publishedAtMillis - b.publishedAtMillis).map((item) => item.message) : [],
+      phase: raw.meta.status,
+      leaderboard: raw.meta.visibility === 'private' ? [] : leaderboard,
+    }
+    return raw
+  })
+  return result.committed
 }
 
 export const publishManualNews = async (database: Database, marketId: string, ownerUid: string, leaseId: string, message: string, atMillis = now()) => {
@@ -126,10 +167,22 @@ export const finalizeEnding = async (firestore: Firestore, database: Database, m
   })
   if (!entered.committed) return false
   const snapshot = entered.snapshot.val() as LiveMarketState
-  for (const [participantId, portfolio] of Object.entries(snapshot.portfolios ?? {})) await setDoc(doc(firestore, 'marketResults', marketId, 'participants', participantId), { ownerUid, checkpointId: checkpoint, participantId, participantUid: snapshot.participants?.[participantId]?.uid ?? '', portfolio, transactions: snapshot.transactions?.[participantId] ?? {}, finalizedAtMillis: atMillis })
+  const leaderboard = rankTeams(snapshot)
+  const teamWrites = Object.entries(snapshot.teamPortfolios ?? {}).map(([teamId, portfolio]) =>
+    setDoc(doc(firestore, 'marketResults', marketId, 'teams', teamId), { ownerUid, checkpointId: checkpoint, teamId, portfolio, leaderboard: leaderboard[teamId] ?? null, finalizedAtMillis: atMillis }))
+  const participantWrites = Object.entries(snapshot.participants ?? {}).map(([participantId, participant]) =>
+    setDoc(doc(firestore, 'marketResults', marketId, 'participants', participantId), {
+      ownerUid, checkpointId: checkpoint, participantId, participantUid: participant.uid, teamId: participant.teamId,
+      teamResult: participant.teamId ? leaderboard[participant.teamId] ?? null : null,
+      transactions: snapshot.transactions?.[participantId] ?? {}, finalizedAtMillis: atMillis,
+    }))
+  const writes = [...teamWrites, ...participantWrites]
+  for (let index = 0; index < writes.length; index += 20) await Promise.all(writes.slice(index, index + 20))
   const complete = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
     if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.finalization?.checkpointId !== checkpoint) return
-    raw.meta.status = 'ENDED'; raw.finalization.status = 'COMPLETED'; raw.finalization.completedAtMillis = atMillis; return raw
+    raw.meta.status = 'ENDED'; raw.finalization.status = 'COMPLETED'; raw.finalization.completedAtMillis = atMillis
+    if (raw.signage) raw.signage.phase = 'ENDED'
+    return raw
   })
   return complete.committed
 }
@@ -142,6 +195,7 @@ export const runHostTick = async (firestore: Firestore, database: Database, mark
   const snapshot = (await get(ref(database, root(marketId)))).val() as LiveMarketState | null
   if (!snapshot || snapshot.meta.status === 'ENDED' || !ownsLiveLease(snapshot, ownerUid, leaseId, atMillis)) return false
   for (const participantId of Object.keys(snapshot.orders ?? {})) await processPendingOrder(database, marketId, ownerUid, leaseId, participantId, atMillis)
+  await publishMarketProjections(database, marketId, ownerUid, leaseId, atMillis)
   if (snapshot.meta.status === 'ENDING') await finalizeEnding(firestore, database, marketId, ownerUid, leaseId, atMillis)
   return true
 }

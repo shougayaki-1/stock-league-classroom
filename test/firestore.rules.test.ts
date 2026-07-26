@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
 let environment: RulesTestEnvironment
-const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'password' as const } }
+const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'google.com' as const } }
 const operatorToken = { ...teacherToken, operator: true }
-const template = { title: '私の市場', description: '説明', startingCash: 10000, companies: [], ownerUid: 'teacher-a', visibility: 'private' }
+const template = { title: '私の市場', description: '説明', startingCash: 10000, teams: [{ id: 'red', name: '赤' }, { id: 'blue', name: '青' }], companies: [], ownerUid: 'teacher-a', visibility: 'private' }
 
 beforeAll(async () => {
   environment = await initializeTestEnvironment({
@@ -23,9 +23,9 @@ beforeEach(async () => {
     await setDoc(doc(context.firestore(), 'templates', 'other'), { ...template, ownerUid: 'teacher-b' })
     await setDoc(doc(context.firestore(), 'officialTemplates', 'seed'), { ...template, visibility: 'official' })
     await setDoc(doc(context.firestore(), 'templateShares', 'capability'), {
-      snapshot: { title: '固定コピー', description: '公開', startingCash: 10000, companies: [] }, createdByUid: 'teacher-a', createdAt: 1,
+      snapshot: { title: '固定コピー', description: '公開', startingCash: 10000, teams: template.teams, companies: [] }, createdByUid: 'teacher-a', createdAt: 1,
     })
-    await setDoc(doc(context.firestore(), 'markets', 'market-a'), { ownerUid: 'teacher-a', templateSnapshot: template, capacity: 80, visibility: 'private' })
+    await setDoc(doc(context.firestore(), 'markets', 'market-a'), { ownerUid: 'teacher-a', templateSnapshot: template, capacity: 80, visibility: 'private', joinCode: 'ABC123' })
     await setDoc(doc(context.firestore(), 'marketJoinCodes', 'ABC123'), { marketId: 'market-a', ownerUid: 'teacher-a' })
   })
 })
@@ -48,7 +48,10 @@ describe('market Firestore rules', () => {
   it('lets a teacher create a code only for a market they own', async () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
-    await assertSucceeds(setDoc(doc(owner, 'marketJoinCodes', 'OWNED'), { marketId: 'market-a', ownerUid: 'teacher-a' }))
+    const batch = writeBatch(owner)
+    batch.set(doc(owner, 'markets', 'market-owned'), { ownerUid: 'teacher-a', templateSnapshot: template, capacity: 80, visibility: 'private', joinCode: 'OWNED1', creationStatus: 'CREATING' })
+    batch.set(doc(owner, 'marketJoinCodes', 'OWNED1'), { marketId: 'market-owned', ownerUid: 'teacher-a' })
+    await assertSucceeds(batch.commit())
     await assertFails(setDoc(doc(other, 'marketJoinCodes', 'FORGED'), { marketId: 'market-a', ownerUid: 'teacher-b' }))
   })
 
@@ -110,7 +113,7 @@ describe('template Firestore rules', () => {
   it('permits only a teacher to create a snapshot-only share', async () => {
     const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     const anonymous = environment.unauthenticatedContext().firestore()
-    await assertSucceeds(setDoc(doc(teacher, 'templateShares', 'new-share'), { snapshot: { title: 'コピー', description: '', startingCash: 1, companies: [] }, createdByUid: 'teacher-a' }))
+    await assertSucceeds(setDoc(doc(teacher, 'templateShares', 'new-share'), { snapshot: { title: 'コピー', description: '', startingCash: 1, teams: template.teams, companies: [] }, createdByUid: 'teacher-a' }))
     await assertFails(setDoc(doc(anonymous, 'templateShares', 'claimed'), { snapshot: {}, createdByUid: 'teacher-a' }))
     await assertFails(setDoc(doc(teacher, 'templateShares', 'foreign-source'), { templateId: 'other', snapshot: {}, createdByUid: 'teacher-a' }))
     await assertFails(setDoc(doc(teacher, 'templateShares', 'forged-owner'), { snapshot: {}, createdByUid: 'teacher-b' }))

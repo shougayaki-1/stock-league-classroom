@@ -5,6 +5,6 @@ import { TemplateSharePage } from './TemplateSharePage'
 describe('TemplateSharePage', () => {
   it('requires a teacher session before resolving a direct share', () => {
     render(<TemplateSharePage shareId="capability" />)
-    expect(screen.getByText(/教師用メールリンク/)).toBeInTheDocument()
+    expect(screen.getByText(/Googleアカウント/)).toBeInTheDocument()
   })
 })

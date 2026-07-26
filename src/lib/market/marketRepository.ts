@@ -1,31 +1,40 @@
-import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc, type Firestore } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, runTransaction as runFirestoreTransaction, serverTimestamp, setDoc, updateDoc, where, type Firestore } from 'firebase/firestore'
 import { onDisconnect, ref, runTransaction, set, update, type Database } from 'firebase/database'
 import type { TemplateSpec } from '../templates/types'
 import { participantId, type JoinRequest, type LiveMarketParticipant, type LiveMarketState, type MarketVisibility, type TeamAssignmentMode } from './liveMarketTypes'
 
 export const MARKET_CAPACITY = 80
-export interface MarketRecord { id: string; ownerUid: string; templateSnapshot: TemplateSpec; capacity: number; visibility: MarketVisibility; createdAt: unknown }
-export interface CreateMarketInput { ownerUid: string; template: TemplateSpec; visibility: MarketVisibility; joinCode: string; teams: Array<{ id: string; name: string }> }
+export const JOIN_CODE_LENGTH = 6
+const JOIN_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+export interface MarketRecord { id: string; ownerUid: string; templateSnapshot: TemplateSpec; capacity: number; visibility: MarketVisibility; joinCode: string; creationStatus: 'CREATING' | 'READY'; createdAt: unknown }
+export interface CreateMarketInput { ownerUid: string; template: TemplateSpec; visibility: MarketVisibility; joinCode?: string }
+export interface MarketCreationResult { marketId: string; joinCode: string }
 export class MarketCreationError extends Error {
   readonly marketId: string
-  constructor(marketId: string, cause: unknown) { super('Market creation needs recovery'); this.marketId = marketId; this.cause = cause }
+  readonly joinCode: string
+  constructor(marketId: string, joinCode: string, cause: unknown) { super('Market creation needs recovery'); this.marketId = marketId; this.joinCode = joinCode; this.cause = cause }
 }
 
 const root = (marketId: string) => `liveMarkets/${marketId}`
 const normalizeCode = (code: string) => code.trim().toUpperCase()
+export const generateJoinCode = (randomValues: Uint32Array = crypto.getRandomValues(new Uint32Array(JOIN_CODE_LENGTH))) =>
+  Array.from(randomValues, (value) => JOIN_CODE_ALPHABET[value % JOIN_CODE_ALPHABET.length]).join('')
 
 export const initialLiveState = (input: CreateMarketInput) => ({
-  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now(), startingCash: input.template.startingCash },
-  teams: Object.fromEntries(input.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
-  companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),
+  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now(), startingCash: input.template.startingCash, joinCode: normalizeCode(input.joinCode ?? '') },
+  teams: Object.fromEntries(input.template.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
+  companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, name: company.name, symbol: company.symbol, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),
+  teamPortfolios: Object.fromEntries(input.template.teams.map((team) => [team.id, { cash: input.template.startingCash, holdings: {}, updatedAtMillis: Date.now() }])),
 })
 
 /** Idempotently completes a CREATING market after any Firestore/RTDB partial failure. */
-export const recoverMarketCreation = async (firestore: Firestore, database: Database, marketId: string, input: CreateMarketInput): Promise<string> => {
+export const recoverMarketCreation = async (firestore: Firestore, database: Database, marketId: string, input: CreateMarketInput): Promise<MarketCreationResult> => {
   const marketRef = doc(firestore, 'markets', marketId)
   const market = await getDoc(marketRef)
   if (!market.exists() || market.data().ownerUid !== input.ownerUid) throw new Error('Market recovery is not authorized')
-  const codeRef = doc(firestore, 'marketJoinCodes', normalizeCode(input.joinCode))
+  const joinCode = normalizeCode(String(market.data().joinCode ?? input.joinCode ?? ''))
+  if (!joinCode) throw new Error('Market join code is missing')
+  const codeRef = doc(firestore, 'marketJoinCodes', joinCode)
   const existingCode = await getDoc(codeRef)
   if (existingCode.exists() && existingCode.data().marketId !== marketId) throw new Error('Join code is already in use')
   if (!existingCode.exists()) await setDoc(codeRef, { marketId, ownerUid: input.ownerUid, createdAt: serverTimestamp() })
@@ -36,17 +45,36 @@ export const recoverMarketCreation = async (firestore: Firestore, database: Data
     return current
   })
   await updateDoc(marketRef, { creationStatus: 'READY', initializedAt: serverTimestamp() })
-  return marketId
+  return { marketId, joinCode }
 }
 
 /** Persists a recoverable CREATING record before crossing Firestore and RTDB boundaries. */
-export const createMarket = async (firestore: Firestore, database: Database, input: CreateMarketInput): Promise<string> => {
-  const marketRef = await addDoc(collection(firestore, 'markets'), {
-    ownerUid: input.ownerUid, templateSnapshot: structuredClone(input.template), capacity: MARKET_CAPACITY,
-    visibility: input.visibility, creationStatus: 'CREATING', createdAt: serverTimestamp(),
-  })
-  try { return await recoverMarketCreation(firestore, database, marketRef.id, input) }
-  catch (error) { throw new MarketCreationError(marketRef.id, error) }
+export const createMarket = async (firestore: Firestore, database: Database, input: CreateMarketInput): Promise<MarketCreationResult> => {
+  const marketRef = doc(collection(firestore, 'markets'))
+  let joinCode = ''
+  let reserved = false
+  for (let attempt = 0; attempt < 10 && !reserved; attempt += 1) {
+    joinCode = normalizeCode(input.joinCode ?? generateJoinCode())
+    const codeRef = doc(firestore, 'marketJoinCodes', joinCode)
+    reserved = await runFirestoreTransaction(firestore, async (transaction) => {
+      if ((await transaction.get(codeRef)).exists()) return false
+      transaction.set(marketRef, {
+        ownerUid: input.ownerUid, templateSnapshot: structuredClone(input.template), capacity: MARKET_CAPACITY,
+        visibility: input.visibility, joinCode, creationStatus: 'CREATING', createdAt: serverTimestamp(),
+      })
+      transaction.set(codeRef, { marketId: marketRef.id, ownerUid: input.ownerUid, createdAt: serverTimestamp() })
+      return true
+    })
+    if (input.joinCode && !reserved) break
+  }
+  if (!reserved) throw new Error('参加コードを確保できませんでした。もう一度お試しください。')
+  try { return await recoverMarketCreation(firestore, database, marketRef.id, { ...input, joinCode }) }
+  catch (error) { throw new MarketCreationError(marketRef.id, joinCode, error) }
+}
+
+export const listOwnedMarkets = async (firestore: Firestore, ownerUid: string): Promise<MarketRecord[]> => {
+  const result = await getDocs(query(collection(firestore, 'markets'), where('ownerUid', '==', ownerUid)))
+  return result.docs.map((item) => ({ id: item.id, ...item.data() } as MarketRecord))
 }
 
 /** This is deliberately a direct lookup; join-code collections are never queried. */
@@ -94,11 +122,15 @@ export const approveJoinRequest = async (database: Database, marketId: string, i
     if (raw.participants[id]) return raw
     const active = Object.values(raw.participants).filter((participant) => participant.connected).length
     if (active >= raw.meta.capacity) return
-    const teamId = chooseTeam(raw, request, mode, manualTeamId)
+    const existingMembership = raw.members?.[request.uid]
+    const teamId = existingMembership?.teamId ?? chooseTeam(raw, request, mode, manualTeamId)
+    if (!teamId) return
     const participant: LiveMarketParticipant = { uid: request.uid, sessionId: request.sessionId, displayName: request.displayName, teamId, connected: true, lastSeenAtMillis: Date.now() }
     raw.participants[id] = participant
-    raw.portfolios ??= {}
-    raw.portfolios[id] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: Date.now() }
+    raw.members ??= {}
+    raw.members[request.uid] = { teamId }
+    raw.teamPortfolios ??= {}
+    raw.teamPortfolios[teamId] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: Date.now() }
     raw.joinRequests[id] = { ...request, approvedAtMillis: Date.now() }
     return raw
   })

@@ -6,9 +6,10 @@ interface TradePanelProps {
   currentPrice: number
   onSubmitOrder: (side: 'BUY' | 'SELL', quantity: number) => void
   latestResult: OrderResult | null
+  disabled?: boolean
 }
 
-export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResult }: TradePanelProps) {
+export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResult, disabled = false }: TradePanelProps) {
   const [quantity, setQuantity] = useState<number | string>('')
 
   const handleBuy = () => {
@@ -37,13 +38,16 @@ export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResul
         <input
           id="quantity"
           type="number"
+          min={1}
+          max={100000}
+          step={1}
           value={quantity}
           onChange={(e) => setQuantity(e.target.value)}
         />
       </div>
 
-      <button onClick={handleBuy}>購入</button>
-      <button onClick={handleSell}>売却</button>
+      <button disabled={disabled} onClick={handleBuy}>購入</button>
+      <button disabled={disabled} onClick={handleSell}>売却</button>
 
       {latestResult && latestResult.filledQuantity > 0 && (
         <div>

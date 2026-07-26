@@ -11,7 +11,7 @@ export interface FirebaseServices { app: FirebaseApp; auth: Auth; firestore: Fir
 export interface FirebaseBootstrapDependencies {
   getServices: () => Omit<FirebaseServices, 'appCheck'>
   connectToEmulators: (auth: Auth, firestore: Firestore, database: Database) => void
-  initializeAppCheck: (app: FirebaseApp, env: Record<string, string | undefined>) => AppCheck | undefined
+  initializeAppCheck: (app: FirebaseApp, env: Record<string, string | boolean | undefined>) => AppCheck | undefined
 }
 const defaultDependencies: FirebaseBootstrapDependencies = {
   getServices: () => ({ app: getFirebaseApp(), auth: getFirebaseAuth(), firestore: getFirestoreDb(), database: getRealtimeDb() }),
@@ -22,7 +22,7 @@ const defaultDependencies: FirebaseBootstrapDependencies = {
 /** Creates an idempotent, render-boundary-safe Firebase service bootstrapper. */
 export const createFirebaseBootstrapper = (dependencies: FirebaseBootstrapDependencies = defaultDependencies) => {
   let initialized: FirebaseServices | undefined
-  return (env: Record<string, string | undefined> = import.meta.env): FirebaseServices => {
+  return (env: Record<string, string | boolean | undefined> = import.meta.env): FirebaseServices => {
     if (initialized) return initialized
     const services = dependencies.getServices()
     if (shouldUseEmulators(env)) dependencies.connectToEmulators(services.auth, services.firestore, services.database)

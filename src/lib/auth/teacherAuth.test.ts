@@ -1,3 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { clearPendingEmail, readPendingEmail, storePendingEmail } from './teacherAuth'
-describe('teacher pending email', () => { beforeEach(() => { clearPendingEmail() }); it('round-trips a saved email', () => { storePendingEmail('teacher@example.com'); expect(readPendingEmail()).toBe('teacher@example.com') }); it('returns null when absent', () => expect(readPendingEmail()).toBeNull()) })
+import { describe, expect, it } from 'vitest'
+import { signInTeacherWithGoogle } from './teacherAuth'
+
+describe('teacher Google sign-in', () => {
+  it('exposes the Google popup sign-in boundary', () => {
+    expect(signInTeacherWithGoogle).toBeTypeOf('function')
+  })
+})
