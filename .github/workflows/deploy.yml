@@ -29,6 +29,8 @@ jobs:
       - run: npm test
       - run: npm run test:rules
       - run: npm run build
+        env:
+          VITE_FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.VITE_FIREBASE_APP_CHECK_SITE_KEY }}
 
   deploy:
     needs: verify
@@ -58,6 +60,7 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
           VITE_COMMIT_SHA: ${{ github.sha }}
+          VITE_FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.VITE_FIREBASE_APP_CHECK_SITE_KEY }}
 
       - name: Confirm the published version
         run: |
