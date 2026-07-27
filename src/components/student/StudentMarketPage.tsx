@@ -6,7 +6,7 @@ import { submitOrder } from '../../lib/market/hostTrading'
 import { armApprovedParticipantPresence } from '../../lib/market/marketRepository'
 import type { LiveMarketMetadata, LiveMarketParticipant, LiveMarketTeam, LivePrice, OrderResult, Portfolio, TeamLeaderboardEntry } from '../../lib/market/liveMarketTypes'
 import { readActiveStudentSession } from '../../lib/students/studentSession'
-import { useDatabaseOffline } from '../../lib/firebase/connectionState'
+import { useDatabaseConnected, useDatabaseOffline, useReleaseIdleConnection } from '../../lib/firebase/connectionState'
 import { TradePanel } from './TradePanel'
 import { ResultsView } from './ResultsView'
 
@@ -29,12 +29,15 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const [notice, setNotice] = useState('')
   const sessionValid = active?.marketId === marketId
   const participantKey = uid && sessionValid ? `${uid}_${active.sessionId}` : ''
-  const offline = useDatabaseOffline(services.database)
+  // Reads meta directly: the connection must be released even after the
+  // listeners above have stopped delivering.
+  const suspended = useReleaseIdleConnection(services.database, { finished: meta?.status === 'ENDED' })
+  const offline = useDatabaseOffline(services.database, { suspended })
+  const connected = useDatabaseConnected(services.database)
 
   useEffect(() => { void getOrCreateStudentUid(services.auth).then(setUid).catch(() => setNotice('匿名ログインを開始できませんでした。')) }, [services.auth])
   useEffect(() => {
     if (!participantKey) return
-    void armApprovedParticipantPresence(services.database, marketId, participantKey).catch(() => setNotice('参加状態を復元できませんでした。'))
     const subscriptions = [
       onValue(ref(services.database, `liveMarkets/${marketId}/participants/${participantKey}`), (snapshot) => setParticipant(snapshot.val() as LiveMarketParticipant | undefined)),
       onValue(ref(services.database, `liveMarkets/${marketId}/meta`), (snapshot) => setMeta(snapshot.val() as LiveMarketMetadata | undefined)),
@@ -50,6 +53,14 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     ]
     return () => subscriptions.forEach((stop) => stop())
   }, [marketId, participantKey, pendingOrderId, services.database])
+  // Re-armed on every reconnection, not just on mount: the server runs our
+  // onDisconnect the moment the socket drops, so a single network blip would
+  // otherwise leave the student marked absent for the rest of the lesson —
+  // vanished from the teacher's list while still sitting at their desk.
+  useEffect(() => {
+    if (!participantKey || !connected) return
+    void armApprovedParticipantPresence(services.database, marketId, participantKey).catch(() => setNotice('参加状態を復元できませんでした。'))
+  }, [connected, marketId, participantKey, services.database])
   useEffect(() => {
     if (!participant?.teamId) return
     return onValue(ref(services.database, `liveMarkets/${marketId}/teamPortfolios/${participant.teamId}`), (snapshot) => setPortfolio(snapshot.val() as Portfolio | undefined))
