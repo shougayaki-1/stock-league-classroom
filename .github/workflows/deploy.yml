@@ -1,0 +1,76 @@
+name: Deploy
+
+# Never fires on a push. A deploy is always a deliberate act.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm'
+        required: true
+        type: string
+
+jobs:
+  verify:
+    if: inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:rules
+      - run: npm run build
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    # Requires the reviewers configured on this environment to approve the run.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Authenticate to Firebase
+        run: |
+          umask 077
+          printf '%s' "$SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      # Hosting and both rule sets go together: shipping the client without the
+      # rules it expects is what broke teacher sign-in before. The predeploy
+      # hook in firebase.json builds, and inherits VITE_COMMIT_SHA from here.
+      - name: Deploy
+        run: npx firebase-tools deploy --only hosting,firestore:rules,database --project oss-stock-league --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+          VITE_COMMIT_SHA: ${{ github.sha }}
+
+      - name: Confirm the published version
+        run: |
+          for _ in $(seq 1 6); do
+            if curl -sf https://oss-stock-league.web.app/ | grep -q "content=\"$GITHUB_SHA\""; then
+              echo "published $GITHUB_SHA"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "the live version tag never matched $GITHUB_SHA"
+          exit 1
+
+      - name: Revoke the credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"
