@@ -3,6 +3,16 @@ import { StudentMarketJoin, TeacherMarketDashboard } from './components/MarketDa
 import { HostConsole } from './components/HostConsole'
 import { StudentMarketPage } from './components/student/StudentMarketPage'
 import { SignagePage } from './components/signage/SignagePage'
+import { AboutPage, ContactPage, GuidePage, PrivacyPage, TermsPage } from './components/PublicDocs'
+
+/** Static public documents, keyed by path. */
+const docPages: Record<string, () => React.JSX.Element> = {
+  '/about': AboutPage,
+  '/guide': GuidePage,
+  '/terms': TermsPage,
+  '/privacy': PrivacyPage,
+  '/contact': ContactPage,
+}
 
 const LandingPage = () => <main className="landing-page">
   <header className="landing-nav">
@@ -36,10 +46,12 @@ const LandingPage = () => <main className="landing-page">
   <section className="feature-section" id="features" aria-labelledby="features-title"><div className="feature-intro"><p className="section-kicker">BUILT FOR THE CLASSROOM</p><h2 id="features-title">知識だけで終わらない、<br />判断する金融教育へ。</h2></div><div className="feature-grid"><article><span>◎</span><h3>リアルタイムの市場体験</h3><p>価格、ニュース、ランキングが同時に動き、意思決定の結果がすぐに見えます。</p></article><article><span>◫</span><h3>授業に合わせた設計</h3><p>学年やテーマに合うテンプレートから、市場シナリオを組み立てられます。</p></article><article><span>↗</span><h3>振り返りまで一つに</h3><p>終了後も結果と取引履歴を確認し、なぜそう判断したかを言語化できます。</p></article></div></section>
 
   <section className="landing-closing"><p>今日のニュースが、明日の判断を変える。</p><h2>さあ、教室に市場をひらこう。</h2><a className="button light" href="/teacher/markets">先生として市場を作成 <span aria-hidden="true">→</span></a></section>
-  <footer>© 2026 Stock League Classroom <a href="/join">生徒の参加はこちら</a></footer>
+  <footer><span>© 2026 Stock League Classroom</span><nav aria-label="サービス情報"><a href="/about">サービス概要</a><a href="/guide">操作マニュアル</a><a href="/terms">利用規約</a><a href="/privacy">プライバシーポリシー</a><a href="/contact">問い合わせ</a><a href="/join">生徒の参加はこちら</a></nav></footer>
 </main>
 
 export default function App() {
+  const DocPage = docPages[window.location.pathname]
+  if (DocPage) return <DocPage />
   const shareMatch = window.location.pathname.match(/^\/templates\/share\/([^/]+)$/)
   if (shareMatch) return <TemplateRoutes shareId={decodeURIComponent(shareMatch[1])} />
   if (window.location.pathname === '/templates') return <TemplateRoutes />
