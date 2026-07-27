@@ -13,17 +13,26 @@
 
 ## Firebase本番設定
 
-- AuthenticationでGoogleと匿名プロバイダを有効化し、Hostingの公開ドメインを承認済みドメインへ追加します。
-- reCAPTCHA EnterpriseのWebキーをApp Checkへ登録し、`VITE_FIREBASE_APP_CHECK_SITE_KEY`を本番ビルドへ設定します。
-- App Checkメトリクスで正規リクエストを確認後、Authentication、Firestore、Realtime Databaseのenforcementを有効化します。
-- Google Cloud ConsoleでFirebase Web APIキーに本番ドメインのHTTPリファラ制限を設定します。
-- `.firebaserc` の対象が意図した本番プロジェクトであることを確認します。
+- [x] AuthenticationでGoogleと匿名プロバイダを有効化し、Hostingの公開ドメインを承認済みドメインへ追加
+- [x] reCAPTCHA Enterpriseのスコアベース・ドメイン限定Webキーを作成し、App Checkへ登録
+- [x] `VITE_FIREBASE_APP_CHECK_SITE_KEY`を本番ビルドへ設定（`.env.local`、GitHub Actions repository variable）
+- [x] Google Cloud ConsoleでFirebase Web APIキーに本番ドメインのHTTPリファラ制限を設定
+- [x] `.firebaserc` の対象が意図した本番プロジェクト（`oss-stock-league`）であることを確認
+- [ ] **App Checkメトリクスで正規リクエストを確認後、Authentication、Firestore、Realtime Databaseのenforcementを有効化**
 
 `VITE_FIREBASE_APP_CHECK_DEBUG_TOKEN` はローカル専用です。本番ビルドに設定すると起動時に失敗します。
 
+### App Check enforcementを有効化する前に
+
+現在、本番ビルドはApp Checkトークンを生成していますが、**バックエンド側のenforcementはまだ無効**です。理由は、設定ミスがあった場合にenforcementを先に有効化すると、正規の教師・生徒のリクエストが全て拒否されるためです。
+
+Firebase Console → App Check → APIs で、Firestore・Realtime Database・Authenticationそれぞれについて「検証済み」と「不明」の比率を数日分観察し、検証済みが十分な割合になってから、各APIの「適用を開始」を押してください。不明なリクエストが多い場合は、リファラ制限やドメイン設定を先に見直してください。
+
 ## デプロイ
 
-`firebase deploy` を実行します。Hostingのpredeployが`npm run build`を実行し、SPA rewriteによって各画面の直接リロードにも対応します。
+`firebase deploy` を実行します。Hostingのpredeployが`npm run build`を実行し、SPA rewriteによって各画面の直接リロードにも対応します。ビルド時に`VITE_FIREBASE_APP_CHECK_SITE_KEY`が`.env.local`から読み込まれます。
+
+`.github/workflows/deploy.yml`によるCI経由のデプロイは、`FIREBASE_SERVICE_ACCOUNT`シークレットと`production` Environmentが未設定のため、現時点では実行できません。当面はローカルからの`firebase deploy`を使ってください。
 
 公開前に、教師ログイン、テンプレート作成、市場作成、生徒参加、承認、複数端末での売買、順位更新、signage、終了結果、削除を実端末で確認してください。
 
