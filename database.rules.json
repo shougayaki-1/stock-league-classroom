@@ -2,10 +2,15 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "serviceStatus": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.operator === true",
+      ".validate": "newData.hasChild('acceptingNewMarkets') && newData.child('acceptingNewMarkets').isBoolean()"
+    },
     "liveMarkets": {
       "$marketId": {
         ".read": "auth != null && (data.child('meta/ownerUid').val() === auth.uid || (!data.exists() && auth.token.email_verified === true && auth.token.firebase.sign_in_provider === 'google.com'))",
-        ".write": "auth != null && auth.token.email_verified === true && auth.token.firebase.sign_in_provider === 'google.com' && ((!data.exists() && newData.child('meta/ownerUid').val() === auth.uid) || (data.exists() && data.child('meta/ownerUid').val() === auth.uid))",
+        ".write": "auth != null && auth.token.email_verified === true && auth.token.firebase.sign_in_provider === 'google.com' && ((!data.exists() && root.child('serviceStatus/acceptingNewMarkets').val() !== false && newData.child('meta/ownerUid').val() === auth.uid) || (data.exists() && data.child('meta/ownerUid').val() === auth.uid))",
         "meta": {
           ".read": "auth != null && (data.child('ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())",
           ".validate": "newData.hasChildren(['ownerUid','capacity','startingCash','visibility','status','createdAtMillis','joinCode'])",

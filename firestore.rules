@@ -8,6 +8,20 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
     function operator() { return teacher() && request.auth.token.operator == true; }
+    // Emergency stop. An absent document means "open", so publishing these rules
+    // before the document is seeded cannot take the service down.
+    function serviceOpen() {
+      return !exists(/databases/$(database)/documents/serviceStatus/global)
+        || get(/databases/$(database)/documents/serviceStatus/global).data.acceptingNewMarkets != false;
+    }
+
+    match /serviceStatus/{documentId} {
+      // Readable by anyone so a maintenance notice can be shown before sign-in.
+      // It holds no personal data.
+      allow get: if true;
+      allow list: if false;
+      allow write: if operator();
+    }
 
     match /templates/{templateId} {
       // A personal template can never be fetched or enumerated by another user.
@@ -45,6 +59,7 @@ service cloud.firestore {
     match /markets/{marketId} {
       allow get, list: if teacher() && resource.data.ownerUid == request.auth.uid;
       allow create: if teacher()
+        && serviceOpen()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.capacity == 80
         && request.resource.data.joinCode is string

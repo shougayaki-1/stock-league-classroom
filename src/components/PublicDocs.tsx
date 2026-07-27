@@ -1,12 +1,9 @@
 import type { ReactNode } from 'react'
 
-/**
- * Static public documents. Operator identity and contact details are intentionally
- * left as 《...》 placeholders so that no personal address ships until it is chosen.
- */
-const OPERATOR = '《運営者名》'
-const CONTACT_EMAIL = '《連絡先メールアドレス》'
-const CONTACT_FORM = '《問い合わせフォームのURL》'
+/** Static public documents. */
+const OPERATOR = 'しょうが焼き'
+const CONTACT_EMAIL = 'stock-league@shoug.org'
+const CONTACT_FORM = 'https://forms.gle/YQW6VwwgsRYxdfKJ9'
 const UPDATED_AT = '2026年7月27日'
 
 const DocLayout = ({ title, lead, children }: { title: string; lead: string; children: ReactNode }) => <main className="doc-page">
@@ -190,6 +187,6 @@ export const ContactPage = () => <DocLayout title="お問い合わせ・通報" 
   <p>生徒本人、保護者、学校の担当者からのご請求に対応します。生徒については氏名等を取得していないため、市場の参加コードと表示名をお知らせください。詳細は<a href="/privacy">プライバシーポリシー</a>をご覧ください。</p>
 
   <h2>連絡先</h2>
-  <p>メール: {CONTACT_EMAIL}<br />フォーム: {CONTACT_FORM}</p>
+  <p>メール: <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a><br />フォーム: <a href={CONTACT_FORM} target="_blank" rel="noopener noreferrer">問い合わせフォームを開く</a></p>
   <p className="doc-note">無償で運営しているため、返信までにお時間をいただく場合があります。緊急に授業を停止する必要がある場合は、教師ポータルから該当の市場を削除してください。</p>
 </DocLayout>

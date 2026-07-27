@@ -113,3 +113,40 @@ describe('live market RTDB rules', () => {
     await assertFails(outsider.ref(`liveMarkets/${market}/teamPortfolios/red`).once('value'))
   })
 })
+
+describe('emergency stop (RTDB)', () => {
+  const freshMarket = { meta: { ownerUid: 'teacher-a', capacity: 80, visibility: 'private', status: 'SETUP', createdAtMillis: 2, startingCash: 10000, joinCode: 'NEW123' } }
+  const setSwitch = (acceptingNewMarkets: boolean) => environment.withSecurityRulesDisabled(async (context) =>
+    context.database().ref('serviceStatus').set({ acceptingNewMarkets }))
+
+  it('lets a teacher create a live market while the switch is absent or open', async () => {
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertSucceeds(teacher.ref('liveMarkets/no-switch').set(freshMarket))
+    await setSwitch(true)
+    await assertSucceeds(teacher.ref('liveMarkets/switch-open').set(freshMarket))
+  })
+
+  it('blocks a teacher from creating a live market directly once closed', async () => {
+    await setSwitch(false)
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertFails(teacher.ref('liveMarkets/blocked').set(freshMarket))
+  })
+
+  it('keeps an in-progress market writable so a running lesson is not cut off', async () => {
+    await setSwitch(false)
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertSucceeds(teacher.ref(`liveMarkets/${market}/meta/status`).set('OPEN'))
+  })
+
+  it('lets clients read the switch but only an operator flip it', async () => {
+    await setSwitch(false)
+    const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
+    await assertSucceeds(student.ref('serviceStatus').get())
+    await assertFails(student.ref('serviceStatus').set({ acceptingNewMarkets: true }))
+    // An ordinary teacher must not be able to reopen the service for themselves.
+    await assertFails(environment.authenticatedContext('teacher-a', teacherToken).database().ref('serviceStatus').set({ acceptingNewMarkets: true }))
+    const operator = environment.authenticatedContext('operator-a', { ...teacherToken, operator: true }).database()
+    await assertSucceeds(operator.ref('serviceStatus').set({ acceptingNewMarkets: true }))
+    await assertFails(operator.ref('serviceStatus').set({ acceptingNewMarkets: 'yes' }))
+  })
+})

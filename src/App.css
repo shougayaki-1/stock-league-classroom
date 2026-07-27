@@ -82,3 +82,5 @@
 .doc-updated { margin-top: 40px; padding-top: 16px; color: #5f6368 !important; font-size: 13px !important; border-top: 1px solid #e8eaed; }
 .doc-footer { box-sizing: border-box; max-width: 900px; margin: auto; padding: 22px 28px 40px; color: #5f6368; font-size: 13px; border-top: 1px solid #e8eaed; }
 .landing-page footer nav { display: inline-flex; flex-wrap: wrap; gap: 14px; margin-left: 14px; }
+.form-notice.stopped { color: #8c1d18; background: #fceeee; border: 1px solid #f1b9b6; border-radius: 10px; padding: 12px 14px; }
+.form-notice.stopped strong { display: block; margin-bottom: 4px; }

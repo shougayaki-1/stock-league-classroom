@@ -119,3 +119,40 @@ describe('template Firestore rules', () => {
     await assertFails(setDoc(doc(teacher, 'templateShares', 'forged-owner'), { snapshot: {}, createdByUid: 'teacher-b' }))
   })
 })
+
+describe('emergency stop', () => {
+  const newMarket = { ownerUid: 'teacher-a', templateSnapshot: template, capacity: 80, visibility: 'private', joinCode: 'ZZZ999', creationStatus: 'CREATING' }
+  const setSwitch = (acceptingNewMarkets: boolean) => environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'serviceStatus', 'global'), { acceptingNewMarkets, message: 'メンテナンス中です。' })
+  })
+
+  it('allows market creation while the switch is absent or open', async () => {
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    // Absent document must not take the service down when the rules are published first.
+    await assertSucceeds(setDoc(doc(teacher, 'markets', 'no-switch'), newMarket))
+    await setSwitch(true)
+    await assertSucceeds(setDoc(doc(teacher, 'markets', 'switch-open'), newMarket))
+  })
+
+  it('blocks new markets for every teacher once the switch is closed', async () => {
+    await setSwitch(false)
+    await assertFails(setDoc(doc(environment.authenticatedContext('teacher-a', teacherToken).firestore(), 'markets', 'blocked-a'), newMarket))
+    await assertFails(setDoc(doc(environment.authenticatedContext('teacher-b', teacherToken).firestore(), 'markets', 'blocked-b'), { ...newMarket, ownerUid: 'teacher-b' }))
+    // Operators are subject to the same stop; it is a service switch, not a permission.
+    await assertFails(setDoc(doc(environment.authenticatedContext('teacher-a', operatorToken).firestore(), 'markets', 'blocked-op'), newMarket))
+  })
+
+  it('keeps existing markets usable while new creation is stopped', async () => {
+    await setSwitch(false)
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(owner, 'markets', 'market-a')))
+    await assertSucceeds(updateDoc(doc(owner, 'markets', 'market-a'), { creationStatus: 'READY' }))
+  })
+
+  it('lets anyone read the notice but only an operator write it', async () => {
+    await setSwitch(false)
+    await assertSucceeds(getDoc(doc(environment.unauthenticatedContext().firestore(), 'serviceStatus', 'global')))
+    await assertFails(setDoc(doc(environment.authenticatedContext('teacher-a', teacherToken).firestore(), 'serviceStatus', 'global'), { acceptingNewMarkets: true }))
+    await assertSucceeds(setDoc(doc(environment.authenticatedContext('teacher-a', operatorToken).firestore(), 'serviceStatus', 'global'), { acceptingNewMarkets: true, message: '' }))
+  })
+})
