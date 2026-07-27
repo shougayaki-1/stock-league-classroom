@@ -15,6 +15,7 @@
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:rules && npm run build"
   },
   "dependencies": {
+    "@sentry/react": "^10.68.0",
     "firebase": "^12.16.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",

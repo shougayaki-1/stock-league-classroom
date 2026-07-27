@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { reportError } from '../lib/monitoring/errorReporting'
 
 interface Props { children: ReactNode }
 interface State { failed: boolean }
@@ -12,6 +13,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     if (import.meta.env.DEV) console.error(error, info)
+    reportError(error)
   }
 
   render() {

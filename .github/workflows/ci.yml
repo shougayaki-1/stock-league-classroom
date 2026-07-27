@@ -24,3 +24,5 @@ jobs:
       - run: npm test
       - run: npm run test:rules
       - run: npm run build
+        env:
+          VITE_COMMIT_SHA: ${{ github.sha }}
