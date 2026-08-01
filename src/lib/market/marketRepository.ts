@@ -191,7 +191,11 @@ export const applyApproveJoinRequest = (
   if (!raw?.meta || !raw.joinRequests?.[id]) return undefined
   const request = raw.joinRequests[id]
   if (!request.connected) return undefined
-  if (raw.participants?.[id]) return raw
+  // Already seated: this is a re-approval (double-submit, or a return trip to /join
+  // instead of "前回の市場へ戻る"), not a new seat. Stamp approvedAtMillis so the
+  // student's own listener still fires, but touch nothing else — no capacity, no
+  // members/teamPortfolios, no recovery code churn.
+  if (raw.participants?.[id]) return { ...raw, joinRequests: { ...raw.joinRequests, [id]: { ...request, approvedAtMillis: atMillis } } }
   const active = Object.values(raw.participants ?? {}).filter((participant) => participant.connected).length
   if (active >= raw.meta.capacity) return undefined
   // Only honour a presented code when it also names the student it was issued to;

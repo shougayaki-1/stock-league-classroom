@@ -93,6 +93,23 @@ describe('recovery codes', () => {
     expect(applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')).toBeUndefined()
   })
 
+  it('re-stamps approvedAtMillis on a second approval of an already-seated participant, without moving them or growing the roster', () => {
+    const state = pendingState()
+    // Already seated under this exact request id (a double-submit, or a return trip to
+    // /join instead of "前回の市場へ戻る"), with a fresh join request that has not been
+    // stamped yet.
+    state.participants!.new_s2 = { uid: 'new', sessionId: 's2', displayName: 'A', teamId: 'red', connected: true, lastSeenAtMillis: 1 }
+    state.members!.new = { teamId: 'red' }
+    const before = Object.keys(state.participants!).length
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.joinRequests!.new_s2.approvedAtMillis).toBe(99)
+    expect(next.participants!.new_s2.teamId).toBe('red')
+    expect(Object.keys(next.participants!).length).toBe(before)
+    // The untouched existing participant, its membership and any recovery code stay put.
+    expect(next.participants!.old_s1).toBeDefined()
+    expect(next.recoveryCodes!.AB23).toEqual({ participantId: 'old_s1', teamId: 'blue', displayName: 'A' })
+  })
+
   it('generates a four character code from the unambiguous alphabet', () => {
     expect(generateRecoveryCode(new Uint32Array([0, 1, 2, 3]))).toBe('2345')
     expect(generateRecoveryCode()).toHaveLength(4)
