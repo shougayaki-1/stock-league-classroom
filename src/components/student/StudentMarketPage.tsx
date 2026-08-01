@@ -7,6 +7,7 @@ import { armApprovedParticipantPresence } from '../../lib/market/marketRepositor
 import type { LiveMarketMetadata, LiveMarketParticipant, LiveMarketTeam, LivePrice, OrderResult, Portfolio, TeamLeaderboardEntry } from '../../lib/market/liveMarketTypes'
 import { readActiveStudentSession } from '../../lib/students/studentSession'
 import { useDatabaseConnected, useDatabaseOffline, useReleaseIdleConnection } from '../../lib/firebase/connectionState'
+import { handleFailure } from '../../lib/monitoring/describeError'
 import { TradePanel } from './TradePanel'
 import { ResultsView } from './ResultsView'
 
@@ -44,7 +45,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const offline = useDatabaseOffline(services.database, { suspended })
   const connected = useDatabaseConnected(services.database)
 
-  useEffect(() => { void getOrCreateStudentUid(services.auth).then(setUid).catch(() => setNotice('匿名ログインを開始できませんでした。')) }, [services.auth])
+  useEffect(() => { void getOrCreateStudentUid(services.auth).then(setUid).catch((error) => setNotice(handleFailure(error, '匿名ログインを開始できませんでした。'))) }, [services.auth])
   useEffect(() => {
     if (!participantKey) return
     const subscriptions = [
@@ -95,7 +96,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   // vanished from the teacher's list while still sitting at their desk.
   useEffect(() => {
     if (!participantKey || !connected) return
-    void armApprovedParticipantPresence(services.database, marketId, participantKey).catch(() => setNotice('参加状態を復元できませんでした。'))
+    void armApprovedParticipantPresence(services.database, marketId, participantKey).catch((error) => setNotice(handleFailure(error, '参加状態を復元できませんでした。')))
   }, [connected, marketId, participantKey, services.database])
   useEffect(() => {
     if (!participant?.teamId) return

@@ -4,6 +4,7 @@ import type { PersonalTemplate, TemplateCompany, TemplateSpec } from '../lib/tem
 import { createPersonalTemplate, createTemplateShare, deletePersonalTemplate, listOfficialTemplates, listPersonalTemplates, updatePersonalTemplate } from '../lib/templates/templateRepository'
 import { officialTemplateSeeds } from '../lib/templates/officialSeeds'
 import { normalizeTemplate, validateTemplate } from '../lib/templates/templateValidation'
+import { handleFailure } from '../lib/monitoring/describeError'
 
 export interface TemplateWorkspaceProps { db?: Firestore; ownerUid?: string; isOperator?: boolean }
 const newId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
@@ -35,7 +36,7 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
     setPersonal(mine)
     if (published.length) setOfficial(published.map(({ id, ...spec }) => ({ id, spec })))
   }, [db, ownerUid])
-  useEffect(() => { void refresh().catch(() => setNotice('テンプレートを読み込めませんでした。')) }, [refresh])
+  useEffect(() => { void refresh().catch((error) => setNotice(handleFailure(error, 'テンプレートを読み込めませんでした。'))) }, [refresh])
   if (!db || !ownerUid) return <main className="workspace-gate"><a className="portal-brand" href="/teacher/markets">← Stock League Classroom</a><div><p className="portal-eyebrow">TEMPLATE STUDIO</p><h1>テンプレートを<br />管理する</h1><p>Googleアカウントでログインすると、授業用の市場シナリオを作成・共有できます。</p><a className="portal-button" href="/teacher/markets">教師としてログイン <span>→</span></a></div></main>
 
   const updateCompany = (index: number, patch: Partial<TemplateCompany>) => setDraft((current) => ({
