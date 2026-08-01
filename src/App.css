@@ -105,3 +105,5 @@
 .trade-confirm { padding: 16px; display: grid; gap: 10px; background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 12px; }
 .trade-confirm p { margin: 0; }
 .trade-note { color: #5f6368; font-size: 12px; }
+.ending-confirm { padding: 16px; display: grid; gap: 10px; background: #fceeee; border: 1px solid #f1b9b6; border-radius: 12px; }
+.ending-confirm p { margin: 0; }
