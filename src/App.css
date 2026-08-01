@@ -107,3 +107,6 @@
 .trade-note { color: #5f6368; font-size: 12px; }
 .ending-confirm { padding: 16px; display: grid; gap: 10px; background: #fceeee; border: 1px solid #f1b9b6; border-radius: 12px; }
 .ending-confirm p { margin: 0; }
+/* A destructive control has to read as destructive everywhere, not only inside .template-actions:
+   removing a student and ending a market are both irreversible mid-lesson. */
+.danger-button { padding: 8px 11px; color: #b3261e; font: inherit; font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #f1b9b6; border-radius: 999px; cursor: pointer; }
