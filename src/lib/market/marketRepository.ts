@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs, query, runTransaction as runFirestore
 import { onDisconnect, ref, remove, runTransaction, set, update, type Database } from 'firebase/database'
 import type { TemplateSpec } from '../templates/types'
 import { participantId, type JoinRequest, type LiveMarketParticipant, type LiveMarketState, type MarketVisibility, type TeamAssignmentMode } from './liveMarketTypes'
+import { serverNow } from '../firebase/serverTime'
 
 export const MARKET_CAPACITY = 80
 export const JOIN_CODE_LENGTH = 6
@@ -21,10 +22,10 @@ export const generateJoinCode = (randomValues: Uint32Array = crypto.getRandomVal
   Array.from(randomValues, (value) => JOIN_CODE_ALPHABET[value % JOIN_CODE_ALPHABET.length]).join('')
 
 export const initialLiveState = (input: CreateMarketInput) => ({
-  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: Date.now(), startingCash: input.template.startingCash, joinCode: normalizeCode(input.joinCode ?? '') },
+  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: serverNow(), startingCash: input.template.startingCash, joinCode: normalizeCode(input.joinCode ?? '') },
   teams: Object.fromEntries(input.template.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
   companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, name: company.name, symbol: company.symbol, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),
-  teamPortfolios: Object.fromEntries(input.template.teams.map((team) => [team.id, { cash: input.template.startingCash, holdings: {}, updatedAtMillis: Date.now() }])),
+  teamPortfolios: Object.fromEntries(input.template.teams.map((team) => [team.id, { cash: input.template.startingCash, holdings: {}, updatedAtMillis: serverNow() }])),
 })
 
 /** Idempotently completes a CREATING market after any Firestore/RTDB partial failure. */
@@ -100,20 +101,20 @@ export const requestToJoinMarket = async (
   request: Omit<JoinRequest, 'requestedAtMillis' | 'connected' | 'approvedAtMillis'>,
 ) => {
   const id = participantId(request.uid, request.sessionId)
-  const payload = buildJoinRequestPayload(request, Date.now())
+  const payload = buildJoinRequestPayload(request, serverNow())
   await set(ref(database, `${root(marketId)}/joinRequests/${id}`), payload)
   await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
   return id
 }
 
 export const markJoinRequestConnected = (database: Database, marketId: string, id: string, connected: boolean) =>
-  update(ref(database, `${root(marketId)}/joinRequests/${id}`), { connected, lastSeenAtMillis: Date.now() })
+  update(ref(database, `${root(marketId)}/joinRequests/${id}`), { connected, lastSeenAtMillis: serverNow() })
 
 /** Once approved, arm an onDisconnect write that can change only the student's own participant presence. */
 export const armApprovedParticipantPresence = async (database: Database, marketId: string, id: string) => {
   const connection = ref(database, `${root(marketId)}/participants/${id}/connected`)
   await onDisconnect(connection).set(false)
-  await update(ref(database, `${root(marketId)}/participants/${id}`), { connected: true, lastSeenAtMillis: Date.now() })
+  await update(ref(database, `${root(marketId)}/participants/${id}`), { connected: true, lastSeenAtMillis: serverNow() })
 }
 
 const chooseTeam = (state: LiveMarketState, request: JoinRequest, mode: TeamAssignmentMode, manualTeamId?: string) => {
@@ -205,7 +206,7 @@ export const approveJoinRequest = async (database: Database, marketId: string, i
   for (let attempt = 0; attempt < APPROVE_RETRY_ATTEMPTS; attempt += 1) {
     const newCode = generateRecoveryCode()
     const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) =>
-      applyApproveJoinRequest(raw, id, mode, manualTeamId, Date.now(), newCode))
+      applyApproveJoinRequest(raw, id, mode, manualTeamId, serverNow(), newCode))
     if (result.committed) return true
   }
   return false
@@ -250,4 +251,4 @@ export const removeParticipant = async (database: Database, marketId: string, id
   (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyRemoveParticipant(raw, id))).committed
 
 export const reassignParticipantTeam = async (database: Database, marketId: string, id: string, teamId: string) =>
-  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyReassignTeam(raw, id, teamId, Date.now()))).committed
+  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyReassignTeam(raw, id, teamId, serverNow()))).committed

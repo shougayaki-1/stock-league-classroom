@@ -3,9 +3,10 @@ import { get, onDisconnect, ref, runTransaction, type Database } from 'firebase/
 import { clampToBounds, createPhaseRuntime, elapsedMarketMinute, getActivePhase } from '../pricing/pricingCore'
 import type { StockPricePhase } from '../pricing/types'
 import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio, TeamLeaderboardEntry } from './liveMarketTypes'
+import { serverNow } from '../firebase/serverTime'
 
 export const root = (marketId: string) => `liveMarkets/${marketId}`
-const now = () => Date.now()
+const now = () => serverNow()
 const clone = <T>(value: T): T => structuredClone(value)
 export const hostLeasePath = (marketId: string) => `${root(marketId)}/hostLease`
 export const hostDisconnectPath = (marketId: string, leaseId: string) => `${root(marketId)}/hostDisconnects/${leaseId}`
