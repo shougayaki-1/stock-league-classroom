@@ -83,15 +83,24 @@ export const resolveJoinCode = async (firestore: Firestore, joinCode: string): P
   return result.exists() ? String(result.data().marketId) : undefined
 }
 
+/** Normalizes the presented recovery code and drops it unless it is exactly RECOVERY_CODE_LENGTH long. */
+export const buildJoinRequestPayload = (
+  request: Omit<JoinRequest, 'requestedAtMillis' | 'connected' | 'approvedAtMillis'>,
+  atMillis: number,
+): JoinRequest => {
+  const payload = { ...request, connected: true, requestedAtMillis: atMillis }
+  if (payload.recoveryCode) payload.recoveryCode = normalizeCode(payload.recoveryCode)
+  if (payload.recoveryCode?.length !== RECOVERY_CODE_LENGTH) delete payload.recoveryCode
+  return payload
+}
+
 export const requestToJoinMarket = async (
   database: Database,
   marketId: string,
   request: Omit<JoinRequest, 'requestedAtMillis' | 'connected' | 'approvedAtMillis'>,
 ) => {
   const id = participantId(request.uid, request.sessionId)
-  const payload = { ...request, connected: true, requestedAtMillis: Date.now() }
-  if (payload.recoveryCode) payload.recoveryCode = normalizeCode(payload.recoveryCode)
-  if (payload.recoveryCode?.length !== RECOVERY_CODE_LENGTH) delete payload.recoveryCode
+  const payload = buildJoinRequestPayload(request, Date.now())
   await set(ref(database, `${root(marketId)}/joinRequests/${id}`), payload)
   await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
   return id

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { participantId } from './liveMarketTypes'
 import type { LiveMarketState } from './liveMarketTypes'
-import { applyApproveJoinRequest, applyReassignTeam, applyRemoveParticipant, generateRecoveryCode, initialLiveState } from './marketRepository'
+import { applyApproveJoinRequest, applyReassignTeam, applyRemoveParticipant, buildJoinRequestPayload, generateRecoveryCode, initialLiveState } from './marketRepository'
 
 describe('market identity', () => {
   it('keeps each device session distinct for a student', () => {
@@ -133,6 +133,41 @@ describe('recovery codes', () => {
     const state = pendingState()
     state.recoveryCodes = { ZZ99: { participantId: 'old_s1', teamId: 'blue', displayName: 'A' } }
     expect(applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')).toBeUndefined()
+  })
+})
+
+describe('join request payload', () => {
+  const baseRequest = { uid: 'u1', sessionId: 's1', displayName: 'A', requestedTeamId: null }
+
+  it('keeps a 4-character code, normalized to uppercase with whitespace trimmed', () => {
+    const payload = buildJoinRequestPayload({ ...baseRequest, recoveryCode: '  ab23  ' }, 42)
+    expect(payload.recoveryCode).toBe('AB23')
+  })
+
+  it('drops a 3-character code', () => {
+    const payload = buildJoinRequestPayload({ ...baseRequest, recoveryCode: 'AB2' }, 42)
+    expect(payload.recoveryCode).toBeUndefined()
+  })
+
+  it('drops a 5-character code', () => {
+    const payload = buildJoinRequestPayload({ ...baseRequest, recoveryCode: 'AB234' }, 42)
+    expect(payload.recoveryCode).toBeUndefined()
+  })
+
+  it('drops an empty or whitespace-only code', () => {
+    expect(buildJoinRequestPayload({ ...baseRequest, recoveryCode: '' }, 42).recoveryCode).toBeUndefined()
+    expect(buildJoinRequestPayload({ ...baseRequest, recoveryCode: '   ' }, 42).recoveryCode).toBeUndefined()
+  })
+
+  it('produces no recoveryCode key at all when none is presented', () => {
+    const payload = buildJoinRequestPayload({ ...baseRequest }, 42)
+    expect('recoveryCode' in payload).toBe(false)
+  })
+
+  it('always sets connected true and the given requestedAtMillis', () => {
+    const payload = buildJoinRequestPayload({ ...baseRequest }, 42)
+    expect(payload.connected).toBe(true)
+    expect(payload.requestedAtMillis).toBe(42)
   })
 })
 

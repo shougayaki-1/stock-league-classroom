@@ -56,10 +56,13 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   }, [marketId, participantKey, pendingOrderId, services.database])
   // Shown for the whole lesson: it is the only way back in from a different
   // device, and a student who has lost their tab cannot be told it afterwards.
+  // Gated on uid too: every approved join lands here via a hard page reload, so
+  // anonymous auth has not resolved yet at mount and the rules-required `auth != null`
+  // would deny a listener subscribed before then (denials are not retried).
   useEffect(() => {
-    if (!sessionValid || !active?.requestId) return
+    if (!sessionValid || !active?.requestId || !uid) return
     return onValue(ref(services.database, `liveMarkets/${marketId}/joinRequests/${active.requestId}/recoveryCode`), (snapshot) => setRecoveryCode(String(snapshot.val() ?? '')))
-  }, [active?.requestId, marketId, services.database, sessionValid])
+  }, [active?.requestId, marketId, services.database, sessionValid, uid])
   // Re-armed on every reconnection, not just on mount: the server runs our
   // onDisconnect the moment the socket drops, so a single network blip would
   // otherwise leave the student marked absent for the rest of the lesson —
