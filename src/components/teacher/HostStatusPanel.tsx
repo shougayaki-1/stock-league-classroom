@@ -9,6 +9,7 @@ export interface HostStatusPanelProps {
   pendingOrderCount: number
   prices: { stockId: string; name: string; symbol: string; price: number; basePrice: number }[]
   lastTickAtMillis?: number
+  hostingSinceMillis?: number
 }
 
 const STATUS_LABEL: Record<MarketStatus, string> = { SETUP: '準備中', OPEN: '取引中', ENDING: '結果を確定中', ENDED: '終了' }
@@ -26,12 +27,16 @@ const changeLabel = (price: number, basePrice: number) => {
   return `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`
 }
 
-export function HostStatusPanel({ status, openedAtMillis, nowMillis, participantCount, capacity, pendingOrderCount, prices, lastTickAtMillis }: HostStatusPanelProps) {
-  const staleFor = lastTickAtMillis === undefined ? 0 : nowMillis - lastTickAtMillis
+export function HostStatusPanel({ status, openedAtMillis, nowMillis, participantCount, capacity, pendingOrderCount, prices, lastTickAtMillis, hostingSinceMillis }: HostStatusPanelProps) {
+  const hasTicked = lastTickAtMillis !== undefined
+  const staleFor = hasTicked ? nowMillis - lastTickAtMillis : hostingSinceMillis === undefined ? 0 : nowMillis - hostingSinceMillis
+  const isStale = hostingSinceMillis !== undefined && staleFor > STALE_TICK_MS
   return (
     <section className="host-status-panel">
       <p className="section-kicker">MARKET STATUS</p>
-      {staleFor > STALE_TICK_MS && <p className="form-notice stopped" role="alert">価格が{Math.floor(staleFor / 1000)}秒間更新されていません。ホスト権限が失効しているか、通信が切れています。</p>}
+      {isStale && (hasTicked
+        ? <p className="form-notice stopped" role="alert">価格が{Math.floor(staleFor / 1000)}秒間更新されていません。ホスト権限が失効しているか、通信が切れています。</p>
+        : <p className="form-notice stopped" role="alert">ホスト取得から{Math.floor(staleFor / 1000)}秒経っても価格が一度も更新されていません。権限が不足しているか、別の端末がホストになっている可能性があります。</p>)}
       <div className="host-status-grid">
         <div><span>状態</span><strong>{STATUS_LABEL[status]}</strong></div>
         <div><span>経過時間</span><strong>{describeElapsed(openedAtMillis, nowMillis)}</strong></div>
