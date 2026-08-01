@@ -97,6 +97,43 @@ describe('recovery codes', () => {
     expect(generateRecoveryCode(new Uint32Array([0, 1, 2, 3]))).toBe('2345')
     expect(generateRecoveryCode()).toHaveLength(4)
   })
+
+  it('rejects a forged recovery code whose display name does not match', () => {
+    const state = pendingState('AB23')
+    state.joinRequests!.new_s2.displayName = 'Mallory'
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    // The requester still gets in, just onto a normally-assigned team with a fresh code.
+    expect(next.participants!.new_s2.teamId).toBe('red')
+    expect(next.joinRequests!.new_s2.recoveryCode).toBe('ZZ99')
+    expect(next.recoveryCodes!.ZZ99).toEqual({ participantId: 'new_s2', teamId: 'red', displayName: 'Mallory' })
+    // The victim keeps their seat, their history and their own recovery code.
+    expect(next.participants!.old_s1).toBeDefined()
+    expect(next.transactions!.old_s1).toBeDefined()
+    expect(next.transactions!.new_s2).toBeUndefined()
+    expect(next.recoveryCodes!.AB23).toEqual({ participantId: 'old_s1', teamId: 'blue', displayName: 'A' })
+  })
+
+  it('clears the stale old identity on a genuine recovery, so approval cannot ping-pong', () => {
+    const state = pendingState('AB23')
+    // Simulates the old tab being left open: its join request is still connected.
+    state.joinRequests!.old_s1 = { uid: 'old', sessionId: 's1', displayName: 'A', requestedTeamId: null, connected: true, requestedAtMillis: 1, approvedAtMillis: 1, recoveryCode: 'AB23' }
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.participants!.new_s2.teamId).toBe('blue')
+    expect(next.members!.old).toBeUndefined()
+    expect(next.joinRequests!.old_s1).toBeUndefined()
+  })
+
+  it('matches a lowercase presented code', () => {
+    const next = applyApproveJoinRequest(pendingState('ab23'), 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.participants!.new_s2.teamId).toBe('blue')
+    expect(next.recoveryCodes!.AB23.participantId).toBe('new_s2')
+  })
+
+  it('aborts when the freshly generated code already exists in recoveryCodes', () => {
+    const state = pendingState()
+    state.recoveryCodes = { ZZ99: { participantId: 'old_s1', teamId: 'blue', displayName: 'A' } }
+    expect(applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')).toBeUndefined()
+  })
 })
 
 describe('team reassignment', () => {

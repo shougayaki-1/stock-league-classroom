@@ -90,7 +90,8 @@ export const requestToJoinMarket = async (
 ) => {
   const id = participantId(request.uid, request.sessionId)
   const payload = { ...request, connected: true, requestedAtMillis: Date.now() }
-  if (!payload.recoveryCode) delete payload.recoveryCode
+  if (payload.recoveryCode) payload.recoveryCode = normalizeCode(payload.recoveryCode)
+  else delete payload.recoveryCode
   await set(ref(database, `${root(marketId)}/joinRequests/${id}`), payload)
   await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
   return id
@@ -142,20 +143,26 @@ export const applyApproveJoinRequest = (
   if (!raw?.meta || !raw.joinRequests?.[id]) return undefined
   const request = raw.joinRequests[id]
   if (!request.connected) return undefined
-  raw.participants ??= {}
-  if (raw.participants[id]) return raw
-  const active = Object.values(raw.participants).filter((participant) => participant.connected).length
+  if (raw.participants?.[id]) return raw
+  const active = Object.values(raw.participants ?? {}).filter((participant) => participant.connected).length
   if (active >= raw.meta.capacity) return undefined
-  const recovery = request.recoveryCode ? raw.recoveryCodes?.[request.recoveryCode] : undefined
+  // Only honour a presented code when it also names the student it was issued to;
+  // a code alone (readable off a neighbour's screen) is not proof of identity.
+  const presentedCode = request.recoveryCode ? normalizeCode(request.recoveryCode) : undefined
+  const candidate = presentedCode ? raw.recoveryCodes?.[presentedCode] : undefined
+  const recovery = candidate && candidate.displayName === request.displayName ? candidate : undefined
   const teamId = recovery?.teamId ?? raw.members?.[request.uid]?.teamId ?? chooseTeam(raw, request, mode, manualTeamId)
   if (!teamId || !raw.teams?.[teamId]) return undefined
+  // A newly generated code must not silently overwrite someone else's live code.
+  if (!recovery && raw.recoveryCodes?.[newCode]) return undefined
+  raw.participants ??= {}
   const participant: LiveMarketParticipant = { uid: request.uid, sessionId: request.sessionId, displayName: request.displayName, teamId, connected: true, lastSeenAtMillis: atMillis }
   raw.participants[id] = participant
   raw.members ??= {}
   raw.members[request.uid] = { teamId }
   raw.teamPortfolios ??= {}
   raw.teamPortfolios[teamId] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: atMillis }
-  const code = recovery && request.recoveryCode ? request.recoveryCode : newCode
+  const code = recovery && presentedCode ? presentedCode : newCode
   if (recovery && recovery.participantId !== id) {
     const previous = raw.transactions?.[recovery.participantId]
     if (previous) {
@@ -163,8 +170,13 @@ export const applyApproveJoinRequest = (
       raw.transactions[id] = { ...previous, ...(raw.transactions[id] ?? {}) }
       delete raw.transactions[recovery.participantId]
     }
+    // Retire the old identity exactly as applyRemoveParticipant would, so it keeps no
+    // member-level access and its stale join request cannot re-approve into a ping-pong.
+    const oldUid = raw.participants[recovery.participantId]?.uid ?? raw.joinRequests[recovery.participantId]?.uid
     if (raw.participants[recovery.participantId]) delete raw.participants[recovery.participantId]
     if (raw.orders?.[recovery.participantId]) delete raw.orders[recovery.participantId]
+    if (oldUid && oldUid !== request.uid) delete raw.members[oldUid]
+    if (raw.joinRequests[recovery.participantId]) delete raw.joinRequests[recovery.participantId]
   }
   raw.recoveryCodes ??= {}
   raw.recoveryCodes[code] = { participantId: id, teamId, displayName: request.displayName }
@@ -172,12 +184,22 @@ export const applyApproveJoinRequest = (
   return raw
 }
 
-/** Root transaction keeps the cap, request approval, team assignment and recovery indivisible. */
-export const approveJoinRequest = async (database: Database, marketId: string, id: string, mode: TeamAssignmentMode, manualTeamId?: string) => {
-  const newCode = generateRecoveryCode()
-  const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) =>
-    applyApproveJoinRequest(raw, id, mode, manualTeamId, Date.now(), newCode))
-  return result.committed
+const APPROVE_RETRY_ATTEMPTS = 5
+
+/**
+ * Root transaction keeps the cap, request approval, team assignment and recovery indivisible.
+ * A fresh code is generated outside the transaction updater (required for RTDB retry safety);
+ * on the rare chance it collides with a code already in use, the whole transaction is retried
+ * with a newly generated code, up to APPROVE_RETRY_ATTEMPTS times.
+ */
+export const approveJoinRequest = async (database: Database, marketId: string, id: string, mode: TeamAssignmentMode, manualTeamId?: string): Promise<boolean> => {
+  for (let attempt = 0; attempt < APPROVE_RETRY_ATTEMPTS; attempt += 1) {
+    const newCode = generateRecoveryCode()
+    const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) =>
+      applyApproveJoinRequest(raw, id, mode, manualTeamId, Date.now(), newCode))
+    if (result.committed) return true
+  }
+  return false
 }
 
 /**
