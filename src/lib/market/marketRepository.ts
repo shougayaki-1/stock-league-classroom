@@ -110,6 +110,18 @@ export const requestToJoinMarket = async (
 export const markJoinRequestConnected = (database: Database, marketId: string, id: string, connected: boolean) =>
   update(ref(database, `${root(marketId)}/joinRequests/${id}`), { connected, lastSeenAtMillis: serverNow() })
 
+/**
+ * While still pending, re-arm an onDisconnect write that can change only the student's
+ * own join request presence. Mirrors armApprovedParticipantPresence: an onDisconnect
+ * registration does not survive a reconnect, so this must be called again on every
+ * reconnection, not just once at request time (requestToJoinMarket arms it the first
+ * time; this is what re-arms it afterward).
+ */
+export const armJoinRequestPresence = async (database: Database, marketId: string, id: string) => {
+  await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
+  await markJoinRequestConnected(database, marketId, id, true)
+}
+
 /** Once approved, arm an onDisconnect write that can change only the student's own participant presence. */
 export const armApprovedParticipantPresence = async (database: Database, marketId: string, id: string) => {
   const connection = ref(database, `${root(marketId)}/participants/${id}/connected`)

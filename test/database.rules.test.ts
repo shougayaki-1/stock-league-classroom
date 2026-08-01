@@ -70,6 +70,18 @@ describe('live market RTDB rules', () => {
     await assertFails(student.ref(`${path}/connected`).set('yes'))
   })
 
+  it('lets a pending student re-mark their own join request connected across a reconnect', async () => {
+    const student = environment.authenticatedContext('student-a').database()
+    const path = `liveMarkets/${market}/joinRequests/student-a_session`
+    await assertSucceeds(student.ref(path).set({ uid: 'student-a', sessionId: 'session', displayName: '生徒', requestedTeamId: null, connected: true, requestedAtMillis: 1 }))
+    await assertSucceeds(student.ref(`${path}/connected`).set(false))
+    // Mirrors armJoinRequestPresence: a multi-field update re-marking connected and
+    // lastSeenAtMillis together, exactly as re-armed on every reconnect.
+    await assertSucceeds(student.ref(path).update({ connected: true, lastSeenAtMillis: 2 }))
+    await assertFails(student.ref(path).update({ displayName: '改ざん', connected: true, lastSeenAtMillis: 2 }))
+    await assertFails(environment.authenticatedContext('student-b').database().ref(path).update({ connected: true, lastSeenAtMillis: 2 }))
+  })
+
   it('allows an approved student to update only their presence', async () => {
     await approveStudent()
     const student = environment.authenticatedContext('student-a').database()
