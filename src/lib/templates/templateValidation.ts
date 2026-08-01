@@ -47,9 +47,12 @@ export const normalizeTemplate = (spec: TemplateSpec): TemplateSpec => ({
   })),
 })
 
+/** Thrown only for deliberate, teacher-facing validation text — never for infrastructure failures. */
+export class TemplateValidationError extends Error {}
+
 export const assertValidTemplate = (spec: TemplateSpec): TemplateSpec => {
   const normalized = normalizeTemplate(spec)
   const errors = validateTemplate(normalized)
-  if (errors.length) throw new Error(errors[0])
+  if (errors.length) throw new TemplateValidationError(errors[0])
   return normalized
 }

@@ -3,7 +3,7 @@ import type { Firestore } from 'firebase/firestore'
 import type { PersonalTemplate, TemplateCompany, TemplateSpec } from '../lib/templates/types'
 import { createPersonalTemplate, createTemplateShare, deletePersonalTemplate, listOfficialTemplates, listPersonalTemplates, updatePersonalTemplate } from '../lib/templates/templateRepository'
 import { officialTemplateSeeds } from '../lib/templates/officialSeeds'
-import { normalizeTemplate, validateTemplate } from '../lib/templates/templateValidation'
+import { TemplateValidationError, normalizeTemplate, validateTemplate } from '../lib/templates/templateValidation'
 import { handleFailure } from '../lib/monitoring/describeError'
 
 export interface TemplateWorkspaceProps { db?: Firestore; ownerUid?: string; isOperator?: boolean }
@@ -95,7 +95,7 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
             <button className="danger-button" type="button" disabled={draft.companies.length <= 1} onClick={() => setDraft({ ...draft, companies: draft.companies.filter((_, itemIndex) => itemIndex !== companyIndex) })}>この銘柄を削除</button>
           </article>)}
         </div>
-        <button className="portal-button" type="button" onClick={() => void save().catch((error: unknown) => setNotice(error instanceof Error ? error.message : '保存できませんでした。'))}>保存する <span>→</span></button>
+        <button className="portal-button" type="button" onClick={() => void save().catch((error: unknown) => setNotice(error instanceof TemplateValidationError ? error.message : handleFailure(error, '保存できませんでした。')))}>保存する <span>→</span></button>
         {notice && <p className="form-notice" role="status">{notice}</p>}
       </div>
 

@@ -136,7 +136,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
           currentPrice={prices[selected.id]?.price ?? selected.basePrice}
           cash={portfolio?.cash ?? 0}
           holding={portfolio?.holdings?.[selected.id] ?? 0}
-          onSubmitOrder={(side, quantity) => void placeOrder(side, quantity).catch(() => { setPendingOrderId(''); setNotice('注文処理でエラーが発生しました。') })}
+          onSubmitOrder={(side, quantity) => void placeOrder(side, quantity).catch((error) => { setPendingOrderId(''); setNotice(handleFailure(error, '注文処理でエラーが発生しました。')) })}
           latestResult={latestResult}
           disabled={meta?.status !== 'OPEN'}
           pending={Boolean(pendingOrderId)}
