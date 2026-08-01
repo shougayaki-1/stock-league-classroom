@@ -75,4 +75,17 @@ describe('AdmissionPanel', () => {
     render(<AdmissionPanel {...baseProps} requests={[]} />)
     expect(screen.getByText(/参加コードを生徒に共有/)).toBeInTheDocument()
   })
+
+  it('marks a recovery request and names the team it would restore, before approval', () => {
+    const requests = [{ id: 'u1_s', displayName: '山田', requestedTeamId: null, recoveryTeamId: 'blue' }]
+    render(<AdmissionPanel {...baseProps} requests={requests} />)
+    expect(screen.getByText('復帰申請')).toBeInTheDocument()
+    expect(screen.getByText(/青の続きに復帰します/)).toBeInTheDocument()
+  })
+
+  it('shows the normal waiting copy for a first-time request', () => {
+    render(<AdmissionPanel {...baseProps} />)
+    expect(screen.queryByText('復帰申請')).not.toBeInTheDocument()
+    expect(screen.getByText('参加を待っています')).toBeInTheDocument()
+  })
 })

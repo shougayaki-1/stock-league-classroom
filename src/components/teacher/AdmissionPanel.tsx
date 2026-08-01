@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { TeamAssignmentMode } from '../../lib/market/liveMarketTypes'
 
-export interface AdmissionRequest { id: string; displayName: string; requestedTeamId: string | null }
+export interface AdmissionRequest { id: string; displayName: string; requestedTeamId: string | null; recoveryTeamId?: string }
 export interface AdmissionParticipant { id: string; displayName: string; teamId: string | null; connected: boolean }
 
 export interface AdmissionPanelProps {
@@ -66,8 +66,8 @@ export function AdmissionPanel({ joinCode, capacity, teams, requests, participan
           <ul>{requests.map((request) => (
             <li key={request.id}>
               <div>
-                <strong>{request.displayName}</strong>
-                <small>{mode === 'student_choice' && request.requestedTeamId ? `希望: ${teamName(request.requestedTeamId)}` : '参加を待っています'}</small>
+                <strong>{request.displayName}</strong>{request.recoveryTeamId && <span className="recovery-badge">復帰申請</span>}
+                <small>{request.recoveryTeamId ? `${teamName(request.recoveryTeamId)}の続きに復帰します（元の参加者と入れ替わります）` : mode === 'student_choice' && request.requestedTeamId ? `希望: ${teamName(request.requestedTeamId)}` : '参加を待っています'}</small>
               </div>
               {mode === 'manual' && (
                 <label>

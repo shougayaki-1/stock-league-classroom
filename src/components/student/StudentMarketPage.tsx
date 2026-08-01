@@ -134,9 +134,15 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     onLeave={clearActiveStudentSession}
   />
 
+  // A matched recovery keeps the presented code as-is (see applyApproveJoinRequest);
+  // a mismatch gets a freshly issued one instead. Comparing the two is the only signal
+  // available to the student under the RTDB rules — they cannot read any other
+  // participant's record, so they cannot be told which team the code pointed to.
+  const recoveryMismatch = Boolean(active?.presentedRecoveryCode) && recoveryCode !== '' && recoveryCode !== active?.presentedRecoveryCode
   return <main className="student-market-page">
     <header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>{teams[participant.teamId ?? '']?.name}</span></header>
     <section className="student-market-summary"><div><p className="portal-eyebrow">{meta?.status ?? 'CONNECTING'}</p><h1>{participant.displayName}さんのチーム口座</h1></div><div><span>現金</span><strong>¥{(portfolio?.cash ?? 0).toLocaleString()}</strong></div><div className="recovery-code"><span>復帰コード</span><strong>{recoveryCode || '—'}</strong><small>端末を替えるときに使います</small></div></section>
+    {recoveryMismatch && <p className="form-notice stopped" role="alert"><strong>前回の続きに戻れませんでした。</strong>入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。前のデータには戻れません。心当たりがなければ先生に伝えてください。</p>}
     {notice && <p className="form-notice" role="status">{notice}</p>}
     <section className="student-trading-grid">
       <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs" role="group" aria-label="銘柄を選ぶ">{Object.values(companies).map((company) => <button type="button" aria-pressed={selectedStockId === company.id} className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>

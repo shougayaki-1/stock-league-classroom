@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { onValue, ref, type Unsubscribe } from 'firebase/database'
 import { bootstrapFirebase } from '../lib/firebase/bootstrap'
@@ -6,7 +6,7 @@ import { signInTeacherWithGoogle } from '../lib/auth/teacherAuth'
 import { getOrCreateStudentUid } from '../lib/auth/studentAuth'
 import { isTeacherIdentity } from '../lib/auth/roles'
 import { AdmissionPanel } from './teacher/AdmissionPanel'
-import { approveJoinRequest, createMarket, listOwnedMarkets, reassignParticipantTeam, rejectJoinRequest, removeParticipant, requestToJoinMarket, resolveJoinCode, type MarketRecord } from '../lib/market/marketRepository'
+import { approveJoinRequest, createMarket, listOwnedMarkets, markJoinRequestConnected, RECOVERY_CODE_LENGTH, reassignParticipantTeam, rejectJoinRequest, removeParticipant, requestToJoinMarket, resolveJoinCode, resolveRecoveryTeamId, type MarketRecord } from '../lib/market/marketRepository'
 import type { LiveMarketState, MarketVisibility, TeamAssignmentMode } from '../lib/market/liveMarketTypes'
 import { listPersonalTemplates } from '../lib/templates/templateRepository'
 import { readServiceStatus, type ServiceStatus } from '../lib/service/serviceStatus'
@@ -14,6 +14,7 @@ import type { PersonalTemplate } from '../lib/templates/types'
 import { deleteMarketCompletely } from '../lib/teacher/marketDeletion'
 import { buildTeamCsv, buildTransactionCsv, downloadCsv, fetchMarketResults } from '../lib/teacher/resultsExport'
 import { getStudentSessionId, readActiveStudentSession, saveActiveStudentSession } from '../lib/students/studentSession'
+import { useDatabaseConnected } from '../lib/firebase/connectionState'
 import { handleFailure } from '../lib/monitoring/describeError'
 import { AppVersion } from './AppVersion'
 
@@ -54,7 +55,7 @@ export const TeacherMarketDashboard = () => {
   const selected = useMemo(() => templates.find((item) => item.id === selectedId), [selectedId, templates])
   const requests = Object.entries(state?.joinRequests ?? {})
     .filter(([id, request]) => request.connected && !state?.participants?.[id])
-    .map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId }))
+    .map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId, recoveryTeamId: resolveRecoveryTeamId(state, request) }))
   const participants = Object.entries(state?.participants ?? {})
     .map(([id, participant]) => ({ id, displayName: participant.displayName, teamId: participant.teamId, connected: participant.connected }))
   const activeCount = participants.filter((participant) => participant.connected).length
@@ -99,7 +100,14 @@ export const StudentMarketJoin = () => {
   const [joinCode, setJoinCode] = useState(() => new URLSearchParams(window.location.search).get('code')?.toUpperCase() ?? ''), [displayName, setDisplayName] = useState(''), [recoveryCode, setRecoveryCode] = useState(''), [marketId, setMarketId] = useState(''), [requestId, setRequestId] = useState('')
   const [status, setStatus] = useState<'entry' | 'requesting' | 'waiting' | 'approved' | 'error'>('entry'), [message, setMessage] = useState('参加コードを入力して、先生の市場に参加しましょう。')
   const activeSession = readActiveStudentSession()
-  useEffect(() => { if (!marketId || !requestId) return; const stop = onValue(ref(services.database, `liveMarkets/${marketId}/joinRequests/${requestId}`), (snapshot) => { if (snapshot.val()?.approvedAtMillis) { const active = { marketId, requestId, sessionId: getStudentSessionId() }; saveActiveStudentSession(active); setStatus('approved'); setMessage('参加が承認されました。市場画面へ移動します。'); window.location.assign(`/markets/${marketId}/play`) } }); return () => stop() }, [marketId, requestId, services.database])
-  const join = async () => { if (!joinCode.trim() || !displayName.trim()) { setStatus('error'); return setMessage('参加コードと表示名を入力してください。') }; setStatus('requesting'); try { const uid = await getOrCreateStudentUid(services.auth); const resolved = await resolveJoinCode(services.firestore, joinCode); if (!resolved) throw new Error('NOT_FOUND'); const id = await requestToJoinMarket(services.database, resolved, { uid, sessionId: getStudentSessionId(), displayName: displayName.trim(), requestedTeamId: null, ...(recoveryCode.trim() ? { recoveryCode: recoveryCode.trim().toUpperCase() } : {}) }); setMarketId(resolved); setRequestId(id); setStatus('waiting'); setMessage('参加を申請しました。先生の承認をお待ちください。') } catch (error) { setStatus('error'); setMessage(error instanceof Error && error.message === 'NOT_FOUND' ? '市場が見つかりません。参加コードを確認してください。' : handleFailure(error, 'この市場は参加受付を終了しているか、接続できません。')) } }
+  const presentedRecoveryCodeRef = useRef('')
+  const connected = useDatabaseConnected(services.database)
+  useEffect(() => { if (!marketId || !requestId) return; const stop = onValue(ref(services.database, `liveMarkets/${marketId}/joinRequests/${requestId}`), (snapshot) => { if (snapshot.val()?.approvedAtMillis) { const active = { marketId, requestId, sessionId: getStudentSessionId(), ...(presentedRecoveryCodeRef.current ? { presentedRecoveryCode: presentedRecoveryCodeRef.current } : {}) }; saveActiveStudentSession(active); setStatus('approved'); setMessage('参加が承認されました。市場画面へ移動します。'); window.location.assign(`/markets/${marketId}/play`) } }); return () => stop() }, [marketId, requestId, services.database])
+  // The socket that armed `connected: false` on disconnect does not survive a
+  // reconnect, so a waiting student whose screen briefly locks would otherwise
+  // vanish from the teacher's admission panel for good (see StudentMarketPage's
+  // matching effect for approved participants, which has the same root cause).
+  useEffect(() => { if (status !== 'waiting' || !marketId || !requestId || !connected) return; void markJoinRequestConnected(services.database, marketId, requestId, true).catch((error) => setMessage(handleFailure(error, '接続状態を更新できませんでした。'))) }, [connected, marketId, requestId, services.database, status])
+  const join = async () => { if (!joinCode.trim() || !displayName.trim()) { setStatus('error'); return setMessage('参加コードと表示名を入力してください。') }; setStatus('requesting'); try { const uid = await getOrCreateStudentUid(services.auth); const resolved = await resolveJoinCode(services.firestore, joinCode); if (!resolved) throw new Error('NOT_FOUND'); const normalizedRecoveryCode = recoveryCode.trim().toUpperCase(); presentedRecoveryCodeRef.current = normalizedRecoveryCode.length === RECOVERY_CODE_LENGTH ? normalizedRecoveryCode : ''; const id = await requestToJoinMarket(services.database, resolved, { uid, sessionId: getStudentSessionId(), displayName: displayName.trim(), requestedTeamId: null, ...(normalizedRecoveryCode ? { recoveryCode: normalizedRecoveryCode } : {}) }); setMarketId(resolved); setRequestId(id); setStatus('waiting'); setMessage('参加を申請しました。先生の承認をお待ちください。') } catch (error) { setStatus('error'); setMessage(error instanceof Error && error.message === 'NOT_FOUND' ? '市場が見つかりません。参加コードを確認してください。' : handleFailure(error, 'この市場は参加受付を終了しているか、接続できません。')) } }
   return <main className="student-page"><header><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>STUDENT ENTRY</span></header><section className="student-card"><div className="student-icon">↗</div><p className="portal-eyebrow">JOIN A MARKET</p><h1>市場に参加</h1><p>先生から受け取った参加コードを入力してください。</p>{activeSession && <a className="inline-link" href={`/markets/${activeSession.marketId}/play`}>前回の市場へ戻る →</a>}{status === 'approved' ? <div className="approved-state"><span>✓</span><h2>参加準備ができました</h2><p>{message}</p></div> : <><label>参加コード<input value={joinCode} maxLength={6} placeholder="例: A1B2C3" onChange={(event) => setJoinCode(event.target.value.toUpperCase())} disabled={status === 'waiting' || status === 'requesting'} /></label><label>表示名<input value={displayName} maxLength={20} placeholder="例: 山田 太郎" onChange={(event) => setDisplayName(event.target.value)} disabled={status === 'waiting' || status === 'requesting'} /></label><label>復帰コード（前に使っていた端末で見た4文字。初めての人は空のまま）<input value={recoveryCode} maxLength={4} placeholder="例: A1B2" onChange={(event) => setRecoveryCode(event.target.value.toUpperCase())} disabled={status === 'waiting' || status === 'requesting'} /><small>復帰コードを入力するときは、表示名を前回と完全に同じ文字で入力してください。</small></label><button className="portal-button" type="button" onClick={() => void join()} disabled={status === 'waiting' || status === 'requesting'}>{status === 'requesting' ? '市場を確認中…' : status === 'waiting' ? '先生の承認を待っています' : '参加を申請する'} <span>→</span></button><p className={`student-message ${status}`} role="status">{message}</p></>}</section><footer>投資はシミュレーションです。実際のお金は使用しません。</footer></main>
 }

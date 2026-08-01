@@ -135,6 +135,32 @@ export const generateRecoveryCode = (randomValues: Uint32Array = crypto.getRando
   Array.from(randomValues, (value) => JOIN_CODE_ALPHABET[value % JOIN_CODE_ALPHABET.length]).join('')
 
 /**
+ * Collapses the differences a real student is likely to type by accident — full-width
+ * vs half-width characters and spacing, both common on a phone's Japanese IME — while
+ * leaving a genuinely different name genuinely different. NFKC folds width/compatibility
+ * variants (e.g. the full-width space U+3000 becomes a normal space); stripping all
+ * whitespace afterward absorbs an extra or missing space between family and given name
+ * (「山田 太郎」 vs 「山田太郎」), which NFKC alone does not touch.
+ */
+const normalizeForIdentityMatch = (value: string): string => value.normalize('NFKC').replace(/\s+/gu, '')
+
+/** Whether two presented display names identify the same student, tolerant of the input
+ * noise above but never of an actually different name. */
+export const matchesRecoveryIdentity = (a: string, b: string): boolean => normalizeForIdentityMatch(a) === normalizeForIdentityMatch(b)
+
+/**
+ * Resolves which team a pending request's presented recovery code would restore into, or
+ * undefined if there is no code, no matching entry, or the identity check fails. Mirrors
+ * the exact match `applyApproveJoinRequest` performs, purely so callers can show the
+ * teacher what approval is about to do before it happens.
+ */
+export const resolveRecoveryTeamId = (state: LiveMarketState | null, request: Pick<JoinRequest, 'displayName' | 'recoveryCode'>): string | undefined => {
+  const presentedCode = request.recoveryCode ? normalizeCode(request.recoveryCode) : undefined
+  const candidate = presentedCode ? state?.recoveryCodes?.[presentedCode] : undefined
+  return candidate && matchesRecoveryIdentity(candidate.displayName, request.displayName) ? candidate.teamId : undefined
+}
+
+/**
  * Approval, capacity, team assignment and device recovery are one indivisible step.
  *
  * A returning student presents the code they were shown on their old device. Their
@@ -160,7 +186,7 @@ export const applyApproveJoinRequest = (
   // a code alone (readable off a neighbour's screen) is not proof of identity.
   const presentedCode = request.recoveryCode ? normalizeCode(request.recoveryCode) : undefined
   const candidate = presentedCode ? raw.recoveryCodes?.[presentedCode] : undefined
-  const recovery = candidate && candidate.displayName === request.displayName ? candidate : undefined
+  const recovery = candidate && matchesRecoveryIdentity(candidate.displayName, request.displayName) ? candidate : undefined
   const teamId = recovery?.teamId ?? raw.members?.[request.uid]?.teamId ?? chooseTeam(raw, request, mode, manualTeamId)
   if (!teamId || !raw.teams?.[teamId]) return undefined
   // A newly generated code must not silently overwrite someone else's live code.

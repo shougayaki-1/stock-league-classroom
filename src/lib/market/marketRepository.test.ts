@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { participantId } from './liveMarketTypes'
 import type { LiveMarketState } from './liveMarketTypes'
-import { applyApproveJoinRequest, applyReassignTeam, applyRemoveParticipant, buildJoinRequestPayload, generateRecoveryCode, initialLiveState } from './marketRepository'
+import { applyApproveJoinRequest, applyReassignTeam, applyRemoveParticipant, buildJoinRequestPayload, generateRecoveryCode, initialLiveState, matchesRecoveryIdentity, resolveRecoveryTeamId } from './marketRepository'
 
 describe('market identity', () => {
   it('keeps each device session distinct for a student', () => {
@@ -133,6 +133,65 @@ describe('recovery codes', () => {
     const state = pendingState()
     state.recoveryCodes = { ZZ99: { participantId: 'old_s1', teamId: 'blue', displayName: 'A' } }
     expect(applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')).toBeUndefined()
+  })
+
+  it('restores across a display name that only differs by an internal space', () => {
+    const state = pendingState('AB23')
+    state.recoveryCodes!.AB23.displayName = '山田 太郎'
+    state.joinRequests!.new_s2.displayName = '山田太郎'
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.participants!.new_s2.teamId).toBe('blue')
+  })
+
+  it('restores across full-width and half-width character variants', () => {
+    const state = pendingState('AB23')
+    state.recoveryCodes!.AB23.displayName = 'ヤマダ タロウ'
+    state.joinRequests!.new_s2.displayName = 'ﾔﾏﾀﾞ ﾀﾛｳ'
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.participants!.new_s2.teamId).toBe('blue')
+  })
+
+  it('still refuses a genuinely different name after normalization', () => {
+    const state = pendingState('AB23')
+    state.recoveryCodes!.AB23.displayName = '山田太郎'
+    state.joinRequests!.new_s2.displayName = '田中花子'
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    // Falls through to normal assignment, same as any other unmatched code.
+    expect(next.participants!.new_s2.teamId).toBe('red')
+    expect(next.participants!.old_s1).toBeDefined()
+  })
+})
+
+describe('matchesRecoveryIdentity', () => {
+  it('matches full-width and half-width variants of the same name', () => {
+    expect(matchesRecoveryIdentity('ﾔﾏﾀﾞ ﾀﾛｳ', 'ヤマダ タロウ')).toBe(true)
+  })
+
+  it('matches names differing only by a half-width or full-width internal space', () => {
+    expect(matchesRecoveryIdentity('山田 太郎', '山田太郎')).toBe(true)
+    expect(matchesRecoveryIdentity('山田　太郎', '山田 太郎')).toBe(true)
+  })
+
+  it('refuses a genuinely different name', () => {
+    expect(matchesRecoveryIdentity('山田太郎', '田中花子')).toBe(false)
+  })
+})
+
+describe('resolveRecoveryTeamId', () => {
+  it('names the team a presented code would restore', () => {
+    const state = pendingState('AB23')
+    expect(resolveRecoveryTeamId(state, state.joinRequests!.new_s2)).toBe('blue')
+  })
+
+  it('is undefined when the display name does not match', () => {
+    const state = pendingState('AB23')
+    state.joinRequests!.new_s2.displayName = 'Mallory'
+    expect(resolveRecoveryTeamId(state, state.joinRequests!.new_s2)).toBeUndefined()
+  })
+
+  it('is undefined when no code was presented', () => {
+    const state = pendingState()
+    expect(resolveRecoveryTeamId(state, state.joinRequests!.new_s2)).toBeUndefined()
   })
 })
 
