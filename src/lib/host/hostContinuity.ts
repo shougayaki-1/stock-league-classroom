@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * The market only advances while the host tab is foregrounded: browsers throttle
@@ -15,22 +15,43 @@ export const useDocumentHidden = (): boolean => {
   return hidden
 }
 
-/** Timestamp the tab was last backgrounded while hosting, or null while it is visible. */
-export const useHiddenSince = (active: boolean): number | null => {
-  const hidden = useDocumentHidden()
-  const [since, setSince] = useState<number | null>(null)
-  const wasHidden = useRef(false)
-  useEffect(() => {
-    if (!active) { setSince(null); wasHidden.current = false; return }
-    if (hidden && !wasHidden.current) { wasHidden.current = true; setSince(Date.now()) }
-    if (!hidden) wasHidden.current = false
-  }, [active, hidden])
-  return hidden ? since : null
-}
-
 export const describeInterruption = (hiddenSinceMillis: number, nowMillis: number): string => {
   const seconds = Math.max(0, Math.round((nowMillis - hiddenSinceMillis) / 1000))
   return seconds < 60 ? `${seconds}秒` : `${Math.floor(seconds / 60)}分${seconds % 60}秒`
+}
+
+export interface HostInterruption {
+  /** Set once the tab actually returns to the foreground; null otherwise. */
+  message: string | null
+  /** Clears the current message. A later, genuine interruption reports again regardless. */
+  dismiss: () => void
+}
+
+/**
+ * Reports how long the tab was actually hidden, measured from the moment it went
+ * hidden to the moment it actually becomes visible again — deliberately independent
+ * of the host lease. Losing the lease while still hidden (the most common real
+ * sequence: background the tab, the throttled tick lets the 15s lease expire) must
+ * not by itself end or report an interruption; only the tab genuinely returning does.
+ * A hidden tab cannot render anything, so the message is only ever produced on return.
+ */
+export const useHostInterruption = (): HostInterruption => {
+  const hidden = useDocumentHidden()
+  const [message, setMessage] = useState<string | null>(null)
+  const hiddenSince = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (hidden) {
+      if (hiddenSince.current === null) hiddenSince.current = Date.now()
+      return
+    }
+    const since = hiddenSince.current
+    hiddenSince.current = null
+    if (since !== null) setMessage(describeInterruption(since, Date.now()))
+  }, [hidden])
+
+  const dismiss = useCallback(() => setMessage(null), [])
+  return { message, dismiss }
 }
 
 /** Keeps the laptop screen awake so the lesson does not stop when the teacher steps away. */
@@ -40,7 +61,14 @@ export const useWakeLock = (active: boolean) => {
     let sentinel: WakeLockSentinel | undefined
     let released = false
     const request = async () => {
-      try { sentinel = await navigator.wakeLock.request('screen') } catch { /* denied or unsupported; the banner still warns */ }
+      try {
+        const acquired = await navigator.wakeLock.request('screen')
+        // The effect may have been cleaned up while this await was pending
+        // (e.g. the lease was taken and immediately lost). Release it right
+        // away instead of storing a sentinel nothing will ever release.
+        if (released) { void acquired.release().catch(() => undefined); return }
+        sentinel = acquired
+      } catch { /* denied or unsupported; the banner still warns */ }
     }
     const reacquire = () => { if (!released && document.visibilityState === 'visible') void request() }
     void request()
