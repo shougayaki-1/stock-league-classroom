@@ -12,6 +12,7 @@ import { listPersonalTemplates } from '../lib/templates/templateRepository'
 import { readServiceStatus, type ServiceStatus } from '../lib/service/serviceStatus'
 import type { PersonalTemplate } from '../lib/templates/types'
 import { deleteMarketCompletely } from '../lib/teacher/marketDeletion'
+import { buildTeamCsv, buildTransactionCsv, downloadCsv, fetchMarketResults } from '../lib/teacher/resultsExport'
 import { getStudentSessionId, readActiveStudentSession, saveActiveStudentSession } from '../lib/students/studentSession'
 
 const googleSignInErrorMessage = (error: unknown): string => {
@@ -58,8 +59,17 @@ export const TeacherMarketDashboard = () => {
   const teamOptions = Object.values(state?.teams ?? {}).map((team) => ({ id: team.id, name: team.name }))
   const signInWithGoogle = async () => { try { await signInTeacherWithGoogle(services.auth); setAuthNotice('Google アカウントでログインしました。') } catch (error) { setAuthNotice(googleSignInErrorMessage(error)) } }
   const create = async () => { if (!selected || !user) return setNotice('先にテンプレートを作成してください。'); setCreating(true); try { const result = await createMarket(services.firestore, services.database, { ownerUid: user.uid, template: selected, visibility }); setMarketId(result.marketId); setJoinCode(result.joinCode); await refreshOwned(user.uid); setNotice('市場を作成しました。参加コードを生徒に共有してください。') } catch (error) { setNotice(error instanceof Error ? error.message : '市場を作成できませんでした。接続と権限を確認してください。') } finally { setCreating(false) } }
+  const exportResults = async (market: MarketRecord) => {
+    const companyNames = Object.fromEntries(market.templateSnapshot.companies.map((company) => [company.id, company.name]))
+    const { teams, participants } = await fetchMarketResults(services.firestore, market.id)
+    if (!teams.length && !participants.length) return setNotice('この市場にはまだ確定した結果がありません。市場を終了してからお試しください。')
+    const stamp = market.templateSnapshot.title.replace(/[^\p{L}\p{N}]+/gu, '_')
+    downloadCsv(`${stamp}_チーム結果.csv`, buildTeamCsv(teams, companyNames))
+    downloadCsv(`${stamp}_取引履歴.csv`, buildTransactionCsv(participants, companyNames))
+    setNotice('結果を CSV で保存しました。')
+  }
   const removeMarket = async (market: MarketRecord) => {
-    if (!user || !window.confirm(`市場「${market.templateSnapshot.title}」を削除しますか？結果と参加コードも削除されます。`)) return
+    if (!user || !window.confirm(`市場「${market.templateSnapshot.title}」を削除しますか？結果・取引履歴・参加コードがすべて消え、元に戻せません。必要なら先に「結果をCSVで保存」してください。`)) return
     await deleteMarketCompletely(services.firestore, services.database, market.id)
     if (marketId === market.id) { setMarketId(''); setJoinCode(''); setState(null) }
     await refreshOwned(user.uid)
@@ -79,7 +89,7 @@ export const TeacherMarketDashboard = () => {
           onReject={(id) => void rejectJoinRequest(services.database, marketId, id).then(() => setNotice('申請を却下しました。')).catch(() => setNotice('申請を却下できませんでした。'))}
           onRemove={(id) => { if (window.confirm('この生徒を市場から退出させますか？チームの資産はそのまま残ります。')) void removeParticipant(services.database, marketId, id).then(() => setNotice('退出させました。')).catch(() => setNotice('退出させられませんでした。')) }}
           onReassign={(id, teamId) => void reassignParticipantTeam(services.database, marketId, id, teamId).then((ok) => setNotice(ok ? 'チームを変更しました。' : 'チームを変更できませんでした。')).catch(() => setNotice('チームを変更できませんでした。'))}
-        /></section>}<section className="template-section"><div className="template-section-head"><div><p className="section-kicker">MARKET HISTORY</p><h2>作成済み市場</h2></div><span>{markets.length} 件</span></div>{markets.length ? <ul className="template-list">{markets.map((market) => <li key={market.id}><div><strong>{market.templateSnapshot.title}</strong><p>参加コード {market.joinCode} ・ {market.creationStatus}</p></div><div className="template-actions"><button type="button" onClick={() => { setMarketId(market.id); setJoinCode(market.joinCode); setState(null) }}>参加を承認</button><a href={`/teacher/markets/${market.id}/host`}>ホスト</a><a href={`/markets/${market.id}/signage`}>教室画面</a><button className="danger-button" onClick={() => void removeMarket(market).catch(() => setNotice('市場を削除できませんでした。'))}>削除</button></div></li>)}</ul> : <p className="empty-copy">まだ市場はありません。</p>}</section></section></main>
+        /></section>}<section className="template-section"><div className="template-section-head"><div><p className="section-kicker">MARKET HISTORY</p><h2>作成済み市場</h2></div><span>{markets.length} 件</span></div>{markets.length ? <ul className="template-list">{markets.map((market) => <li key={market.id}><div><strong>{market.templateSnapshot.title}</strong><p>参加コード {market.joinCode} ・ {market.creationStatus}</p></div><div className="template-actions"><button type="button" onClick={() => { setMarketId(market.id); setJoinCode(market.joinCode); setState(null) }}>参加を承認</button><a href={`/teacher/markets/${market.id}/host`}>ホスト</a><a href={`/markets/${market.id}/signage`}>教室画面</a><button type="button" onClick={() => void exportResults(market).catch(() => setNotice('結果を読み込めませんでした。'))}>結果をCSVで保存</button><button className="danger-button" onClick={() => void removeMarket(market).catch(() => setNotice('市場を削除できませんでした。'))}>削除</button></div></li>)}</ul> : <p className="empty-copy">まだ市場はありません。</p>}</section></section></main>
 }
 
 export const StudentMarketJoin = () => {

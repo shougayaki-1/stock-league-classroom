@@ -173,6 +173,8 @@ export const finalizeEnding = async (firestore: Firestore, database: Database, m
   const participantWrites = Object.entries(snapshot.participants ?? {}).map(([participantId, participant]) =>
     setDoc(doc(firestore, 'marketResults', marketId, 'participants', participantId), {
       ownerUid, checkpointId: checkpoint, participantId, participantUid: participant.uid, teamId: participant.teamId,
+      // Carried into the result so the teacher's CSV names a student, not a UID.
+      displayName: participant.displayName,
       teamResult: participant.teamId ? leaderboard[participant.teamId] ?? null : null,
       transactions: snapshot.transactions?.[participantId] ?? {}, finalizedAtMillis: atMillis,
     }))
