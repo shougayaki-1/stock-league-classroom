@@ -96,3 +96,12 @@
 .host-price-table th, .host-price-table td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid rgba(128, 128, 128, 0.25); font-variant-numeric: tabular-nums; }
 .host-price-table .up { color: #0a7a3d; }
 .host-price-table .down { color: #b3261e; }
+.trade-panel { display: grid; gap: 12px; margin-top: 18px; }
+.trade-head { display: flex; align-items: baseline; justify-content: space-between; font-weight: 700; }
+.trade-price { font-variant-numeric: tabular-nums; color: #1a73e8; }
+.trade-limits { display: flex; gap: 16px; color: #5f6368; font-size: 12px; }
+.trade-actions { display: flex; gap: 10px; }
+.trade-actions button { flex: 1; }
+.trade-confirm { padding: 16px; display: grid; gap: 10px; background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 12px; }
+.trade-confirm p { margin: 0; }
+.trade-note { color: #5f6368; font-size: 12px; }

@@ -103,7 +103,16 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     {notice && <p className="form-notice" role="status">{notice}</p>}
     <section className="student-trading-grid">
       <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs">{Object.values(companies).map((company) => <button className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>
-        {selected && <TradePanel stockName={`${selected.name} (${selected.symbol})`} currentPrice={prices[selected.id]?.price ?? selected.basePrice} onSubmitOrder={(side, quantity) => void placeOrder(side, quantity).catch(() => { setPendingOrderId(''); setNotice('注文処理でエラーが発生しました。') })} latestResult={latestResult} disabled={meta?.status !== 'OPEN' || Boolean(pendingOrderId)} />}
+        {selected && <TradePanel
+          stockName={`${selected.name} (${selected.symbol})`}
+          currentPrice={prices[selected.id]?.price ?? selected.basePrice}
+          cash={portfolio?.cash ?? 0}
+          holding={portfolio?.holdings?.[selected.id] ?? 0}
+          onSubmitOrder={(side, quantity) => void placeOrder(side, quantity).catch(() => { setPendingOrderId(''); setNotice('注文処理でエラーが発生しました。') })}
+          latestResult={latestResult}
+          disabled={meta?.status !== 'OPEN'}
+          pending={Boolean(pendingOrderId)}
+        />}
       </div>
       <aside className="news-card"><h2>チーム資産</h2><p>現金 ¥{(portfolio?.cash ?? 0).toLocaleString()}</p><ul>{Object.entries(portfolio?.holdings ?? {}).map(([stockId, quantity]) => <li key={stockId}>{companies[stockId]?.symbol ?? stockId}: {quantity}株</li>)}</ul><h2>チーム順位</h2><ol>{Object.values(leaderboard).sort((a, b) => a.rank - b.rank).map((entry) => <li key={entry.teamId}><b>{entry.rank}位 {entry.name}</b> ¥{entry.valuation.toLocaleString()}</li>)}</ol></aside>
     </section>
