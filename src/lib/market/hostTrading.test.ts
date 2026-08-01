@@ -53,22 +53,51 @@ describe('news price impact', () => {
   it('shifts the whole phase runtime so the shock survives the next tick', () => {
     const next = state()
     applyNewsImpact(next, 10, 2_000)
-    expect(next.prices.acme.price).toBe(clampToBounds(121, 100))
     expect(next.prices.acme.runtime!.startPrice).toBe(clampToBounds(110, 100))
     expect(next.prices.acme.runtime!.endPrice).toBe(clampToBounds(132, 100))
+    // entry.price is derived from the shifted runtime, not clamped independently,
+    // so it is by construction the number the next tick recomputes.
+    expect(next.prices.acme.price).toBe(clampToBounds(110 + (132 - 110) * (2_000 / 60_000), 100))
     expect(next.prices.acme.updatedAtMillis).toBe(2_000)
   })
 
   it('clamps the impact and keeps the price inside the base-price bounds', () => {
     const next = state()
     applyNewsImpact(next, -500, 2_000)
-    expect(next.prices.acme.price).toBe(clampToBounds(110 * 0.8, 100))
+    const shiftedStart = clampToBounds(100 * 0.8, 100)
+    const shiftedEnd = clampToBounds(120 * 0.8, 100)
+    expect(next.prices.acme.price).toBe(clampToBounds(shiftedStart + (shiftedEnd - shiftedStart) * (2_000 / 60_000), 100))
   })
 
   it('does nothing at zero', () => {
     const next = state()
     applyNewsImpact(next, 0, 2_000)
     expect(next.prices.acme.price).toBe(110)
+  })
+
+  it('sets a price the very next tick recomputes identically, so there is no twitch', () => {
+    const next = state()
+    applyNewsImpact(next, 10, 2_000)
+    const runtime = next.prices.acme.runtime!
+    expect(priceAtRuntime(runtime, 100, 2_000)).toBe(next.prices.acme.price)
+  })
+
+  it('keeps carrying the shock a second later, unlike an un-shocked runtime at the same instant', () => {
+    const shocked = state()
+    applyNewsImpact(shocked, 10, 2_000)
+    const unshocked = state()
+    const shockedNext = priceAtRuntime(shocked.prices.acme.runtime!, 100, 3_000)
+    const unshockedNext = priceAtRuntime(unshocked.prices.acme.runtime!, 100, 3_000)
+    const runtime = shocked.prices.acme.runtime!
+    expect(shockedNext).toBe(clampToBounds(runtime.startPrice + (runtime.endPrice - runtime.startPrice) * (3_000 / 60_000), 100))
+    expect(shockedNext).toBeGreaterThan(unshockedNext)
+  })
+
+  it('still shifts and clamps the price for an entry with no runtime', () => {
+    const next = { companies: state().companies, prices: { acme: { price: 110, updatedAtMillis: 1_000 } } }
+    applyNewsImpact(next, 10, 2_000)
+    expect(next.prices.acme.price).toBe(clampToBounds(121, 100))
+    expect(next.prices.acme.updatedAtMillis).toBe(2_000)
   })
 })
 

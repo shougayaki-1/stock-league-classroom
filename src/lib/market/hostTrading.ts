@@ -163,12 +163,15 @@ export const applyNewsImpact = (state: Pick<LiveMarketState, 'prices' | 'compani
   const multiplier = 1 + bounded / 100
   for (const [stockId, entry] of Object.entries(state.prices)) {
     const basePrice = state.companies?.[stockId]?.basePrice ?? entry.price
-    entry.price = clampToBounds(entry.price * multiplier, basePrice)
-    entry.updatedAtMillis = atMillis
     if (entry.runtime) {
       entry.runtime.startPrice = clampToBounds(entry.runtime.startPrice * multiplier, basePrice)
       entry.runtime.endPrice = clampToBounds(entry.runtime.endPrice * multiplier, basePrice)
+      // Derived from the just-shifted runtime so this is the exact number the next tick recomputes.
+      entry.price = priceAtRuntime(entry.runtime, basePrice, atMillis)
+    } else {
+      entry.price = clampToBounds(entry.price * multiplier, basePrice)
     }
+    entry.updatedAtMillis = atMillis
   }
 }
 
