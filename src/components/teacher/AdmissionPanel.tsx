@@ -21,6 +21,26 @@ export interface AdmissionPanelProps {
 
 export function AdmissionPanel({ joinCode, capacity, teams, requests, participants, mode, onModeChange, onApprove, onReject, onRemove, onReassign, onCopyJoinCode }: AdmissionPanelProps) {
   const [manualTeams, setManualTeams] = useState<Record<string, string>>({})
+  // Track the previously-seen requests so we can prune a request's manual team
+  // choice once its id disappears (e.g. rejected, then re-requested with the
+  // same deterministic id). Adjusting state during render, per
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders,
+  // keeps this correct without an Effect or an extra render pass.
+  const [prevRequests, setPrevRequests] = useState(requests)
+  if (requests !== prevRequests) {
+    const currentIds = new Set(requests.map((request) => request.id))
+    const disappearedIds = prevRequests
+      .map((request) => request.id)
+      .filter((id) => !currentIds.has(id))
+    if (disappearedIds.length > 0) {
+      setManualTeams((current) => {
+        const next = { ...current }
+        disappearedIds.forEach((id) => delete next[id])
+        return next
+      })
+    }
+    setPrevRequests(requests)
+  }
   const active = participants.filter((participant) => participant.connected).length
   const teamName = (id: string | null) => teams.find((team) => team.id === id)?.name ?? '未割当'
   return (

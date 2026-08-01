@@ -45,8 +45,30 @@ describe('AdmissionPanel', () => {
   })
 
   it('shows the participant count against the capacity', () => {
-    render(<AdmissionPanel {...baseProps} />)
+    const participants = [
+      { id: 'u2_s', displayName: '鈴木', teamId: 'red', connected: true },
+      { id: 'u3_s', displayName: '佐藤', teamId: 'red', connected: false },
+    ]
+    render(<AdmissionPanel {...baseProps} participants={participants} />)
     expect(screen.getByText('1 / 80')).toBeInTheDocument()
+    const disconnectedItem = screen.getByText('佐藤').closest('li')
+    expect(disconnectedItem).toHaveClass('disconnected')
+    expect(disconnectedItem).toBeInTheDocument()
+  })
+
+  it('resets the manual team choice when a request disappears and returns', async () => {
+    const onApprove = vi.fn()
+    const request = { id: 'u1_s', displayName: '山田', requestedTeamId: null }
+    const { rerender } = render(
+      <AdmissionPanel {...baseProps} mode="manual" requests={[request]} onApprove={onApprove} />,
+    )
+    await userEvent.selectOptions(screen.getByLabelText('山田 さんの割り当て先'), 'blue')
+    expect(screen.getByLabelText('山田 さんの割り当て先')).toHaveValue('blue')
+
+    rerender(<AdmissionPanel {...baseProps} mode="manual" requests={[]} onApprove={onApprove} />)
+
+    rerender(<AdmissionPanel {...baseProps} mode="manual" requests={[request]} onApprove={onApprove} />)
+    expect(screen.getByLabelText('山田 さんの割り当て先')).toHaveValue('red')
   })
 
   it('explains the empty state when nobody is waiting', () => {
