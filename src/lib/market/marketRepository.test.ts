@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { participantId } from './liveMarketTypes'
 import type { LiveMarketState } from './liveMarketTypes'
-import { applyReassignTeam, applyRemoveParticipant, initialLiveState } from './marketRepository'
+import { applyApproveJoinRequest, applyReassignTeam, applyRemoveParticipant, generateRecoveryCode, initialLiveState } from './marketRepository'
 
 describe('market identity', () => {
   it('keeps each device session distinct for a student', () => {
@@ -44,6 +44,58 @@ describe('participant removal', () => {
 
   it('aborts when the participant does not exist', () => {
     expect(applyRemoveParticipant(stateWithTwo(), 'missing_s')).toBeUndefined()
+  })
+})
+
+const pendingState = (recoveryCode?: string): LiveMarketState => ({
+  meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'OPEN', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC234' },
+  teams: { red: { id: 'red', name: '赤' }, blue: { id: 'blue', name: '青' } },
+  joinRequests: { new_s2: { uid: 'new', sessionId: 's2', displayName: 'A', requestedTeamId: null, connected: true, requestedAtMillis: 5, ...(recoveryCode ? { recoveryCode } : {}) } },
+  participants: { old_s1: { uid: 'old', sessionId: 's1', displayName: 'A', teamId: 'blue', connected: false, lastSeenAtMillis: 1 } },
+  members: { old: { teamId: 'blue' } },
+  transactions: { old_s1: { o1: { orderId: 'o1', participantId: 'old_s1', teamId: 'blue', stockId: 'acme', side: 'BUY', requestedQuantity: 2, filledQuantity: 2, price: 100, processedAtMillis: 6 } } },
+  teamPortfolios: { blue: { cash: 9800, holdings: { acme: 2 }, updatedAtMillis: 6 } },
+  recoveryCodes: { AB23: { participantId: 'old_s1', teamId: 'blue', displayName: 'A' } },
+})
+
+describe('recovery codes', () => {
+  it('issues a code on a first approval and records the reverse index', () => {
+    const state = pendingState()
+    delete state.recoveryCodes
+    delete state.participants
+    const next = applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.joinRequests!.new_s2.recoveryCode).toBe('ZZ99')
+    expect(next.recoveryCodes!.ZZ99).toEqual({ participantId: 'new_s2', teamId: next.participants!.new_s2.teamId, displayName: 'A' })
+  })
+
+  it('restores the previous team and trade history when a code is presented', () => {
+    const next = applyApproveJoinRequest(pendingState('AB23'), 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.participants!.new_s2.teamId).toBe('blue')
+    expect(next.participants!.old_s1).toBeUndefined()
+    expect(next.transactions!.new_s2.o1.filledQuantity).toBe(2)
+    expect(next.transactions!.old_s1).toBeUndefined()
+    expect(next.recoveryCodes!.AB23.participantId).toBe('new_s2')
+    expect(next.joinRequests!.new_s2.recoveryCode).toBe('AB23')
+    // The team keeps every asset, so the student comes back to exactly what they left.
+    expect(next.teamPortfolios!.blue).toEqual({ cash: 9800, holdings: { acme: 2 }, updatedAtMillis: 6 })
+  })
+
+  it('ignores an unknown code and assigns a team normally', () => {
+    const next = applyApproveJoinRequest(pendingState('QQQQ'), 'new_s2', 'random', undefined, 99, 'ZZ99')!
+    expect(next.joinRequests!.new_s2.recoveryCode).toBe('ZZ99')
+    expect(next.participants!.old_s1).toBeDefined()
+  })
+
+  it('refuses a new participant once the capacity is reached', () => {
+    const state = pendingState()
+    state.meta.capacity = 1
+    state.participants!.old_s1.connected = true
+    expect(applyApproveJoinRequest(state, 'new_s2', 'random', undefined, 99, 'ZZ99')).toBeUndefined()
+  })
+
+  it('generates a four character code from the unambiguous alphabet', () => {
+    expect(generateRecoveryCode(new Uint32Array([0, 1, 2, 3]))).toBe('2345')
+    expect(generateRecoveryCode()).toHaveLength(4)
   })
 })
 

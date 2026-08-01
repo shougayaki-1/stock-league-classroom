@@ -83,9 +83,15 @@ export const resolveJoinCode = async (firestore: Firestore, joinCode: string): P
   return result.exists() ? String(result.data().marketId) : undefined
 }
 
-export const requestToJoinMarket = async (database: Database, marketId: string, request: Omit<JoinRequest, 'requestedAtMillis' | 'connected'>) => {
+export const requestToJoinMarket = async (
+  database: Database,
+  marketId: string,
+  request: Omit<JoinRequest, 'requestedAtMillis' | 'connected' | 'approvedAtMillis'>,
+) => {
   const id = participantId(request.uid, request.sessionId)
-  await set(ref(database, `${root(marketId)}/joinRequests/${id}`), { ...request, connected: true, requestedAtMillis: Date.now() })
+  const payload = { ...request, connected: true, requestedAtMillis: Date.now() }
+  if (!payload.recoveryCode) delete payload.recoveryCode
+  await set(ref(database, `${root(marketId)}/joinRequests/${id}`), payload)
   await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
   return id
 }
@@ -112,28 +118,65 @@ const chooseTeam = (state: LiveMarketState, request: JoinRequest, mode: TeamAssi
   return teamIds.reduce((best, id) => counts[id] < counts[best] ? id : best, teamIds[0])
 }
 
-/** Root transaction keeps the cap, request approval, and team assignment indivisible. */
+export const RECOVERY_CODE_LENGTH = 4
+/** Short enough to read aloud, from the same unambiguous alphabet as join codes. */
+export const generateRecoveryCode = (randomValues: Uint32Array = crypto.getRandomValues(new Uint32Array(RECOVERY_CODE_LENGTH))) =>
+  Array.from(randomValues, (value) => JOIN_CODE_ALPHABET[value % JOIN_CODE_ALPHABET.length]).join('')
+
+/**
+ * Approval, capacity, team assignment and device recovery are one indivisible step.
+ *
+ * A returning student presents the code they were shown on their old device. Their
+ * assets live on the team, so restoring the team restores everything; the personal
+ * trade history is re-keyed onto the new participant id and the stale participant
+ * is retired so the teacher's list never shows a ghost.
+ */
+export const applyApproveJoinRequest = (
+  raw: LiveMarketState | null,
+  id: string,
+  mode: TeamAssignmentMode,
+  manualTeamId: string | undefined,
+  atMillis: number,
+  newCode: string,
+): LiveMarketState | undefined => {
+  if (!raw?.meta || !raw.joinRequests?.[id]) return undefined
+  const request = raw.joinRequests[id]
+  if (!request.connected) return undefined
+  raw.participants ??= {}
+  if (raw.participants[id]) return raw
+  const active = Object.values(raw.participants).filter((participant) => participant.connected).length
+  if (active >= raw.meta.capacity) return undefined
+  const recovery = request.recoveryCode ? raw.recoveryCodes?.[request.recoveryCode] : undefined
+  const teamId = recovery?.teamId ?? raw.members?.[request.uid]?.teamId ?? chooseTeam(raw, request, mode, manualTeamId)
+  if (!teamId || !raw.teams?.[teamId]) return undefined
+  const participant: LiveMarketParticipant = { uid: request.uid, sessionId: request.sessionId, displayName: request.displayName, teamId, connected: true, lastSeenAtMillis: atMillis }
+  raw.participants[id] = participant
+  raw.members ??= {}
+  raw.members[request.uid] = { teamId }
+  raw.teamPortfolios ??= {}
+  raw.teamPortfolios[teamId] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: atMillis }
+  const code = recovery && request.recoveryCode ? request.recoveryCode : newCode
+  if (recovery && recovery.participantId !== id) {
+    const previous = raw.transactions?.[recovery.participantId]
+    if (previous) {
+      raw.transactions ??= {}
+      raw.transactions[id] = { ...previous, ...(raw.transactions[id] ?? {}) }
+      delete raw.transactions[recovery.participantId]
+    }
+    if (raw.participants[recovery.participantId]) delete raw.participants[recovery.participantId]
+    if (raw.orders?.[recovery.participantId]) delete raw.orders[recovery.participantId]
+  }
+  raw.recoveryCodes ??= {}
+  raw.recoveryCodes[code] = { participantId: id, teamId, displayName: request.displayName }
+  raw.joinRequests[id] = { ...request, approvedAtMillis: atMillis, recoveryCode: code }
+  return raw
+}
+
+/** Root transaction keeps the cap, request approval, team assignment and recovery indivisible. */
 export const approveJoinRequest = async (database: Database, marketId: string, id: string, mode: TeamAssignmentMode, manualTeamId?: string) => {
-  const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
-    if (!raw?.meta || !raw.joinRequests?.[id]) return
-    const request = raw.joinRequests[id]
-    if (!request.connected) return
-    raw.participants ??= {}
-    if (raw.participants[id]) return raw
-    const active = Object.values(raw.participants).filter((participant) => participant.connected).length
-    if (active >= raw.meta.capacity) return
-    const existingMembership = raw.members?.[request.uid]
-    const teamId = existingMembership?.teamId ?? chooseTeam(raw, request, mode, manualTeamId)
-    if (!teamId) return
-    const participant: LiveMarketParticipant = { uid: request.uid, sessionId: request.sessionId, displayName: request.displayName, teamId, connected: true, lastSeenAtMillis: Date.now() }
-    raw.participants[id] = participant
-    raw.members ??= {}
-    raw.members[request.uid] = { teamId }
-    raw.teamPortfolios ??= {}
-    raw.teamPortfolios[teamId] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: Date.now() }
-    raw.joinRequests[id] = { ...request, approvedAtMillis: Date.now() }
-    return raw
-  })
+  const newCode = generateRecoveryCode()
+  const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) =>
+    applyApproveJoinRequest(raw, id, mode, manualTeamId, Date.now(), newCode))
   return result.committed
 }
 

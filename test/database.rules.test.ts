@@ -151,6 +151,31 @@ describe('emergency stop (RTDB)', () => {
   })
 })
 
+describe('recovery codes', () => {
+  it('lets a student read but never rewrite the code issued to them', async () => {
+    const request = { uid: 'student-a', sessionId: 'session', displayName: '生徒', requestedTeamId: null, connected: true, requestedAtMillis: 1, recoveryCode: 'AB23' }
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/joinRequests/student-a_session`).set(request))
+    const student = environment.authenticatedContext('student-a').database()
+    await assertSucceeds(student.ref(`liveMarkets/${market}/joinRequests/student-a_session/recoveryCode`).get())
+    await assertFails(student.ref(`liveMarkets/${market}/joinRequests/student-a_session`).set({ ...request, recoveryCode: 'ZZ99' }))
+  })
+
+  it('never exposes the market-wide recovery index to a student', async () => {
+    await approveStudent()
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/recoveryCodes/AB23`).set({ participantId: 'student-a_session', teamId: 'red', displayName: '生徒' }))
+    await assertFails(environment.authenticatedContext('student-a').database().ref(`liveMarkets/${market}/recoveryCodes`).get())
+  })
+
+  it('rejects a malformed recovery code on a join request', async () => {
+    const student = environment.authenticatedContext('student-b').database()
+    await assertFails(student.ref(`liveMarkets/${market}/joinRequests/student-b_session`).set({
+      uid: 'student-b', sessionId: 'session', displayName: '生徒', requestedTeamId: null, connected: true, requestedAtMillis: 1, recoveryCode: 'TOOLONG',
+    }))
+  })
+})
+
 describe('joining an already-open market', () => {
   it('accepts a join request while the market is OPEN but not after it ended', async () => {
     await environment.withSecurityRulesDisabled(async (context) =>
