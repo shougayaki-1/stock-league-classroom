@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { AppVersion } from './AppVersion'
 
 /** Static public documents. */
 const OPERATOR = 'しょうが焼き'
@@ -17,7 +18,7 @@ const DocLayout = ({ title, lead, children }: { title: string; lead: string; chi
     {children}
     <p className="doc-updated">最終更新: {UPDATED_AT}</p>
   </article>
-  <footer className="doc-footer">© 2026 Stock League Classroom　運営: {OPERATOR}　<a href="/">トップへ</a></footer>
+  <footer className="doc-footer">© 2026 Stock League Classroom　運営: {OPERATOR}　<a href="/">トップへ</a><AppVersion /></footer>
 </main>
 
 const Disclaimer = () => <aside className="doc-callout" role="note">
