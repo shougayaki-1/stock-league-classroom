@@ -49,14 +49,14 @@ describe('live market RTDB rules', () => {
     await assertFails(outsider.ref(`liveMarkets/${market}/prices`).once('value'))
   })
 
-  it('allows a student to create a join request only while setup is open', async () => {
+  it('allows a student to create a join request during setup, and still after the market opens', async () => {
     const student = environment.authenticatedContext('student-a').database()
     const path = `liveMarkets/${market}/joinRequests/student-a_session`
     await assertSucceeds(student.ref(path).set({ uid: 'student-a', sessionId: 'session', displayName: '生徒', requestedTeamId: null, connected: true, requestedAtMillis: 1 }))
     await assertSucceeds(student.ref(`${path}/connected`).set(false))
     const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
     await assertSucceeds(teacher.ref(`liveMarkets/${market}/meta/status`).set('OPEN'))
-    await assertFails(environment.authenticatedContext('student-b').database().ref(`liveMarkets/${market}/joinRequests/student-b_session`).set({ uid: 'student-b', sessionId: 'session', displayName: '遅刻', requestedTeamId: null, connected: true, requestedAtMillis: 2 }))
+    await assertSucceeds(environment.authenticatedContext('student-b').database().ref(`liveMarkets/${market}/joinRequests/student-b_session`).set({ uid: 'student-b', sessionId: 'session', displayName: '遅刻', requestedTeamId: null, connected: true, requestedAtMillis: 2 }))
   })
 
   it('rejects malformed and identity-changing join request writes through child paths', async () => {
@@ -148,5 +148,20 @@ describe('emergency stop (RTDB)', () => {
     const operator = environment.authenticatedContext('operator-a', { ...teacherToken, operator: true }).database()
     await assertSucceeds(operator.ref('serviceStatus').set({ acceptingNewMarkets: true }))
     await assertFails(operator.ref('serviceStatus').set({ acceptingNewMarkets: 'yes' }))
+  })
+})
+
+describe('joining an already-open market', () => {
+  it('accepts a join request while the market is OPEN but not after it ended', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/meta/status`).set('OPEN'))
+    const student = environment.authenticatedContext('student-late').database()
+    const request = { uid: 'student-late', sessionId: 'session', displayName: '遅刻', requestedTeamId: null, connected: true, requestedAtMillis: 5 }
+    await assertSucceeds(student.ref(`liveMarkets/${market}/joinRequests/student-late_session`).set(request))
+
+    await environment.withSecurityRulesDisabled(async (context) =>
+      context.database().ref(`liveMarkets/${market}/meta/status`).set('ENDED'))
+    const other = environment.authenticatedContext('student-too-late').database()
+    await assertFails(other.ref(`liveMarkets/${market}/joinRequests/student-too-late_session`).set({ ...request, uid: 'student-too-late' }))
   })
 })
