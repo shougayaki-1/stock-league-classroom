@@ -30,6 +30,7 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
   const [editingId, setEditingId] = useState<string>()
   const [draft, setDraft] = useState<TemplateSpec>(() => blank())
   const [notice, setNotice] = useState('')
+  const [shareUrl, setShareUrl] = useState('')
   const refresh = useCallback(async () => {
     if (!db || !ownerUid) return
     const [mine, published] = await Promise.all([listPersonalTemplates(db, ownerUid), listOfficialTemplates(db)])
@@ -56,7 +57,10 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
   const createNew = () => { setEditingId(undefined); setDraft(blank()); setNotice('') }
   const share = async (item: PersonalTemplate) => {
     const id = await createTemplateShare(db, ownerUid, item)
-    setNotice(`共有URL: ${window.location.origin}/templates/share/${id}`)
+    // A share link cannot be listed or re-fetched later, so it must be copyable now.
+    const url = `${window.location.origin}/templates/share/${id}`
+    setShareUrl(url)
+    setNotice('共有URLを発行しました。下のボタンでコピーしてください。')
   }
   const removeTemplate = async (item: PersonalTemplate) => {
     if (!window.confirm(`「${item.title}」を削除しますか？`)) return
@@ -97,6 +101,7 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
         </div>
         <button className="portal-button" type="button" onClick={() => void save().catch((error: unknown) => setNotice(error instanceof TemplateValidationError ? error.message : handleFailure(error, '保存できませんでした。')))}>保存する <span>→</span></button>
         {notice && <p className="form-notice" role="status">{notice}</p>}
+        {shareUrl && <p className="form-notice share-url" role="status"><code>{shareUrl}</code><button type="button" onClick={() => void navigator.clipboard.writeText(shareUrl).then(() => setNotice('共有URLをコピーしました。'))}>コピー</button><small>この URL はあとから一覧できません。いま控えてください。</small></p>}
       </div>
 
       <div className="template-section"><div className="template-section-head"><div><p className="section-kicker">YOUR LIBRARY</p><h2>自分のテンプレート</h2></div><span>{personal.length} 件</span></div>{personal.length ? <ul className="template-list">{personal.map((item) => <li key={item.id}><div className="template-mark">◫</div><div><strong>{item.title}</strong><p>{item.description}</p><small>初期資金 ¥{item.startingCash.toLocaleString()} ・ {item.teams.length} チーム ・ {item.companies.length} 社</small></div><div className="template-actions"><button type="button" onClick={() => edit(item)}>編集</button><button type="button" onClick={() => void share(item)}>共有</button><button className="danger-button" type="button" onClick={() => void removeTemplate(item)}>削除</button></div></li>)}</ul> : <div className="template-empty"><strong>まだテンプレートがありません。</strong><p>上のエディタで最初の市場を保存してください。</p></div>}</div>

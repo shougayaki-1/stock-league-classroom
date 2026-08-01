@@ -111,3 +111,8 @@
    removing a student and ending a market are both irreversible mid-lesson. */
 .danger-button { padding: 8px 11px; color: #b3261e; font: inherit; font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #f1b9b6; border-radius: 999px; cursor: pointer; }
 .app-version { opacity: 0.6; font-size: 0.75rem; margin-left: 0.75rem; }
+.results-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.share-url { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.share-url code { padding: 3px 6px; color: #1967d2; background: #e8f0fe; border-radius: 5px; word-break: break-all; }
+.share-url button { padding: 8px 11px; color: #1a73e8; font: inherit; font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #a8c7fa; border-radius: 999px; cursor: pointer; }
+.share-url small { flex-basis: 100%; color: #5f6368; font-size: 11px; }

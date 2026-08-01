@@ -5,7 +5,7 @@ import { getOrCreateStudentUid } from '../../lib/auth/studentAuth'
 import { submitOrder } from '../../lib/market/hostTrading'
 import { armApprovedParticipantPresence } from '../../lib/market/marketRepository'
 import type { LiveMarketMetadata, LiveMarketParticipant, LiveMarketTeam, LivePrice, OrderResult, Portfolio, TeamLeaderboardEntry } from '../../lib/market/liveMarketTypes'
-import { readActiveStudentSession } from '../../lib/students/studentSession'
+import { clearActiveStudentSession, readActiveStudentSession } from '../../lib/students/studentSession'
 import { useDatabaseConnected, useDatabaseOffline, useReleaseIdleConnection } from '../../lib/firebase/connectionState'
 import { handleFailure } from '../../lib/monitoring/describeError'
 import { TradePanel } from './TradePanel'
@@ -106,7 +106,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     if (!selectedStockId) setSelectedStockId(Object.keys(companies)[0] ?? '')
   }, [companies, selectedStockId])
 
-  if (!sessionValid) return <main className="student-page"><section className="student-card"><h1>参加情報が見つかりません</h1><p>参加コードを使って、もう一度市場へ参加してください。</p><a className="portal-button" href="/join">参加画面へ</a></section></main>
+  if (!sessionValid) return <main className="student-page"><section className="student-card"><h1>参加情報が見つかりません</h1><p>参加コードを使って、もう一度市場へ参加してください。</p><a className="portal-button" href="/join" onClick={() => clearActiveStudentSession()}>参加画面へ</a></section></main>
   if (offline) return <main className="student-page"><section className="student-card"><div className="student-icon">!</div><h1>市場につながりません</h1><p>通信が切れているか、教室の同時利用が上限に達しています。数十秒待つと自動で復帰することがあります。復帰しない場合は先生に知らせてください。</p><p className="student-message error" role="alert">売買した内容は保存されています。つながり次第、続きから再開できます。</p></section></main>
   if (!participant) return <main className="student-page"><section className="student-card"><h1>市場へ接続しています…</h1><p>{notice || '承認済みの参加情報を確認しています。'}</p><a href="/join">参加画面へ戻る</a></section></main>
 
@@ -123,7 +123,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     if (!result.committed) { setPendingOrderId(''); setNotice('注文を送信できませんでした。前の注文が処理中か、市場が終了しています。') }
   }
 
-  if (meta?.status === 'ENDED') return <ResultsView teamName={teams[participant.teamId ?? '']?.name ?? '所属チーム'} finalValuation={teamResult?.valuation ?? 0} rank={teamResult?.rank ?? null} transactions={Object.values(transactions)} />
+  if (meta?.status === 'ENDED') return <ResultsView teamName={teams[participant.teamId ?? '']?.name ?? '所属チーム'} finalValuation={teamResult?.valuation ?? 0} rank={teamResult?.rank ?? null} transactions={Object.values(transactions)} onLeave={clearActiveStudentSession} />
 
   return <main className="student-market-page">
     <header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>{teams[participant.teamId ?? '']?.name}</span></header>
