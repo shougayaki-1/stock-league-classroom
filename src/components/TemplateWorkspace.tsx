@@ -13,7 +13,7 @@ const blank = (): TemplateSpec => ({
   startingCash: 10000,
   teams: [{ id: newId('team'), name: '赤チーム' }, { id: newId('team'), name: '青チーム' }],
   companies: [{
-    id: newId('stock'), name: 'サンプル株式会社', symbol: 'SAMPLE', initialPrice: 500, initialShares: 100,
+    id: newId('stock'), name: 'サンプル株式会社', symbol: 'SAMPLE', initialPrice: 500,
     pricePhases: [{ id: newId('phase'), startMinute: 0, endMinute: 60, direction: 'FLAT', changePercent: 0 }],
   }],
 })
@@ -80,7 +80,7 @@ export const TemplateWorkspace = ({ db, ownerUid }: TemplateWorkspaceProps) => {
           {draft.teams.map((team, index) => <div className="editor-row" key={team.id}><label>チーム名<input value={team.name} maxLength={30} onChange={(event) => setDraft({ ...draft, teams: draft.teams.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} /></label><button className="danger-button" type="button" disabled={draft.teams.length <= 2} onClick={() => setDraft({ ...draft, teams: draft.teams.filter((_, itemIndex) => itemIndex !== index) })}>削除</button></div>)}
         </div>
 
-        <div className="editor-section"><div className="card-heading"><h3>銘柄と価格フェーズ</h3><button type="button" disabled={draft.companies.length >= 20} onClick={() => setDraft({ ...draft, companies: [...draft.companies, { id: newId('stock'), name: '新しい会社', symbol: `STK${draft.companies.length + 1}`, initialPrice: 500, initialShares: 100, pricePhases: [{ id: newId('phase'), startMinute: 0, endMinute: 60, direction: 'FLAT', changePercent: 0 }] }] })}>＋ 銘柄を追加</button></div>
+        <div className="editor-section"><div className="card-heading"><h3>銘柄と価格フェーズ</h3><button type="button" disabled={draft.companies.length >= 20} onClick={() => setDraft({ ...draft, companies: [...draft.companies, { id: newId('stock'), name: '新しい会社', symbol: `STK${draft.companies.length + 1}`, initialPrice: 500, pricePhases: [{ id: newId('phase'), startMinute: 0, endMinute: 60, direction: 'FLAT', changePercent: 0 }] }] })}>＋ 銘柄を追加</button></div>
           {draft.companies.map((company, companyIndex) => <article className="company-editor" key={company.id}>
             <div className="field-grid"><label>会社名<input value={company.name} maxLength={80} onChange={(event) => updateCompany(companyIndex, { name: event.target.value })} /></label><label>銘柄コード<input value={company.symbol} maxLength={10} onChange={(event) => updateCompany(companyIndex, { symbol: event.target.value.toUpperCase() })} /></label><label>初期価格<input type="number" min={1} max={10_000_000} value={company.initialPrice} onChange={(event) => updateCompany(companyIndex, { initialPrice: Number(event.target.value) })} /></label></div>
             <div className="card-heading"><h4>開始からの価格フェーズ（分）</h4><button type="button" onClick={() => updateCompany(companyIndex, { pricePhases: [...(company.pricePhases ?? []), { id: newId('phase'), startMinute: 0, endMinute: 60, direction: 'FLAT', changePercent: 0 }] })}>＋ フェーズ</button></div>

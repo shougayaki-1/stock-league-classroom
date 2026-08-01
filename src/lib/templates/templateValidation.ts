@@ -43,7 +43,6 @@ export const normalizeTemplate = (spec: TemplateSpec): TemplateSpec => ({
     name: company.name.trim(),
     symbol: company.symbol.trim().toUpperCase(),
     initialPrice: Math.round(company.initialPrice),
-    initialShares: Math.max(1, Math.round(company.initialShares)),
     pricePhases: normalizePhases(company.pricePhases),
   })),
 })

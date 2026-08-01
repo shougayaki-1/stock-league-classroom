@@ -14,7 +14,7 @@ const template: TemplateSpec = {
   title: '結合テスト市場', description: '', startingCash: 1000,
   teams: [{ id: 'red', name: '赤' }, { id: 'blue', name: '青' }],
   companies: [{
-    id: 'acme', name: 'Acme', symbol: 'ACME', initialPrice: 100, initialShares: 100,
+    id: 'acme', name: 'Acme', symbol: 'ACME', initialPrice: 100,
     pricePhases: [{ id: 'flat', startMinute: 0, endMinute: 60, direction: 'FLAT', changePercent: 0 }],
   }],
 }
