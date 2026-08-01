@@ -35,8 +35,9 @@ export function ResultsView({ teamName, finalValuation, rank, transactions, comp
     {rank !== null && <p className="result-rank">{rank}位</p>}
 
     <h2>銘柄ごとの結果</h2>
+    <p className="result-note">チームでお金と株をひとつにまとめて取引しているので、この結果にはチームメイトの分も入っています。</p>
     {positions.length ? <table className="results-positions">
-      <thead><tr><th scope="col">銘柄</th><th scope="col">残っている株</th><th scope="col">買った金額</th><th scope="col">売った金額</th><th scope="col">損益</th></tr></thead>
+      <thead><tr><th scope="col">銘柄</th><th scope="col">チームの残り株数</th><th scope="col">あなたが買った金額</th><th scope="col">あなたが売った金額</th><th scope="col">チーム全体の損益</th></tr></thead>
       <tbody>{positions.map((position) => {
         const remaining = holdings[position.stockId] ?? 0
         const net = position.received + remaining * (prices[position.stockId] ?? 0) - position.spent
