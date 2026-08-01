@@ -91,7 +91,7 @@ export const requestToJoinMarket = async (
   const id = participantId(request.uid, request.sessionId)
   const payload = { ...request, connected: true, requestedAtMillis: Date.now() }
   if (payload.recoveryCode) payload.recoveryCode = normalizeCode(payload.recoveryCode)
-  else delete payload.recoveryCode
+  if (payload.recoveryCode?.length !== RECOVERY_CODE_LENGTH) delete payload.recoveryCode
   await set(ref(database, `${root(marketId)}/joinRequests/${id}`), payload)
   await onDisconnect(ref(database, `${root(marketId)}/joinRequests/${id}/connected`)).set(false)
   return id

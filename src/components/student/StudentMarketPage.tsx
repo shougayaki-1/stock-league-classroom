@@ -27,6 +27,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const [selectedStockId, setSelectedStockId] = useState('')
   const [pendingOrderId, setPendingOrderId] = useState('')
   const [notice, setNotice] = useState('')
+  const [recoveryCode, setRecoveryCode] = useState('')
   const sessionValid = active?.marketId === marketId
   const participantKey = uid && sessionValid ? `${uid}_${active.sessionId}` : ''
   // Reads meta directly: the connection must be released even after the
@@ -53,6 +54,12 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     ]
     return () => subscriptions.forEach((stop) => stop())
   }, [marketId, participantKey, pendingOrderId, services.database])
+  // Shown for the whole lesson: it is the only way back in from a different
+  // device, and a student who has lost their tab cannot be told it afterwards.
+  useEffect(() => {
+    if (!sessionValid || !active?.requestId) return
+    return onValue(ref(services.database, `liveMarkets/${marketId}/joinRequests/${active.requestId}/recoveryCode`), (snapshot) => setRecoveryCode(String(snapshot.val() ?? '')))
+  }, [active?.requestId, marketId, services.database, sessionValid])
   // Re-armed on every reconnection, not just on mount: the server runs our
   // onDisconnect the moment the socket drops, so a single network blip would
   // otherwise leave the student marked absent for the rest of the lesson —
@@ -89,7 +96,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
 
   return <main className="student-market-page">
     <header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>{teams[participant.teamId ?? '']?.name}</span></header>
-    <section className="student-market-summary"><div><p className="portal-eyebrow">{meta?.status ?? 'CONNECTING'}</p><h1>{participant.displayName}さんのチーム口座</h1></div><div><span>現金</span><strong>¥{(portfolio?.cash ?? 0).toLocaleString()}</strong></div></section>
+    <section className="student-market-summary"><div><p className="portal-eyebrow">{meta?.status ?? 'CONNECTING'}</p><h1>{participant.displayName}さんのチーム口座</h1></div><div><span>現金</span><strong>¥{(portfolio?.cash ?? 0).toLocaleString()}</strong></div><div className="recovery-code"><span>復帰コード</span><strong>{recoveryCode || '—'}</strong><small>端末を替えるときに使います</small></div></section>
     {notice && <p className="form-notice" role="status">{notice}</p>}
     <section className="student-trading-grid">
       <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs">{Object.values(companies).map((company) => <button className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>
