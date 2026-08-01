@@ -1,5 +1,5 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction as runFirestoreTransaction, serverTimestamp, setDoc, updateDoc, where, type Firestore } from 'firebase/firestore'
-import { onDisconnect, ref, runTransaction, set, update, type Database } from 'firebase/database'
+import { onDisconnect, ref, remove, runTransaction, set, update, type Database } from 'firebase/database'
 import type { TemplateSpec } from '../templates/types'
 import { participantId, type JoinRequest, type LiveMarketParticipant, type LiveMarketState, type MarketVisibility, type TeamAssignmentMode } from './liveMarketTypes'
 
@@ -136,3 +136,44 @@ export const approveJoinRequest = async (database: Database, marketId: string, i
   })
   return result.committed
 }
+
+/**
+ * Team portfolios are shared, so a removed member never takes assets with them.
+ * Membership is dropped too: the student may rejoin and be assigned freshly.
+ */
+export const applyRemoveParticipant = (raw: LiveMarketState | null, id: string): LiveMarketState | undefined => {
+  const participant = raw?.participants?.[id]
+  if (!raw || !participant) return undefined
+  delete raw.participants![id]
+  if (raw.orders?.[id]) delete raw.orders[id]
+  if (raw.joinRequests?.[id]) delete raw.joinRequests[id]
+  if (raw.members?.[participant.uid]) delete raw.members[participant.uid]
+  for (const [code, entry] of Object.entries(raw.recoveryCodes ?? {})) {
+    if (entry.participantId === id) delete raw.recoveryCodes![code]
+  }
+  return raw
+}
+
+export const applyReassignTeam = (raw: LiveMarketState | null, id: string, teamId: string, atMillis: number): LiveMarketState | undefined => {
+  const participant = raw?.participants?.[id]
+  if (!raw || !participant || !raw.teams?.[teamId] || participant.teamId === teamId) return undefined
+  participant.teamId = teamId
+  raw.members ??= {}
+  raw.members[participant.uid] = { teamId }
+  raw.teamPortfolios ??= {}
+  raw.teamPortfolios[teamId] ??= { cash: raw.meta.startingCash, holdings: {}, updatedAtMillis: atMillis }
+  for (const entry of Object.values(raw.recoveryCodes ?? {})) {
+    if (entry.participantId === id) entry.teamId = teamId
+  }
+  return raw
+}
+
+/** A rejected request is removed outright; the student sees the waiting screen time out. */
+export const rejectJoinRequest = (database: Database, marketId: string, id: string) =>
+  remove(ref(database, `${root(marketId)}/joinRequests/${id}`))
+
+export const removeParticipant = async (database: Database, marketId: string, id: string) =>
+  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyRemoveParticipant(raw, id))).committed
+
+export const reassignParticipantTeam = async (database: Database, marketId: string, id: string, teamId: string) =>
+  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyReassignTeam(raw, id, teamId, Date.now()))).committed
