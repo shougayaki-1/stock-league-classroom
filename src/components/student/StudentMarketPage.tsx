@@ -12,6 +12,13 @@ import { ResultsView } from './ResultsView'
 
 interface LiveCompany { id: string; name: string; symbol: string; basePrice: number }
 
+// The host tick runs once a second and the host lease TTL is 15 seconds, so a
+// healthy fill normally arrives within a couple of seconds. 20 seconds gives
+// enough headroom to survive a lease handoff (up to 15s for another host to
+// take over, plus a tick) without stranding a student behind disabled buttons
+// for the rest of the lesson.
+const ORDER_RESULT_TIMEOUT_MS = 20000
+
 export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const services = bootstrapFirebase()
   const active = useMemo(() => readActiveStudentSession(), [])
@@ -26,6 +33,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const [leaderboard, setLeaderboard] = useState<Record<string, TeamLeaderboardEntry>>({})
   const [selectedStockId, setSelectedStockId] = useState('')
   const [pendingOrderId, setPendingOrderId] = useState('')
+  const [timedOutOrderId, setTimedOutOrderId] = useState('')
   const [notice, setNotice] = useState('')
   const [recoveryCode, setRecoveryCode] = useState('')
   const sessionValid = active?.marketId === marketId
@@ -49,11 +57,29 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
         const next = snapshot.val() ?? {}
         setTransactions(next)
         if (pendingOrderId && next[pendingOrderId]) setPendingOrderId('')
+        if (timedOutOrderId && next[timedOutOrderId]) { setTimedOutOrderId(''); setNotice('') }
       }),
       onValue(ref(services.database, `liveMarkets/${marketId}/teamLeaderboard`), (snapshot) => setLeaderboard(snapshot.val() ?? {})),
     ]
     return () => subscriptions.forEach((stop) => stop())
-  }, [marketId, participantKey, pendingOrderId, services.database])
+  }, [marketId, participantKey, pendingOrderId, timedOutOrderId, services.database])
+  // A submitted order is confirmed by the matching transaction arriving over
+  // the listener above. If the host tab is backgrounded, its lease expires
+  // mid-processing, or the listener drops, that confirmation may never come.
+  // Without a timeout the buy/sell buttons stay disabled for the rest of the
+  // lesson, so give up waiting after ORDER_RESULT_TIMEOUT_MS and let the
+  // student try again. Cleared automatically (by the effect re-running) when
+  // pendingOrderId changes — including when the result arrives in time — and
+  // on unmount.
+  useEffect(() => {
+    if (!pendingOrderId) return
+    const timer = window.setTimeout(() => {
+      setPendingOrderId('')
+      setTimedOutOrderId(pendingOrderId)
+      setNotice('注文の結果が届きませんでした。もう一度注文してください。')
+    }, ORDER_RESULT_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [pendingOrderId])
   // Shown for the whole lesson: it is the only way back in from a different
   // device, and a student who has lost their tab cannot be told it afterwards.
   // Gated on uid too: every approved join lands here via a hard page reload, so
@@ -89,6 +115,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const placeOrder = async (side: 'BUY' | 'SELL', quantity: number) => {
     if (!selected || pendingOrderId || !Number.isInteger(quantity) || quantity < 1 || quantity > 100000) return setNotice('数量は1〜100000の整数で入力してください。')
     const orderId = crypto.randomUUID()
+    setTimedOutOrderId('')
     setPendingOrderId(orderId)
     setNotice('注文を送信しました。約定を待っています。')
     const result = await submitOrder(services.database, marketId, participantKey, { orderId, stockId: selected.id, side, quantity, submittedAtMillis: Date.now() })

@@ -102,4 +102,53 @@ describe('order safety', () => {
     expect(screen.getByText('注文を送信中…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '購入' })).toBeDisabled()
   })
+
+  it('disables the confirm button while pending, but keeps cancel clickable', async () => {
+    const onSubmitOrder = vi.fn()
+    const { rerender } = render(<TradePanel {...base} onSubmitOrder={onSubmitOrder} />)
+    await userEvent.type(screen.getByLabelText('数量'), '2')
+    await userEvent.click(screen.getByRole('button', { name: '購入' }))
+    rerender(<TradePanel {...base} onSubmitOrder={onSubmitOrder} pending />)
+    expect(screen.getByRole('button', { name: 'この内容で注文する' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'やめる' })).toBeEnabled()
+  })
+
+  it('disables the confirm button once the market is no longer open', async () => {
+    const onSubmitOrder = vi.fn()
+    const { rerender } = render(<TradePanel {...base} onSubmitOrder={onSubmitOrder} />)
+    await userEvent.type(screen.getByLabelText('数量'), '2')
+    await userEvent.click(screen.getByRole('button', { name: '購入' }))
+    rerender(<TradePanel {...base} onSubmitOrder={onSubmitOrder} disabled />)
+    expect(screen.getByRole('button', { name: 'この内容で注文する' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'やめる' }))
+    expect(onSubmitOrder).not.toHaveBeenCalled()
+    expect(screen.queryByText(/よろしいですか/)).not.toBeInTheDocument()
+  })
+
+  it('uses a non-modal group role for the inline confirmation, not dialog', async () => {
+    render(<TradePanel {...base} onSubmitOrder={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('数量'), '2')
+    await userEvent.click(screen.getByRole('button', { name: '購入' }))
+    expect(screen.getByRole('group', { name: '注文の確認' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('rejects a non-integer quantity instead of silently flooring it', async () => {
+    const onSubmitOrder = vi.fn()
+    render(<TradePanel {...base} onSubmitOrder={onSubmitOrder} />)
+    await userEvent.type(screen.getByLabelText('数量'), '2.5')
+    await userEvent.click(screen.getByRole('button', { name: '購入' }))
+    expect(onSubmitOrder).not.toHaveBeenCalled()
+    expect(screen.queryByText(/よろしいですか/)).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('数量は整数で入力してください。')
+  })
+
+  it('hides the previous order result while a new confirmation is open', async () => {
+    const previousResult = { orderId: 'o1', participantId: 'p1', teamId: 'red', stockId: 's1', side: 'BUY' as const, requestedQuantity: 5, filledQuantity: 5, price: 100, processedAtMillis: 0 }
+    render(<TradePanel {...base} onSubmitOrder={vi.fn()} latestResult={previousResult} />)
+    expect(screen.getByText(/約定しました/)).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('数量'), '2')
+    await userEvent.click(screen.getByRole('button', { name: '購入' }))
+    expect(screen.queryByText(/約定しました/)).not.toBeInTheDocument()
+  })
 })

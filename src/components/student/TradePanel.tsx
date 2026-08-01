@@ -22,6 +22,7 @@ export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResul
 
   const review = (side: 'BUY' | 'SELL') => {
     setConfirming(null)
+    if (quantity !== '' && !Number.isInteger(Number(quantity))) return setError('数量は整数で入力してください。')
     if (!Number.isInteger(requested) || requested < 1) return setError('数量を1株以上の整数で入力してください。')
     if (side === 'BUY' && requested > affordable) return setError(`いまの現金では${affordable}株までです。`)
     if (side === 'SELL' && requested > holding) return setError(`持っているのは${holding}株です。`)
@@ -70,21 +71,21 @@ export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResul
       {pending && <p className="student-message" role="status">注文を送信中…</p>}
 
       {confirming && (
-        <div className="trade-confirm" role="dialog" aria-label="注文の確認">
+        <div className="trade-confirm" role="group" aria-label="注文の確認">
           <p>{stockName} を {requested}株、約 {(requested * currentPrice).toLocaleString()}円で{confirming === 'BUY' ? '購入' : '売却'}します。よろしいですか？</p>
           <p className="trade-note">価格は毎秒動きます。実際の約定価格は少し変わることがあります。</p>
-          <button type="button" onClick={send}>この内容で注文する</button>
+          <button type="button" disabled={disabled || pending} onClick={send}>この内容で注文する</button>
           <button type="button" className="outline-button" onClick={() => setConfirming(null)}>やめる</button>
         </div>
       )}
 
-      {latestResult && latestResult.filledQuantity > 0 && latestResult.filledQuantity < latestResult.requestedQuantity && (
+      {!confirming && latestResult && latestResult.filledQuantity > 0 && latestResult.filledQuantity < latestResult.requestedQuantity && (
         <p className="student-message" role="status">{latestResult.requestedQuantity}株のうち{latestResult.filledQuantity}株が{latestResult.price}円で約定しました。</p>
       )}
-      {latestResult && latestResult.filledQuantity === latestResult.requestedQuantity && latestResult.filledQuantity > 0 && (
+      {!confirming && latestResult && latestResult.filledQuantity === latestResult.requestedQuantity && latestResult.filledQuantity > 0 && (
         <p className="student-message" role="status">{latestResult.filledQuantity}株を{latestResult.price}円で約定しました。</p>
       )}
-      {latestResult && latestResult.filledQuantity === 0 && (
+      {!confirming && latestResult && latestResult.filledQuantity === 0 && (
         <p className="student-message error" role="status">約定できませんでした。現金か保有株が足りません。</p>
       )}
     </div>
