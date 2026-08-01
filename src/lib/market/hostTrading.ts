@@ -150,11 +150,35 @@ export const publishMarketProjections = async (database: Database, marketId: str
   return result.committed
 }
 
-export const publishManualNews = async (database: Database, marketId: string, ownerUid: string, leaseId: string, message: string, atMillis = now()) => {
+export const NEWS_IMPACT_LIMIT = 20
+
+/**
+ * A shock has to move the phase runtime, not just the price: publishPrices
+ * recomputes each price from its runtime every tick, so a bare price write
+ * would be erased one second later.
+ */
+export const applyNewsImpact = (state: Pick<LiveMarketState, 'prices' | 'companies'>, impactPercent: number, atMillis: number) => {
+  const bounded = Math.max(-NEWS_IMPACT_LIMIT, Math.min(NEWS_IMPACT_LIMIT, impactPercent))
+  if (!bounded || !state.prices) return
+  const multiplier = 1 + bounded / 100
+  for (const [stockId, entry] of Object.entries(state.prices)) {
+    const basePrice = state.companies?.[stockId]?.basePrice ?? entry.price
+    entry.price = clampToBounds(entry.price * multiplier, basePrice)
+    entry.updatedAtMillis = atMillis
+    if (entry.runtime) {
+      entry.runtime.startPrice = clampToBounds(entry.runtime.startPrice * multiplier, basePrice)
+      entry.runtime.endPrice = clampToBounds(entry.runtime.endPrice * multiplier, basePrice)
+    }
+  }
+}
+
+export const publishManualNews = async (database: Database, marketId: string, ownerUid: string, leaseId: string, message: string, impactPercent = 0, atMillis = now()) => {
   const trimmed = message.trim().slice(0, 280); if (!trimmed) throw new Error('News must not be empty')
   return runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
     if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.meta.status !== 'OPEN') return
-    raw.news ??= {}; raw.news[crypto.randomUUID()] = { message: trimmed, publishedAtMillis: atMillis }; return raw
+    raw.news ??= {}; raw.news[crypto.randomUUID()] = { message: trimmed, publishedAtMillis: atMillis, impactPercent }
+    applyNewsImpact(raw, impactPercent, atMillis)
+    return raw
   })
 }
 

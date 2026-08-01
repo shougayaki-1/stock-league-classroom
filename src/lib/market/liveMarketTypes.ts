@@ -67,7 +67,7 @@ export interface LiveMarketState {
   teamPortfolios?: Record<string, Portfolio>
   transactions?: Record<string, Record<string, OrderResult>>
   teamLeaderboard?: Record<string, TeamLeaderboardEntry>
-  news?: Record<string, { message: string; publishedAtMillis: number }>
+  news?: Record<string, { message: string; publishedAtMillis: number; impactPercent?: number }>
   finalization?: { status: 'PENDING' | 'WRITING_RESULTS' | 'COMPLETED'; checkpointId: string; startedAtMillis: number; completedAtMillis?: number }
   /** Host-authored, pre-aggregated projection for the physical signage display. Never raw portfolios. */
   signage?: SignageData

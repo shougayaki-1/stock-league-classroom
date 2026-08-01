@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease } from './hostTrading'
+import { applyNewsImpact, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease } from './hostTrading'
+import { clampToBounds } from '../pricing/pricingCore'
 import type { LiveMarketState } from './liveMarketTypes'
 
 describe('trading fill policy', () => {
@@ -38,6 +39,36 @@ describe('team leaderboard', () => {
     expect(leaderboard.blue.rank).toBe(1)
     expect(leaderboard.green.rank).toBe(3)
     expect(leaderboard.green.valuation).toBe(700)
+  })
+})
+
+describe('news price impact', () => {
+  const state = () => ({
+    companies: { acme: { id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 } },
+    prices: { acme: { price: 110, updatedAtMillis: 1_000, runtime: { mode: 'PHASE' as const, phaseId: 'p1', startPrice: 100, endPrice: 120, startAtMillis: 0, endAtMillis: 60_000, seed: 0 } } },
+  })
+
+  // Expectations go through clampToBounds because that is what bounds a price;
+  // asserting bare arithmetic would silently disagree with pricingCore.
+  it('shifts the whole phase runtime so the shock survives the next tick', () => {
+    const next = state()
+    applyNewsImpact(next, 10, 2_000)
+    expect(next.prices.acme.price).toBe(clampToBounds(121, 100))
+    expect(next.prices.acme.runtime!.startPrice).toBe(clampToBounds(110, 100))
+    expect(next.prices.acme.runtime!.endPrice).toBe(clampToBounds(132, 100))
+    expect(next.prices.acme.updatedAtMillis).toBe(2_000)
+  })
+
+  it('clamps the impact and keeps the price inside the base-price bounds', () => {
+    const next = state()
+    applyNewsImpact(next, -500, 2_000)
+    expect(next.prices.acme.price).toBe(clampToBounds(110 * 0.8, 100))
+  })
+
+  it('does nothing at zero', () => {
+    const next = state()
+    applyNewsImpact(next, 0, 2_000)
+    expect(next.prices.acme.price).toBe(110)
   })
 })
 
