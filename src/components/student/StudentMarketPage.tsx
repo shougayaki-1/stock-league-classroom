@@ -123,14 +123,23 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     if (!result.committed) { setPendingOrderId(''); setNotice('注文を送信できませんでした。前の注文が処理中か、市場が終了しています。') }
   }
 
-  if (meta?.status === 'ENDED') return <ResultsView teamName={teams[participant.teamId ?? '']?.name ?? '所属チーム'} finalValuation={teamResult?.valuation ?? 0} rank={teamResult?.rank ?? null} transactions={Object.values(transactions)} onLeave={clearActiveStudentSession} />
+  if (meta?.status === 'ENDED') return <ResultsView
+    teamName={teams[participant.teamId ?? '']?.name ?? '所属チーム'}
+    finalValuation={teamResult?.valuation ?? 0}
+    rank={teamResult?.rank ?? null}
+    transactions={Object.values(transactions)}
+    companyNames={Object.fromEntries(Object.values(companies).map((company) => [company.id, company.name]))}
+    holdings={portfolio?.holdings ?? {}}
+    prices={Object.fromEntries(Object.entries(prices).map(([stockId, value]) => [stockId, value.price]))}
+    onLeave={clearActiveStudentSession}
+  />
 
   return <main className="student-market-page">
     <header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>{teams[participant.teamId ?? '']?.name}</span></header>
     <section className="student-market-summary"><div><p className="portal-eyebrow">{meta?.status ?? 'CONNECTING'}</p><h1>{participant.displayName}さんのチーム口座</h1></div><div><span>現金</span><strong>¥{(portfolio?.cash ?? 0).toLocaleString()}</strong></div><div className="recovery-code"><span>復帰コード</span><strong>{recoveryCode || '—'}</strong><small>端末を替えるときに使います</small></div></section>
     {notice && <p className="form-notice" role="status">{notice}</p>}
     <section className="student-trading-grid">
-      <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs">{Object.values(companies).map((company) => <button className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>
+      <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs" role="group" aria-label="銘柄を選ぶ">{Object.values(companies).map((company) => <button type="button" aria-pressed={selectedStockId === company.id} className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>
         {selected && <TradePanel
           stockName={`${selected.name} (${selected.symbol})`}
           currentPrice={prices[selected.id]?.price ?? selected.basePrice}

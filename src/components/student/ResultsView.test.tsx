@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { ResultsView } from './ResultsView'
+import { ResultsView, summarizePositions } from './ResultsView'
 import type { OrderResult } from '../../lib/market/liveMarketTypes'
 
 const transaction = (orderId: string, side: 'BUY' | 'SELL' = 'BUY'): OrderResult => ({
@@ -24,5 +24,32 @@ describe('ResultsView', () => {
   it('本人の取引履歴を表示する', () => {
     render(<ResultsView teamName="赤チーム" finalValuation={1_000_000} rank={null} transactions={[transaction('a'), transaction('b', 'SELL')]} />)
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+})
+
+describe('summarizePositions', () => {
+  const tx = (side: 'BUY' | 'SELL', filledQuantity: number, price: number, processedAtMillis: number) =>
+    ({ orderId: `${side}${processedAtMillis}`, participantId: 'p', teamId: 't', stockId: 'acme', side, requestedQuantity: filledQuantity, filledQuantity, price, processedAtMillis })
+
+  it('nets buys and sells into a realised amount per stock', () => {
+    const [position] = summarizePositions([tx('BUY', 5, 100, 1), tx('SELL', 2, 130, 2)])
+    expect(position).toEqual({ stockId: 'acme', bought: 5, sold: 2, spent: 500, received: 260 })
+  })
+
+  it('returns an empty list when nothing traded', () => {
+    expect(summarizePositions([])).toEqual([])
+  })
+})
+
+describe('ResultsView positions', () => {
+  it('shows the company name, remaining holding and net result', () => {
+    render(<ResultsView
+      teamName="赤" finalValuation={8500} rank={1}
+      transactions={[{ orderId: 'o1', participantId: 'p', teamId: 't', stockId: 'acme', side: 'BUY', requestedQuantity: 5, filledQuantity: 5, price: 100, processedAtMillis: 1 }]}
+      companyNames={{ acme: 'アクメ' }} holdings={{ acme: 5 }} prices={{ acme: 120 }}
+    />)
+    expect(screen.getByText('アクメ')).toBeInTheDocument()
+    expect(screen.getByText('5株')).toBeInTheDocument()
+    expect(screen.getByText('+100円')).toBeInTheDocument()
   })
 })

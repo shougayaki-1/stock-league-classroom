@@ -116,3 +116,7 @@
 .share-url code { padding: 3px 6px; color: #1967d2; background: #e8f0fe; border-radius: 5px; word-break: break-all; }
 .share-url button { padding: 8px 11px; color: #1a73e8; font: inherit; font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #a8c7fa; border-radius: 999px; cursor: pointer; }
 .share-url small { flex-basis: 100%; color: #5f6368; font-size: 11px; }
+.results-positions { width: 100%; border-collapse: collapse; margin: 0.5rem 0 1.25rem; }
+.results-positions th, .results-positions td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid rgba(128, 128, 128, 0.25); font-variant-numeric: tabular-nums; }
+.results-positions .up { color: #0a7a3d; }
+.results-positions .down { color: #b3261e; }
