@@ -18,7 +18,7 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
   const [lease, setLease] = useState(''); const [news, setNews] = useState(''); const [notice, setNotice] = useState(''); const [template, setTemplate] = useState<TemplateSpec | null>(null)
   const [live, setLive] = useState<LiveMarketState | null>(null)
   const [mode, setMode] = useState<TeamAssignmentMode>('random')
-  const interruption = useHostInterruption()
+  const interruption = useHostInterruption(Boolean(lease))
   useWakeLock(Boolean(lease))
   useUnloadWarning(Boolean(lease))
   useEffect(() => onValue(ref(services.database, `liveMarkets/${marketId}`), (snapshot) => setLive(snapshot.val() as LiveMarketState | null)), [marketId, services.database])

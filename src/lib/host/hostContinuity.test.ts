@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { describeInterruption, useDocumentHidden, useHostInterruption, useUnloadWarning, useWakeLock } from './hostContinuity'
+import { MIN_REPORTABLE_INTERRUPTION_MS, describeInterruption, useDocumentHidden, useHostInterruption, useUnloadWarning, useWakeLock } from './hostContinuity'
 
 const setHidden = (hidden: boolean) => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => hidden ? 'hidden' : 'visible' })
@@ -32,13 +32,13 @@ describe('describeInterruption', () => {
 
 describe('useHostInterruption', () => {
   it('reports exactly one interruption spanning the full hide-to-visible period, even across an unrelated re-render (such as the host lease being lost while still hidden)', () => {
-    const { result, rerender } = renderHook(() => useHostInterruption())
+    const { result, rerender } = renderHook(({ active }) => useHostInterruption(active), { initialProps: { active: true } })
     act(() => setHidden(true))
     vi.setSystemTime(5_000)
     // Simulate the parent re-rendering because something unrelated changed
     // (e.g. HostConsole clearing the lease after runHostTick returns false).
     // This must not clear the tracked hide time or report anything yet.
-    rerender()
+    rerender({ active: true })
     expect(result.current.message).toBeNull()
     vi.setSystemTime(20_000)
     act(() => setHidden(false))
@@ -46,7 +46,7 @@ describe('useHostInterruption', () => {
   })
 
   it('reports a fresh interruption on every hide/return cycle, and a dismissal never suppresses a later one', () => {
-    const { result } = renderHook(() => useHostInterruption())
+    const { result } = renderHook(() => useHostInterruption(true))
 
     act(() => setHidden(true))
     vi.setSystemTime(10_000)
@@ -63,17 +63,17 @@ describe('useHostInterruption', () => {
     expect(result.current.message).toBe('30秒')
   })
 
-  it('starts tracking immediately when mounted while the tab is already hidden', () => {
+  it('starts tracking immediately when mounted while the tab is already hidden and active', () => {
     setHidden(true)
     vi.setSystemTime(3_000)
-    const { result } = renderHook(() => useHostInterruption())
-    vi.setSystemTime(8_000)
+    const { result } = renderHook(() => useHostInterruption(true))
+    vi.setSystemTime(15_000)
     act(() => setHidden(false))
-    expect(result.current.message).toBe('5秒')
+    expect(result.current.message).toBe('12秒')
   })
 
   it('produces no message while still hidden, and does not report twice for one return', () => {
-    const { result } = renderHook(() => useHostInterruption())
+    const { result } = renderHook(() => useHostInterruption(true))
     act(() => setHidden(true))
     expect(result.current.message).toBeNull()
     vi.setSystemTime(12_000)
@@ -83,6 +83,63 @@ describe('useHostInterruption', () => {
     // re-report.
     act(() => setHidden(false))
     expect(result.current.message).toBe('12秒')
+  })
+
+  it('never produces a message for a hide that happens before the lease is taken, even once active later becomes true while visible', () => {
+    // Mirrors the teacher opening the host console without taking the lease,
+    // switching tabs, returning, and only then clicking "ホストを取得する".
+    const { result, rerender } = renderHook(({ active }) => useHostInterruption(active), { initialProps: { active: false } })
+    act(() => setHidden(true))
+    vi.setSystemTime(120_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBeNull()
+    rerender({ active: true })
+    expect(result.current.message).toBeNull()
+  })
+
+  it('measures the full hide-to-visible span even when active flips false while still hidden, and reports exactly once', () => {
+    // The previous round's Critical bug: losing the lease while hidden must not
+    // clear the pending span, nor be misread as the moment of return.
+    const { result, rerender } = renderHook(({ active }) => useHostInterruption(active), { initialProps: { active: true } })
+    act(() => setHidden(true))
+    vi.setSystemTime(4_000)
+    rerender({ active: false })
+    expect(result.current.message).toBeNull()
+    vi.setSystemTime(30_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBe('30秒')
+  })
+
+  it('suppresses an interruption shorter than the reportable threshold, and reports one just over it', () => {
+    const { result, rerender } = renderHook(() => useHostInterruption(true))
+    act(() => setHidden(true))
+    vi.setSystemTime(MIN_REPORTABLE_INTERRUPTION_MS - 1_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBeNull()
+
+    vi.setSystemTime(60_000)
+    act(() => setHidden(true))
+    vi.setSystemTime(60_000 + MIN_REPORTABLE_INTERRUPTION_MS + 1_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBe('11秒')
+    rerender()
+  })
+
+  it('reports two successive genuine interruptions independently, unaffected by dismissing the first', () => {
+    const { result } = renderHook(() => useHostInterruption(true))
+
+    act(() => setHidden(true))
+    vi.setSystemTime(20_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBe('20秒')
+    act(() => result.current.dismiss())
+    expect(result.current.message).toBeNull()
+
+    vi.setSystemTime(50_000)
+    act(() => setHidden(true))
+    vi.setSystemTime(75_000)
+    act(() => setHidden(false))
+    expect(result.current.message).toBe('25秒')
   })
 })
 
