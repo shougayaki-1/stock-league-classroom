@@ -11,6 +11,30 @@ describe('csv encoding', () => {
   })
 })
 
+describe('csv formula injection guard', () => {
+  it.each(['=1+1', '+1', '-1', '@SUM(A1)', '\t1'])(
+    'prefixes a leading %j with an apostrophe so spreadsheets treat it as text',
+    (risky) => {
+      expect(toCsv([[risky]])).toBe(`'${risky}`)
+    },
+  )
+  it('prefixes a leading CR, which also forces RFC 4180 quoting since CR is a control character', () => {
+    expect(toCsv([['\r1']])).toBe(`"'\r1"`)
+  })
+  it('leaves a normal Japanese name untouched', () => {
+    expect(toCsv([['山田太郎']])).toBe('山田太郎')
+  })
+  it('leaves a normal number untouched', () => {
+    expect(toCsv([['8500']])).toBe('8500')
+  })
+  it('leaves a risky character alone when it is not the first character', () => {
+    expect(toCsv([['a=1+1']])).toBe('a=1+1')
+  })
+  it('prefixes and quotes together, with the apostrophe inside the quotes', () => {
+    expect(toCsv([['=a,b']])).toBe(`"'=a,b"`)
+  })
+})
+
 const teams: ExportedTeamResult[] = [
   { teamId: 'red', portfolio: { cash: 8000, holdings: { acme: 5 } }, leaderboard: { teamId: 'red', name: '赤', valuation: 8500, rank: 1 } },
   { teamId: 'blue', portfolio: { cash: 10000, holdings: {} }, leaderboard: null },

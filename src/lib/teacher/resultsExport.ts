@@ -13,7 +13,14 @@ export interface ExportedParticipantResult {
   transactions?: Record<string, OrderResult>
 }
 
-const escapeField = (value: string) => /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+/** A leading =, +, -, @, TAB or CR makes Excel/LibreOffice read the cell as a formula; prefixing with an
+ *  apostrophe forces literal text without changing the visible content. Student-typed display names and
+ *  team names flow through here, so this must run before quoting on every cell in every builder. */
+const RISKY_LEADING_CHAR = /^[=+\-@\t\r]/
+const escapeField = (value: string) => {
+  const neutralized = RISKY_LEADING_CHAR.test(value) ? `'${value}` : value
+  return /[",\n\r]/.test(neutralized) ? `"${neutralized.replace(/"/g, '""')}"` : neutralized
+}
 /** CRLF and RFC 4180 quoting: Excel is the only tool most teachers will open this in. */
 export const toCsv = (rows: string[][]): string => rows.map((row) => row.map(escapeField).join(',')).join('\r\n')
 
