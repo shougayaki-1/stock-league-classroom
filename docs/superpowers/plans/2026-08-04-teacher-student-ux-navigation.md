@@ -1315,7 +1315,7 @@ git commit -m "refactor: remove the duplicate admission panel from the market da
 
 No new automated test (no `StudentMarketPage.test.tsx` exists, for the same Firebase-coupling reason). Verify with typecheck, the full suite, and the manual check in Step 3.
 
-- [ ] **Step 1: Import the shared label helper**
+- [x] **Step 1: Import the shared label helper**
 
 In `src/components/student/StudentMarketPage.tsx`, add:
 
@@ -1323,7 +1323,7 @@ In `src/components/student/StudentMarketPage.tsx`, add:
 import { describeStudentPhase } from '../../lib/market/marketStatusLabels'
 ```
 
-- [ ] **Step 2: Replace the raw status text**
+- [x] **Step 2: Replace the raw status text**
 
 Replace:
 
@@ -1337,14 +1337,14 @@ with:
 <Chip label={`${teams[participant.teamId ?? '']?.name ?? 'チーム'} ・ ${describeStudentPhase(meta?.status)}`} variant="outlined" sx={{ alignSelf: { md: 'center' } }} />
 ```
 
-- [ ] **Step 3: Typecheck, run the full suite, then manually verify**
+- [x] **Step 3: Typecheck, run the full suite, then manually verify**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
 Run: `npm run dev`, join a test market as a student before the teacher opens it, and confirm the chip reads "接続中" instead of "CONNECTING"; then have the teacher open the market and confirm it updates to "取引中".
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/components/student/StudentMarketPage.tsx
