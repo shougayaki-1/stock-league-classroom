@@ -1382,7 +1382,7 @@ describe('RecoveryCodeDisclosure', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/student/RecoveryCodeDisclosure.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./RecoveryCodeDisclosure` does not exist yet).
@@ -1468,7 +1468,7 @@ git commit -m "fix: keep the recovery code out of the way until a student actual
 **Interfaces:**
 - Produces: `StudentOnboardingCard({ onDismiss: () => void })` from `src/components/student/StudentOnboardingCard.tsx`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```tsx
 // src/components/student/StudentOnboardingCard.test.tsx
@@ -1492,12 +1492,12 @@ describe('StudentOnboardingCard', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/student/StudentOnboardingCard.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./StudentOnboardingCard` does not exist yet).
 
-- [ ] **Step 3: Write StudentOnboardingCard**
+- [x] **Step 3: Write StudentOnboardingCard**
 
 ```tsx
 // src/components/student/StudentOnboardingCard.tsx
@@ -1525,12 +1525,12 @@ export function StudentOnboardingCard({ onDismiss }: StudentOnboardingCardProps)
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/student/StudentOnboardingCard.test.tsx`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Wire it into StudentMarketPage, gated by localStorage**
+- [x] **Step 5: Wire it into StudentMarketPage, gated by localStorage**
 
 In `src/components/student/StudentMarketPage.tsx`, add:
 
@@ -1556,14 +1556,14 @@ Render the card right before the market-board/portfolio row, i.e. immediately ab
 {showOnboarding && <StudentOnboardingCard onDismiss={dismissOnboarding} />}
 ```
 
-- [ ] **Step 6: Typecheck, run the full suite, then manually verify**
+- [x] **Step 6: Typecheck, run the full suite, then manually verify**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
 Run: `npm run dev`, join a market as a new student (clear `localStorage` first, or use a private window), confirm the onboarding card appears above the trading board, and confirm clicking "わかった → 取引を始める" dismisses it and that reloading the page does not bring it back.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/components/student/StudentOnboardingCard.tsx src/components/student/StudentOnboardingCard.test.tsx src/components/student/StudentMarketPage.tsx

@@ -12,6 +12,7 @@ import { handleFailure } from '../../lib/monitoring/describeError'
 import { TradePanel } from './TradePanel'
 import { ResultsView } from './ResultsView'
 import { RecoveryCodeDisclosure } from './RecoveryCodeDisclosure'
+import { StudentOnboardingCard } from './StudentOnboardingCard'
 import { Alert, Box, Button, Chip, Container, Divider, Paper, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import { StudentPageSurface, StudentSurfaceCard } from '../ui/StudentUi'
 import { studentPrimaryActionSx } from '../ui/studentUiStyles'
@@ -29,6 +30,13 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const services = bootstrapFirebase()
   const active = useMemo(() => readActiveStudentSession(), [])
   const [uid, setUid] = useState('')
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const onboardingKey = uid ? `stock-league:student-onboarding:${uid}` : ''
+  useEffect(() => {
+    if (!onboardingKey) return
+    setShowOnboarding(window.localStorage.getItem(onboardingKey) !== 'done')
+  }, [onboardingKey])
+  const dismissOnboarding = () => { if (onboardingKey) window.localStorage.setItem(onboardingKey, 'done'); setShowOnboarding(false) }
   const [participant, setParticipant] = useState<LiveMarketParticipant>()
   const [meta, setMeta] = useState<LiveMarketMetadata>()
   const [teams, setTeams] = useState<Record<string, LiveMarketTeam>>({})
@@ -151,6 +159,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 1 }}><StudentSurfaceCard sx={{ flex: 1 }}><Stack direction="row" spacing={3} sx={{ p: 2.5, alignItems: 'center' }}><Box><Typography variant="caption" color="text.secondary">現金</Typography><Typography variant="h5" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>¥{(portfolio?.cash ?? 0).toLocaleString()}</Typography></Box></Stack></StudentSurfaceCard><Chip label={`${teams[participant.teamId ?? '']?.name ?? 'チーム'} ・ ${describeStudentPhase(meta?.status)}`} variant="outlined" sx={{ alignSelf: { md: 'center' } }} /></Stack>
       <Box sx={{ mb: 3 }}><RecoveryCodeDisclosure code={recoveryCode} /></Box>
       <Stack spacing={2} sx={{ mb: 3 }}>{recoveryMismatch && <Alert severity="warning"><strong>前回の続きに戻れませんでした。</strong> 入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。</Alert>}{notice && <Alert severity="info" role="status">{notice}</Alert>}</Stack>
+      {showOnboarding && <StudentOnboardingCard onDismiss={dismissOnboarding} />}
       <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ alignItems: 'flex-start' }}>
       <StudentSurfaceCard sx={{ flex: 1, width: '100%' }}><Box sx={{ p: { xs: 2.5, sm: 3 } }}><Typography variant="overline" color="text.secondary">MARKET BOARD</Typography><Typography variant="h2" sx={{ mb: 2, mt: .5 }}>銘柄を選ぶ</Typography><ToggleButtonGroup exclusive value={selectedStockId} onChange={(_, next: string | null) => next && setSelectedStockId(next)} aria-label="銘柄を選ぶ" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, '& .MuiToggleButtonGroup-grouped': { minHeight: 60, border: 1, borderColor: 'divider !important', borderRadius: '12px !important', px: 2, py: 1, textTransform: 'none', '&.Mui-selected': { bgcolor: 'action.selected', color: 'text.primary', boxShadow: 'inset 0 -3px 0 currentColor' } } }}>{Object.values(companies).map((company) => <ToggleButton value={company.id} key={company.id} aria-label={`${company.name}を選ぶ`}><Stack sx={{ alignItems: 'flex-start' }}><Typography sx={{ fontWeight: 800 }}>{company.symbol}</Typography><Typography variant="caption">¥{(prices[company.id]?.price ?? company.basePrice).toLocaleString()}</Typography></Stack></ToggleButton>)}</ToggleButtonGroup>
         {selected && <TradePanel
