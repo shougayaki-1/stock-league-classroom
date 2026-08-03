@@ -1,6 +1,6 @@
 import { TemplateRoutes } from './components/TemplateRoutes'
 import { StudentMarketJoin, TeacherMarketDashboard } from './components/MarketDashboard'
-import { HostConsole } from './components/HostConsole'
+import { ControlRoom } from './components/teacher/ControlRoom'
 import { StudentMarketPage } from './components/student/StudentMarketPage'
 import { SignagePage } from './components/signage/SignagePage'
 import { AboutPage, ContactPage, GuidePage, PrivacyPage, TermsPage } from './components/PublicDocs'
@@ -69,7 +69,7 @@ const StudentPlayRoute = () => <StudentMarketPage marketId={useParams().marketId
 const SignageRoute = () => <SignagePage marketId={useParams().marketId ?? ''} />
 const RoomRoute = () => {
   const marketId = useParams().marketId ?? ''
-  return <TeacherShell active="room" marketId={marketId}><HostConsole marketId={marketId} /></TeacherShell>
+  return <TeacherShell active="room" marketId={marketId}><ControlRoom marketId={marketId} /></TeacherShell>
 }
 /** Keeps old links (bookmarks, printed handouts) working after the host console was renamed to the control room. */
 const HostRouteRedirect = () => {

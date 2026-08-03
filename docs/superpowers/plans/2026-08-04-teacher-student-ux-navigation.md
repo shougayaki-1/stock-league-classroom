@@ -971,7 +971,7 @@ git commit -m "refactor: rename the host console route to /room and give it an h
 
 This task has no new automated test (per the Global Constraints note — `ControlRoom` is Firebase-coupled the same way `HostConsole` always was, and none of the components it assembles change behavior here, only their container). Verification is the manual smoke check in Step 4.
 
-- [ ] **Step 1: Create the new file**
+- [x] **Step 1: Create the new file**
 
 ```tsx
 // src/components/teacher/ControlRoom.tsx
@@ -1203,13 +1203,13 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
 }
 ```
 
-- [ ] **Step 2: Delete the old file**
+- [x] **Step 2: Delete the old file**
 
 ```bash
 git rm src/components/HostConsole.tsx
 ```
 
-- [ ] **Step 3: Update App.tsx**
+- [x] **Step 3: Update App.tsx**
 
 In `src/App.tsx`, replace:
 
@@ -1225,7 +1225,7 @@ import { ControlRoom } from './components/teacher/ControlRoom'
 
 In `RoomRoute` (added in Task 5), replace `<HostConsole marketId={marketId} />` with `<ControlRoom marketId={marketId} />`.
 
-- [ ] **Step 4: Typecheck, run the full suite, then manually verify the tabs**
+- [x] **Step 4: Typecheck, run the full suite, then manually verify the tabs**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
@@ -1236,7 +1236,7 @@ Run: `npm run dev`. As a teacher, create a test market, open its control room, a
 - Reloading the page while on the "ニュース配信" tab keeps that tab selected (because `?tab=news` is in the URL).
 - The "教室画面" tab's button opens `/markets/:id/signage` in a new tab.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/teacher/ControlRoom.tsx src/App.tsx
