@@ -10,6 +10,7 @@ import { AdmissionPanel } from './teacher/AdmissionPanel'
 import { HostStatusPanel } from './teacher/HostStatusPanel'
 import { PhaseBand } from './teacher/PhaseBand'
 import { MarketControlPanel } from './teacher/MarketControlPanel'
+import { NewsPublishPanel } from './teacher/NewsPublishPanel'
 import { approveJoinRequest, reassignParticipantTeam, rejectJoinRequest, removeParticipant, resolveRecoveryTeamId, setAutoApprove } from '../lib/market/marketRepository'
 import type { LiveMarketState, TeamAssignmentMode } from '../lib/market/liveMarketTypes'
 import type { TemplateSpec } from '../lib/templates/types'
@@ -23,18 +24,11 @@ import {
   AppBar,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   CircularProgress,
   Container,
-  FormControl,
-  InputLabel,
   Link,
-  MenuItem,
-  Select,
   Stack,
-  TextField,
   Toolbar,
   Typography,
 } from '@mui/material'
@@ -63,7 +57,7 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
   const services = bootstrapFirebase(); const [user, setUser] = useState<User | null>(services.auth.currentUser)
   const [authReady, setAuthReady] = useState(false)
   const [marketAccess, setMarketAccess] = useState<MarketAccess>('loading')
-  const [lease, setLease] = useState(''); const [news, setNews] = useState(''); const [impact, setImpact] = useState(0); const [notice, setNotice] = useState(''); const [template, setTemplate] = useState<TemplateSpec | null>(null)
+  const [lease, setLease] = useState(''); const [notice, setNotice] = useState(''); const [template, setTemplate] = useState<TemplateSpec | null>(null)
   const [live, setLive] = useState<LiveMarketState | null>(null)
   const [mode, setMode] = useState<TeamAssignmentMode>('random')
   const [nowMillis, setNowMillis] = useState(() => serverNow())
@@ -177,7 +171,12 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
             onCancelEnd={() => setEndingConfirm(false)}
             onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}
           /></Box>
-          <Card component="aside" sx={{ flex: 1 }}><CardContent><Stack spacing={2}><Typography variant="overline" color="text.secondary">MANUAL NEWS</Typography><Typography component="h2" variant="h4">ニュースを配信</Typography><Typography color="text.secondary">授業中の出来事を市場へ届けます。</Typography><TextField label="ニュース本文" value={news} multiline minRows={4} placeholder="例: 新商品の発表で期待が高まる" onChange={(event) => setNews(event.target.value)} disabled={!lease} fullWidth /><FormControl fullWidth disabled={!lease}><InputLabel id="news-impact-label">相場への影響</InputLabel><Select labelId="news-impact-label" label="相場への影響" value={impact} onChange={(event) => setImpact(Number(event.target.value))}><MenuItem value={0}>影響なし（お知らせだけ）</MenuItem><MenuItem value={5}>やや上昇（+5%）</MenuItem><MenuItem value={10}>大きく上昇（+10%）</MenuItem><MenuItem value={-5}>やや下落（-5%）</MenuItem><MenuItem value={-10}>大きく下落（-10%）</MenuItem></Select></FormControl><Button variant="contained" disabled={!lease || !news.trim()} onClick={() => void publishManualNews(services.database, marketId, user.uid, lease, news, impact).then(() => { setNews(''); setImpact(0); setNotice('ニュースを配信しました。') }).catch((error) => setNotice(handleFailure(error, 'ニュースを配信できません。市場が取引中か確認してください。')))}>配信する</Button></Stack></CardContent></Card>
+          <Box sx={{ flex: 1 }}><NewsPublishPanel
+            disabled={!lease}
+            onPublish={(body, impactPercent) => publishManualNews(services.database, marketId, user.uid, lease, body, impactPercent)
+              .then(() => setNotice('ニュースを配信しました。'))
+              .catch((error) => { setNotice(handleFailure(error, 'ニュースを配信できません。市場が取引中か確認してください。')); throw error })}
+          /></Box>
         </Stack>
         <AdmissionPanel
       joinCode={live?.meta?.joinCode ?? ''}

@@ -530,7 +530,7 @@ git commit -m "refactor: extract MarketControlPanel from HostConsole"
 **Interfaces:**
 - Produces: `NewsPublishPanel({ disabled: boolean; onPublish: (body: string, impactPercent: number) => Promise<void> })` from `src/components/teacher/NewsPublishPanel.tsx`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```tsx
 // src/components/teacher/NewsPublishPanel.test.tsx
@@ -567,12 +567,12 @@ describe('NewsPublishPanel', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/NewsPublishPanel.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./NewsPublishPanel` does not exist yet).
 
-- [ ] **Step 3: Write NewsPublishPanel**
+- [x] **Step 3: Write NewsPublishPanel**
 
 ```tsx
 // src/components/teacher/NewsPublishPanel.tsx
@@ -618,12 +618,12 @@ export function NewsPublishPanel({ disabled, onPublish }: NewsPublishPanelProps)
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/NewsPublishPanel.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Wire it into HostConsole**
+- [x] **Step 5: Wire it into HostConsole**
 
 In `src/components/HostConsole.tsx`, add:
 
@@ -644,16 +644,16 @@ Replace the entire `<Card component="aside" sx={{ flex: 1 }}><CardContent><Stack
 
 Remove the now-unused `news`/`impact` state declarations (`const [news, setNews] = useState('')`, `const [impact, setImpact] = useState(0)`) from `HostConsole`.
 
-- [ ] **Step 6: Typecheck and run the full suite**
+- [x] **Step 6: Typecheck and run the full suite**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS. Remove any imports `tsc` now flags as unused in `HostConsole.tsx` (likely `TextField`, `FormControl`, `InputLabel`, `MenuItem`, `Select` are fully moved out).
 
-- [ ] **Step 7: Manual smoke check**
+- [x] **Step 7: Manual smoke check**
 
 Run: `npm run dev`, acquire the host lease on a test market, publish a news item from the extracted panel, and confirm the form clears and the notice appears.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/components/teacher/NewsPublishPanel.tsx src/components/teacher/NewsPublishPanel.test.tsx src/components/HostConsole.tsx
