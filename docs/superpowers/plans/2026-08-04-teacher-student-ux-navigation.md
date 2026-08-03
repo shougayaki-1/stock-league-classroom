@@ -36,7 +36,7 @@
 - Produces: `HostStatusPanel({ prices: { stockId: string; name: string; symbol: string; price: number; basePrice: number }[]; lastTickAtMillis?: number; hostingSinceMillis?: number; nowMillis: number })` from `src/components/teacher/HostStatusPanel.tsx` (breaking change to this component's props — `status`, `openedAtMillis`, `participantCount`, `capacity`, `pendingOrderCount` are removed; `describeElapsed` is no longer exported from here).
 - Consumes: `MarketStatus` from `src/lib/market/liveMarketTypes.ts` (already exists).
 
-- [ ] **Step 1: Write the failing test for the shared labels module**
+- [x] **Step 1: Write the failing test for the shared labels module**
 
 ```ts
 // src/lib/market/marketStatusLabels.test.ts
@@ -62,12 +62,12 @@ describe('marketStatusLabels', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/lib/market/marketStatusLabels.test.ts`
 Expected: FAIL with "Failed to resolve import" (the module does not exist yet).
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```ts
 // src/lib/market/marketStatusLabels.ts
@@ -88,19 +88,19 @@ export const describeStudentPhase = (status: MarketStatus | undefined): string =
   status ? MARKET_STATUS_LABEL[status] : '接続中'
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/lib/market/marketStatusLabels.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/market/marketStatusLabels.ts src/lib/market/marketStatusLabels.test.ts
 git commit -m "feat: add a shared market status label map for teacher and student UI"
 ```
 
-- [ ] **Step 6: Write the failing test for PhaseBand**
+- [x] **Step 6: Write the failing test for PhaseBand**
 
 ```tsx
 // src/components/teacher/PhaseBand.test.tsx
@@ -133,12 +133,12 @@ describe('PhaseBand', () => {
 })
 ```
 
-- [ ] **Step 7: Run test to verify it fails**
+- [x] **Step 7: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/PhaseBand.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./PhaseBand` does not exist yet).
 
-- [ ] **Step 8: Write PhaseBand**
+- [x] **Step 8: Write PhaseBand**
 
 ```tsx
 // src/components/teacher/PhaseBand.tsx
@@ -200,12 +200,12 @@ export function PhaseBand({ status, openedAtMillis, nowMillis, participantCount,
 }
 ```
 
-- [ ] **Step 9: Run test to verify it passes**
+- [x] **Step 9: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/PhaseBand.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 10: Write the failing/updated tests for the trimmed HostStatusPanel**
+- [x] **Step 10: Write the failing/updated tests for the trimmed HostStatusPanel**
 
 Replace the entire contents of `src/components/teacher/HostStatusPanel.test.tsx`:
 
@@ -250,12 +250,12 @@ describe('HostStatusPanel', () => {
 })
 ```
 
-- [ ] **Step 11: Run test to verify it fails**
+- [x] **Step 11: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/HostStatusPanel.test.tsx`
 Expected: FAIL — `HostStatusPanel` still requires `status`/`openedAtMillis`/`participantCount`/`capacity`/`pendingOrderCount` and renders the old markup, so the "no warning"/"warns" assertions about `role="alert"` still pass but this locks in the target shape ahead of the trim; the real signal is the next step's typecheck failing once props are narrowed. Proceed to Step 12 regardless — this is a case where the test file is updated before the implementation, per TDD, even though some assertions happen to still pass against the old implementation.
 
-- [ ] **Step 12: Trim HostStatusPanel to the price table**
+- [x] **Step 12: Trim HostStatusPanel to the price table**
 
 Replace the entire contents of `src/components/teacher/HostStatusPanel.tsx`:
 
@@ -304,12 +304,12 @@ export function HostStatusPanel({ prices, lastTickAtMillis, hostingSinceMillis, 
 
 Note what was deliberately dropped versus the previous version: the `describeElapsed` export (now in `PhaseBand`), the `status`/`openedAtMillis`/`participantCount`/`capacity`/`pendingOrderCount` props and their metric row (now in `PhaseBand`), the non-functional "緊急暴落"/"緊急急騰" pills, the dead "遅延" column (always rendered `—`), the redundant per-row "現在フェーズ" column, and the non-functional per-row "詳細" link.
 
-- [ ] **Step 13: Run test to verify it passes**
+- [x] **Step 13: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/HostStatusPanel.test.tsx`
 Expected: PASS (5 tests)
 
-- [ ] **Step 14: Wire PhaseBand and the trimmed HostStatusPanel into HostConsole**
+- [x] **Step 14: Wire PhaseBand and the trimmed HostStatusPanel into HostConsole**
 
 In `src/components/HostConsole.tsx`, add the import (near the other local imports, e.g. after the `AdmissionPanel` import):
 
@@ -336,16 +336,16 @@ Replace the single `<HostStatusPanel ... />` call (the one currently passing `st
 />
 ```
 
-- [ ] **Step 15: Typecheck and run the full suite**
+- [x] **Step 15: Typecheck and run the full suite**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS. If typecheck flags an unused import in `HostConsole.tsx`, remove it.
 
-- [ ] **Step 16: Manual smoke check**
+- [x] **Step 16: Manual smoke check**
 
 Run: `npm run dev`, sign in as a teacher, open a market's host console (`/teacher/markets/:id/host`), and confirm the phase band and price table both render with live data and no console errors.
 
-- [ ] **Step 17: Commit**
+- [x] **Step 17: Commit**
 
 ```bash
 git add src/components/teacher/PhaseBand.tsx src/components/teacher/PhaseBand.test.tsx src/components/teacher/HostStatusPanel.tsx src/components/teacher/HostStatusPanel.test.tsx src/components/HostConsole.tsx
