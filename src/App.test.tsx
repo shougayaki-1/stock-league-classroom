@@ -31,4 +31,19 @@ describe('App', () => {
     expect(screen.getByText(/自動削除の仕組みは実装されていません/)).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
+
+  it('shows a not-found page for an unknown route instead of falling back to the landing page', () => {
+    window.history.pushState({}, '', '/does-not-exist')
+    render(<App />)
+    expect(screen.getByRole('heading', { name: 'ページが見つかりません' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('normalizes a trailing slash before matching a public route', async () => {
+    window.history.pushState({}, '', '/terms/')
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: /利用規約/ })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/terms')
+    window.history.pushState({}, '', '/')
+  })
 })

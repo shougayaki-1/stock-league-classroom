@@ -15,11 +15,16 @@
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:rules && npm run build"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.2.0",
+    "@mui/material": "^9.2.0",
     "@sentry/react": "^10.68.0",
     "firebase": "^12.16.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-router": "^7.9.4"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

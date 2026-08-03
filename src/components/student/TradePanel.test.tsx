@@ -7,7 +7,7 @@ describe('TradePanel', () => {
   it('現在価格と銘柄名を表示する', () => {
     render(<TradePanel stockName="開成テック" currentPrice={1500} onSubmitOrder={vi.fn()} latestResult={null} cash={100000} holding={100} />)
     expect(screen.getByText('開成テック')).toBeInTheDocument()
-    expect(screen.getByText('1500')).toBeInTheDocument()
+    expect(screen.getByText('¥1,500')).toBeInTheDocument()
   })
 
   it('数量を入力して購入ボタンを押すと確認を経てonSubmitOrderが呼ばれる', async () => {

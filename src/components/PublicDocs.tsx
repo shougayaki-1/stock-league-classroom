@@ -1,25 +1,24 @@
-import type { ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import { AppVersion } from './AppVersion'
+import { Box, Container, Link, Stack, Typography } from '@mui/material'
 
 /** Static public documents. */
 const OPERATOR = 'しょうが焼き'
 const CONTACT_EMAIL = 'stock-league@shoug.org'
 const CONTACT_FORM = 'https://forms.gle/YQW6VwwgsRYxdfKJ9'
 const UPDATED_AT = '2026年8月1日'
+const DocLink = (props: ComponentPropsWithoutRef<'a'>) => <Link {...props} color="primary" />
 
-const DocLayout = ({ title, lead, children }: { title: string; lead: string; children: ReactNode }) => <main className="doc-page">
-  <header className="doc-nav">
-    <a className="portal-brand" href="/">Stock League <span>Classroom</span></a>
-    <nav aria-label="公開文書"><a href="/about">サービス概要</a><a href="/guide">操作マニュアル</a><a href="/terms">利用規約</a><a href="/privacy">プライバシーポリシー</a><a href="/contact">問い合わせ</a></nav>
-  </header>
-  <article className="doc-body">
-    <h1>{title}</h1>
-    <p className="doc-lead">{lead}</p>
+const DocLayout = ({ title, lead, children }: { title: string; lead: string; children: ReactNode }) => <Box component="main" className="doc-page" sx={{ minHeight: '100svh' }}>
+  <Box component="header" className="doc-nav" sx={{ borderBottom: 1, borderColor: 'divider' }}><Container maxWidth="md"><Stack component="nav" direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ py: 2, justifyContent: 'space-between', alignItems: { sm: 'center' }, '& a': { display: 'inline-flex', alignItems: 'center', minHeight: 44 } }} aria-label="公開文書"><Link href="/" underline="none" color="primary.dark" sx={{ fontWeight: 800 }}>Stock League Classroom</Link><Stack direction="row" useFlexGap spacing={2} sx={{ flexWrap: 'wrap' }}><DocLink href="/about">サービス概要</DocLink><DocLink href="/guide">操作マニュアル</DocLink><DocLink href="/terms">利用規約</DocLink><DocLink href="/privacy">プライバシーポリシー</DocLink><DocLink href="/contact">問い合わせ</DocLink></Stack></Stack></Container></Box>
+  <Container component="article" className="doc-body" maxWidth="md" sx={{ py: { xs: 4, md: 7 }, '& p, & li': { lineHeight: 1.9 }, '& h2': { mt: 5 }, '& h3': { mt: 3 } }}>
+    <Typography variant="h1">{title}</Typography>
+    <Typography color="text.secondary" sx={{ mt: 1, fontSize: '1.125rem', lineHeight: 1.8 }}>{lead}</Typography>
     {children}
-    <p className="doc-updated">最終更新: {UPDATED_AT}</p>
-  </article>
-  <footer className="doc-footer">© 2026 Stock League Classroom　運営: {OPERATOR}　<a href="/">トップへ</a><AppVersion /></footer>
-</main>
+    <Typography variant="body2" color="text.secondary" sx={{ mt: 5, pt: 2, borderTop: 1, borderColor: 'divider' }}>最終更新: {UPDATED_AT}</Typography>
+  </Container>
+  <Box component="footer" className="doc-footer" sx={{ borderTop: 1, borderColor: 'divider', py: 3 }}><Container maxWidth="md"><Typography variant="body2" color="text.secondary">© 2026 Stock League Classroom　運営: {OPERATOR}　<Link href="/" color="primary" sx={{ display: 'inline-flex', alignItems: 'center', minHeight: 44 }}>トップへ</Link> <AppVersion /></Typography></Container></Box>
+</Box>
 
 const Disclaimer = () => <aside className="doc-callout" role="note">
   <strong>これは投資のシミュレーションです。</strong>
@@ -63,7 +62,7 @@ export const TermsPage = () => <DocLayout title="利用規約" lead="本サー�
     <li>法令または所属機関の規程に違反する行為</li>
   </ul>
   <h2>第4条（データの取り扱い）</h2>
-  <p>本サービスが取得する情報とその取り扱いについては<a href="/privacy">プライバシーポリシー</a>をご確認ください。</p>
+  <p>本サービスが取得する情報とその取り扱いについては<DocLink href="/privacy">プライバシーポリシー</DocLink>をご確認ください。</p>
   <h2>第5条（サービスの変更・中断・終了）</h2>
   <p>運営者は、保守、障害対応、その他運営上必要と判断した場合、事前の通知なく本サービスの全部または一部を変更、中断または終了することがあります。授業中に市場が停止する可能性があるため、本サービスの動作に依存しない授業計画の準備をお願いします。</p>
   <h2>第6条（利用の制限）</h2>
@@ -73,7 +72,7 @@ export const TermsPage = () => <DocLayout title="利用規約" lead="本サー�
   <h2>第8条（規約の変更）</h2>
   <p>運営者は本規約を変更することがあります。変更後の規約は本ページに掲載した時点から効力を生じます。</p>
   <h2>第9条（お問い合わせ）</h2>
-  <p>本規約に関するお問い合わせは <a href="/contact">問い合わせ窓口</a> までご連絡ください。</p>
+  <p>本規約に関するお問い合わせは <DocLink href="/contact">問い合わせ窓口</DocLink> までご連絡ください。</p>
 </DocLayout>
 
 export const PrivacyPage = () => <DocLayout title="プライバシーポリシー" lead="本サービスが取得する情報と、その利用・保存・削除の方法を説明します。">
@@ -129,7 +128,7 @@ export const PrivacyPage = () => <DocLayout title="プライバシーポリシ�
   <p>教師は、自身が作成した市場・テンプレート・結果を管理画面からいつでも削除できます。</p>
 
   <h2>6. 開示・削除の請求</h2>
-  <p>ご本人または保護者、および学校の担当者からの、取得情報の開示・訂正・削除のご請求に対応します。<a href="/contact">問い合わせ窓口</a> よりご連絡ください。生徒については氏名等を取得していないため、ご請求の際は市場の参加コードと表示名をお知らせください。</p>
+  <p>ご本人または保護者、および学校の担当者からの、取得情報の開示・訂正・削除のご請求に対応します。<DocLink href="/contact">問い合わせ窓口</DocLink> よりご連絡ください。生徒については氏名等を取得していないため、ご請求の際は市場の参加コードと表示名をお知らせください。</p>
 
   <h2>7. 未成年の利用について</h2>
   <p>本サービスは、学校の授業において教師の管理のもとで利用されることを前提としています。生徒の個人情報を取得しない設計とし、入力項目を表示名のみに限定しているのはこのためです。保護者の方からのお問い合わせにも対応します。</p>
@@ -144,7 +143,7 @@ export const PrivacyPage = () => <DocLayout title="プライバシーポリシ�
 export const GuidePage = () => <DocLayout title="教師向け操作マニュアル" lead="授業の準備から振り返りまでの手順です。">
   <h2>1. 準備（授業前）</h2>
   <ol>
-    <li><a href="/teacher/markets">教師ポータル</a> を開き、Google アカウントでログインします</li>
+    <li><DocLink href="/teacher/markets">教師ポータル</DocLink> を開き、Google アカウントでログインします</li>
     <li>「テンプレートを管理」から、チーム、会社（銘柄）、初期価格、価格フェーズを設定したテンプレートを作成します</li>
     <li>チームは2〜8件、会社は1〜20件まで設定できます</li>
   </ol>
@@ -180,7 +179,7 @@ export const GuidePage = () => <DocLayout title="教師向け操作マニュア�
     <li><strong>生徒が画面を閉じてしまった</strong> — 生徒に復帰コードを聞き、参加画面から参加コードと一緒に入力してもらってください。同じチームに戻れます。</li>
     <li><strong>結果を保存したい</strong> — 市場の管理画面の「結果をCSVで保存」から、チーム結果と取引履歴をダウンロードできます。市場を削除すると復元できません。</li>
   </ul>
-  <p>解決しない場合は <a href="/contact">問い合わせ窓口</a> へご連絡ください。</p>
+  <p>解決しない場合は <DocLink href="/contact">問い合わせ窓口</DocLink> へご連絡ください。</p>
 </DocLayout>
 
 export const ContactPage = () => <DocLayout title="お問い合わせ・通報" lead="不具合のご報告、不適切な内容の通報、データの削除請求を受け付けます。">
@@ -198,9 +197,9 @@ export const ContactPage = () => <DocLayout title="お問い合わせ・通報" 
   <p>通報の際は、市場の参加コードと、対象となる表示名または本文をお知らせください。</p>
 
   <h2>データの開示・削除のご請求</h2>
-  <p>生徒本人、保護者、学校の担当者からのご請求に対応します。生徒については氏名等を取得していないため、市場の参加コードと表示名をお知らせください。詳細は<a href="/privacy">プライバシーポリシー</a>をご覧ください。</p>
+  <p>生徒本人、保護者、学校の担当者からのご請求に対応します。生徒については氏名等を取得していないため、市場の参加コードと表示名をお知らせください。詳細は<DocLink href="/privacy">プライバシーポリシー</DocLink>をご覧ください。</p>
 
   <h2>連絡先</h2>
-  <p>メール: <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a><br />フォーム: <a href={CONTACT_FORM} target="_blank" rel="noopener noreferrer">問い合わせフォームを開く</a></p>
+  <p>メール: <DocLink href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</DocLink><br />フォーム: <DocLink href={CONTACT_FORM} target="_blank" rel="noopener noreferrer">問い合わせフォームを開く</DocLink></p>
   <p className="doc-note">無償で運営しているため、返信までにお時間をいただく場合があります。緊急に授業を停止する必要がある場合は、教師ポータルから該当の市場を削除してください。</p>
 </DocLayout>

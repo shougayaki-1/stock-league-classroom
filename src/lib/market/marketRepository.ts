@@ -22,7 +22,7 @@ export const generateJoinCode = (randomValues: Uint32Array = crypto.getRandomVal
   Array.from(randomValues, (value) => JOIN_CODE_ALPHABET[value % JOIN_CODE_ALPHABET.length]).join('')
 
 export const initialLiveState = (input: CreateMarketInput) => ({
-  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: serverNow(), startingCash: input.template.startingCash, joinCode: normalizeCode(input.joinCode ?? '') },
+  meta: { ownerUid: input.ownerUid, capacity: MARKET_CAPACITY, visibility: input.visibility, status: 'SETUP' as const, createdAtMillis: serverNow(), startingCash: input.template.startingCash, joinCode: normalizeCode(input.joinCode ?? ''), autoApprove: false },
   teams: Object.fromEntries(input.template.teams.map((team) => [team.id, { id: team.id, name: team.name }])),
   companies: Object.fromEntries(input.template.companies.map((company) => [company.id, { id: company.id, name: company.name, symbol: company.symbol, basePrice: company.initialPrice, ...(company.pricePhases ? { phases: company.pricePhases } : {}) }])),
   teamPortfolios: Object.fromEntries(input.template.teams.map((team) => [team.id, { cash: input.template.startingCash, holdings: {}, updatedAtMillis: serverNow() }])),
@@ -76,6 +76,11 @@ export const createMarket = async (firestore: Firestore, database: Database, inp
 export const listOwnedMarkets = async (firestore: Firestore, ownerUid: string): Promise<MarketRecord[]> => {
   const result = await getDocs(query(collection(firestore, 'markets'), where('ownerUid', '==', ownerUid)))
   return result.docs.map((item) => ({ id: item.id, ...item.data() } as MarketRecord))
+}
+
+/** Changes the classroom admission mode without changing the immutable market setup. */
+export const setAutoApprove = async (database: Database, marketId: string, enabled: boolean) => {
+  await update(ref(database, `${root(marketId)}/meta`), { autoApprove: enabled })
 }
 
 /** This is deliberately a direct lookup; join-code collections are never queried. */

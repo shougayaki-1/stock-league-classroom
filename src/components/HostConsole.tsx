@@ -8,17 +8,61 @@ import { acquireHostLease, armHostLeaseDisconnect, openMarket, publishManualNews
 import { serverNow } from '../lib/firebase/serverTime'
 import { AdmissionPanel } from './teacher/AdmissionPanel'
 import { HostStatusPanel } from './teacher/HostStatusPanel'
-import { approveJoinRequest, reassignParticipantTeam, rejectJoinRequest, removeParticipant, resolveRecoveryTeamId } from '../lib/market/marketRepository'
+import { approveJoinRequest, reassignParticipantTeam, rejectJoinRequest, removeParticipant, resolveRecoveryTeamId, setAutoApprove } from '../lib/market/marketRepository'
 import type { LiveMarketState, TeamAssignmentMode } from '../lib/market/liveMarketTypes'
 import type { TemplateSpec } from '../lib/templates/types'
 import { useDatabaseOffline } from '../lib/firebase/connectionState'
 import { useHostInterruption, useUnloadWarning, useWakeLock } from '../lib/host/hostContinuity'
 import { handleFailure } from '../lib/monitoring/describeError'
 import { AppVersion } from './AppVersion'
+import { AuthLoadingScreen } from './teacher/TeacherShell'
+import {
+  Alert,
+  AppBar,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Container,
+  Divider,
+  FormControl,
+  InputLabel,
+  Link,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
+  TextField,
+  Toolbar,
+  Typography,
+} from '@mui/material'
+
+type MarketAccess = 'loading' | 'ready' | 'not-found' | 'forbidden' | 'read-error'
+
+const MarketAccessState = ({ state }: { state: Exclude<MarketAccess, 'ready'> }) => {
+  const content = state === 'loading'
+    ? { title: '市場を確認しています', detail: '市場の設定とアクセス権を読み込んでいます。' }
+    : state === 'not-found'
+      ? { title: 'この市場は見つかりません', detail: '削除されたか、URLが正しくない可能性があります。' }
+      : state === 'forbidden'
+        ? { title: 'この市場を進行する権限がありません', detail: '市場を作成した教師アカウントでログインしているか確認してください。' }
+        : { title: '市場を読み込めません', detail: '通信状態を確認してから、もう一度お試しください。' }
+  return <Container component="main" maxWidth="md" sx={{ py: 8 }}><Stack spacing={2} sx={{ alignItems: 'flex-start', maxWidth: 520 }}>
+    {state === 'loading' && <CircularProgress aria-label="市場を読み込んでいます" />}
+    <Typography component="h1" variant="h2">{content.title}</Typography>
+    <Typography color="text.secondary">{content.detail}</Typography>
+    {state !== 'loading' && <Alert severity={state === 'read-error' ? 'warning' : 'info'}>{content.detail}</Alert>}
+    {state !== 'loading' && <Button variant="contained" href="/teacher/markets">市場の管理へ戻る</Button>}
+  </Stack></Container>
+}
 
 const leaseId = () => crypto.randomUUID()
 export const HostConsole = ({ marketId }: { marketId: string }) => {
   const services = bootstrapFirebase(); const [user, setUser] = useState<User | null>(services.auth.currentUser)
+  const [authReady, setAuthReady] = useState(false)
+  const [marketAccess, setMarketAccess] = useState<MarketAccess>('loading')
   const [lease, setLease] = useState(''); const [news, setNews] = useState(''); const [impact, setImpact] = useState(0); const [notice, setNotice] = useState(''); const [template, setTemplate] = useState<TemplateSpec | null>(null)
   const [live, setLive] = useState<LiveMarketState | null>(null)
   const [mode, setMode] = useState<TeamAssignmentMode>('random')
@@ -27,16 +71,56 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
   const [hostingSinceMillis, setHostingSinceMillis] = useState<number>()
   const [endingConfirm, setEndingConfirm] = useState(false); const [ending, setEnding] = useState(false)
   const liveRef = useRef<LiveMarketState | null>(null)
+  const autoApproving = useRef(false)
   useEffect(() => { liveRef.current = live }, [live])
   useEffect(() => { const timer = window.setInterval(() => setNowMillis(serverNow()), 1_000); return () => window.clearInterval(timer) }, [])
   const interruption = useHostInterruption(Boolean(lease))
   useWakeLock(Boolean(lease))
   useUnloadWarning(Boolean(lease))
-  useEffect(() => onValue(ref(services.database, `liveMarkets/${marketId}`), (snapshot) => setLive(snapshot.val() as LiveMarketState | null)), [marketId, services.database])
   const offline = useDatabaseOffline(services.database)
-  useEffect(() => onAuthStateChanged(services.auth, setUser), [services.auth])
-  useEffect(() => { if (!user || !isTeacherIdentity(user)) return; void getDoc(doc(services.firestore, 'markets', marketId)).then((snapshot) => setTemplate(snapshot.data()?.templateSnapshot as TemplateSpec ?? null)).catch((error) => setNotice(handleFailure(error, '市場設定を取得できません。'))) }, [marketId, services.firestore, user])
+  useEffect(() => onAuthStateChanged(services.auth, (next) => { setUser(next); setAuthReady(true) }), [services.auth])
+  useEffect(() => {
+    if (!authReady || !user || !isTeacherIdentity(user)) return
+    let active = true
+    setMarketAccess('loading')
+    void getDoc(doc(services.firestore, 'markets', marketId)).then((snapshot) => {
+      if (!active) return
+      if (!snapshot.exists()) { setMarketAccess('not-found'); return }
+      const nextTemplate = snapshot.data()?.templateSnapshot as TemplateSpec | undefined
+      if (!nextTemplate) { setMarketAccess('read-error'); return }
+      setTemplate(nextTemplate)
+      setMarketAccess('ready')
+    }).catch((error: unknown) => {
+      if (!active) return
+      const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
+      setMarketAccess(code.includes('permission-denied') ? 'forbidden' : 'read-error')
+    })
+    return () => { active = false }
+  }, [authReady, marketId, services.firestore, user])
+  useEffect(() => {
+    if (!authReady || !user || !isTeacherIdentity(user) || marketAccess !== 'ready') return
+    return onValue(ref(services.database, `liveMarkets/${marketId}`),
+      (snapshot) => {
+        const value = snapshot.val() as LiveMarketState | null
+        if (!value) { setMarketAccess('read-error'); return }
+        setLive(value)
+      },
+      (error) => {
+        const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
+        setMarketAccess(code.includes('permission-denied') ? 'forbidden' : 'read-error')
+      })
+  }, [authReady, marketAccess, marketId, services.database, user])
   const stocks = useMemo(() => (template?.companies ?? []).map((company) => ({ id: company.id, basePrice: company.initialPrice, phases: company.pricePhases })), [template])
+  const pendingRequests = useMemo(() => Object.entries(live?.joinRequests ?? {}).filter(([id, request]) => request.connected && !live?.participants?.[id]).map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId, recoveryTeamId: resolveRecoveryTeamId(live, request) })), [live])
+  const autoApprove = Boolean(live?.meta?.autoApprove)
+  useEffect(() => {
+    if (!autoApprove || !pendingRequests.length || autoApproving.current || !user) return
+    autoApproving.current = true
+    void Promise.all(pendingRequests.map((request) => approveJoinRequest(services.database, marketId, request.id, mode)))
+      .then((results) => setNotice(`${results.filter(Boolean).length}人を自動承認しました。`))
+      .catch((error) => setNotice(handleFailure(error, '自動承認に失敗しました。')))
+      .finally(() => { autoApproving.current = false })
+  }, [autoApprove, marketId, mode, pendingRequests, services.database, user])
   useEffect(() => {
     if (!lease || !user || !template) return
     const tick = () => void runHostTick(services.firestore, services.database, marketId, user.uid, lease, stocks)
@@ -44,20 +128,55 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
       .catch((error) => setNotice(handleFailure(error, 'ホスト処理を再試行しています。')))
     tick(); const timer = window.setInterval(tick, 1_000); return () => window.clearInterval(timer)
   }, [lease, marketId, services.database, services.firestore, stocks, template, user])
-  if (!user || !isTeacherIdentity(user)) return <main className="workspace-gate"><a className="portal-brand" href="/teacher/markets">← Stock League Classroom</a><div><p className="portal-eyebrow">HOST CONSOLE</p><h1>市場を進行する</h1><p>市場を開始・終了したり、授業中のニュースを配信するには教師としてログインしてください。</p><a className="portal-button" href="/teacher/markets">教師としてログイン <span>→</span></a></div></main>
+  if (!authReady) return <AuthLoadingScreen />
+  if (!user || !isTeacherIdentity(user)) return <Container component="main" maxWidth="md" sx={{ py: 8 }}><Stack spacing={3} sx={{ alignItems: 'flex-start', maxWidth: 600 }}><Link href="/teacher/markets" underline="hover">← Stock League Classroom</Link><Box><Typography variant="overline" color="text.secondary">HOST CONSOLE</Typography><Typography component="h1" variant="h2" sx={{ mt: 1 }}>市場を進行する</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>市場を開始・終了したり、授業中のニュースを配信するには教師としてログインしてください。</Typography></Box><Button variant="contained" href="/teacher/markets">教師としてログイン</Button></Stack></Container>
+  if (marketAccess !== 'ready') return <MarketAccessState state={marketAccess} />
   const takeLease = async () => { const next = leaseId(); const expiresAtMillis = serverNow() + 15_000; const ok = await acquireHostLease(services.database, marketId, user.uid, next); if (!ok) return setNotice('この市場のホストを取得できません。'); await armHostLeaseDisconnect(services.database, marketId, { ownerUid: user.uid, leaseId: next, expiresAtMillis, paused: false }); setLease(next); setLastTickAtMillis(undefined); setHostingSinceMillis(serverNow()); setNotice('ホストを取得しました。') }
-  return <main className="host-page"><header className="teacher-header"><a className="portal-brand" href="/teacher/markets">Stock League <span>Classroom</span></a><a href="/teacher/markets">← 市場の管理へ</a><AppVersion /></header><section className="host-hero"><div><p className="portal-eyebrow">HOST CONSOLE</p><h1>市場の進行を、<em>コントロール。</em></h1><p>市場ID: <code>{marketId}</code></p></div><div className={`host-status ${lease ? 'connected' : ''}`}><span>{lease ? '●' : '○'}</span>{lease ? 'ホスト接続中' : 'ホスト未接続'}</div></section><section className="host-workspace">{offline && <p className="form-notice stopped" role="alert"><strong>サーバーに接続できていません。市場の進行が止まっています。</strong>価格の更新と生徒の売買は処理されていません。通信を確認してください。同時利用が上限に達している場合、しばらく待つと復帰します。</p>}{interruption.message && <p className="form-notice stopped" role="alert"><strong>{interruption.message}のあいだ、市場の進行が止まっていた可能性があります。</strong>このタブが裏に回っている間、価格の更新と生徒の売買は処理されません。授業中はこのタブを前面に置いたままにしてください。<button type="button" className="outline-button" onClick={interruption.dismiss}>確認しました</button></p>}{lease && <p className="form-notice" role="status">このタブを閉じたり、別のアプリで隠したり、パソコンをスリープさせると市場が止まります。授業のあいだは開いたままにしてください。</p>}{notice && <p className="form-notice host-notice" role="status">{notice}</p>}<HostStatusPanel status={live?.meta?.status ?? 'SETUP'} openedAtMillis={live?.meta?.openedAtMillis} nowMillis={nowMillis} participantCount={Object.values(live?.participants ?? {}).filter((participant) => participant.connected).length} capacity={live?.meta?.capacity ?? 80} pendingOrderCount={Object.values(live?.orders ?? {}).filter((entry) => entry.pending).length} prices={(template?.companies ?? []).map((company) => ({ stockId: company.id, name: company.name, symbol: company.symbol, price: live?.prices?.[company.id]?.price ?? company.initialPrice, basePrice: company.initialPrice }))} lastTickAtMillis={lastTickAtMillis} hostingSinceMillis={hostingSinceMillis} /><div className="host-main-card"><p className="section-kicker">MARKET CONTROL</p><h2>{lease ? '市場を進行できます' : live?.meta?.status === 'ENDED' ? '市場は終了しました' : 'この端末で市場を管理する'}</h2><p>{lease ? '市場の開始・終了やニュース配信を行えます。画面を閉じるとホスト権限は自動的に解放されます。' : live?.meta?.status === 'ENDED' ? '結果は確定しています。この画面でホストを再取得する必要はありません。' : '最初にホスト権限を取得してください。ほかの端末が操作中の場合は取得できません。'}</p>{!lease ? (live?.meta?.status === 'ENDED' ? null : <button className="portal-button" type="button" onClick={() => void takeLease().catch((error) => setNotice(handleFailure(error, 'ホストを取得できませんでした。')))}>ホストを取得する <span>→</span></button>) : <div className="host-controls"><button className="portal-button" type="button" onClick={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}>市場を開始</button>{!endingConfirm ? <button className="outline-button" type="button" onClick={() => setEndingConfirm(true)}>市場を終了</button> : <div className="ending-confirm" role="group" aria-label="市場終了の確認"><p><strong>市場を終了すると、結果が確定して元に戻せません。</strong>生徒はこれ以上売買できなくなります。</p><button className="danger-button" type="button" disabled={ending} onClick={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}>{ending ? '処理中…' : '終了して結果を確定する'}</button><button className="outline-button" type="button" disabled={ending} onClick={() => setEndingConfirm(false)}>やめる</button></div>}</div>}</div><aside className="news-card"><p className="section-kicker">MANUAL NEWS</p><h2>ニュースを配信</h2><p>授業中の出来事を市場へ届けます。</p><label>ニュース本文<textarea value={news} rows={4} placeholder="例: 新商品の発表で期待が高まる" onChange={(event) => setNews(event.target.value)} disabled={!lease} /></label><label>相場への影響<select value={impact} onChange={(event) => setImpact(Number(event.target.value))} disabled={!lease}><option value={0}>影響なし（お知らせだけ）</option><option value={5}>やや上昇（+5%）</option><option value={10}>大きく上昇（+10%）</option><option value={-5}>やや下落（-5%）</option><option value={-10}>大きく下落（-10%）</option></select></label><button className="portal-button" type="button" disabled={!lease || !news.trim()} onClick={() => void publishManualNews(services.database, marketId, user.uid, lease, news, impact).then(() => { setNews(''); setImpact(0); setNotice('ニュースを配信しました。') }).catch((error) => setNotice(handleFailure(error, 'ニュースを配信できません。市場が取引中か確認してください。')))}>配信する <span>→</span></button></aside><AdmissionPanel
+  return <Box component="main" className="host-page" sx={{ pb: 6 }}>
+    <AppBar component="header" position="static" color="transparent" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
+      <Toolbar component={Container} maxWidth="xl" disableGutters sx={{ gap: 2, px: { xs: 2, sm: 3 } }}>
+        <Link href="/teacher/markets" color="inherit" underline="none" variant="h6" sx={{ flexGrow: 1 }}>Stock League Classroom</Link>
+        <Button href="/teacher/markets" variant="text">市場の管理へ</Button><AppVersion />
+      </Toolbar>
+    </AppBar>
+    <Container maxWidth="xl" sx={{ pt: { xs: 4, md: 6 } }}>
+      <Stack spacing={4}>
+        <Stack component="section" direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+          <Box><Typography variant="overline" color="text.secondary">HOST CONSOLE</Typography><Typography component="h1" variant="h2">市場の進行をコントロール</Typography><Typography color="text.secondary">市場ID: <Box component="code">{marketId}</Box></Typography></Box>
+          <Chip color={lease ? 'success' : 'default'} variant={lease ? 'filled' : 'outlined'} label={lease ? 'ホスト接続中' : 'ホスト未接続'} />
+        </Stack>
+        <Stack spacing={2} aria-live="polite">
+          {offline && <Alert severity="error"><Typography component="strong" sx={{ fontWeight: 700 }}>サーバーに接続できていません。市場の進行が止まっています。</Typography><br />価格の更新と生徒の売買は処理されていません。通信を確認してください。</Alert>}
+          {interruption.message && <Alert severity="warning" action={<Button color="inherit" size="small" onClick={interruption.dismiss}>確認しました</Button>}><Typography component="strong" sx={{ fontWeight: 700 }}>{interruption.message}のあいだ、市場の進行が止まっていた可能性があります。</Typography><br />授業中はこのタブを前面に置いたままにしてください。</Alert>}
+          {lease && <Alert severity="info">このタブを閉じたり、別のアプリで隠したり、パソコンをスリープさせると市場が止まります。授業のあいだは開いたままにしてください。</Alert>}
+          {notice && <Alert severity="info">{notice}</Alert>}
+        </Stack>
+        <HostStatusPanel status={live?.meta?.status ?? 'SETUP'} openedAtMillis={live?.meta?.openedAtMillis} nowMillis={nowMillis} participantCount={Object.values(live?.participants ?? {}).filter((participant) => participant.connected).length} capacity={live?.meta?.capacity ?? 80} pendingOrderCount={Object.values(live?.orders ?? {}).filter((entry) => entry.pending).length} prices={(template?.companies ?? []).map((company) => ({ stockId: company.id, name: company.name, symbol: company.symbol, price: live?.prices?.[company.id]?.price ?? company.initialPrice, basePrice: company.initialPrice }))} lastTickAtMillis={lastTickAtMillis} hostingSinceMillis={hostingSinceMillis} />
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ alignItems: 'stretch' }}>
+          <Card component="section" sx={{ flex: 1 }}><CardContent><Stack spacing={2}><Typography variant="overline" color="text.secondary">MARKET CONTROL</Typography><Typography component="h2" variant="h4">{lease ? '市場を進行できます' : live?.meta?.status === 'ENDED' ? '市場は終了しました' : 'この端末で市場を管理する'}</Typography><Typography color="text.secondary">{lease ? '市場の開始・終了やニュース配信を行えます。画面を閉じるとホスト権限は自動的に解放されます。' : live?.meta?.status === 'ENDED' ? '結果は確定しています。この画面でホストを再取得する必要はありません。' : '最初にホスト権限を取得してください。ほかの端末が操作中の場合は取得できません。'}</Typography><Divider />
+            {!lease ? (live?.meta?.status === 'ENDED' ? null : <Button variant="contained" sx={{ alignSelf: 'flex-start' }} onClick={() => void takeLease().catch((error) => setNotice(handleFailure(error, 'ホストを取得できませんでした。')))}>ホストを取得する</Button>) : <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'center' } }}><Button variant="contained" onClick={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}>市場を開始</Button>{!endingConfirm ? <Button variant="outlined" color="error" onClick={() => setEndingConfirm(true)}>市場を終了</Button> : <Paper variant="outlined" sx={{ p: 2, width: '100%' }}><Stack spacing={1.5}><Typography><Box component="strong">市場を終了すると、結果が確定して元に戻せません。</Box> 生徒はこれ以上売買できなくなります。</Typography><Stack direction="row" spacing={1}><Button color="error" variant="contained" disabled={ending} onClick={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}>{ending ? '処理中…' : '終了して結果を確定する'}</Button><Button variant="outlined" disabled={ending} onClick={() => setEndingConfirm(false)}>やめる</Button></Stack></Stack></Paper>}</Stack>}</Stack></CardContent></Card>
+          <Card component="aside" sx={{ flex: 1 }}><CardContent><Stack spacing={2}><Typography variant="overline" color="text.secondary">MANUAL NEWS</Typography><Typography component="h2" variant="h4">ニュースを配信</Typography><Typography color="text.secondary">授業中の出来事を市場へ届けます。</Typography><TextField label="ニュース本文" value={news} multiline minRows={4} placeholder="例: 新商品の発表で期待が高まる" onChange={(event) => setNews(event.target.value)} disabled={!lease} fullWidth /><FormControl fullWidth disabled={!lease}><InputLabel id="news-impact-label">相場への影響</InputLabel><Select labelId="news-impact-label" label="相場への影響" value={impact} onChange={(event) => setImpact(Number(event.target.value))}><MenuItem value={0}>影響なし（お知らせだけ）</MenuItem><MenuItem value={5}>やや上昇（+5%）</MenuItem><MenuItem value={10}>大きく上昇（+10%）</MenuItem><MenuItem value={-5}>やや下落（-5%）</MenuItem><MenuItem value={-10}>大きく下落（-10%）</MenuItem></Select></FormControl><Button variant="contained" disabled={!lease || !news.trim()} onClick={() => void publishManualNews(services.database, marketId, user.uid, lease, news, impact).then(() => { setNews(''); setImpact(0); setNotice('ニュースを配信しました。') }).catch((error) => setNotice(handleFailure(error, 'ニュースを配信できません。市場が取引中か確認してください。')))}>配信する</Button></Stack></CardContent></Card>
+        </Stack>
+        <AdmissionPanel
       joinCode={live?.meta?.joinCode ?? ''}
       capacity={live?.meta?.capacity ?? 80}
       teams={Object.values(live?.teams ?? {}).map((team) => ({ id: team.id, name: team.name }))}
-      requests={Object.entries(live?.joinRequests ?? {}).filter(([id, request]) => request.connected && !live?.participants?.[id]).map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId, recoveryTeamId: resolveRecoveryTeamId(live, request) }))}
+      requests={pendingRequests}
       participants={Object.entries(live?.participants ?? {}).map(([id, participant]) => ({ id, displayName: participant.displayName, teamId: participant.teamId, connected: participant.connected }))}
       mode={mode}
+      autoApprove={autoApprove}
+      onAutoApproveChange={(enabled) => void setAutoApprove(services.database, marketId, enabled).then(() => setNotice(enabled ? '参加申請の自動承認を有効にしました。' : '参加申請の自動承認を無効にしました。')).catch((error) => setNotice(handleFailure(error, '自動承認モードを変更できませんでした。')))}
       onModeChange={setMode}
+      onApproveAll={() => void Promise.all(pendingRequests.map((request) => approveJoinRequest(services.database, marketId, request.id, mode))).then((results) => setNotice(`${results.filter(Boolean).length}人を一括承認しました。`)).catch((error) => setNotice(handleFailure(error, '一括承認に失敗しました。')))}
       onCopyJoinCode={() => void navigator.clipboard.writeText(live?.meta?.joinCode ?? '').then(() => setNotice('参加コードをコピーしました。'))}
+      joinUrl={`${window.location.origin}/join?code=${encodeURIComponent(live?.meta?.joinCode ?? '')}`}
+      onCopyJoinUrl={() => void navigator.clipboard.writeText(`${window.location.origin}/join?code=${encodeURIComponent(live?.meta?.joinCode ?? '')}`).then(() => setNotice('生徒用マジックリンクをコピーしました。'))}
       onApprove={(id, manualTeamId) => void approveJoinRequest(services.database, marketId, id, mode, manualTeamId).then((ok) => setNotice(ok ? '参加を承認しました。' : '承認できませんでした。')).catch((error) => setNotice(handleFailure(error, '参加を承認できませんでした。')))}
       onReject={(id) => void rejectJoinRequest(services.database, marketId, id).then(() => setNotice('申請を却下しました。')).catch((error) => setNotice(handleFailure(error, '申請を却下できませんでした。')))}
       onRemove={(id) => { if (window.confirm('この生徒を市場から退出させますか？チームの資産はそのまま残ります。')) void removeParticipant(services.database, marketId, id).then(() => setNotice('退出させました。')).catch((error) => setNotice(handleFailure(error, '退出させられませんでした。'))) }}
       onReassign={(id, teamId) => void reassignParticipantTeam(services.database, marketId, id, teamId).then((ok) => setNotice(ok ? 'チームを変更しました。' : 'チームを変更できませんでした。')).catch((error) => setNotice(handleFailure(error, 'チームを変更できませんでした。')))}
-    /></section></main>
+        />
+      </Stack>
+    </Container>
+  </Box>
 }

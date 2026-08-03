@@ -4,16 +4,21 @@ import { bootstrapFirebase } from '../lib/firebase/bootstrap'
 import { isTeacherIdentity } from '../lib/auth/roles'
 import { TemplateSharePage } from './TemplateSharePage'
 import { TemplateWorkspace } from './TemplateWorkspace'
+import { AuthLoadingScreen } from './teacher/TeacherShell'
 
 export const TemplateRoutes = ({ shareId }: { shareId?: string }) => {
   const services = bootstrapFirebase()
   const [user, setUser] = useState<User | null>(services.auth.currentUser)
   const [isOperator, setIsOperator] = useState(false)
-  useEffect(() => onAuthStateChanged(services.auth, async (next) => {
+  const [authReady, setAuthReady] = useState(false)
+  useEffect(() => onAuthStateChanged(services.auth, (next) => {
     setUser(next)
-    setIsOperator(Boolean(next && (await next.getIdTokenResult()).claims.operator === true))
+    setAuthReady(true)
+    if (!next) return setIsOperator(false)
+    void next.getIdTokenResult().then((token) => setIsOperator(token.claims.operator === true)).catch(() => setIsOperator(false))
   }), [services.auth])
   const ownerUid = user && isTeacherIdentity(user) ? user.uid : undefined
+  if (!shareId && !authReady) return <AuthLoadingScreen />
   return shareId
     ? <TemplateSharePage shareId={shareId} db={services.firestore} ownerUid={ownerUid} />
     : <TemplateWorkspace db={services.firestore} ownerUid={ownerUid} isOperator={isOperator} />

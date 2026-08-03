@@ -11,6 +11,7 @@ export interface LiveMarketMetadata {
   createdAtMillis: number
   startingCash: number
   joinCode: string
+  autoApprove?: boolean
   openedAtMillis?: number
 }
 

@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import type { OrderResult } from '../../lib/market/liveMarketTypes'
+import { Alert, Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
+import { StudentField } from '../ui/StudentUi'
+import { studentPrimaryActionSx } from '../ui/studentUiStyles'
 
 interface TradePanelProps {
   stockName: string
@@ -37,57 +40,61 @@ export function TradePanel({ stockName, currentPrice, onSubmitOrder, latestResul
   }
 
   return (
-    <div className="trade-panel">
-      <div className="trade-head">
-        <span>{stockName}</span>
-        <span className="trade-price">{currentPrice}</span>
-      </div>
+    <Stack spacing={2.25} sx={{ mt: 2.5 }}>
+      <Stack direction="row" sx={{ alignItems: 'baseline', justifyContent: 'space-between', gap: 2 }}>
+        <Typography component="h3" variant="h6" sx={{ fontWeight: 700 }}>{stockName}</Typography>
+        <Typography sx={{ fontSize: '1.5rem', fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>¥{currentPrice.toLocaleString()}</Typography>
+      </Stack>
 
-      <div className="trade-limits">
-        <span>買える数 {affordable}株</span>
-        <span>売れる数 {holding}株</span>
-      </div>
+      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+        <Chip label={`買える数 ${affordable}株`} sx={{ bgcolor: 'action.hover' }} />
+        <Chip label={`売れる数 ${holding}株`} sx={{ bgcolor: 'action.hover' }} />
+      </Stack>
 
-      <div>
-        <label htmlFor="quantity">数量</label>
-        <input
-          id="quantity"
-          type="number"
-          inputMode="numeric"
-          min={1}
-          max={100000}
-          step={1}
-          value={quantity}
-          onChange={(event) => { setQuantity(event.target.value); setConfirming(null); setError('') }}
-        />
-      </div>
+      <StudentField
+        id="quantity"
+        label="数量"
+        type="number"
+        value={quantity}
+        onChange={(event) => { setQuantity(event.target.value); setConfirming(null); setError('') }}
+        inputMode="numeric"
+        min={1}
+        max={100000}
+        step={1}
+        helperText="1〜100,000株の整数で入力してください。"
+      />
 
-      <div className="trade-actions">
-        <button type="button" disabled={disabled || pending} onClick={() => review('BUY')}>購入</button>
-        <button type="button" disabled={disabled || pending} onClick={() => review('SELL')}>売却</button>
-      </div>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+        <Button fullWidth size="large" color="success" variant="contained" type="button" disabled={disabled || pending} onClick={() => review('BUY')}>購入</Button>
+        <Button fullWidth size="large" color="error" variant="outlined" type="button" disabled={disabled || pending} onClick={() => review('SELL')}>売却</Button>
+      </Stack>
 
-      {error && <p className="student-message error" role="alert">{error}</p>}
-      {pending && <p className="student-message" role="status">注文を送信中…</p>}
+      {error && <Alert severity="error" role="alert">{error}</Alert>}
+      {pending && <Alert severity="info" role="status">注文を送信中…</Alert>}
 
       {confirming && (
-        <div className="trade-confirm" role="group" aria-label="注文の確認">
-          <p>{stockName} を {requested}株、約 {(requested * currentPrice).toLocaleString()}円で{confirming === 'BUY' ? '購入' : '売却'}します。よろしいですか？</p>
-          <p className="trade-note">価格は毎秒動きます。実際の約定価格は少し変わることがあります。</p>
-          <button type="button" disabled={disabled || pending} onClick={send}>この内容で注文する</button>
-          <button type="button" className="outline-button" onClick={() => setConfirming(null)}>やめる</button>
-        </div>
+        <Paper variant="outlined" role="group" aria-label="注文の確認" sx={{ p: 2.5, bgcolor: 'background.default' }}>
+          <Stack spacing={1.5}>
+            <Typography>{stockName} を {requested}株、約 {(requested * currentPrice).toLocaleString()}円で{confirming === 'BUY' ? '購入' : '売却'}します。よろしいですか？</Typography>
+            <Typography variant="body2" color="text.secondary">価格は毎秒動きます。実際の約定価格は少し変わることがあります。</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Button variant="contained" type="button" disabled={disabled || pending} onClick={send} sx={studentPrimaryActionSx}>この内容で注文する</Button>
+              <Button variant="text" type="button" onClick={() => setConfirming(null)}>やめる</Button>
+            </Stack>
+          </Stack>
+        </Paper>
       )}
 
       {!confirming && latestResult && latestResult.filledQuantity > 0 && latestResult.filledQuantity < latestResult.requestedQuantity && (
-        <p className="student-message" role="status">{latestResult.requestedQuantity}株のうち{latestResult.filledQuantity}株が{latestResult.price}円で約定しました。</p>
+        <Alert severity="success" role="status">{latestResult.requestedQuantity}株のうち{latestResult.filledQuantity}株が{latestResult.price}円で約定しました。</Alert>
       )}
       {!confirming && latestResult && latestResult.filledQuantity === latestResult.requestedQuantity && latestResult.filledQuantity > 0 && (
-        <p className="student-message" role="status">{latestResult.filledQuantity}株を{latestResult.price}円で約定しました。</p>
+        <Alert severity="success" role="status">{latestResult.filledQuantity}株を{latestResult.price}円で約定しました。</Alert>
       )}
       {!confirming && latestResult && latestResult.filledQuantity === 0 && (
-        <p className="student-message error" role="status">約定できませんでした。現金か保有株が足りません。</p>
+        <Alert severity="error" role="status">約定できませんでした。現金か保有株が足りません。</Alert>
       )}
-    </div>
+      {disabled && !pending && <Box><Typography variant="body2" color="text.secondary">市場が取引中のときだけ注文できます。</Typography></Box>}
+    </Stack>
   )
 }

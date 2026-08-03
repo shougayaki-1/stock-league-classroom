@@ -10,6 +10,9 @@ import { useDatabaseConnected, useDatabaseOffline, useReleaseIdleConnection } fr
 import { handleFailure } from '../../lib/monitoring/describeError'
 import { TradePanel } from './TradePanel'
 import { ResultsView } from './ResultsView'
+import { Alert, Box, Button, Chip, Container, Divider, Paper, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { StudentPageSurface, StudentSurfaceCard } from '../ui/StudentUi'
+import { studentPrimaryActionSx } from '../ui/studentUiStyles'
 
 interface LiveCompany { id: string; name: string; symbol: string; basePrice: number }
 
@@ -106,9 +109,10 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     if (!selectedStockId) setSelectedStockId(Object.keys(companies)[0] ?? '')
   }, [companies, selectedStockId])
 
-  if (!sessionValid) return <main className="student-page"><section className="student-card"><h1>参加情報が見つかりません</h1><p>参加コードを使って、もう一度市場へ参加してください。</p><a className="portal-button" href="/join" onClick={() => clearActiveStudentSession()}>参加画面へ</a></section></main>
-  if (offline) return <main className="student-page"><section className="student-card"><div className="student-icon">!</div><h1>市場につながりません</h1><p>通信が切れているか、教室の同時利用が上限に達しています。数十秒待つと自動で復帰することがあります。復帰しない場合は先生に知らせてください。</p><p className="student-message error" role="alert">売買した内容は保存されています。つながり次第、続きから再開できます。</p></section></main>
-  if (!participant) return <main className="student-page"><section className="student-card"><h1>市場へ接続しています…</h1><p>{notice || '承認済みの参加情報を確認しています。'}</p><a href="/join">参加画面へ戻る</a></section></main>
+  const studentMessage = (title: string, message: string, severity?: 'error' | 'info') => <StudentPageSurface><Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 3 }}><StudentSurfaceCard sx={{ width: 'min(100%, 480px)' }}><Stack spacing={2} sx={{ p: { xs: 3, sm: 4 } }}><Typography variant="h1">{title}</Typography><Typography color="text.secondary">{message}</Typography>{severity && <Alert severity={severity}>{severity === 'error' ? '売買した内容は保存されています。つながり次第、続きから再開できます。' : notice || '承認済みの参加情報を確認しています。'}</Alert>}<Button href="/join" variant="contained" onClick={title === '参加情報が見つかりません' ? clearActiveStudentSession : undefined} sx={studentPrimaryActionSx}>参加画面へ</Button></Stack></StudentSurfaceCard></Box></StudentPageSurface>
+  if (!sessionValid) return studentMessage('参加情報が見つかりません', '参加コードを使って、もう一度市場へ参加してください。')
+  if (offline) return studentMessage('市場につながりません', '通信が切れているか、教室の同時利用が上限に達しています。数十秒待つと自動で復帰することがあります。復帰しない場合は先生に知らせてください。', 'error')
+  if (!participant) return studentMessage('市場へ接続しています…', notice || '承認済みの参加情報を確認しています。', 'info')
 
   const selected = companies[selectedStockId]
   const latestResult = Object.values(transactions).sort((a, b) => b.processedAtMillis - a.processedAtMillis)[0] ?? null
@@ -139,13 +143,13 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   // available to the student under the RTDB rules — they cannot read any other
   // participant's record, so they cannot be told which team the code pointed to.
   const recoveryMismatch = Boolean(active?.presentedRecoveryCode) && recoveryCode !== '' && recoveryCode !== active?.presentedRecoveryCode
-  return <main className="student-market-page">
-    <header className="teacher-header"><a className="portal-brand" href="/">Stock League <span>Classroom</span></a><span>{teams[participant.teamId ?? '']?.name}</span></header>
-    <section className="student-market-summary"><div><p className="portal-eyebrow">{meta?.status ?? 'CONNECTING'}</p><h1>{participant.displayName}さんのチーム口座</h1></div><div><span>現金</span><strong>¥{(portfolio?.cash ?? 0).toLocaleString()}</strong></div><div className="recovery-code"><span>復帰コード</span><strong>{recoveryCode || '—'}</strong><small>端末を替えるときに使います</small></div></section>
-    {recoveryMismatch && <p className="form-notice stopped" role="alert"><strong>前回の続きに戻れませんでした。</strong>入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。前のデータには戻れません。心当たりがなければ先生に伝えてください。</p>}
-    {notice && <p className="form-notice" role="status">{notice}</p>}
-    <section className="student-trading-grid">
-      <div className="host-main-card"><h2>銘柄を選ぶ</h2><div className="stock-tabs" role="group" aria-label="銘柄を選ぶ">{Object.values(companies).map((company) => <button type="button" aria-pressed={selectedStockId === company.id} className={selectedStockId === company.id ? 'active' : ''} key={company.id} onClick={() => setSelectedStockId(company.id)}>{company.symbol}<small>{prices[company.id]?.price ?? company.basePrice}円</small></button>)}</div>
+  return <StudentPageSurface>
+    <Paper component="header" square elevation={0} sx={{ position: 'sticky', top: 0, zIndex: 10, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}><Container maxWidth="lg"><Stack direction="row" sx={{ minHeight: 72, alignItems: 'center', justifyContent: 'space-between' }}><Box><Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>STUDENT MARKET</Typography><Typography sx={{ fontWeight: 800 }}>{participant.displayName}</Typography></Box><Box sx={{ textAlign: 'right' }}><Typography variant="caption" color="text.secondary">チーム総資産</Typography><Typography variant="h5" sx={{ fontWeight: 900, fontVariantNumeric: 'tabular-nums' }}>¥{(teamResult?.valuation ?? portfolio?.cash ?? 0).toLocaleString()}</Typography></Box></Stack></Container></Paper>
+    <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 4 }, pb: { xs: 12, md: 5 } }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 3 }}><StudentSurfaceCard sx={{ flex: 1 }}><Stack direction="row" spacing={3} sx={{ p: 2.5, alignItems: 'center', justifyContent: 'space-between' }}><Box><Typography variant="caption" color="text.secondary">現金</Typography><Typography variant="h5" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>¥{(portfolio?.cash ?? 0).toLocaleString()}</Typography></Box><Box sx={{ textAlign: 'right' }}><Typography variant="caption" color="text.secondary">復帰コード</Typography><Typography variant="h5" sx={{ fontWeight: 800, letterSpacing: '.12em' }}>{recoveryCode || '—'}</Typography></Box></Stack></StudentSurfaceCard><Chip label={`${teams[participant.teamId ?? '']?.name ?? 'チーム'} ・ ${meta?.status ?? 'CONNECTING'}`} variant="outlined" sx={{ alignSelf: { md: 'center' } }} /></Stack>
+      <Stack spacing={2} sx={{ mb: 3 }}>{recoveryMismatch && <Alert severity="warning"><strong>前回の続きに戻れませんでした。</strong> 入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。</Alert>}{notice && <Alert severity="info" role="status">{notice}</Alert>}</Stack>
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ alignItems: 'flex-start' }}>
+      <StudentSurfaceCard sx={{ flex: 1, width: '100%' }}><Box sx={{ p: { xs: 2.5, sm: 3 } }}><Typography variant="overline" color="text.secondary">MARKET BOARD</Typography><Typography variant="h2" sx={{ mb: 2, mt: .5 }}>銘柄を選ぶ</Typography><ToggleButtonGroup exclusive value={selectedStockId} onChange={(_, next: string | null) => next && setSelectedStockId(next)} aria-label="銘柄を選ぶ" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, '& .MuiToggleButtonGroup-grouped': { minHeight: 60, border: 1, borderColor: 'divider !important', borderRadius: '12px !important', px: 2, py: 1, textTransform: 'none', '&.Mui-selected': { bgcolor: 'action.selected', color: 'text.primary', boxShadow: 'inset 0 -3px 0 currentColor' } } }}>{Object.values(companies).map((company) => <ToggleButton value={company.id} key={company.id} aria-label={`${company.name}を選ぶ`}><Stack sx={{ alignItems: 'flex-start' }}><Typography sx={{ fontWeight: 800 }}>{company.symbol}</Typography><Typography variant="caption">¥{(prices[company.id]?.price ?? company.basePrice).toLocaleString()}</Typography></Stack></ToggleButton>)}</ToggleButtonGroup>
         {selected && <TradePanel
           stockName={`${selected.name} (${selected.symbol})`}
           currentPrice={prices[selected.id]?.price ?? selected.basePrice}
@@ -155,9 +159,9 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
           latestResult={latestResult}
           disabled={meta?.status !== 'OPEN'}
           pending={Boolean(pendingOrderId)}
-        />}
-      </div>
-      <aside className="news-card"><h2>チーム資産</h2><p>現金 ¥{(portfolio?.cash ?? 0).toLocaleString()}</p><ul>{Object.entries(portfolio?.holdings ?? {}).map(([stockId, quantity]) => <li key={stockId}>{companies[stockId]?.symbol ?? stockId}: {quantity}株</li>)}</ul><h2>チーム順位</h2><ol>{Object.values(leaderboard).sort((a, b) => a.rank - b.rank).map((entry) => <li key={entry.teamId}><b>{entry.rank}位 {entry.name}</b> ¥{entry.valuation.toLocaleString()}</li>)}</ol></aside>
-    </section>
-  </main>
+        />}</Box></StudentSurfaceCard>
+      <StudentSurfaceCard component="aside" sx={{ width: { xs: '100%', lg: 340 }, flexShrink: 0 }}><Box sx={{ p: 3 }}><Typography variant="overline" color="text.secondary">YOUR PORTFOLIO</Typography><Typography variant="h2" sx={{ mt: .5 }}>チーム資産</Typography><Stack component="ul" spacing={1} sx={{ mt: 2, pl: 2 }}>{Object.entries(portfolio?.holdings ?? {}).map(([stockId, quantity]) => <Typography component="li" key={stockId}>{companies[stockId]?.symbol ?? stockId}: {quantity}株</Typography>)}</Stack><Divider sx={{ my: 3 }} /><Typography variant="overline" color="text.secondary">LEADERBOARD</Typography><Typography variant="h2" sx={{ mt: .5 }}>チーム順位</Typography><Stack component="ol" spacing={1.25} sx={{ mt: 2, pl: 3 }}>{Object.values(leaderboard).sort((a, b) => a.rank - b.rank).map((entry) => <Typography component="li" key={entry.teamId}><strong>{entry.rank}位 {entry.name}</strong>　¥{entry.valuation.toLocaleString()}</Typography>)}</Stack></Box></StudentSurfaceCard>
+      </Stack>
+    </Container>
+  </StudentPageSurface>
 }
