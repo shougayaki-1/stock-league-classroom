@@ -3,7 +3,7 @@ import { Timestamp } from 'firebase/firestore'
 import { seedOfficialTemplates, toTimestampMillis } from './templateRepository'
 import type { TemplateSpec } from './types'
 
-const example: TemplateSpec = { title: '元テンプレート', description: '説明', startingCash: 100, teams: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], companies: [{ id: 'one', name: '一社', symbol: 'ONE', initialPrice: 10, initialShares: 10 }] }
+const example: TemplateSpec = { title: '元テンプレート', description: '説明', startingCash: 100, teams: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], companies: [{ id: 'one', name: '一社', symbol: 'ONE', initialPrice: 10 }] }
 
 describe('template repository contracts', () => {
   it('keeps a portable template shape for duplication and share snapshots', () => {

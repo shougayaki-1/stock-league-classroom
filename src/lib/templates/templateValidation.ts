@@ -43,14 +43,16 @@ export const normalizeTemplate = (spec: TemplateSpec): TemplateSpec => ({
     name: company.name.trim(),
     symbol: company.symbol.trim().toUpperCase(),
     initialPrice: Math.round(company.initialPrice),
-    initialShares: Math.max(1, Math.round(company.initialShares)),
     pricePhases: normalizePhases(company.pricePhases),
   })),
 })
 
+/** Thrown only for deliberate, teacher-facing validation text — never for infrastructure failures. */
+export class TemplateValidationError extends Error {}
+
 export const assertValidTemplate = (spec: TemplateSpec): TemplateSpec => {
   const normalized = normalizeTemplate(spec)
   const errors = validateTemplate(normalized)
-  if (errors.length) throw new Error(errors[0])
+  if (errors.length) throw new TemplateValidationError(errors[0])
   return normalized
 }

@@ -2,6 +2,9 @@ export interface ActiveStudentSession {
   marketId: string
   requestId: string
   sessionId: string
+  /** The recovery code this device presented at join time, if any — kept only so the
+   * student can later be told whether it actually matched (see StudentMarketPage). */
+  presentedRecoveryCode?: string
 }
 
 const SESSION_ID_KEY = 'stock-league-session-id'

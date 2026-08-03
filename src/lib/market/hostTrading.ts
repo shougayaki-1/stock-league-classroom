@@ -3,9 +3,10 @@ import { get, onDisconnect, ref, runTransaction, type Database } from 'firebase/
 import { clampToBounds, createPhaseRuntime, elapsedMarketMinute, getActivePhase } from '../pricing/pricingCore'
 import type { StockPricePhase } from '../pricing/types'
 import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio, TeamLeaderboardEntry } from './liveMarketTypes'
+import { serverNow } from '../firebase/serverTime'
 
 export const root = (marketId: string) => `liveMarkets/${marketId}`
-const now = () => Date.now()
+const now = () => serverNow()
 const clone = <T>(value: T): T => structuredClone(value)
 export const hostLeasePath = (marketId: string) => `${root(marketId)}/hostLease`
 export const hostDisconnectPath = (marketId: string, leaseId: string) => `${root(marketId)}/hostDisconnects/${leaseId}`
@@ -150,11 +151,38 @@ export const publishMarketProjections = async (database: Database, marketId: str
   return result.committed
 }
 
-export const publishManualNews = async (database: Database, marketId: string, ownerUid: string, leaseId: string, message: string, atMillis = now()) => {
+export const NEWS_IMPACT_LIMIT = 20
+
+/**
+ * A shock has to move the phase runtime, not just the price: publishPrices
+ * recomputes each price from its runtime every tick, so a bare price write
+ * would be erased one second later.
+ */
+export const applyNewsImpact = (state: Pick<LiveMarketState, 'prices' | 'companies'>, impactPercent: number, atMillis: number) => {
+  const bounded = Math.max(-NEWS_IMPACT_LIMIT, Math.min(NEWS_IMPACT_LIMIT, impactPercent))
+  if (!bounded || !state.prices) return
+  const multiplier = 1 + bounded / 100
+  for (const [stockId, entry] of Object.entries(state.prices)) {
+    const basePrice = state.companies?.[stockId]?.basePrice ?? entry.price
+    if (entry.runtime) {
+      entry.runtime.startPrice = clampToBounds(entry.runtime.startPrice * multiplier, basePrice)
+      entry.runtime.endPrice = clampToBounds(entry.runtime.endPrice * multiplier, basePrice)
+      // Derived from the just-shifted runtime so this is the exact number the next tick recomputes.
+      entry.price = priceAtRuntime(entry.runtime, basePrice, atMillis)
+    } else {
+      entry.price = clampToBounds(entry.price * multiplier, basePrice)
+    }
+    entry.updatedAtMillis = atMillis
+  }
+}
+
+export const publishManualNews = async (database: Database, marketId: string, ownerUid: string, leaseId: string, message: string, impactPercent = 0, atMillis = now()) => {
   const trimmed = message.trim().slice(0, 280); if (!trimmed) throw new Error('News must not be empty')
   return runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
     if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.meta.status !== 'OPEN') return
-    raw.news ??= {}; raw.news[crypto.randomUUID()] = { message: trimmed, publishedAtMillis: atMillis }; return raw
+    raw.news ??= {}; raw.news[crypto.randomUUID()] = { message: trimmed, publishedAtMillis: atMillis, impactPercent }
+    applyNewsImpact(raw, impactPercent, atMillis)
+    return raw
   })
 }
 
@@ -173,6 +201,8 @@ export const finalizeEnding = async (firestore: Firestore, database: Database, m
   const participantWrites = Object.entries(snapshot.participants ?? {}).map(([participantId, participant]) =>
     setDoc(doc(firestore, 'marketResults', marketId, 'participants', participantId), {
       ownerUid, checkpointId: checkpoint, participantId, participantUid: participant.uid, teamId: participant.teamId,
+      // Carried into the result so the teacher's CSV names a student, not a UID.
+      displayName: participant.displayName,
       teamResult: participant.teamId ? leaderboard[participant.teamId] ?? null : null,
       transactions: snapshot.transactions?.[participantId] ?? {}, finalizedAtMillis: atMillis,
     }))

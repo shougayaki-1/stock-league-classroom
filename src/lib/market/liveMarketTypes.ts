@@ -18,7 +18,11 @@ export interface LiveMarketTeam { id: string; name: string }
 export interface JoinRequest {
   uid: string; sessionId: string; displayName: string; requestedTeamId: string | null
   connected: boolean; requestedAtMillis: number; approvedAtMillis?: number
+  /** Issued on approval; lets the same student return from another device. */
+  recoveryCode?: string
 }
+/** Reverse index from a student-facing recovery code to the live participant it restores. */
+export interface RecoveryEntry { participantId: string; teamId: string; displayName: string }
 export interface LiveMarketParticipant {
   uid: string; sessionId: string; displayName: string; teamId: string | null
   connected: boolean; lastSeenAtMillis: number
@@ -54,6 +58,7 @@ export interface LiveMarketState {
   companies?: Record<string, { id: string; name: string; symbol: string; basePrice: number; phases?: import('../pricing/types').StockPricePhase[] }>
   members?: Record<string, MarketMember>
   joinRequests?: Record<string, JoinRequest>
+  recoveryCodes?: Record<string, RecoveryEntry>
   participants?: Record<string, LiveMarketParticipant>
   hostLease?: HostLease
   hostDisconnects?: Record<string, { ownerUid: string; disconnectedAtMillis: number }>
@@ -62,7 +67,7 @@ export interface LiveMarketState {
   teamPortfolios?: Record<string, Portfolio>
   transactions?: Record<string, Record<string, OrderResult>>
   teamLeaderboard?: Record<string, TeamLeaderboardEntry>
-  news?: Record<string, { message: string; publishedAtMillis: number }>
+  news?: Record<string, { message: string; publishedAtMillis: number; impactPercent?: number }>
   finalization?: { status: 'PENDING' | 'WRITING_RESULTS' | 'COMPLETED'; checkpointId: string; startedAtMillis: number; completedAtMillis?: number }
   /** Host-authored, pre-aggregated projection for the physical signage display. Never raw portfolios. */
   signage?: SignageData

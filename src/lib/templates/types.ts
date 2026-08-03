@@ -10,7 +10,6 @@ export interface TemplateCompany {
   name: string
   symbol: string
   initialPrice: number
-  initialShares: number
   /** Optional configured intrahour price schedule; absence deliberately means flat. */
   pricePhases?: import('../pricing/types').StockPricePhase[]
 }
