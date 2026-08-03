@@ -671,7 +671,7 @@ git commit -m "refactor: extract NewsPublishPanel from HostConsole"
 **Interfaces:**
 - Produces: `SignageLinkPanel({ marketId: string })` from `src/components/teacher/SignageLinkPanel.tsx`. Not wired into any page yet — Task 6 wires it into the new Control Room's "教室画面" tab.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```tsx
 // src/components/teacher/SignageLinkPanel.test.tsx
@@ -689,12 +689,12 @@ describe('SignageLinkPanel', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/SignageLinkPanel.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./SignageLinkPanel` does not exist yet).
 
-- [ ] **Step 3: Write SignageLinkPanel**
+- [x] **Step 3: Write SignageLinkPanel**
 
 ```tsx
 // src/components/teacher/SignageLinkPanel.tsx
@@ -719,12 +719,12 @@ export function SignageLinkPanel({ marketId }: SignageLinkPanelProps) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/SignageLinkPanel.test.tsx`
 Expected: PASS (1 test)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/teacher/SignageLinkPanel.tsx src/components/teacher/SignageLinkPanel.test.tsx
