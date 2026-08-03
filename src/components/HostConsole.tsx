@@ -9,6 +9,7 @@ import { serverNow } from '../lib/firebase/serverTime'
 import { AdmissionPanel } from './teacher/AdmissionPanel'
 import { HostStatusPanel } from './teacher/HostStatusPanel'
 import { PhaseBand } from './teacher/PhaseBand'
+import { MarketControlPanel } from './teacher/MarketControlPanel'
 import { approveJoinRequest, reassignParticipantTeam, rejectJoinRequest, removeParticipant, resolveRecoveryTeamId, setAutoApprove } from '../lib/market/marketRepository'
 import type { LiveMarketState, TeamAssignmentMode } from '../lib/market/liveMarketTypes'
 import type { TemplateSpec } from '../lib/templates/types'
@@ -27,12 +28,10 @@ import {
   Chip,
   CircularProgress,
   Container,
-  Divider,
   FormControl,
   InputLabel,
   Link,
   MenuItem,
-  Paper,
   Select,
   Stack,
   TextField,
@@ -167,8 +166,17 @@ export const HostConsole = ({ marketId }: { marketId: string }) => {
           nowMillis={nowMillis}
         />
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ alignItems: 'stretch' }}>
-          <Card component="section" sx={{ flex: 1 }}><CardContent><Stack spacing={2}><Typography variant="overline" color="text.secondary">MARKET CONTROL</Typography><Typography component="h2" variant="h4">{lease ? '市場を進行できます' : live?.meta?.status === 'ENDED' ? '市場は終了しました' : 'この端末で市場を管理する'}</Typography><Typography color="text.secondary">{lease ? '市場の開始・終了やニュース配信を行えます。画面を閉じるとホスト権限は自動的に解放されます。' : live?.meta?.status === 'ENDED' ? '結果は確定しています。この画面でホストを再取得する必要はありません。' : '最初にホスト権限を取得してください。ほかの端末が操作中の場合は取得できません。'}</Typography><Divider />
-            {!lease ? (live?.meta?.status === 'ENDED' ? null : <Button variant="contained" sx={{ alignSelf: 'flex-start' }} onClick={() => void takeLease().catch((error) => setNotice(handleFailure(error, 'ホストを取得できませんでした。')))}>ホストを取得する</Button>) : <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'center' } }}><Button variant="contained" onClick={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}>市場を開始</Button>{!endingConfirm ? <Button variant="outlined" color="error" onClick={() => setEndingConfirm(true)}>市場を終了</Button> : <Paper variant="outlined" sx={{ p: 2, width: '100%' }}><Stack spacing={1.5}><Typography><Box component="strong">市場を終了すると、結果が確定して元に戻せません。</Box> 生徒はこれ以上売買できなくなります。</Typography><Stack direction="row" spacing={1}><Button color="error" variant="contained" disabled={ending} onClick={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}>{ending ? '処理中…' : '終了して結果を確定する'}</Button><Button variant="outlined" disabled={ending} onClick={() => setEndingConfirm(false)}>やめる</Button></Stack></Stack></Paper>}</Stack>}</Stack></CardContent></Card>
+          <Box sx={{ flex: 1 }}><MarketControlPanel
+            lease={lease}
+            marketStatus={live?.meta?.status ?? 'SETUP'}
+            endingConfirm={endingConfirm}
+            ending={ending}
+            onTakeLease={() => void takeLease().catch((error) => setNotice(handleFailure(error, 'ホストを取得できませんでした。')))}
+            onOpenMarket={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}
+            onRequestEnd={() => setEndingConfirm(true)}
+            onCancelEnd={() => setEndingConfirm(false)}
+            onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}
+          /></Box>
           <Card component="aside" sx={{ flex: 1 }}><CardContent><Stack spacing={2}><Typography variant="overline" color="text.secondary">MANUAL NEWS</Typography><Typography component="h2" variant="h4">ニュースを配信</Typography><Typography color="text.secondary">授業中の出来事を市場へ届けます。</Typography><TextField label="ニュース本文" value={news} multiline minRows={4} placeholder="例: 新商品の発表で期待が高まる" onChange={(event) => setNews(event.target.value)} disabled={!lease} fullWidth /><FormControl fullWidth disabled={!lease}><InputLabel id="news-impact-label">相場への影響</InputLabel><Select labelId="news-impact-label" label="相場への影響" value={impact} onChange={(event) => setImpact(Number(event.target.value))}><MenuItem value={0}>影響なし（お知らせだけ）</MenuItem><MenuItem value={5}>やや上昇（+5%）</MenuItem><MenuItem value={10}>大きく上昇（+10%）</MenuItem><MenuItem value={-5}>やや下落（-5%）</MenuItem><MenuItem value={-10}>大きく下落（-10%）</MenuItem></Select></FormControl><Button variant="contained" disabled={!lease || !news.trim()} onClick={() => void publishManualNews(services.database, marketId, user.uid, lease, news, impact).then(() => { setNews(''); setImpact(0); setNotice('ニュースを配信しました。') }).catch((error) => setNotice(handleFailure(error, 'ニュースを配信できません。市場が取引中か確認してください。')))}>配信する</Button></Stack></CardContent></Card>
         </Stack>
         <AdmissionPanel

@@ -365,7 +365,7 @@ git commit -m "refactor: extract PhaseBand and trim HostStatusPanel to the price
 - Produces: `MarketControlPanel({ lease: string; marketStatus: MarketStatus; endingConfirm: boolean; ending: boolean; onTakeLease: () => void; onOpenMarket: () => void; onRequestEnd: () => void; onCancelEnd: () => void; onConfirmEnd: () => void })` from `src/components/teacher/MarketControlPanel.tsx`.
 - Consumes: `MarketStatus` from `src/lib/market/liveMarketTypes.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```tsx
 // src/components/teacher/MarketControlPanel.test.tsx
@@ -421,12 +421,12 @@ describe('MarketControlPanel', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/MarketControlPanel.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./MarketControlPanel` does not exist yet).
 
-- [ ] **Step 3: Write MarketControlPanel**
+- [x] **Step 3: Write MarketControlPanel**
 
 ```tsx
 // src/components/teacher/MarketControlPanel.tsx
@@ -477,12 +477,12 @@ export function MarketControlPanel({ lease, marketStatus, endingConfirm, ending,
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/MarketControlPanel.test.tsx`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Wire it into HostConsole**
+- [x] **Step 5: Wire it into HostConsole**
 
 In `src/components/HostConsole.tsx`, add:
 
@@ -506,12 +506,12 @@ Replace the entire `<Card component="section" sx={{ flex: 1 }}><CardContent><Sta
 /></Box>
 ```
 
-- [ ] **Step 6: Typecheck and run the full suite**
+- [x] **Step 6: Typecheck and run the full suite**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS. Remove any import `tsc` flags as now unused in `HostConsole.tsx` (e.g. `Divider`, `Paper` if nothing else in the file still needs them — check before deleting, since the "MANUAL NEWS" card touched in Task 3 also uses some of these).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/components/teacher/MarketControlPanel.tsx src/components/teacher/MarketControlPanel.test.tsx src/components/HostConsole.tsx
