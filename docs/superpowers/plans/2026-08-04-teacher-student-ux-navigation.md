@@ -1255,7 +1255,7 @@ git commit -m "refactor: assemble the tabbed control room and retire HostConsole
 
 This task has no new automated test, per the Global Constraints note (no `MarketDashboard.test.tsx` exists, for the same Firebase-coupling reason `HostConsole`/`ControlRoom` have none). Verify with typecheck, the full suite, and the manual check in Step 4.
 
-- [ ] **Step 1: Remove the AdmissionPanel-only state, effects and handlers**
+- [x] **Step 1: Remove the AdmissionPanel-only state, effects and handlers**
 
 In `src/components/MarketDashboard.tsx`, remove:
 - The import `import { AdmissionPanel } from './teacher/AdmissionPanel'`.
@@ -1273,7 +1273,7 @@ Replace `const activeCount = participants.filter((participant) => participant.co
 const activeCount = Object.values(state?.participants ?? {}).filter((participant) => participant.connected).length
 ```
 
-- [ ] **Step 2: Replace the "ACTIVE MARKET" card's admission UI with a single Control Room CTA**
+- [x] **Step 2: Replace the "ACTIVE MARKET" card's admission UI with a single Control Room CTA**
 
 Replace the entire block starting at `{marketId && <Paper component="section" className="active-market-card" ...>` through its matching `</Paper>}` (which currently contains the "市場を進行"/"教室画面" buttons followed by the `<AdmissionPanel ... />` call) with:
 
@@ -1281,7 +1281,7 @@ Replace the entire block starting at `{marketId && <Paper component="section" cl
 {marketId && <Paper component="section" className="active-market-card" elevation={0} sx={{ mt: 3, p: { xs: 2, sm: 3 } }}><Stack className="active-head" direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}><Box><Typography className="section-kicker" variant="overline" color="primary">ACTIVE MARKET</Typography><Typography variant="h5">2. 参加受付・進行はコントロールルームで</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>参加コードの共有、参加申請の承認、市場の開始・終了、ニュース配信は、すべてコントロールルームにまとまっています。</Typography></Box><Button variant="contained" size="large" href={`/teacher/markets/${marketId}/room`} startIcon={<PlayCircleOutlined />}>コントロールルームを開く</Button></Stack></Paper>}
 ```
 
-- [ ] **Step 3: Simplify the per-market history row actions**
+- [x] **Step 3: Simplify the per-market history row actions**
 
 Replace `<Button size="small" variant="outlined" type="button" onClick={() => { setMarketId(market.id); setJoinCode(market.joinCode); setState(null) }}>参加を承認</Button><Button size="small" variant="contained" href={`/teacher/markets/${market.id}/host`}>市場を進行</Button>` with:
 
@@ -1289,14 +1289,14 @@ Replace `<Button size="small" variant="outlined" type="button" onClick={() => { 
 <Button size="small" variant="outlined" type="button" onClick={() => { setMarketId(market.id); setJoinCode(market.joinCode); setState(null) }}>選択</Button><Button size="small" variant="contained" href={`/teacher/markets/${market.id}/room`}>コントロールルームを開く</Button>
 ```
 
-- [ ] **Step 4: Typecheck, run the full suite, then manually verify**
+- [x] **Step 4: Typecheck, run the full suite, then manually verify**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS. Remove any imports `tsc` flags as now unused.
 
 Run: `npm run dev`, sign in as a teacher, confirm the dashboard's "ACTIVE MARKET" section no longer shows a duplicate participant list, and that "コントロールルームを開く" opens the control room at `/teacher/markets/:id/room?tab=admission`-equivalent behavior (opens on the participants tab while the market is still `SETUP`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/MarketDashboard.tsx
