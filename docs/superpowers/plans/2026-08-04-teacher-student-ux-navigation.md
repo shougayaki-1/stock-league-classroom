@@ -745,7 +745,7 @@ git commit -m "feat: add SignageLinkPanel for the control room's classroom-scree
 - Produces: route `/teacher/markets/:marketId/room` (renders the still-named `HostConsole`, unchanged this task); route `/teacher/markets/:marketId/host` now redirects to `/room` preserving query string and hash.
 - Produces: `TeacherArea` type narrows from `'markets' | 'templates' | 'host'` to `'markets' | 'templates' | 'room'` — this is a breaking change to `TeacherShell`'s `active` prop that Task 6 must also account for (it currently isn't set anywhere else, so this task's own `App.tsx` edit is the only caller to update).
 
-- [ ] **Step 1: Write the failing TeacherShell tests**
+- [x] **Step 1: Write the failing TeacherShell tests**
 
 Replace the entire contents of `src/components/teacher/TeacherShell.test.tsx`:
 
@@ -794,7 +794,7 @@ describe('TeacherShell market navigation', () => {
 Run: `npx vitest run src/components/teacher/TeacherShell.test.tsx`
 Expected: FAIL — no element with role `button`/`link` named `コントロールルーム` exists yet (the current sidebar has `シナリオ・ニュース予約`, `MCコントロール`, etc. instead).
 
-- [ ] **Step 3: Rewrite TeacherShell**
+- [x] **Step 3: Rewrite TeacherShell**
 
 Replace the entire contents of `src/components/teacher/TeacherShell.tsx`:
 
@@ -876,12 +876,12 @@ export const AuthLoadingScreen = () => <main className="auth-loading" aria-busy=
 </main>
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/teacher/TeacherShell.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Write the failing App.tsx redirect test**
+- [x] **Step 5: Write the failing App.tsx redirect test**
 
 Add to `src/App.test.tsx`, inside the existing `describe('App', ...)` block:
 
@@ -895,12 +895,12 @@ Add to `src/App.test.tsx`, inside the existing `describe('App', ...)` block:
   })
 ```
 
-- [ ] **Step 6: Run test to verify it fails**
+- [x] **Step 6: Run test to verify it fails**
 
 Run: `npx vitest run src/App.test.tsx`
 Expected: FAIL — the route `/teacher/markets/:marketId/host` currently renders `HostRoute` directly instead of redirecting.
 
-- [ ] **Step 7: Update App.tsx**
+- [x] **Step 7: Update App.tsx**
 
 In `src/App.tsx`, replace:
 
@@ -939,17 +939,17 @@ with:
   <Route path="/teacher/markets/:marketId/host" element={<HostRouteRedirect />} />
 ```
 
-- [ ] **Step 8: Run test to verify it passes**
+- [x] **Step 8: Run test to verify it passes**
 
 Run: `npx vitest run src/App.test.tsx`
 Expected: PASS
 
-- [ ] **Step 9: Run the full suite and typecheck**
+- [x] **Step 9: Run the full suite and typecheck**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/App.tsx src/App.test.tsx src/components/teacher/TeacherShell.tsx src/components/teacher/TeacherShell.test.tsx

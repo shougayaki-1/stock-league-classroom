@@ -46,4 +46,12 @@ describe('App', () => {
     expect(window.location.pathname).toBe('/terms')
     window.history.pushState({}, '', '/')
   })
+
+  it('redirects the legacy host console URL to the control room, keeping the query string', () => {
+    window.history.pushState({}, '', '/teacher/markets/demo-market/host?tab=news')
+    render(<App />)
+    expect(window.location.pathname).toBe('/teacher/markets/demo-market/room')
+    expect(window.location.search).toBe('?tab=news')
+    window.history.pushState({}, '', '/')
+  })
 })

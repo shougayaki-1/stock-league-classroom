@@ -67,9 +67,15 @@ const LandingPage = () => <main className="landing-page">
 const TemplateShareRoute = () => <TemplateRoutes shareId={useParams().shareId ?? ''} />
 const StudentPlayRoute = () => <StudentMarketPage marketId={useParams().marketId ?? ''} />
 const SignageRoute = () => <SignagePage marketId={useParams().marketId ?? ''} />
-const HostRoute = () => {
+const RoomRoute = () => {
   const marketId = useParams().marketId ?? ''
-  return <TeacherShell active="host" marketId={marketId}><HostConsole marketId={marketId} /></TeacherShell>
+  return <TeacherShell active="room" marketId={marketId}><HostConsole marketId={marketId} /></TeacherShell>
+}
+/** Keeps old links (bookmarks, printed handouts) working after the host console was renamed to the control room. */
+const HostRouteRedirect = () => {
+  const marketId = useParams().marketId ?? ''
+  const { search, hash } = useLocation()
+  return <Navigate replace to={`/teacher/markets/${marketId}/room${search}${hash}`} />
 }
 
 /** Keeps shared links canonical, including links copied with a trailing slash. */
@@ -85,7 +91,8 @@ const AppRoutes = () => <><TrailingSlashRedirect /><Routes>
   <Route path="/templates" element={<TemplateRoutes />} />
   <Route path="/templates/share/:shareId" element={<TemplateShareRoute />} />
   <Route path="/teacher/markets" element={<TeacherMarketDashboard />} />
-  <Route path="/teacher/markets/:marketId/host" element={<HostRoute />} />
+  <Route path="/teacher/markets/:marketId/room" element={<RoomRoute />} />
+  <Route path="/teacher/markets/:marketId/host" element={<HostRouteRedirect />} />
   <Route path="/join" element={<StudentMarketJoin />} />
   <Route path="/markets/:marketId/play" element={<StudentPlayRoute />} />
   <Route path="/markets/:marketId/signage" element={<SignageRoute />} />
