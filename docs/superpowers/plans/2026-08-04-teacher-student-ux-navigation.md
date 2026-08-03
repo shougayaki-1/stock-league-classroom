@@ -789,7 +789,7 @@ describe('TeacherShell market navigation', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/components/teacher/TeacherShell.test.tsx`
 Expected: FAIL — no element with role `button`/`link` named `コントロールルーム` exists yet (the current sidebar has `シナリオ・ニュース予約`, `MCコントロール`, etc. instead).
@@ -1363,7 +1363,7 @@ git commit -m "fix: show the student's market phase in the same Japanese wording
 **Interfaces:**
 - Produces: `RecoveryCodeDisclosure({ code: string })` from `src/components/student/RecoveryCodeDisclosure.tsx`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```tsx
 // src/components/student/RecoveryCodeDisclosure.test.tsx
@@ -1387,7 +1387,7 @@ describe('RecoveryCodeDisclosure', () => {
 Run: `npx vitest run src/components/student/RecoveryCodeDisclosure.test.tsx`
 Expected: FAIL with "Failed to resolve import" (`./RecoveryCodeDisclosure` does not exist yet).
 
-- [ ] **Step 3: Write RecoveryCodeDisclosure**
+- [x] **Step 3: Write RecoveryCodeDisclosure**
 
 ```tsx
 // src/components/student/RecoveryCodeDisclosure.tsx
@@ -1414,12 +1414,12 @@ export function RecoveryCodeDisclosure({ code }: RecoveryCodeDisclosureProps) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/components/student/RecoveryCodeDisclosure.test.tsx`
 Expected: PASS (1 test)
 
-- [ ] **Step 5: Wire it into StudentMarketPage**
+- [x] **Step 5: Wire it into StudentMarketPage**
 
 In `src/components/student/StudentMarketPage.tsx`, add:
 
@@ -1442,14 +1442,14 @@ with:
 
 (This step assumes Task 8 has already landed, so the chip already reads `describeStudentPhase(meta?.status)`; if executing this task before Task 8, keep the chip's existing `meta?.status ?? 'CONNECTING'` label unchanged and only remove the 復帰コード `Box`.)
 
-- [ ] **Step 6: Typecheck, run the full suite, then manually verify**
+- [x] **Step 6: Typecheck, run the full suite, then manually verify**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
 Run: `npm run dev`, join a market as a student, confirm the recovery code is not visible by default, and confirm clicking "別の端末で続きから参加したいときは" reveals it.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/components/student/RecoveryCodeDisclosure.tsx src/components/student/RecoveryCodeDisclosure.test.tsx src/components/student/StudentMarketPage.tsx
