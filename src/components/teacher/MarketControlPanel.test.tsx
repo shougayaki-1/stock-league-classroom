@@ -9,6 +9,7 @@ const baseProps = {
   endingConfirm: false,
   ending: false,
   onTakeLease: vi.fn(),
+  onPauseMarket: vi.fn(),
   onOpenMarket: vi.fn(),
   onRequestEnd: vi.fn(),
   onCancelEnd: vi.fn(),
@@ -28,6 +29,18 @@ describe('MarketControlPanel', () => {
     render(<MarketControlPanel {...baseProps} lease="lease-1" marketStatus="OPEN" onRequestEnd={onRequestEnd} />)
     await userEvent.click(screen.getByRole('button', { name: '市場を終了' }))
     expect(onRequestEnd).toHaveBeenCalled()
+  })
+
+  it('offers to pause an open market', async () => {
+    const onPauseMarket = vi.fn()
+    render(<MarketControlPanel {...baseProps} lease="lease-1" marketStatus="OPEN" onPauseMarket={onPauseMarket} />)
+    await userEvent.click(screen.getByRole('button', { name: '市場を一時停止' }))
+    expect(onPauseMarket).toHaveBeenCalled()
+  })
+
+  it('does not offer to pause once the market is already paused', () => {
+    render(<MarketControlPanel {...baseProps} lease="lease-1" marketStatus="PAUSED" />)
+    expect(screen.queryByRole('button', { name: '市場を一時停止' })).not.toBeInTheDocument()
   })
 
   it('offers to resume a paused market', async () => {
