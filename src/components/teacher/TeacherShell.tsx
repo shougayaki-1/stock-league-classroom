@@ -57,18 +57,6 @@ export const TeacherShell = ({ active, children, email, marketId, onShowGuide }:
   </Box>
 }
 
-export interface ProgressStep { label: string; detail?: string }
-export const SetupProgress = ({ steps, current, label = '進行状況' }: { steps: ProgressStep[]; current: number; label?: string }) => <section className="setup-progress" aria-label={label}>
-  <div className="progress-caption"><span>{label}</span><strong>{Math.min(current + 1, steps.length)} / {steps.length}</strong></div>
-  <ol>{steps.map((step, index) => {
-    const state = index < current ? 'complete' : index === current ? 'current' : ''
-    return <li className={state} key={step.label} aria-current={index === current ? 'step' : undefined}>
-      <span className="progress-dot">{index < current ? '✓' : index + 1}</span>
-      <div><strong>{step.label}</strong>{step.detail && <small>{step.detail}</small>}</div>
-    </li>
-  })}</ol>
-</section>
-
 export const AuthLoadingScreen = () => <main className="auth-loading" aria-busy="true" aria-label="ログイン状態を確認しています">
   <div className="auth-loading-mark">SL</div><div className="auth-loading-line" /><p>教室を準備しています</p>
 </main>

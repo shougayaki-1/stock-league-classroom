@@ -1,5 +1,5 @@
 import { TemplateRoutes } from './components/TemplateRoutes'
-import { TeacherMarketDashboard } from './components/MarketDashboard'
+import { WorkspacePicker } from './components/teacher/WorkspacePicker'
 import { StudentMarketJoin } from './components/student/StudentMarketJoin'
 import { ControlRoom } from './components/teacher/ControlRoom'
 import { StudentMarketPage } from './components/student/StudentMarketPage'
@@ -91,7 +91,7 @@ const AppRoutes = () => <><TrailingSlashRedirect /><Routes>
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route path="/templates" element={<TemplateRoutes />} />
   <Route path="/templates/share/:shareId" element={<TemplateShareRoute />} />
-  <Route path="/teacher/markets" element={<TeacherMarketDashboard />} />
+  <Route path="/teacher/markets" element={<WorkspacePicker />} />
   <Route path="/teacher/markets/:marketId/room" element={<RoomRoute />} />
   <Route path="/teacher/markets/:marketId/host" element={<HostRouteRedirect />} />
   <Route path="/join" element={<StudentMarketJoin />} />
