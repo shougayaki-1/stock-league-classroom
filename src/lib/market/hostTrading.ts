@@ -1,7 +1,8 @@
 import { doc, setDoc, type Firestore } from 'firebase/firestore'
 import { get, onDisconnect, ref, runTransaction, type Database } from 'firebase/database'
-import { clampToBounds, createPhaseRuntime, elapsedMarketMinute, getActivePhase } from '../pricing/pricingCore'
+import { clampToBounds, createPhaseRuntime, elapsedMarketMinute, getActivePhase, normalizePhases } from '../pricing/pricingCore'
 import type { StockPricePhase } from '../pricing/types'
+import { TEMPLATE_LIMITS } from '../templates/templateValidation'
 import type { HostLease, LiveMarketState, OrderResult, PendingOrder, Portfolio, TeamLeaderboardEntry } from './liveMarketTypes'
 import { serverNow } from '../firebase/serverTime'
 
@@ -64,6 +65,39 @@ export const applyPauseMarket = (raw: LiveMarketState | null, ownerUid: string, 
 
 export const pauseMarket = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) =>
   (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyPauseMarket(raw, ownerUid, leaseId, atMillis))).committed
+
+export type MarketCompanyDraft = { id: string; name: string; symbol: string; basePrice: number; phases?: StockPricePhase[] }
+
+export const validateMarketCompanies = (companies: MarketCompanyDraft[]): string[] => {
+  const errors: string[] = []
+  if (!companies.length) errors.push('銘柄は1件以上必要です。')
+  const symbols = companies.map((company) => company.symbol.trim().toUpperCase())
+  if (new Set(symbols).size !== symbols.length) errors.push('銘柄コードは重複できません。')
+  if (companies.some((company) => !company.name.trim() || company.name.trim().length > TEMPLATE_LIMITS.maxCompanyName)) errors.push('会社名は1〜80文字で入力してください。')
+  if (companies.some((company) => !company.symbol.trim() || company.symbol.trim().length > TEMPLATE_LIMITS.maxSymbol)) errors.push('銘柄コードは1〜10文字で入力してください。')
+  if (companies.some((company) => !Number.isInteger(company.basePrice) || company.basePrice < 1 || company.basePrice > TEMPLATE_LIMITS.maxPrice)) errors.push('基準価格は1〜1,000万円の整数で入力してください。')
+  return errors
+}
+
+/** Editing is only safe while nothing else is writing prices: SETUP (never opened) or PAUSED
+ * (manually stopped for exactly this). Unlike the trading-engine actions above, this does not
+ * require a live host lease — it is a static config change, not a step in the tick loop, and the
+ * top-level liveMarkets .write rule already restricts any write here to the market's owner. */
+export const applyUpdateMarketCompanies = (raw: LiveMarketState | null, ownerUid: string, _atMillis: number, companies: MarketCompanyDraft[]): LiveMarketState | undefined => {
+  if (!raw || raw.meta.ownerUid !== ownerUid || (raw.meta.status !== 'SETUP' && raw.meta.status !== 'PAUSED')) return undefined
+  if (validateMarketCompanies(companies).length) return undefined
+  raw.companies = Object.fromEntries(companies.map((company) => [company.id, {
+    id: company.id,
+    name: company.name.trim(),
+    symbol: company.symbol.trim().toUpperCase(),
+    basePrice: Math.round(company.basePrice),
+    ...(company.phases ? { phases: normalizePhases(company.phases) } : {}),
+  }]))
+  return raw
+}
+
+export const updateMarketCompanies = async (database: Database, marketId: string, ownerUid: string, companies: MarketCompanyDraft[], atMillis = now()) =>
+  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyUpdateMarketCompanies(raw, ownerUid, atMillis, companies))).committed
 
 /** A reachable host action transitions OPEN to ENDING; the tick finalizes it.
  * The finalized state can still be reopened by the market owner. */

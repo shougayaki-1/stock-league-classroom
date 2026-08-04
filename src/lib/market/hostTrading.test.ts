@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyNewsImpact, applyPauseMarket, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease } from './hostTrading'
+import { applyNewsImpact, applyPauseMarket, applyUpdateMarketCompanies, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease, validateMarketCompanies } from './hostTrading'
 import { clampToBounds } from '../pricing/pricingCore'
 import type { LiveMarketState } from './liveMarketTypes'
 
@@ -136,5 +136,53 @@ describe('manual market pause', () => {
 
   it('refuses for a different owner', () => {
     expect(applyPauseMarket(openState(), 'someone-else', 'L1', 20_000)).toBeUndefined()
+  })
+})
+
+describe('market company validation', () => {
+  const companies = () => [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }]
+
+  it('accepts a well-formed company list', () => {
+    expect(validateMarketCompanies(companies())).toEqual([])
+  })
+
+  it('requires at least one company', () => {
+    expect(validateMarketCompanies([])).toEqual(['銘柄は1件以上必要です。'])
+  })
+
+  it('rejects duplicate symbols', () => {
+    const list = [...companies(), { id: 'acme2', name: 'Acme 2', symbol: 'ac', basePrice: 200 }]
+    expect(validateMarketCompanies(list)).toContain('銘柄コードは重複できません。')
+  })
+
+  it('rejects a non-positive base price', () => {
+    expect(validateMarketCompanies([{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 0 }])).toContain('基準価格は1〜1,000万円の整数で入力してください。')
+  })
+})
+
+describe('market company edits', () => {
+  const pausedState = (): LiveMarketState => ({
+    meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'PAUSED', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC234' },
+    teams: {},
+    companies: { acme: { id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 } },
+  })
+
+  it('overwrites the companies map while the market is paused', () => {
+    const next = applyUpdateMarketCompanies(pausedState(), 'teacher', 30_000, [{ id: 'acme', name: 'Updated Co', symbol: 'up', basePrice: 250 }])!
+    expect(next.companies!.acme).toEqual({ id: 'acme', name: 'Updated Co', symbol: 'UP', basePrice: 250 })
+  })
+
+  it('refuses while the market is open', () => {
+    const state = pausedState()
+    state.meta.status = 'OPEN'
+    expect(applyUpdateMarketCompanies(state, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
+  })
+
+  it('refuses invalid company data even while paused', () => {
+    expect(applyUpdateMarketCompanies(pausedState(), 'teacher', 30_000, [])).toBeUndefined()
+  })
+
+  it('refuses for a different owner', () => {
+    expect(applyUpdateMarketCompanies(pausedState(), 'someone-else', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
   })
 })
