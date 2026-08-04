@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { onValue, ref } from 'firebase/database'
@@ -40,8 +40,9 @@ export const MarketStocksPage = ({ marketId }: { marketId: string }) => {
   const [title, setTitle] = useState('')
   const [status, setStatus] = useState<MarketStatus>('SETUP')
   const [draft, setDraft] = useState<MarketCompanyDraft[]>([])
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState<{ text: string; severity: 'success' | 'error' } | null>(null)
   const [saving, setSaving] = useState(false)
+  const seededRef = useRef(false)
 
   useEffect(() => onAuthStateChanged(services.auth, (next) => { setUser(next); setAuthReady(true) }), [services.auth])
 
@@ -65,15 +66,24 @@ export const MarketStocksPage = ({ marketId }: { marketId: string }) => {
 
   useEffect(() => {
     if (!authReady || !user || !isTeacherIdentity(user) || access !== 'ready') return
-    return onValue(ref(services.database, `liveMarkets/${marketId}`), (snapshot) => {
-      const value = snapshot.val() as LiveMarketState | null
-      if (!value) { setAccess('read-error'); return }
-      setStatus(value.meta.status)
-      setDraft(Object.values(value.companies ?? {}).map((company) => ({ id: company.id, name: company.name, symbol: company.symbol, basePrice: company.basePrice, phases: company.phases })))
+    seededRef.current = false
+    const statusStop = onValue(ref(services.database, `liveMarkets/${marketId}/meta/status`), (snapshot) => {
+      const value = snapshot.val() as MarketStatus | null
+      if (value) setStatus(value)
     }, (error) => {
       const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
       setAccess(code.includes('permission-denied') ? 'forbidden' : 'read-error')
     })
+    const companiesStop = onValue(ref(services.database, `liveMarkets/${marketId}/companies`), (snapshot) => {
+      const value = snapshot.val() as LiveMarketState['companies'] | null
+      if (!value || seededRef.current) return
+      seededRef.current = true
+      setDraft(Object.values(value).map((company) => ({ id: company.id, name: company.name, symbol: company.symbol, basePrice: company.basePrice, phases: company.phases })))
+    }, (error) => {
+      const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
+      setAccess(code.includes('permission-denied') ? 'forbidden' : 'read-error')
+    })
+    return () => { statusStop(); companiesStop() }
   }, [access, authReady, marketId, services.database, user])
 
   if (!authReady) return <AuthLoadingScreen />
@@ -85,13 +95,13 @@ export const MarketStocksPage = ({ marketId }: { marketId: string }) => {
 
   const save = async () => {
     const errors = validateMarketCompanies(draft)
-    if (errors.length) return setNotice(errors[0])
+    if (errors.length) { setNotice({ text: errors[0], severity: 'error' }); return }
     setSaving(true)
     try {
       const ok = await updateMarketCompanies(services.database, marketId, user.uid, draft)
-      setNotice(ok ? '銘柄を保存しました。' : '保存できませんでした。市場が一時停止中か確認してください。')
+      setNotice(ok ? { text: '銘柄を保存しました。', severity: 'success' } : { text: '保存できませんでした。市場が一時停止中か確認してください。', severity: 'error' })
     } catch (error) {
-      setNotice(handleFailure(error, '保存できませんでした。'))
+      setNotice({ text: handleFailure(error, '保存できませんでした。'), severity: 'error' })
     } finally {
       setSaving(false)
     }
@@ -106,7 +116,7 @@ export const MarketStocksPage = ({ marketId }: { marketId: string }) => {
           <Typography color="text.secondary">会社情報と、授業時間内の価格変化を設定します。</Typography>
         </Box>
         {!editable && <Alert severity="info" action={<Button color="inherit" size="small" href={`/teacher/markets/${marketId}/room`}>進行画面を開く</Button>}>編集するには、進行画面で市場を一時停止してください。</Alert>}
-        {notice && <Alert severity={notice.includes('できません') ? 'error' : 'success'} role="status">{notice}</Alert>}
+        {notice && <Alert severity={notice.severity} role="status">{notice.text}</Alert>}
         <Stack spacing={2}>
           {draft.map((company, companyIndex) => <Card key={company.id} variant="outlined"><CardContent><Stack spacing={2}>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
