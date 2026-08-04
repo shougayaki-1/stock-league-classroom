@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyNewsImpact, applyPauseMarket, applyUpdateMarketCompanies, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease, validateMarketCompanies } from './hostTrading'
-import { clampToBounds } from '../pricing/pricingCore'
+import { clampToBounds, createPhaseRuntime, getActivePhase } from '../pricing/pricingCore'
 import type { LiveMarketState } from './liveMarketTypes'
 
 describe('trading fill policy', () => {
@@ -184,5 +184,29 @@ describe('market company edits', () => {
 
   it('refuses for a different owner', () => {
     expect(applyUpdateMarketCompanies(pausedState(), 'someone-else', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
+  })
+
+  it('refuses while the market is ending or ended', () => {
+    const ending = pausedState(); ending.meta.status = 'ENDING'
+    expect(applyUpdateMarketCompanies(ending, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
+    const ended = pausedState(); ended.meta.status = 'ENDED'
+    expect(applyUpdateMarketCompanies(ended, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
+  })
+})
+
+describe('edited companies feed the price engine', () => {
+  it('an edited base price changes the phase runtime the price engine would compute', () => {
+    const state: LiveMarketState = {
+      meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'PAUSED', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC234' },
+      teams: {},
+      companies: { acme: { id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100, phases: [{ id: 'up', startMinute: 0, endMinute: 60, direction: 'UP', changePercent: 20 }] } },
+    }
+    const updated = applyUpdateMarketCompanies(state, 'teacher', 1_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 500, phases: [{ id: 'up', startMinute: 0, endMinute: 60, direction: 'UP', changePercent: 20 }] }])!
+    const stock = updated.companies!.acme
+    expect(stock.basePrice).toBe(500)
+    const phase = getActivePhase(stock.phases ?? [], 0)
+    const runtime = createPhaseRuntime(stock.basePrice, phase, 0, 0, stock.basePrice, 0)
+    expect(runtime.startPrice).toBe(500)
+    expect(runtime.endPrice).toBeGreaterThan(500)
   })
 })
