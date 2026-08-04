@@ -13,6 +13,7 @@ interface AdminShellProps {
   marketId: string
   marketTitle?: string
   marketStatus?: MarketStatus
+  stocksNavGuardMessage?: string
 }
 
 const Icon = ({ name }: { name: AdminIcon }) => {
@@ -27,7 +28,7 @@ const Icon = ({ name }: { name: AdminIcon }) => {
 
 const STATUS_COLOR: Record<MarketStatus, 'default' | 'success' | 'warning'> = { SETUP: 'default', OPEN: 'success', PAUSED: 'warning', ENDING: 'warning', ENDED: 'default' }
 
-export const AdminShell = ({ active, children, marketId, marketTitle, marketStatus }: AdminShellProps) => {
+export const AdminShell = ({ active, children, marketId, marketTitle, marketStatus, stocksNavGuardMessage }: AdminShellProps) => {
   const itemSx = { minHeight: 44, px: 1.5, borderRadius: 2.5, gap: 1.5, color: 'text.secondary', flex: { xs: '1 1 auto', md: 'initial' }, '&.active, &.Mui-selected': { color: 'primary.dark', bgcolor: 'primary.light' }, '&:hover': { bgcolor: 'action.hover', color: 'text.primary' } }
   const iconSx = { minWidth: 0, color: 'inherit', '& svg': { width: 20, height: 20 } }
   const item = (label: string, icon: AdminIcon) => <><ListItemIcon sx={iconSx}><Icon name={icon} /></ListItemIcon><ListItemText primary={label} slotProps={{ primary: { sx: { fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' } } }} /></>
@@ -45,7 +46,7 @@ export const AdminShell = ({ active, children, marketId, marketTitle, marketStat
       <Divider />
       <Box component="nav" aria-label="市場メニュー" sx={{ display: 'flex', flexDirection: { xs: 'row', md: 'column' }, gap: 0.5, flexWrap: 'wrap', width: '100%' }}>
         <Typography variant="caption" sx={{ display: { xs: 'none', md: 'block' }, px: 1.5, color: 'text.secondary', fontWeight: 700, letterSpacing: '.02em' }}>市場設定</Typography>
-        <ListItemButton component={NavLink} to={`/teacher/markets/${marketId}/stocks`} selected={active === 'stocks'} sx={itemSx}>{item('銘柄', 'stocks')}</ListItemButton>
+        <ListItemButton component={NavLink} to={`/teacher/markets/${marketId}/stocks`} selected={active === 'stocks'} onClick={(event) => { if (stocksNavGuardMessage && !window.confirm(stocksNavGuardMessage)) event.preventDefault() }} sx={itemSx}>{item('銘柄', 'stocks')}</ListItemButton>
         <Typography variant="caption" sx={{ display: { xs: 'none', md: 'block' }, px: 1.5, mt: 1, color: 'text.secondary', fontWeight: 700, letterSpacing: '.02em' }}>この市場を進行する</Typography>
         <ListItemButton component={NavLink} to={`/teacher/markets/${marketId}/room`} selected={active === 'room'} sx={itemSx}>{item('進行', 'room')}</ListItemButton>
         <ListItemButton component="a" href={`/markets/${marketId}/signage`} target="_blank" rel="noopener" sx={itemSx}>{item('教室画面', 'screen')}</ListItemButton>

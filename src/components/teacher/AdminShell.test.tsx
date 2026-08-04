@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AdminShell } from './AdminShell'
 
 const renderShell = (active: 'stocks' | 'room' = 'room') => render(
@@ -33,5 +34,29 @@ describe('AdminShell navigation', () => {
   it('renders the page content', () => {
     renderShell()
     expect(screen.getByText('内容')).toBeInTheDocument()
+  })
+
+  it('confirms before navigating to stocks when a guard message is set, and blocks navigation if declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(
+      <MemoryRouter>
+        <AdminShell active="room" marketId="market-123" stocksNavGuardMessage="市場が進行中です。移動しますか？"><main>内容</main></AdminShell>
+      </MemoryRouter>,
+    )
+    await userEvent.click(screen.getByRole('link', { name: /銘柄/ }))
+    expect(confirmSpy).toHaveBeenCalledWith('市場が進行中です。移動しますか？')
+    confirmSpy.mockRestore()
+  })
+
+  it('navigates to stocks without a confirm dialog when no guard message is set', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    render(
+      <MemoryRouter>
+        <AdminShell active="room" marketId="market-123"><main>内容</main></AdminShell>
+      </MemoryRouter>,
+    )
+    await userEvent.click(screen.getByRole('link', { name: /銘柄/ }))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })

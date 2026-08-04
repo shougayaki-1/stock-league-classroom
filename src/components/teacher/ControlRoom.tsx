@@ -150,7 +150,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
   const requestedTab = searchParams.get('tab')
   const activeTab: ControlRoomTab = isControlRoomTab(requestedTab) ? requestedTab : defaultTab
   const selectTab = (tab: ControlRoomTab) => setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', tab); return next }, { replace: true })
-  return <AdminShell active="room" marketId={marketId} marketTitle={template?.title} marketStatus={marketStatus}>
+  return <AdminShell active="room" marketId={marketId} marketTitle={template?.title} marketStatus={marketStatus} stocksNavGuardMessage={lease && marketStatus === 'OPEN' ? '市場は現在進行中です。銘柄を編集する画面に移動すると、進行が一時的に止まります（戻ってきたらもう一度ホストを取得してください）。移動しますか？' : undefined}>
     <Container maxWidth="xl" sx={{ py: { xs: 4, md: 6 } }}>
       <Stack spacing={4}>
         <Stack component="section" direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
