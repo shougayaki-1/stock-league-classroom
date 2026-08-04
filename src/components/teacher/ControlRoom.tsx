@@ -112,7 +112,17 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
         setMarketAccess(code.includes('permission-denied') ? 'forbidden' : 'read-error')
       })
   }, [authReady, marketAccess, marketId, services.database, user])
-  const stocks = useMemo(() => (template?.companies ?? []).map((company) => ({ id: company.id, basePrice: company.initialPrice, phases: company.pricePhases })), [template])
+  // `live` gets a brand-new object reference on every RTDB snapshot, including ticks that only
+  // touched unrelated fields (prices, teamLeaderboard, ...). Memoizing on live?.companies identity
+  // would recompute — and therefore restart the tick-loop effect below that depends on `stocks` —
+  // every second even when the company list hasn't actually changed, so this memoizes on a
+  // content-based key via a ref instead of useMemo's identity-based dependency array.
+  const companiesKey = JSON.stringify(live?.companies ?? {})
+  const stocksCache = useRef<{ key: string; stocks: { id: string; basePrice: number; phases?: import('../../lib/pricing/types').StockPricePhase[] }[] }>({ key: '', stocks: [] })
+  if (stocksCache.current.key !== companiesKey) {
+    stocksCache.current = { key: companiesKey, stocks: Object.values(live?.companies ?? {}).map((company) => ({ id: company.id, basePrice: company.basePrice, phases: company.phases })) }
+  }
+  const stocks = stocksCache.current.stocks
   const pendingRequests = useMemo(() => Object.entries(live?.joinRequests ?? {}).filter(([id, request]) => request.connected && !live?.participants?.[id]).map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId, recoveryTeamId: resolveRecoveryTeamId(live, request) })), [live])
   const autoApprove = Boolean(live?.meta?.autoApprove)
   useEffect(() => {
@@ -199,7 +209,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
                 onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了後も市場を再開できます。' : '市場を終了できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '市場を終了できません。もう一度お試しください。')); setEnding(false) }) }}
               /></Box>
               <Box sx={{ flex: 1 }}><HostStatusPanel
-                prices={(template?.companies ?? []).map((company) => ({ stockId: company.id, name: company.name, symbol: company.symbol, price: live?.prices?.[company.id]?.price ?? company.initialPrice, basePrice: company.initialPrice }))}
+                prices={Object.values(live?.companies ?? {}).map((company) => ({ stockId: company.id, name: company.name, symbol: company.symbol, price: live?.prices?.[company.id]?.price ?? company.basePrice, basePrice: company.basePrice }))}
                 lastTickAtMillis={lastTickAtMillis}
                 hostingSinceMillis={hostingSinceMillis}
                 nowMillis={nowMillis}
