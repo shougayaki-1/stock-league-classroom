@@ -1,5 +1,14 @@
 # Phase 0: 現行版の安全化と基準値計測 Implementation Plan
 
+> **この計画は大部分が不要になった。そのまま実行してはならない。**
+>
+> 統合仕様書 §1 が「既存利用者はいない、旧データ移行は不要、旧クラシック市場は維持しない」と定めたため、次が消える。
+>
+> - Task 7（既存市場への一時バックフィル）— 移行対象が存在しない
+> - Task 9〜13（旧方式の帯域基準値計測）— 旧市場を廃止するため比較対象にならない
+>
+> 先読み脆弱性への対処そのものは統合仕様書 §26-1 と Phase A に引き継がれる。**Task 1〜6 で特定した事実（`companies.phases` の露出、`ControlRoom.tsx` のキャッシュキー、RTDBのルールカスケード）は Phase A で有効である。**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the two confirmed lookahead vulnerabilities in the live RTDB market state (`prices/{stockId}/runtime` and `companies/{stockId}/phases` being readable by students), and establish a measured, dated baseline of RTDB bandwidth/writes before Phase 1's engine rewrite, so its reduction can later be quantified.

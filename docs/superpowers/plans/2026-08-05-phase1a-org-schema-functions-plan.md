@@ -1,5 +1,15 @@
 # Phase 1.1〜1.3: 組織の器・LessonTemplate v2・Cloud Functions基盤 Implementation Plan
 
+> **この計画は Phase A の素材として大部分が有効。ただし単独で実行しない。**
+>
+> 統合仕様書の Phase A が後継であり、そちらの計画を参照すること。本計画のうち組織の器、`orgId` のルール強制、教材版の不変性、draft/version 分離、Functions 基盤、`pricingCore` の共有はそのまま引き継がれる。
+>
+> 一方、次は統合仕様書により不要または変更となる。
+>
+> - v1 → v2 変換関数（既存利用者がいないため不要）
+> - v1/v2 を同一コレクションで扱う暫定策（新モデルでゼロから開始するため不要）
+> - `LessonRun`、イベントログ、チェックポイントが Phase A の範囲に追加される
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** すべてのFirestore/RTDBドキュメントに `orgId`/`createdByUid` を導入してルールで強制し（1.1）、`schemaVersion` 付きの LessonTemplate v2 とバージョン管理構造を定義し（1.2）、Cloud Functions基盤とクライアント/サーバー共有の価格計算モジュールを整備する（1.3）。UIは一切変更しない。ラウンド進行・一括約定・需給連動・振り返り（1.4〜1.6）はこの計画の範囲外。

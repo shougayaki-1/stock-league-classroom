@@ -1,5 +1,17 @@
 # Phase 1.4〜1.6: ラウンド進行エンジンと予想・振り返り Implementation Plan
 
+> **この計画は無効。実行してはならない。**
+>
+> 本計画は「ラウンド締切時の一括約定（`settleRound`）」を前提に21タスクを構成しているが、統合仕様書 §1 がこれを「常時注文可能・短時間バッチ約定」へ置き換えた。`TeamRoundDecision` の submit/finalize モデルも同様に無効である。
+>
+> 後継は Phase C の計画。ただし次の設計は統合仕様書でも有効であり、Phase C へ引き継ぐこと。
+>
+> - 注文検証を需給計算より先に行う
+> - 冪等キーによる二重処理の防止
+> - `teamDecisions` / `privateEngineState` を `liveMarkets` の配下に置かない（RTDBのルールカスケード対策）
+> - 需給は金額ベース、価格変化は加算合成
+> - 「根拠の妥当性」を自動採点しない
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** ラウンドモードの授業を1コマ通しで実施できるようにする — 教師が「次へ」で8フェーズ（導入／情報収集／個人予想／チーム相談／売買／変動／解説／振り返り）を進行し、締切時に全チームを同一条件で一括約定し、ニュースと需給を銘柄別に価格へ反映し、生徒の予想と判断理由を記録して振り返りグラフとルーブリックで評価できる状態にする。クラシックモードの `placeContinuousOrder()` サーバー化も本計画に含む。
