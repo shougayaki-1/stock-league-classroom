@@ -1243,7 +1243,7 @@ export const WorkspacePicker = () => {
 
 Run: `rm src/components/MarketDashboard.tsx`
 
-- [ ] **Step 3: Update the `App.tsx` import**
+- [ ] **Step 3: Update the `App.tsx` import and route element**
 
 In `src/App.tsx`, replace:
 
@@ -1257,7 +1257,19 @@ with:
 import { WorkspacePicker } from './components/teacher/WorkspacePicker'
 ```
 
-The route wiring (`<Route path="/teacher/markets" element={<TeacherMarketDashboard />} />` → `<WorkspacePicker />`) happens in Task 10 alongside the rest of the routing changes, to keep this diff focused on introducing the file.
+And replace the route element that still names the old symbol:
+
+```tsx
+  <Route path="/teacher/markets" element={<TeacherMarketDashboard />} />
+```
+
+with:
+
+```tsx
+  <Route path="/teacher/markets" element={<WorkspacePicker />} />
+```
+
+(This is the only route touched in this task. Task 10 wires the remaining new routes — `/teacher/markets/:marketId/stocks` and the simplified `/teacher/markets/:marketId/room` — which depend on `MarketStocksPage`, `ControlRoom`, and `StudentMarketJoin` all being in place first.)
 
 - [ ] **Step 4: Remove the now-dead `SetupProgress` export from `TeacherShell.tsx`**
 
@@ -1271,12 +1283,12 @@ In `src/components/teacher/TeacherShell.tsx`, delete the `export interface Progr
 - [ ] **Step 5: Run the full test suite**
 
 Run: `npm test`
-Expected: PASS. `App.tsx` will not yet compile cleanly against the new route wiring — that lands in Task 10, so skip `npm run build` until then, but `npm test` (which type-checks via `tsc -b` as part of `npm run typecheck`, not `npm test`) should still pass since `App.tsx`'s `TeacherMarketDashboard` reference was already swapped for `WorkspacePicker` in Step 3 and the route element in Task 10 is a same-shape swap.
+Expected: PASS, including `App.test.tsx`'s check that the landing page still links to `/teacher/markets`.
 
-- [ ] **Step 6: Run lint and typecheck**
+- [ ] **Step 6: Run lint, typecheck, and build**
 
-Run: `npm run lint && npm run typecheck`
-Expected: no errors. If `App.tsx` still references `<TeacherMarketDashboard />` as the route element (it does, until Task 10), typecheck will fail with "cannot find name 'TeacherMarketDashboard'" — that is expected and resolved by Task 10. If your task runner requires a clean typecheck before committing, do Task 10's route-wiring step for `/teacher/markets` (and only that one route) inline here instead of deferring it; otherwise proceed straight to Task 10 without a standalone commit for this step.
+Run: `npm run lint && npm run typecheck && npm run build`
+Expected: no errors, build succeeds. `App.tsx` compiles cleanly at this point — only `/teacher/markets` was touched; `RoomRoute`/`StocksRoute` land in Task 10.
 
 - [ ] **Step 7: Commit**
 
@@ -1293,7 +1305,7 @@ git commit -m "refactor: replace the teacher dashboard with a workspace picker"
 - Modify: `src/App.tsx`
 
 **Interfaces:**
-- Consumes: `WorkspacePicker` (Task 9), `StudentMarketJoin` (Task 8), `MarketStocksPage` (Task 7), `ControlRoom` (Task 5, now self-wrapping in `AdminShell`)
+- Consumes: `MarketStocksPage` (Task 7), `ControlRoom` (Task 5, now self-wrapping in `AdminShell`). `WorkspacePicker` and `StudentMarketJoin` are already wired into `App.tsx` by Tasks 8-9.
 
 - [ ] **Step 1: Remove the `TeacherShell` import and add `MarketStocksPage`**
 
@@ -1338,31 +1350,19 @@ In the `AppRoutes` route list, add a new route immediately after the room route:
   <Route path="/teacher/markets/:marketId/stocks" element={<StocksRoute />} />
 ```
 
-- [ ] **Step 4: Point the workspace route at `WorkspacePicker`**
+(The `/teacher/markets` route element itself already points at `WorkspacePicker` — that was done in Task 9 Step 3, since `WorkspacePicker` had to exist and be imported before any route could reference it. This task only adds the two routes above.)
 
-Replace:
-
-```tsx
-  <Route path="/teacher/markets" element={<TeacherMarketDashboard />} />
-```
-
-with:
-
-```tsx
-  <Route path="/teacher/markets" element={<WorkspacePicker />} />
-```
-
-- [ ] **Step 5: Run the full test suite**
+- [ ] **Step 4: Run the full test suite**
 
 Run: `npm test`
 Expected: PASS, including `App.test.tsx` (the landing page link to `/teacher/markets`, the public doc pages, the not-found page, and the legacy host-URL redirect all still work — none of them render `WorkspacePicker`, `ControlRoom`, or `MarketStocksPage`, which need Firebase and are not exercised by that suite).
 
-- [ ] **Step 6: Run lint, typecheck, and build**
+- [ ] **Step 5: Run lint, typecheck, and build**
 
 Run: `npm run lint && npm run typecheck && npm run build`
 Expected: no errors, build succeeds.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/App.tsx
