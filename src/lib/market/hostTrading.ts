@@ -52,6 +52,19 @@ export const openMarket = async (database: Database, marketId: string, ownerUid:
   return raw
 })
 
+/** Manual pause: distinct from the disconnect-driven pause in pauseDisconnectedLease, which only
+ * flags the lease. This flips meta.status itself, reusing the PAUSED state and resume path
+ * openMarket already handles. */
+export const applyPauseMarket = (raw: LiveMarketState | null, ownerUid: string, leaseId: string, atMillis: number): LiveMarketState | undefined => {
+  if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.meta.status !== 'OPEN') return undefined
+  raw.meta.status = 'PAUSED'
+  raw.meta.pausedAtMillis = atMillis
+  return raw
+}
+
+export const pauseMarket = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) =>
+  (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyPauseMarket(raw, ownerUid, leaseId, atMillis))).committed
+
 /** A reachable host action transitions OPEN to ENDING; the tick finalizes it.
  * The finalized state can still be reopened by the market owner. */
 export const requestMarketEnding = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {

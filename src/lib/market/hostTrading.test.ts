@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyNewsImpact, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease } from './hostTrading'
+import { applyNewsImpact, applyPauseMarket, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease } from './hostTrading'
 import { clampToBounds } from '../pricing/pricingCore'
 import type { LiveMarketState } from './liveMarketTypes'
 
@@ -108,5 +108,33 @@ describe('lease-specific disconnect markers', () => {
     expect(shouldPauseLease(state, 'teacher', 'L2', 100)).toBe(false)
     state.hostDisconnects!.L2 = { ownerUid: 'teacher', disconnectedAtMillis: 3 }
     expect(shouldPauseLease(state, 'teacher', 'L2', 100)).toBe(true)
+  })
+})
+
+describe('manual market pause', () => {
+  const openState = (): LiveMarketState => ({
+    meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'OPEN', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC234', openedAtMillis: 5_000 },
+    teams: {},
+    hostLease: { ownerUid: 'teacher', leaseId: 'L1', expiresAtMillis: 100_000, paused: false },
+  })
+
+  it('moves an open market to PAUSED and stamps pausedAtMillis', () => {
+    const next = applyPauseMarket(openState(), 'teacher', 'L1', 20_000)!
+    expect(next.meta.status).toBe('PAUSED')
+    expect(next.meta.pausedAtMillis).toBe(20_000)
+  })
+
+  it('refuses when the market is not OPEN', () => {
+    const state = openState()
+    state.meta.status = 'SETUP'
+    expect(applyPauseMarket(state, 'teacher', 'L1', 20_000)).toBeUndefined()
+  })
+
+  it('refuses without a valid lease', () => {
+    expect(applyPauseMarket(openState(), 'teacher', 'WRONG', 20_000)).toBeUndefined()
+  })
+
+  it('refuses for a different owner', () => {
+    expect(applyPauseMarket(openState(), 'someone-else', 'L1', 20_000)).toBeUndefined()
   })
 })
