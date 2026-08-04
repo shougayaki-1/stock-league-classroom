@@ -305,6 +305,9 @@ export const runHostTick = async (firestore: Firestore, database: Database, mark
   }
   // Keep the lease while an ended market is waiting for the teacher to reopen it.
   if (current.meta.status === 'ENDED') return true
+  // A teacher takes the host lease while still in SETUP (admitting students) — that's the
+  // only way to ever reach the "開始" button. Nothing to tick yet; just hold the lease.
+  if (current.meta.status === 'SETUP') return true
   if (current.meta.status !== 'OPEN') return false
   await publishPrices(database, marketId, ownerUid, leaseId, stocks, atMillis)
   const snapshot = (await get(ref(database, root(marketId)))).val() as LiveMarketState | null

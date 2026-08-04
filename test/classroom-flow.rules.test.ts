@@ -74,4 +74,29 @@ describe('classroom release flow', () => {
     expect(reopened.signage.phase).toBe('OPEN')
     stopRoot()
   }, 20_000)
+
+  // A teacher always takes the host lease while the market is still SETUP (waiting for
+  // students to join) — that's the only way to reach the "開始" button at all. runHostTick
+  // must tolerate that, not just OPEN/PAUSED/ENDING/ENDED. Mirrors ControlRoom.tsx, which
+  // keeps an onValue listener open on the market root for as long as the page is mounted —
+  // a transaction issued without any live listener sees a cold local cache on its first
+  // (optimistic) pass, which is a separate, real quirk but not the one this test targets.
+  it('keeps the host lease alive while the market is still SETUP', async () => {
+    const teacher = environment.authenticatedContext('teacher-b', teacherToken)
+    const teacherFirestore = teacher.firestore() as never
+    const teacherDatabase = teacher.database() as never
+    const created = await createMarket(teacherFirestore, teacherDatabase, { ownerUid: 'teacher-b', template, visibility: 'private', joinCode: 'SETUP1' })
+    const stopLive = onValue(ref(teacherDatabase, `liveMarkets/${created.marketId}`), () => {})
+    await new Promise<void>((resolve) => {
+      const stop = onValue(ref(teacherDatabase, `liveMarkets/${created.marketId}`), (snapshot) => { if (snapshot.exists()) { stop(); resolve() } })
+    })
+    const leaseId = 'lease-setup'
+    expect(await acquireHostLease(teacherDatabase, created.marketId, 'teacher-b', leaseId)).toBe(true)
+    const tickOk = await runHostTick(teacherFirestore, teacherDatabase, created.marketId, 'teacher-b', leaseId, [])
+    expect(tickOk).toBe(true)
+    const state = (await get(ref(teacherDatabase, `liveMarkets/${created.marketId}`))).val()
+    expect(state.meta.status).toBe('SETUP')
+    expect(state.hostLease.leaseId).toBe(leaseId)
+    stopLive()
+  }, 20_000)
 })
