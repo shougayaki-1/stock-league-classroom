@@ -93,11 +93,22 @@ export const applyUpdateMarketCompanies = (raw: LiveMarketState | null, ownerUid
     basePrice: Math.round(company.basePrice),
     ...(company.phases ? { phases: normalizePhases(company.phases) } : {}),
   }]))
+  // publishPrices reuses a cached runtime keyed by phaseId/expiry; without clearing it here, an
+  // edit to the currently-active phase (or basePrice) has no visible effect until that phase's
+  // window naturally ends, since the stale runtime survives the edit.
+  for (const company of companies) {
+    if (raw.prices?.[company.id]?.runtime) delete raw.prices[company.id].runtime
+  }
   return raw
 }
 
 export const updateMarketCompanies = async (database: Database, marketId: string, ownerUid: string, companies: MarketCompanyDraft[], atMillis = now()) =>
   (await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => applyUpdateMarketCompanies(raw, ownerUid, atMillis, companies))).committed
+
+/** What the price engine's tick loop should run against, straight from live RTDB company data —
+ * never from the immutable Firestore templateSnapshot, which updateMarketCompanies never touches. */
+export const deriveStocksFromCompanies = (companies?: LiveMarketState['companies']): Array<{ id: string; basePrice: number; phases?: StockPricePhase[] }> =>
+  Object.values(companies ?? {}).map((company) => ({ id: company.id, basePrice: company.basePrice, phases: company.phases }))
 
 /** A reachable host action transitions OPEN to ENDING; the tick finalizes it.
  * The finalized state can still be reopened by the market owner. */

@@ -5,7 +5,7 @@ import { onValue, ref } from 'firebase/database'
 import { useSearchParams } from 'react-router'
 import { bootstrapFirebase } from '../../lib/firebase/bootstrap'
 import { isTeacherIdentity } from '../../lib/auth/roles'
-import { acquireHostLease, armHostLeaseDisconnect, openMarket, pauseMarket, publishManualNews, requestMarketEnding, runHostTick } from '../../lib/market/hostTrading'
+import { acquireHostLease, armHostLeaseDisconnect, deriveStocksFromCompanies, openMarket, pauseMarket, publishManualNews, requestMarketEnding, runHostTick } from '../../lib/market/hostTrading'
 import { serverNow } from '../../lib/firebase/serverTime'
 import { AdmissionPanel } from './AdmissionPanel'
 import { PhaseBand } from './PhaseBand'
@@ -120,7 +120,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
   const companiesKey = JSON.stringify(live?.companies ?? {})
   const stocksCache = useRef<{ key: string; stocks: { id: string; basePrice: number; phases?: import('../../lib/pricing/types').StockPricePhase[] }[] }>({ key: '', stocks: [] })
   if (stocksCache.current.key !== companiesKey) {
-    stocksCache.current = { key: companiesKey, stocks: Object.values(live?.companies ?? {}).map((company) => ({ id: company.id, basePrice: company.basePrice, phases: company.phases })) }
+    stocksCache.current = { key: companiesKey, stocks: deriveStocksFromCompanies(live?.companies) }
   }
   const stocks = stocksCache.current.stocks
   const pendingRequests = useMemo(() => Object.entries(live?.joinRequests ?? {}).filter(([id, request]) => request.connected && !live?.participants?.[id]).map(([id, request]) => ({ id, displayName: request.displayName, requestedTeamId: request.requestedTeamId, recoveryTeamId: resolveRecoveryTeamId(live, request) })), [live])

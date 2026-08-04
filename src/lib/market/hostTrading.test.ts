@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyNewsImpact, applyPauseMarket, applyUpdateMarketCompanies, calculateOrderFill, priceAtRuntime, rankTeams, shouldPauseLease, validateMarketCompanies } from './hostTrading'
-import { clampToBounds, createPhaseRuntime, getActivePhase } from '../pricing/pricingCore'
+import { applyNewsImpact, applyPauseMarket, applyUpdateMarketCompanies, calculateOrderFill, deriveStocksFromCompanies, priceAtRuntime, rankTeams, shouldPauseLease, validateMarketCompanies } from './hostTrading'
+import { clampToBounds } from '../pricing/pricingCore'
 import type { LiveMarketState } from './liveMarketTypes'
 
 describe('trading fill policy', () => {
@@ -192,21 +192,35 @@ describe('market company edits', () => {
     const ended = pausedState(); ended.meta.status = 'ENDED'
     expect(applyUpdateMarketCompanies(ended, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 }])).toBeUndefined()
   })
+
+  it('clears the cached price runtime for an edited company, so the edit takes effect instead of being masked by the stale runtime', () => {
+    const state = pausedState()
+    state.prices = { acme: { price: 150, updatedAtMillis: 1, runtime: { mode: 'PHASE', phaseId: 'old-phase', startPrice: 100, endPrice: 150, startAtMillis: 0, endAtMillis: 999_999, seed: 0 } } }
+    const next = applyUpdateMarketCompanies(state, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 500 }])!
+    expect(next.prices!.acme.runtime).toBeUndefined()
+    expect(next.prices!.acme.price).toBe(150)
+  })
+
+  it('does nothing to prices when the edited company has no cached price yet', () => {
+    const state = pausedState()
+    expect(() => applyUpdateMarketCompanies(state, 'teacher', 30_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 500 }])).not.toThrow()
+  })
 })
 
-describe('edited companies feed the price engine', () => {
-  it('an edited base price changes the phase runtime the price engine would compute', () => {
+describe('deriving the price engine input from live company data', () => {
+  it('reflects an edited base price and phases, not template defaults', () => {
     const state: LiveMarketState = {
       meta: { ownerUid: 'teacher', capacity: 80, visibility: 'private', status: 'PAUSED', createdAtMillis: 1, startingCash: 10000, joinCode: 'ABC234' },
       teams: {},
-      companies: { acme: { id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100, phases: [{ id: 'up', startMinute: 0, endMinute: 60, direction: 'UP', changePercent: 20 }] } },
+      companies: { acme: { id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 100 } },
     }
-    const updated = applyUpdateMarketCompanies(state, 'teacher', 1_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 500, phases: [{ id: 'up', startMinute: 0, endMinute: 60, direction: 'UP', changePercent: 20 }] }])!
-    const stock = updated.companies!.acme
-    expect(stock.basePrice).toBe(500)
-    const phase = getActivePhase(stock.phases ?? [], 0)
-    const runtime = createPhaseRuntime(stock.basePrice, phase, 0, 0, stock.basePrice, 0)
-    expect(runtime.startPrice).toBe(500)
-    expect(runtime.endPrice).toBeGreaterThan(500)
+    const edited = applyUpdateMarketCompanies(state, 'teacher', 1_000, [{ id: 'acme', name: 'Acme', symbol: 'AC', basePrice: 777, phases: [{ id: 'p1', startMinute: 0, endMinute: 30, direction: 'DOWN', changePercent: 15 }] }])!
+    const stocks = deriveStocksFromCompanies(edited.companies)
+    expect(stocks).toEqual([{ id: 'acme', basePrice: 777, phases: [{ id: 'p1', startMinute: 0, endMinute: 30, direction: 'DOWN', changePercent: 15 }] }])
+  })
+
+  it('is empty when there are no companies yet', () => {
+    expect(deriveStocksFromCompanies(undefined)).toEqual([])
+    expect(deriveStocksFromCompanies({})).toEqual([])
   })
 })
