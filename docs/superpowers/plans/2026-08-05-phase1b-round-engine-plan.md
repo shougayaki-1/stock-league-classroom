@@ -4,7 +4,7 @@
 
 **Goal:** ラウンドモードの授業を1コマ通しで実施できるようにする — 教師が「次へ」で8フェーズ（導入／情報収集／個人予想／チーム相談／売買／変動／解説／振り返り）を進行し、締切時に全チームを同一条件で一括約定し、ニュースと需給を銘柄別に価格へ反映し、生徒の予想と判断理由を記録して振り返りグラフとルーブリックで評価できる状態にする。クラシックモードの `placeContinuousOrder()` サーバー化も本計画に含む。
 
-**Architecture:** 既存の `liveMarkets/{marketId}` RTDBツリーをラウンドモード用に拡張する（新規のFirestoreコレクションは作らない）。価格・約定の権威はCloud Functions（Callable）に置く — ラウンドの進行 (`advancePhase`) と一括約定 (`settleRound`) は教師のブラウザではなくサーバーが実行し、将来のニュース・需給パラメータは `privateEngineState` ノードに置いて **全クライアント（教師のブラウザを含む）から `.read: false`** にする。これにより「先読み脆弱性は原理的に発生しない」という設計目標と「教師のタブが背面・スリープでも影響を受けない」という設計目標の両方を満たす。チームの注文案（`TeamRoundDecision`）自体は秘匿すべき情報を含まないため、既存の `applyPauseMarket` / `applyApproveJoinRequest` と同じ「純粋関数 + RTDB `runTransaction`」パターンで教師・生徒のブラウザから直接編集する。約定の中核計算（検証・ニュース影響・需給影響・価格合成）は `src/lib/pricing`/`src/lib/market` 配下の純粋関数として実装し、Cloud Functionsとクライアント（プレビュー用の即時バリデーション）の双方から同じ関数を呼ぶ。これは Phase 1.3 が確立した「`pricingCore` をクライアントとFunctionsで共有する」仕組みをそのまま踏襲する。
+**Architecture:** 既存の `liveMarkets/{marketId}` RTDBツリーをラウンドモード用に拡張する（新規のFirestoreコレクションは作らない）。価格・約定の権威はCloud Functions（Callable）に置く — ラウンドの進行 (`advancePhase`) と一括約定 (`settleRound`) は教師のブラウザではなくサーバーが実行し、将来のニュース・需給パラメータは **`liveMarkets/{marketId}` の外側**、`privateEngineState/{marketId}` という兄弟ツリーに置いて全クライアント（教師のブラウザを含む）から `.read: false`/`.write: false` にする。**`liveMarkets/{marketId}` の外に置くのは意図的。** RTDBのセキュリティルールは祖先が許可した読み取りを子孫の `.read: false` で取り消せない（許可は下方向にしか累積しない）。既存の `database.rules.json` は `liveMarkets/$marketId` のルート自体に `data.child('meta/ownerUid').val() === auth.uid` で教師の全読み取りを許可しているため、その配下に `privateEngineState` を置くと教師のブラウザからも読めてしまい「サーバーのみ」という設計要件を満たせない。同じ理由で、チームの注文案（`TeamRoundDecision`）と個人予想は「秘匿は不要だが他チームには見せない」情報であるため、`rounds/{roundIndex}`（全メンバーに広く読み取りを許可する）の**配下ではなく**、`teamDecisions/{roundIndex}/{teamId}` / `predictions/{roundIndex}/{teamId}/{participantId}` という別の兄弟ツリーに置き、そこだけチーム単位の狭いルールを付ける。こうしないと「`rounds/{roundIndex}` を読める」という広い許可が配下の全チームの注文案にもカスケードしてしまう。`TeamRoundDecision` 自体の編集操作は既存の `applyPauseMarket` / `applyApproveJoinRequest` と同じ「純粋関数 + RTDB `runTransaction`」パターンで教師・生徒のブラウザから直接行う。約定の中核計算（検証・ニュース影響・需給影響・価格合成）は `src/lib/pricing`/`src/lib/market` 配下の純粋関数として実装し、Cloud Functionsとクライアント（プレビュー用の即時バリデーション）の双方から同じ関数を呼ぶ。これは Phase 1.3 が確立した「`pricingCore` をクライアントとFunctionsで共有する」仕組みをそのまま踏襲する。
 
 **Tech Stack:** TypeScript, React + MUI（既存コンポーネント資産）, Firebase Realtime Database（`runTransaction`）, Firebase Cloud Functions v2 (`onCall`), Firebase Admin SDK, Vitest, `@firebase/rules-unit-testing`（`npm run test:rules`）。
 
@@ -54,7 +54,7 @@
 | `functions/src/round/placeContinuousOrder.ts` | 新規。`onCall`。クラシックモード即時約定 |
 | `functions/src/round/placeContinuousOrder.test.ts` | 新規 |
 | `functions/src/index.ts` | 変更。3つの `onCall` をexport |
-| `database.rules.json` | 変更。`rounds`, `publicQuote`, `settlementPriceHistory`, `privateEngineState` ノードを追加 |
+| `database.rules.json` | 変更。`liveMarkets/$marketId` 配下に `rounds`, `publicQuote`, `settlementPriceHistory` を追加し、`liveMarkets` と並列の兄弟ツリーとして `teamDecisions`, `predictions`, `privateEngineState` を新設する（カスケードで漏洩させないための構造。Architecture節参照） |
 | `test/database.rules.test.ts` | 変更。新ノードの読み書きマトリクスを追加 |
 | `src/lib/templates/types.ts`（実パスはTask 1で確定） | 変更。`market.marketDepthWeight`, `market.sensitivity`, `market.maxDemandImpact`, `market.demandLinkedPricing` を追加 |
 | `src/components/teacher/ControlRoom.tsx` | 変更。`live.meta.mode` で `runHostTick` ループとラウンドモードUIを分岐 |
@@ -129,9 +129,15 @@ export interface LessonRound {
 
 export interface PlannedOrder { stockId: string; side: 'BUY' | 'SELL'; quantity: number }
 
-/** liveMarkets/{marketId}/rounds/{roundIndex}/teamDecisions/{teamId}. Field names use this
- * codebase's `AtMillis` convention rather than the design doc's `updatedAt`/`submittedAt`,
- * for consistency with every other timestamp field in liveMarketTypes.ts. */
+/** teamDecisions/{marketId}/{roundIndex}/{teamId} — deliberately NOT nested under
+ * liveMarkets/{marketId}/rounds/{roundIndex}, even though that is where LessonRound itself
+ * lives. rounds/{roundIndex} is broadly readable by every market member (phase, status,
+ * revealAnimation are all safe to show everyone); RTDB rule grants cascade downward and
+ * cannot be revoked by a narrower child rule, so nesting a team-only document under a
+ * broadly-readable parent would let every team read every other team's draft orders. See
+ * this plan's Architecture section and Task 7. Field names use this codebase's `AtMillis`
+ * convention rather than the design doc's `updatedAt`/`submittedAt`, for consistency with
+ * every other timestamp field in liveMarketTypes.ts. */
 export interface TeamRoundDecision {
   revision: number
   orders: PlannedOrder[]
@@ -271,8 +277,11 @@ Expected: FAIL — module not found.
 import { ref, runTransaction, type Database } from 'firebase/database'
 import type { PlannedOrder, TeamRoundDecision } from './roundTypes'
 
+// Deliberately a sibling of liveMarkets, not nested under liveMarkets/{marketId}/rounds —
+// see this plan's Architecture section for why (RTDB rule cascade cannot be narrowed by a
+// child rule once a broadly-readable ancestor already grants access).
 const decisionPath = (marketId: string, roundIndex: number, teamId: string) =>
-  `liveMarkets/${marketId}/rounds/${roundIndex}/teamDecisions/${teamId}`
+  `teamDecisions/${marketId}/${roundIndex}/${teamId}`
 
 export interface TeamDecisionEdit { orders: PlannedOrder[]; reason: string; referencedDocumentIds: string[] }
 
@@ -603,6 +612,13 @@ import type { LiveMarketState } from '../../../src/lib/market/liveMarketTypes'
  * settlement with a fresh settlementId (so a retried/duplicate call sees SETTLING or
  * SETTLED and backs off), then compute off-transaction, then persist gated on that
  * exact settlementId still being current.
+ *
+ * teamDecisions and privateEngineState are read from their own sibling root paths
+ * (`teamDecisions/{marketId}/{roundIndex}`, `privateEngineState/{marketId}`), not from
+ * `liveMarkets/{marketId}` — see this plan's Architecture section for why they cannot be
+ * nested under liveMarkets without leaking via the RTDB rule cascade. Only the Admin SDK
+ * (this function) can read privateEngineState at all; its rule is `.read: false` for
+ * every client SDK, teacher included.
  */
 export const settleRoundAdmin = async (database: AdminDatabase, marketId: string, roundIndex: number) => {
   const roundRef = database.ref(`liveMarkets/${marketId}/rounds/${roundIndex}`)
@@ -619,15 +635,17 @@ export const settleRoundAdmin = async (database: AdminDatabase, marketId: string
   claimed = settlementId
 
   const marketRef = database.ref(`liveMarkets/${marketId}`)
-  const snapshot = (await marketRef.get()).val() as LiveMarketState & { rounds?: Record<number, LessonRound & { teamDecisions?: Record<string, TeamRoundDecision> }> }
-  const round = snapshot.rounds?.[roundIndex]
-  if (!round) throw new HttpsError('not-found', 'Round does not exist')
+  const [snapshot, teamDecisions] = await Promise.all([
+    marketRef.get().then((s) => s.val() as LiveMarketState),
+    database.ref(`teamDecisions/${marketId}/${roundIndex}`).get().then((s) => (s.val() ?? {}) as Record<string, TeamRoundDecision>),
+  ])
+  if (!snapshot) throw new HttpsError('not-found', 'Market does not exist')
 
   const input: SettleRoundInput = {
     roundIndex,
     publicPrice: Object.fromEntries(Object.entries(snapshot.publicQuote ?? {}).map(([stockId, quote]: [string, { currentPrice: number }]) => [stockId, quote.currentPrice])),
     basePrice: Object.fromEntries(Object.values(snapshot.companies ?? {}).map((company) => [company.id, company.basePrice])),
-    teamDecisions: round.teamDecisions ?? {},
+    teamDecisions,
     teamPortfolios: snapshot.teamPortfolios ?? {},
     // {} until Task 12 wires the real resolvers in — 1.5 lands after 1.4.
     newsPercentByStock: {},
@@ -648,7 +666,7 @@ export const settleRoundAdmin = async (database: AdminDatabase, marketId: string
       marketRef.child(`settlementPriceHistory/${stockId}/${roundIndex}`).set({ price, breakdown: output.breakdown[stockId], volume: input.volumeByStock[stockId] ?? 0 })),
     ...output.fills.map((fill) => marketRef.child(`transactions/${fill.participantId}/${fill.orderId}`).set(fill)),
   ])
-  return output
+  return { ...output, publicPrice: input.publicPrice }
 }
 
 export const settleRound = onCall(async (request) => {
@@ -750,6 +768,16 @@ export const computeAdvanceResult = (round: LessonRound, context: AdvanceContext
   return { round: advanced }
 }
 
+/** Deterministic per (marketId, roundIndex, stockId) so a re-fetch of the same round never
+ * jitters the reveal animation's shape — reused verbatim from the seeding convention
+ * pricingCore.createPhaseRuntime already uses for classic mode's phase runtime. */
+const revealSeed = (marketId: string, roundIndex: number, stockId: string) => {
+  let hash = 0
+  for (const char of `${marketId}:${roundIndex}:${stockId}`) hash = (hash * 31 + char.charCodeAt(0)) % 100_000
+  return hash
+}
+const REVEAL_DURATION_MILLIS = 8_000
+
 export const advancePhase = onCall(async (request) => {
   const marketId = String(request.data?.marketId ?? '')
   if (!marketId) throw new HttpsError('invalid-argument', 'marketId is required')
@@ -762,23 +790,40 @@ export const advancePhase = onCall(async (request) => {
   if (ownerUid !== request.auth?.uid) throw new HttpsError('permission-denied', 'Only the market owner can advance a round')
 
   const round = (await marketRef.child(`rounds/${roundIndexSnapshot}`).get()).val() as LessonRound
-  if (round.phase === 'TRADING' && round.status !== 'SETTLED') await settleRoundAdmin(database, marketId, round.roundIndex)
+  let settlement: Awaited<ReturnType<typeof settleRoundAdmin>> | undefined
+  if (round.phase === 'TRADING' && round.status !== 'SETTLED') settlement = await settleRoundAdmin(database, marketId, round.roundIndex)
   const resettled = (await marketRef.child(`rounds/${roundIndexSnapshot}`).get()).val() as LessonRound
 
-  // TODO(Task 12, 1.5): replace with the round's actual per-stock opening price computed by settleRound.
-  const openingPrice = Object.fromEntries(Object.entries((await marketRef.child('companies').get()).val() ?? {}).map(([id, company]: [string, { basePrice: number }]) => [id, company.basePrice]))
+  // TODO(Task 12, 1.5): once every round always goes through settleRoundAdmin, this can read
+  // nextOpeningPrice unconditionally instead of falling back to basePrice for round 0.
+  const openingPrice = settlement && 'nextOpeningPrice' in settlement
+    ? settlement.nextOpeningPrice
+    : Object.fromEntries(Object.entries((await marketRef.child('companies').get()).val() ?? {}).map(([id, company]: [string, { basePrice: number }]) => [id, company.basePrice]))
   const { round: nextRound, publicQuote } = computeAdvanceResult(resettled, { openingPrice, tradingWindowMillis: 5 * 60_000 }, Date.now())
+
+  // Only written once settlement has actually produced both endpoints — revealAnimation's
+  // mere existence therefore always implies it is safe to show (see design doc §3: the
+  // reveal is purely a rendering aid, never the settlement source of truth).
+  const revealWrite = settlement && 'nextOpeningPrice' in settlement
+    ? marketRef.child('rounds').child(String(round.roundIndex)).child('revealAnimation').update(
+        Object.fromEntries(Object.entries(settlement.nextOpeningPrice).map(([stockId, endPrice]) => [stockId, {
+          startPrice: settlement!.publicPrice[stockId] ?? endPrice,
+          endPrice,
+          startAtMillis: Date.now(),
+          endAtMillis: Date.now() + REVEAL_DURATION_MILLIS,
+          seed: revealSeed(marketId, round.roundIndex, stockId),
+        }])))
+    : Promise.resolve()
 
   await Promise.all([
     marketRef.child(`rounds/${nextRound.roundIndex}`).set(nextRound),
     marketRef.child('meta/currentRoundIndex').set(nextRound.roundIndex),
     publicQuote ? marketRef.child('publicQuote').update(publicQuote) : Promise.resolve(),
+    revealWrite,
   ])
   return { round: nextRound }
 })
 ```
-
-*(この`openingPrice`のプレースホルダはTask 12で「直前ラウンドの`nextOpeningPrice`を読む」実装に差し替える。Task 5の時点ではラウンド0はテンプレートの`basePrice`から、ラウンド1以降は本来`settlementPriceHistory`から取るべきだが、そのつなぎ込みは1.5の完了後まで確定しないため、ここでは意図的に単純化している。)*
 
 - [ ] **Step 4: テストを実行し成功を確認する**
 
@@ -906,36 +951,50 @@ git commit -m "feat: move classic-mode order execution to a server callable"
 **Interfaces:**
 - Consumes: 既存の `liveMarkets/{marketId}` ルール構造
 
+**重要な制約（RTDBのルールカスケード）:** Firebase RTDBのセキュリティルールは祖先が許可した読み取りを子孫の `.read: false` で取り消せない — 許可は下方向にしか累積しない。既存の `database.rules.json` は `liveMarkets/$marketId` のルート自体に教師（`meta/ownerUid`）への全読み取りを許可しているため、その配下に「教師にも読ませたくないノード」を置くことはできない。同様に、`rounds/$roundIndex` を全メンバーに広く読める設計にすると、その配下に「特定チームにしか読ませたくないノード」を置くこともできない。このため `teamDecisions`・`predictions`・`privateEngineState` は `liveMarkets` と**並列の**トップレベルパスとして新設する。
+
 - [ ] **Step 1: 失敗するルールテストを書く**
 
-`test/database.rules.test.ts` に追記（既存の `seed`/`approveStudent` ヘルパーを再利用）:
+`test/database.rules.test.ts` に追記（既存の `seed`/`approveStudent` ヘルパーを再利用。`environment` の初期化に渡す `database.rules` は変わらず `database.rules.json` を読むだけでよい — 新設したトップレベルパスも同じファイルに含まれるため）:
 
 ```ts
 describe('round-mode nodes', () => {
-  it('lets a team member read the public quote and settlement history, but never privateEngineState', async () => {
+  it('lets a team member read the public quote and settlement history under liveMarkets', async () => {
     await approveStudent()
     const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
     await assertSucceeds(student.ref(`liveMarkets/${market}/publicQuote/acme`).get())
     await assertSucceeds(student.ref(`liveMarkets/${market}/settlementPriceHistory/acme/0`).get())
-    await assertFails(student.ref(`liveMarkets/${market}/privateEngineState`).get())
   })
 
-  it('denies privateEngineState reads even to the market owner\'s client SDK — only Admin SDK (Cloud Functions) may read it', async () => {
+  it('denies privateEngineState reads to every client SDK, including the market owner — only Admin SDK (Cloud Functions) may read it', async () => {
     const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
-    await assertFails(teacher.ref(`liveMarkets/${market}/privateEngineState`).get())
+    const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
+    await assertFails(teacher.ref(`privateEngineState/${market}`).get())
+    await assertFails(student.ref(`privateEngineState/${market}`).get())
   })
 
   it('lets only a team\'s own members write their teamDecisions, incrementing revision by exactly 1', async () => {
     await approveStudent('student-a', 'red')
     const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
-    await assertSucceeds(student.ref(`liveMarkets/${market}/rounds/0/teamDecisions/red`).set({ revision: 1, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
-    await assertFails(student.ref(`liveMarkets/${market}/rounds/0/teamDecisions/red`).set({ revision: 3, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
+    await assertSucceeds(student.ref(`teamDecisions/${market}/0/red`).set({ revision: 1, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
+    await assertFails(student.ref(`teamDecisions/${market}/0/red`).set({ revision: 3, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
   })
 
   it('denies a student writing another team\'s decision', async () => {
     await approveStudent('student-a', 'red')
     const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
-    await assertFails(student.ref(`liveMarkets/${market}/rounds/0/teamDecisions/blue`).set({ revision: 1, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
+    await assertFails(student.ref(`teamDecisions/${market}/0/blue`).set({ revision: 1, orders: [], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'student-a_session', updatedAtMillis: 1, submitted: false }))
+  })
+
+  it('denies a student reading a different team\'s decision, and denies reading it via the parent rounds/{roundIndex} path too', async () => {
+    await approveStudent('student-a', 'red')
+    await environment.withSecurityRulesDisabled((context) => context.database().ref(`teamDecisions/${market}/0/blue`).set({ revision: 1, orders: [{ stockId: 'acme', side: 'BUY', quantity: 5 }], reason: '', referencedDocumentIds: [], updatedByParticipantId: 'x', updatedAtMillis: 1, submitted: false }))
+    const student = environment.authenticatedContext('student-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
+    await assertFails(student.ref(`teamDecisions/${market}/0/blue`).get())
+    // teamDecisions is a sibling of liveMarkets, not nested under it, so reading
+    // liveMarkets/{market}/rounds/0 (which the student CAN read) must not expose it.
+    const roundSnapshot = await student.ref(`liveMarkets/${market}/rounds/0`).get()
+    expect(roundSnapshot.hasChild('teamDecisions')).toBe(false)
   })
 })
 ```
@@ -947,19 +1006,12 @@ Expected: FAIL — nodes not yet defined, everything denied by default `.write: 
 
 - [ ] **Step 3: ルールを追加する**
 
-`database.rules.json` の `liveMarkets/$marketId` 配下に追記:
+`database.rules.json` の `liveMarkets/$marketId` 配下（`companies`, `prices` 等と同じ階層）に追記:
 
 ```json
 "rounds": {
   "$roundIndex": {
-    ".read": "auth != null && (data.parent().parent().child('meta/ownerUid').val() === auth.uid || data.parent().parent().child('members').child(auth.uid).exists())",
-    "teamDecisions": {
-      "$teamId": {
-        ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId)",
-        ".write": "auth != null && root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId",
-        ".validate": "newData.hasChildren(['revision','orders','reason','referencedDocumentIds','updatedByParticipantId','updatedAtMillis','submitted']) && newData.child('revision').val() === (data.exists() ? data.child('revision').val() + 1 : 1)"
-      }
-    }
+    ".read": "auth != null && (data.parent().parent().child('meta/ownerUid').val() === auth.uid || data.parent().parent().child('members').child(auth.uid).exists())"
   }
 },
 "publicQuote": {
@@ -973,14 +1025,46 @@ Expected: FAIL — nodes not yet defined, everything denied by default `.write: 
       ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
     }
   }
-},
-"privateEngineState": {
-  ".read": false,
-  ".write": false
 }
 ```
 
-（`rounds/$roundIndex` そのものへの直接 `.write` は与えない — フェーズ遷移は `advancePhase` Callableのみが行い、Admin SDKはルールを迂回するため、この省略は「クライアントは書けない」ことを意味する。`teamDecisions` の `.write` は生徒からの直接書き込みを許すが、`submitted` を `false` へ戻す不変条件はクライアント側の `applyEditTeamDecision`（Task 2）に委ねる — 既存コードベースの `participants`/`joinRequests` と同じ信頼モデル。）
+（`rounds/$roundIndex` そのものへの直接 `.write` は与えない — フェーズ遷移は `advancePhase` Callableのみが行い、Admin SDKはルールを迂回するため、この省略は「クライアントは書けない」ことを意味する。`revealAnimation`・`publicNews` は `rounds/$roundIndex` の子として書かれるため、上記の `.read` がそのままカスケードして全メンバーに読める — これは意図通り、両方とも締切後にしか存在しない安全な情報である。）
+
+これとは別に、`database.rules.json` のトップレベル（`"rules": { "liveMarkets": {...}, ... }` と同じ階層）に、`liveMarkets` と並列の3つのパスを新設する:
+
+```json
+"teamDecisions": {
+  "$marketId": {
+    "$roundIndex": {
+      "$teamId": {
+        ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId)",
+        ".write": "auth != null && root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId",
+        ".validate": "newData.hasChildren(['revision','orders','reason','referencedDocumentIds','updatedByParticipantId','updatedAtMillis','submitted']) && newData.child('revision').val() === (data.exists() ? data.child('revision').val() + 1 : 1)"
+      }
+    }
+  }
+},
+"predictions": {
+  "$marketId": {
+    "$roundIndex": {
+      "$teamId": {
+        "$participantId": {
+          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId)",
+          ".write": "auth != null && root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid"
+        }
+      }
+    }
+  }
+},
+"privateEngineState": {
+  "$marketId": {
+    ".read": false,
+    ".write": false
+  }
+}
+```
+
+`teamDecisions`・`predictions`・`privateEngineState` を `liveMarkets` の**外**（トップレベルの兄弟パス）に置くのは、このTaskの冒頭で説明したルールカスケードの制約による意図的な設計 — `liveMarkets/$marketId` のルート自体が教師（`meta/ownerUid`）へ全読み取りを許可しているため、その配下では「教師にも読ませない」「特定チーム以外には読ませない」という制限を後から加えられない。`teamDecisions` の `.write` は生徒からの直接書き込みを許すが、`submitted` を `false` へ戻す不変条件はクライアント側の `applyEditTeamDecision`（Task 2）に委ねる — 既存コードベースの `participants`/`joinRequests` と同じ信頼モデル。
 
 - [ ] **Step 4: テストを実行し成功を確認する**
 
@@ -1335,8 +1419,9 @@ export const resolveNewsImpactsForRound = (schedule: ScheduledNewsImpact[], roun
 - [ ] **Step 5: `settleRoundAdmin`（Task 4, `functions/src/round/settleRound.ts`）を書き換え、`newsPercentByStock: {}` を実際の解決結果へ差し替える**
 
 ```ts
-// settleRoundAdmin 内、SettleRoundInput の組み立て箇所を変更
-const newsSchedule = ((await marketRef.child('privateEngineState/newsSchedule').get()).val() ?? []) as ScheduledNewsImpact[]
+// settleRoundAdmin 内、SettleRoundInput の組み立て箇所を変更。privateEngineState は
+// liveMarkets と並列のトップレベルパスなので marketRef ではなく database.ref から直接読む。
+const newsSchedule = ((await database.ref(`privateEngineState/${marketId}/newsSchedule`).get()).val() ?? []) as ScheduledNewsImpact[]
 const input: SettleRoundInput = {
   // ...
   newsPercentByStock: resolveNewsImpactsForRound(newsSchedule, roundIndex),
@@ -1509,9 +1594,9 @@ Expected: FAIL
 
 - [ ] **Step 4: テストを実行し成功を確認する**
 
-- [ ] **Step 5: `ControlRoom.tsx` のラウンドモード分岐から呼び出す `onPublish` を、`privateEngineState/newsSchedule` へ追記するCallable（または直接のAdmin書き込みが必要なため、新規Callable `publishRoundNews` を `functions/src/round/`に追加）へ配線する**
+- [ ] **Step 5: `ControlRoom.tsx` のラウンドモード分岐から呼び出す `onPublish` を、`privateEngineState/{marketId}/newsSchedule` へ追記するCallable（新規Callable `publishRoundNews` を `functions/src/round/`に追加）へ配線する**
 
-*(この配線はTask 5で追加した `advancePhase` と同様のパターン。`publishRoundNews` は本Task内で新規作成し、`marketRef.child('privateEngineState/newsSchedule').push(...)` する薄いCallableとする。生徒に見せてよい見出しテキストのみ `liveMarkets/{marketId}/rounds/{roundIndex}/publicNews` へ即時公開し、`impacts` 配列は `privateEngineState` 側にのみ置く。)*
+*(この配線はTask 5で追加した `advancePhase` と同様のパターン。`publishRoundNews` は本Task内で新規作成し、`database.ref(`privateEngineState/${marketId}/newsSchedule`).push(...)` する薄いCallableとする — `privateEngineState` は `liveMarkets` と並列のトップレベルパスなので `marketRef.child(...)` ではなく `database.ref(...)` から直接参照する（Task 7参照）。生徒に見せてよい見出しテキストのみ `liveMarkets/{marketId}/rounds/{roundIndex}/publicNews` へ即時公開し、`impacts` 配列は `privateEngineState` 側にのみ置く。)*
 
 - [ ] **Step 6: `npm run verify` を実行する**
 
@@ -1578,9 +1663,11 @@ Task 15〜17, 19〜21 は1.5と並行して着手できる。Task 18のみ Task 
 
 ```ts
 // src/lib/market/predictionTypes.ts
-/** liveMarkets/{marketId}/rounds/{roundIndex}/predictions/{teamId}/{participantId}/{stockId}.
- * Keyed by teamId first so the RTDB rule for "teammates may read each other's predictions"
- * can match the same members/$uid/teamId pattern teamPortfolios already uses. */
+/** predictions/{marketId}/{roundIndex}/{teamId}/{participantId}/{stockId} — a sibling of
+ * liveMarkets, not nested under it, for the same RTDB rule-cascade reason as teamDecisions
+ * (see this plan's Architecture section and Task 7). Keyed by teamId so the RTDB rule for
+ * "teammates may read each other's predictions" can match the same members/$uid/teamId
+ * pattern teamPortfolios already uses. */
 export interface PersonalPrediction {
   direction: 'UP' | 'FLAT' | 'DOWN'
   confidence: 1 | 2 | 3 | 4 | 5
@@ -1627,25 +1714,12 @@ export const applySavePrediction = (input: Pick<PersonalPrediction, 'direction' 
 }
 
 export const savePrediction = async (database: Database, marketId: string, roundIndex: number, teamId: string, participantId: string, stockId: string, input: Pick<PersonalPrediction, 'direction' | 'confidence' | 'rationale' | 'percentChange'>, atMillis = Date.now()) =>
-  set(ref(database, `liveMarkets/${marketId}/rounds/${roundIndex}/predictions/${teamId}/${participantId}/${stockId}`), applySavePrediction(input, atMillis))
+  set(ref(database, `predictions/${marketId}/${roundIndex}/${teamId}/${participantId}/${stockId}`), applySavePrediction(input, atMillis))
 ```
 
 - [ ] **Step 5: テストを実行し成功を確認する**
 
-- [ ] **Step 6: RTDBルールを追加する（`database.rules.json`、Task 7と同じファイル）**
-
-```json
-"predictions": {
-  "$teamId": {
-    "$participantId": {
-      ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId)",
-      ".write": "auth != null && root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid"
-    }
-  }
-}
-```
-
-（`rounds/$roundIndex` 配下、`teamDecisions` と同階層に追加。チームメイトは読めるが、書けるのは本人のみ。）
+- [ ] **Step 6: RTDBルールは Task 7 の `predictions` ブロックとしてすでに追加済みであることを確認する。** Task 7 で `predictions/$marketId/$roundIndex/$teamId/$participantId` の `.read`（チームメイト・所有者）/`.write`（本人のみ）を `liveMarkets` と並列のトップレベルパスとして定義済み。もし Task 7 の実施順序を入れ替えてこのTaskを先に行った場合は、ここで同じ内容を `database.rules.json` に追記する。
 
 - [ ] **Step 7: `npm run verify` を実行する**
 
@@ -1869,7 +1943,7 @@ export const anonymizeParticipantResult = async (firestore: Firestore, marketId:
 
 - [ ] **Step 5: `finalizeEnding`（`hostTrading.ts:261`）が書き込む `marketResults/{marketId}/participants/{participantId}` へ、予想・判断理由も含めるよう拡張する**
 
-`finalizeEnding` の `participantWrites` に、`snapshot.rounds` から集めた `predictions`/`teamDecisions.reason` を含める（実装時、ラウンド数分ループしてマージする）。
+`finalizeEnding` の `participantWrites` に、`predictions/{marketId}` と `teamDecisions/{marketId}`（いずれも `liveMarkets` と並列のトップレベルパス。Task 7・15参照）から集めた予想と判断理由を含める（実装時、ラウンド数分ループしてマージする。`finalizeEnding` は現状 `liveMarkets/{marketId}` のスナップショットしか読んでいないため、この2パスの追加読み取りをここで新設する）。
 
 - [ ] **Step 6: `npm run verify` を実行する**
 

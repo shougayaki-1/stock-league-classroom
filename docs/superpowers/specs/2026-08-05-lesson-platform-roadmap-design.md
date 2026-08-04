@@ -389,6 +389,8 @@ nextPrice = currentPrice * (1 + appliedChangePercent / 100)
 
 この順序であれば、注文の処理順によって買える数量が変わることもない。
 
+**買付余力の超過は画面で防ぐことを主たる防御とする。** `settleRound` 側にも配分の規則は必要だが、それはクライアントを迂回した場合の安全網であり、通常の授業では発動しない。安全網の配分規則（複数銘柄への買い注文が余力を超えたときにどう削るか）は決定的でなければならず、実装時に規則を1つ決めて固定する。
+
 需給影響の式は金額ベースとする。株数ベースでは高価格銘柄と低価格銘柄を比較できない。
 
 ```ts
@@ -402,8 +404,10 @@ demandImpactPercent = clamp(demandRatio * sensitivity, -maxDemandImpact, maxDema
 教師に発行株数を設定させるのは負担が大きいため、相対的な重みで表現する。
 
 ```ts
-liquidityScale = 全チームの初期資金合計 × marketDepthWeight   // marketDepthWeight の既定値は 1.0
+liquidityScale = meta.startingCash × チーム数 × marketDepthWeight   // marketDepthWeight の既定値は 1.0
 ```
+
+**分母は市場開始時に固定し、以後変えない。** 稼働中の `teamPortfolios.cash` を合計すると、チームが売買するたびに分母が動き、同じ注文量でもラウンドごとに価格への影響が変わってしまう。生徒から見て因果が読めなくなるため、必ず初期値から算出する。
 
 全チームが全資金を1銘柄へ投じたとき `demandRatio` が概ね 1.0 になる。教師は数値を意識せず「この会社は小さい」と設定するだけで変動しやすさを調整できる。
 
