@@ -39,6 +39,7 @@
 | 市場作成の冪等性 | `creationStatus: 'CREATING' \| 'READY'` と `recoverMarketCreation` により、FirestoreとRTDBを跨ぐ部分失敗から復旧できる | `src/lib/market/marketRepository.ts:10`、`:32` |
 | 価格配信 | ホストのブラウザが1秒ごとに市場ルートへトランザクションを実行し、その中で全銘柄を更新する | `src/lib/market/hostTrading.ts` |
 | 価格の権威 | ホストのブラウザ。サーバーサイドの処理は存在しない（`functions/` ディレクトリなし） | `firebase.json` |
+| サーバー時刻の同期 | **実装済み。** `.info/serverTimeOffset` を購読し `serverNow()` を提供する。リース判定と価格スケジュールは既にサーバー時刻で動く | `src/lib/firebase/serverTime.ts` |
 | ニュース影響 | 指定した変化率を全銘柄へ一律適用 | `src/lib/market/hostTrading.ts:232` |
 | 需給の価格反映 | 存在しない。生徒の売買量は価格に影響しない | `src/lib/market/hostTrading.ts` |
 | 一時停止 | RTDBルールは `PAUSED` を許可し、再開時の `openedAtMillis` 更新も許可している。コードとルールの不整合はない | `database.rules.json:22`、`:23` |
@@ -617,12 +618,16 @@ v2で追加する主な要素:
 
 既存の3つの公式テンプレート（学園祭・宇宙都市・地域再生）はv2へ変換する。
 
-**1.3 Cloud Functions基盤と価格の秘匿**
+**1.3 Cloud Functions基盤**
 
 - Blazeプランへ移行し、予算アラートを設定する
 - `functions/` パッケージを新設する
-- `src/lib/pricing/pricingCore.ts` をクライアントとFunctionsが共有できる形へ切り出す
-- クライアントは `.info/serverTimeOffset` を購読し、補正した時刻で表示価格を算出する
+- `src/lib/pricing/pricingCore.ts` のうち**決定的な関数のみ**をクライアントとFunctionsが共有できる形へ切り出す
+
+  `createPhaseRuntime`（`pricingCore.ts:41`）は `seed = Math.random() * 1000` を既定引数に持つ。これはクラシックモードのホスト側でのみ使うものであり、共有パッケージへ含めてはならない。共有するのは `clampToBounds`、`getPhaseEndPrice`、`applyMeanReversion`、`normalizePhases` などの決定的な関数に限る。
+
+- 丸め処理、最低価格、上限、適用順序を単一関数で固定する（基盤設計4を参照）
+- サーバー時刻の同期は既に `src/lib/firebase/serverTime.ts` に実装済みであり、この段階では新規実装ではなく、Functions 側から同じ時刻基準を使えることの確認作業になる
 
 **1.4 ラウンド進行と一括約定**
 
