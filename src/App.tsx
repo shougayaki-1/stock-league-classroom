@@ -1,5 +1,6 @@
 import { TemplateRoutes } from './components/TemplateRoutes'
-import { StudentMarketJoin, TeacherMarketDashboard } from './components/MarketDashboard'
+import { TeacherMarketDashboard } from './components/MarketDashboard'
+import { StudentMarketJoin } from './components/student/StudentMarketJoin'
 import { ControlRoom } from './components/teacher/ControlRoom'
 import { StudentMarketPage } from './components/student/StudentMarketPage'
 import { SignagePage } from './components/signage/SignagePage'
