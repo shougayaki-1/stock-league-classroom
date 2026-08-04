@@ -32,17 +32,17 @@ export const AdminShell = ({ active, children, marketId, marketTitle, marketStat
   const iconSx = { minWidth: 0, color: 'inherit', '& svg': { width: 20, height: 20 } }
   const item = (label: string, icon: AdminIcon) => <><ListItemIcon sx={iconSx}><Icon name={icon} /></ListItemIcon><ListItemText primary={label} slotProps={{ primary: { sx: { fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' } } }} /></>
   return <Box sx={{ minHeight: '100dvh', display: 'flex', flexDirection: { xs: 'column', md: 'row' } }}>
-    <Paper component="aside" square elevation={0} sx={{ width: { md: 260 }, flexShrink: 0, p: 2, display: 'flex', flexDirection: { xs: 'row', md: 'column' }, flexWrap: 'wrap', alignItems: { xs: 'center', md: 'stretch' }, gap: 1, borderRight: { md: 1 }, borderBottom: { xs: 1, md: 0 }, borderColor: 'divider', position: { md: 'sticky' }, top: 0, height: { md: '100dvh' } }}>
-      <Stack spacing={1.5} sx={{ width: '100%', display: { xs: 'none', md: 'flex' } }}>
-        <ButtonBase component={RouterLink} to="/teacher/markets" sx={{ justifyContent: 'flex-start', gap: 1, borderRadius: 2, p: 1, color: 'text.secondary' }}>
-          <Icon name="switch" /><Typography variant="body2" sx={{ fontWeight: 700 }}>別の市場を選ぶ</Typography>
+    <Paper component="aside" square elevation={0} sx={{ width: { md: 260 }, flexShrink: 0, p: { xs: 1.25, md: 2 }, display: 'flex', flexDirection: 'column', gap: 1, borderRight: { md: 1 }, borderBottom: { xs: 1, md: 0 }, borderColor: 'divider', position: { md: 'sticky' }, top: 0, height: { md: '100dvh' } }}>
+      <Stack direction={{ xs: 'row', md: 'column' }} spacing={{ xs: 1, md: 1.5 }} sx={{ width: '100%', alignItems: { xs: 'center', md: 'stretch' } }}>
+        <ButtonBase component={RouterLink} to="/teacher/markets" aria-label="別の市場を選ぶ" sx={{ justifyContent: 'flex-start', gap: 1, borderRadius: 2, p: 1, color: 'text.secondary', flexShrink: 0 }}>
+          <Icon name="switch" /><Typography variant="body2" sx={{ fontWeight: 700, display: { xs: 'none', md: 'inline' } }}>別の市場を選ぶ</Typography>
         </ButtonBase>
-        <Box sx={{ px: 1 }}>
+        <Box sx={{ px: { md: 1 }, minWidth: 0, flex: { xs: '1 1 auto', md: 'initial' } }}>
           <Typography variant="subtitle2" noWrap>{marketTitle ?? '市場'}</Typography>
-          {marketStatus && <Chip size="small" color={STATUS_COLOR[marketStatus]} label={MARKET_STATUS_LABEL[marketStatus]} sx={{ mt: 0.5 }} />}
+          {marketStatus && <Chip size="small" color={STATUS_COLOR[marketStatus]} label={MARKET_STATUS_LABEL[marketStatus]} sx={{ mt: { xs: 0, md: 0.5 } }} />}
         </Box>
-        <Divider />
       </Stack>
+      <Divider />
       <Box component="nav" aria-label="市場メニュー" sx={{ display: 'flex', flexDirection: { xs: 'row', md: 'column' }, gap: 0.5, flexWrap: 'wrap', width: '100%' }}>
         <Typography variant="caption" sx={{ display: { xs: 'none', md: 'block' }, px: 1.5, color: 'text.secondary', fontWeight: 700, letterSpacing: '.02em' }}>市場設定</Typography>
         <ListItemButton component={NavLink} to={`/teacher/markets/${marketId}/stocks`} selected={active === 'stocks'} sx={itemSx}>{item('銘柄', 'stocks')}</ListItemButton>
