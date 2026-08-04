@@ -1,5 +1,5 @@
 /** All mutable market state lives below liveMarkets/{marketId}. */
-export type MarketStatus = 'SETUP' | 'OPEN' | 'ENDING' | 'ENDED'
+export type MarketStatus = 'SETUP' | 'OPEN' | 'PAUSED' | 'ENDING' | 'ENDED'
 export type MarketVisibility = 'private' | 'ranking_only' | 'public'
 export type TeamAssignmentMode = 'manual' | 'student_choice' | 'random'
 
@@ -13,6 +13,8 @@ export interface LiveMarketMetadata {
   joinCode: string
   autoApprove?: boolean
   openedAtMillis?: number
+  /** Set while the teacher has temporarily stopped trading. */
+  pausedAtMillis?: number
 }
 
 export interface LiveMarketTeam { id: string; name: string }

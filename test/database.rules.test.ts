@@ -124,6 +124,13 @@ describe('live market RTDB rules', () => {
     await assertFails(outsider.ref(`liveMarkets/${market}/teamLeaderboard`).once('value'))
     await assertFails(outsider.ref(`liveMarkets/${market}/teamPortfolios/red`).once('value'))
   })
+
+  it('allows an authenticated classroom display to read a private signage projection', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => context.database().ref(`liveMarkets/${market}/signage`).set({ joinCode: 'ABC123', prices: [], publicNews: [], phase: 'ENDED', leaderboard: [] }))
+    const display = environment.authenticatedContext('display-a', { firebase: { sign_in_provider: 'anonymous' as const } }).database()
+    await assertSucceeds(display.ref(`liveMarkets/${market}/signage`).once('value'))
+    await assertFails(environment.unauthenticatedContext().database().ref(`liveMarkets/${market}/signage`).once('value'))
+  })
 })
 
 describe('emergency stop (RTDB)', () => {

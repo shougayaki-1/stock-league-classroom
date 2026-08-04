@@ -65,6 +65,13 @@ describe('classroom release flow', () => {
     const result = await getDoc(doc(studentFirestore, 'marketResults', created.marketId, 'participants', requestId))
     expect(result.data()?.teamResult.rank).toBe(1)
     expect(result.data()?.transactions['order-1'].filledQuantity).toBe(3)
+
+    expect((await openMarket(teacherDatabase, created.marketId, 'teacher-a', leaseId)).committed).toBe(true)
+    await runHostTick(teacherFirestore, teacherDatabase, created.marketId, 'teacher-a', leaseId, [{ id: 'acme', basePrice: 100, phases: template.companies[0].pricePhases }])
+    const reopened = (await get(ref(teacherDatabase, `liveMarkets/${created.marketId}`))).val()
+    expect(reopened.meta.status).toBe('OPEN')
+    expect(reopened.finalization).toBeUndefined()
+    expect(reopened.signage.phase).toBe('OPEN')
     stopRoot()
   }, 20_000)
 })

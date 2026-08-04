@@ -19,8 +19,9 @@
           "startingCash": { ".validate": "(!data.exists() && newData.isNumber() && newData.val() >= 1) || newData.val() === data.val()" },
           "joinCode": { ".validate": "(!data.exists() && newData.isString() && newData.val().length === 6) || newData.val() === data.val()" },
           "visibility": { ".validate": "(!data.exists() && (newData.val() === 'private' || newData.val() === 'ranking_only' || newData.val() === 'public')) || newData.val() === data.val()" },
-          "status": { ".validate": "newData.val() === 'SETUP' || newData.val() === 'OPEN' || newData.val() === 'ENDING' || newData.val() === 'ENDED'" },
-          "openedAtMillis": { ".validate": "!newData.exists() || (newData.isNumber() && (!data.exists() || newData.val() === data.val()))" }
+          "status": { ".validate": "newData.val() === 'SETUP' || newData.val() === 'OPEN' || newData.val() === 'PAUSED' || newData.val() === 'ENDING' || newData.val() === 'ENDED'" },
+          "openedAtMillis": { ".validate": "!newData.exists() || (newData.isNumber() && (!data.exists() || newData.val() === data.val() || (data.parent().child('status').val() === 'PAUSED' && newData.val() >= data.val()) || (newData.parent().child('status').val() === 'OPEN' && (data.parent().child('status').val() === 'ENDING' || data.parent().child('status').val() === 'ENDED'))))" },
+          "pausedAtMillis": { ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)" }
         },
         "teams": {
           ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
@@ -91,7 +92,9 @@
           }
         },
         "signage": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists() || root.child('liveMarkets').child($marketId).child('meta/visibility').val() === 'ranking_only' || root.child('liveMarkets').child($marketId).child('meta/visibility').val() === 'public')"
+            // The projection contains only the sanitized signage payload. It is safe
+            // for an authenticated classroom display even when the market itself is private.
+            ".read": "auth != null"
         }
       }
     }

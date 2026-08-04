@@ -20,5 +20,6 @@ describe('SignageScreen', () => {
     expect(screen.getByText(/1,500/)).toBeInTheDocument()
     expect(screen.getByText(/本日の市場が開場しました/)).toBeInTheDocument()
     expect(screen.getByText(/たろう/)).toBeInTheDocument()
+    expect(screen.getByText('取引中')).toBeInTheDocument()
   })
 })

@@ -17,7 +17,7 @@ export const shouldPauseLease = (raw: LiveMarketState, ownerUid: string, leaseId
 /** The market owner is the only eligible host.  Transactions make simultaneous lease claims deterministic. */
 export const acquireHostLease = async (database: Database, marketId: string, ownerUid: string, leaseId: string, ttlMillis = 15_000, atMillis = now()) => {
   const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
-    if (!raw || raw.meta.ownerUid !== ownerUid || raw.meta.status === 'ENDED') return
+    if (!raw || raw.meta.ownerUid !== ownerUid) return
     const lease = raw.hostLease
     if (lease && lease.ownerUid !== ownerUid && lease.expiresAtMillis > atMillis) return
     raw.hostLease = { ownerUid, leaseId, expiresAtMillis: atMillis + ttlMillis, paused: false }
@@ -29,18 +29,31 @@ export const acquireHostLease = async (database: Database, marketId: string, own
 /** Renewal is lease-ID-bound: an older browser session can never reclaim a newer lease. */
 export const renewHostLease = async (database: Database, marketId: string, ownerUid: string, leaseId: string, ttlMillis = 15_000, atMillis = now()) => {
   const result = await runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
-    if (!raw || raw.meta.status === 'ENDED' || !ownsLiveLease(raw, ownerUid, leaseId, atMillis)) return
+    if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis)) return
     raw.hostLease!.expiresAtMillis = atMillis + ttlMillis; return raw
   })
   return result.committed
 }
 
-export const openMarket = async (database: Database, marketId: string, ownerUid: string, leaseId: string) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
-  if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, now()) || raw.meta.status !== 'SETUP') return
-  raw.meta.status = 'OPEN'; raw.meta.openedAtMillis ??= now(); return raw
+export const openMarket = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
+  if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || !['SETUP', 'PAUSED', 'ENDING', 'ENDED'].includes(raw.meta.status)) return
+  if (raw.meta.status === 'PAUSED' && raw.meta.pausedAtMillis !== undefined && raw.meta.openedAtMillis !== undefined) {
+    // Move the logical clock forward so price phases freeze while the market is paused.
+    raw.meta.openedAtMillis += Math.max(0, atMillis - raw.meta.pausedAtMillis)
+  }
+  if (raw.meta.status === 'ENDING' || raw.meta.status === 'ENDED') {
+    // Older markets used ENDED as a terminal state. Reopening starts a fresh live round
+    // while retaining the existing team portfolios and transaction history.
+    raw.meta.openedAtMillis = atMillis
+    delete raw.finalization
+  }
+  delete raw.meta.pausedAtMillis
+  raw.meta.status = 'OPEN'
+  return raw
 })
 
-/** A reachable host action transitions OPEN to ENDING; the tick performs/retries finalization. */
+/** A reachable host action transitions OPEN to ENDING; the tick finalizes it.
+ * The finalized state can still be reopened by the market owner. */
 export const requestMarketEnding = async (database: Database, marketId: string, ownerUid: string, leaseId: string, atMillis = now()) => runTransaction(ref(database, root(marketId)), (raw: LiveMarketState | null) => {
   if (!raw || !ownsLiveLease(raw, ownerUid, leaseId, atMillis) || raw.meta.status !== 'OPEN') return
   raw.meta.status = 'ENDING'; raw.finalization ??= { status: 'PENDING', checkpointId: `ending-${atMillis}`, startedAtMillis: atMillis }; return raw
@@ -221,6 +234,20 @@ export const finalizeEnding = async (firestore: Firestore, database: Database, m
 export const runHostTick = async (firestore: Firestore, database: Database, marketId: string, ownerUid: string, leaseId: string, stocks: Array<{ id: string; basePrice: number; phases?: StockPricePhase[] }>, atMillis = now()) => {
   await pauseDisconnectedLease(database, marketId, ownerUid, leaseId, atMillis)
   if (!await renewHostLease(database, marketId, ownerUid, leaseId, 15_000, atMillis)) return false
+  const current = (await get(ref(database, root(marketId)))).val() as LiveMarketState | null
+  if (!current || !ownsLiveLease(current, ownerUid, leaseId, atMillis)) return false
+  if (current.meta.status === 'PAUSED') {
+    await publishMarketProjections(database, marketId, ownerUid, leaseId, atMillis)
+    return true
+  }
+  // A legacy closing market may still be waiting for result finalization.
+  if (current.meta.status === 'ENDING') {
+    await finalizeEnding(firestore, database, marketId, ownerUid, leaseId, atMillis)
+    return true
+  }
+  // Keep the lease while an ended market is waiting for the teacher to reopen it.
+  if (current.meta.status === 'ENDED') return true
+  if (current.meta.status !== 'OPEN') return false
   await publishPrices(database, marketId, ownerUid, leaseId, stocks, atMillis)
   const snapshot = (await get(ref(database, root(marketId)))).val() as LiveMarketState | null
   if (!snapshot || snapshot.meta.status === 'ENDED' || !ownsLiveLease(snapshot, ownerUid, leaseId, atMillis)) return false

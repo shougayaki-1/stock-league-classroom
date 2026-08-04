@@ -37,7 +37,7 @@ export const useDatabaseOffline = (database: Database, { suspended = false, grac
   return offline
 }
 
-interface ReleaseOptions { finished?: boolean; hiddenIdleMs?: number; settleMs?: number }
+interface ReleaseOptions { finished?: boolean; reopenable?: boolean; hiddenIdleMs?: number; settleMs?: number }
 
 /**
  * Hands the connection back while nobody is looking at it.
@@ -52,7 +52,7 @@ interface ReleaseOptions { finished?: boolean; hiddenIdleMs?: number; settleMs?:
  */
 export const useReleaseIdleConnection = (
   database: Database,
-  { finished = false, hiddenIdleMs = HIDDEN_IDLE_MS, settleMs = ENDED_SETTLE_MS }: ReleaseOptions = {},
+  { finished = false, reopenable = false, hiddenIdleMs = HIDDEN_IDLE_MS, settleMs = ENDED_SETTLE_MS }: ReleaseOptions = {},
 ): boolean => {
   const [suspended, setSuspended] = useState(false)
   useEffect(() => {
@@ -62,7 +62,7 @@ export const useReleaseIdleConnection = (
     // screen the student opens next.
     const restore = () => { clearTimeout(timer); goOnline(database); setSuspended(false) }
 
-    if (finished) {
+    if (finished && !reopenable) {
       timer = setTimeout(release, settleMs)
       // A finished market has nothing left to stream, so returning to the tab
       // must not reopen the connection.
@@ -77,6 +77,6 @@ export const useReleaseIdleConnection = (
     document.addEventListener('visibilitychange', onVisibilityChange)
     onVisibilityChange()
     return () => { document.removeEventListener('visibilitychange', onVisibilityChange); restore() }
-  }, [database, finished, hiddenIdleMs, settleMs])
+  }, [database, finished, hiddenIdleMs, reopenable, settleMs])
   return suspended
 }

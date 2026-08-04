@@ -128,7 +128,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
   useEffect(() => {
     if (!lease || !user || !template) return
     const tick = () => void runHostTick(services.firestore, services.database, marketId, user.uid, lease, stocks)
-      .then((ok) => { if (ok) setLastTickAtMillis(serverNow()); else { setLease(''); setLastTickAtMillis(undefined); setHostingSinceMillis(undefined); setNotice(liveRef.current?.meta?.status === 'ENDED' ? '終了処理が完了しました。結果は確定しています。' : '終了処理が完了しました。もう一度「ホストを取得する」を押してください。') } })
+      .then((ok) => { if (ok) setLastTickAtMillis(serverNow()); else { setLease(''); setLastTickAtMillis(undefined); setHostingSinceMillis(undefined); setNotice(liveRef.current?.meta?.status === 'ENDED' ? '市場を終了しました。必要なときに再開できます。' : 'ホスト処理が終了しました。もう一度「ホストを取得する」を押してください。') } })
       .catch((error) => setNotice(handleFailure(error, 'ホスト処理を再試行しています。')))
     tick(); const timer = window.setInterval(tick, 1_000); return () => window.clearInterval(timer)
   }, [lease, marketId, services.database, services.firestore, stocks, template, user])
@@ -203,7 +203,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
                 onOpenMarket={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}
                 onRequestEnd={() => setEndingConfirm(true)}
                 onCancelEnd={() => setEndingConfirm(false)}
-                onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了まで再試行します。' : '終了処理を開始できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '終了処理を開始できません。もう一度お試しください。')); setEnding(false) }) }}
+                onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了後も市場を再開できます。' : '市場を終了できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '市場を終了できません。もう一度お試しください。')); setEnding(false) }) }}
               /></Box>
               <Box sx={{ flex: 1 }}><HostStatusPanel
                 prices={(template?.companies ?? []).map((company) => ({ stockId: company.id, name: company.name, symbol: company.symbol, price: live?.prices?.[company.id]?.price ?? company.initialPrice, basePrice: company.initialPrice }))}

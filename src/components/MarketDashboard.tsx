@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { onValue, ref, type Unsubscribe } from 'firebase/database'
 import { bootstrapFirebase } from '../lib/firebase/bootstrap'
-import { signInTeacherWithGoogle } from '../lib/auth/teacherAuth'
+import { getTeacherGoogleRedirectResult, signInTeacherWithGoogle } from '../lib/auth/teacherAuth'
 import { getOrCreateStudentUid } from '../lib/auth/studentAuth'
 import { isTeacherIdentity } from '../lib/auth/roles'
 import { armJoinRequestPresence, createMarket, listOwnedMarkets, RECOVERY_CODE_LENGTH, requestToJoinMarket, resolveJoinCode, type MarketRecord } from '../lib/market/marketRepository'
@@ -29,7 +29,6 @@ import { studentPrimaryActionSx } from './ui/studentUiStyles'
 const googleSignInErrorMessage = (error: unknown): string => {
   const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : ''
   if (code === 'auth/operation-not-allowed') return 'Google ログインが有効ではありません。Firebase Authentication の Google プロバイダを有効にしてください。'
-  if (code === 'auth/popup-blocked') return 'ログイン用ポップアップがブロックされました。ブラウザでこのサイトのポップアップを許可してください。'
   if (code === 'auth/unauthorized-domain') return 'この公開URLが承認済みドメインに登録されていません。Authentication の設定を確認してください。'
   return `Google ログインを完了できませんでした${code ? `（${code}）` : ''}。もう一度お試しください。`
 }
@@ -44,6 +43,17 @@ export const TeacherMarketDashboard = () => {
   const [status, setStatus] = useState<ServiceStatus>({ acceptingNewMarkets: true, message: '' })
   const [showOnboarding, setShowOnboarding] = useState(false)
   useEffect(() => onAuthStateChanged(services.auth, (next) => { setUser(next); setAuthReady(true) }), [services.auth])
+  useEffect(() => {
+    let cancelled = false
+    void getTeacherGoogleRedirectResult(services.auth)
+      .then((result) => {
+        if (!cancelled && result) setAuthNotice('Google アカウントでログインしました。')
+      })
+      .catch((error) => {
+        if (!cancelled) setAuthNotice(googleSignInErrorMessage(error))
+      })
+    return () => { cancelled = true }
+  }, [services.auth])
   // The stop is enforced by the rules; this read only explains the refusal.
   useEffect(() => { void readServiceStatus(services.firestore).then(setStatus) }, [services.firestore])
   const teacher = Boolean(user && isTeacherIdentity(user))
@@ -73,7 +83,10 @@ export const TeacherMarketDashboard = () => {
     ? official.find((item) => item.id === selectedId.slice(9))?.spec
     : templates.find((item) => item.id === selectedId.slice(9)), [official, selectedId, templates])
   const activeCount = Object.values(state?.participants ?? {}).filter((participant) => participant.connected).length
-  const signInWithGoogle = async () => { try { await signInTeacherWithGoogle(services.auth); setAuthNotice('Google アカウントでログインしました。') } catch (error) { setAuthNotice(googleSignInErrorMessage(error)) } }
+  const signInWithGoogle = async () => {
+    setAuthNotice('Google ログイン画面へ移動します。選択後、この画面に戻ります。')
+    try { await signInTeacherWithGoogle(services.auth) } catch (error) { setAuthNotice(googleSignInErrorMessage(error)) }
+  }
   const create = async () => { if (!selected || !user) return setNotice('先にテンプレートを作成してください。'); setCreating(true); try { const result = await createMarket(services.firestore, services.database, { ownerUid: user.uid, template: selected, visibility }); setMarketId(result.marketId); await refreshOwned(user.uid); setNotice('市場を作成しました。参加コードを生徒に共有してください。') } catch (error) { setNotice(error instanceof Error && error.message.startsWith('参加コード') ? error.message : handleFailure(error, '市場を作成できませんでした。接続と権限を確認してください。')) } finally { setCreating(false) } }
   const exportResults = async (market: MarketRecord) => {
     const companyNames = Object.fromEntries(market.templateSnapshot.companies.map((company) => [company.id, company.name]))

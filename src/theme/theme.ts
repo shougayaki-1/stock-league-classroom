@@ -35,7 +35,7 @@ export const appTheme = createTheme({
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { minWidth: 72, minHeight: 44, borderRadius: 22, paddingInline: 20 },
+        root: { minWidth: 72, minHeight: 44, borderRadius: 22, paddingInline: 20, whiteSpace: 'nowrap', flexShrink: 0 },
         sizeSmall: { minHeight: 36, paddingInline: 16 },
         sizeLarge: { minHeight: 48, borderRadius: 24, paddingInline: 24 },
       },

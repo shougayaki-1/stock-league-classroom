@@ -54,7 +54,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
   const participantKey = uid && sessionValid ? `${uid}_${active.sessionId}` : ''
   // Reads meta directly: the connection must be released even after the
   // listeners above have stopped delivering.
-  const suspended = useReleaseIdleConnection(services.database, { finished: meta?.status === 'ENDED' })
+  const suspended = useReleaseIdleConnection(services.database, { finished: meta?.status === 'ENDED', reopenable: true })
   const offline = useDatabaseOffline(services.database, { suspended })
   const connected = useDatabaseConnected(services.database)
 
@@ -158,7 +158,7 @@ export const StudentMarketPage = ({ marketId }: { marketId: string }) => {
     <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 4 }, pb: { xs: 12, md: 5 } }}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 1 }}><StudentSurfaceCard sx={{ flex: 1 }}><Stack direction="row" spacing={3} sx={{ p: 2.5, alignItems: 'center' }}><Box><Typography variant="caption" color="text.secondary">現金</Typography><Typography variant="h5" sx={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>¥{(portfolio?.cash ?? 0).toLocaleString()}</Typography></Box></Stack></StudentSurfaceCard><Chip label={`${teams[participant.teamId ?? '']?.name ?? 'チーム'} ・ ${describeStudentPhase(meta?.status)}`} variant="outlined" sx={{ alignSelf: { md: 'center' } }} /></Stack>
       <Box sx={{ mb: 3 }}><RecoveryCodeDisclosure code={recoveryCode} /></Box>
-      <Stack spacing={2} sx={{ mb: 3 }}>{recoveryMismatch && <Alert severity="warning"><strong>前回の続きに戻れませんでした。</strong> 入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。</Alert>}{notice && <Alert severity="info" role="status">{notice}</Alert>}</Stack>
+      <Stack spacing={2} sx={{ mb: 3 }}>{meta?.status === 'PAUSED' && <Alert severity="warning"><strong>市場は一時停止中です。</strong> 先生が再開すると、この画面から続きができます。チームの資産と取引履歴は保持されています。</Alert>}{recoveryMismatch && <Alert severity="warning"><strong>前回の続きに戻れませんでした。</strong> 入力した復帰コードか表示名が前回と違っていたため、新しく参加しています。</Alert>}{notice && <Alert severity="info" role="status">{notice}</Alert>}</Stack>
       {showOnboarding && <StudentOnboardingCard onDismiss={dismissOnboarding} />}
       <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} sx={{ alignItems: 'flex-start' }}>
       <StudentSurfaceCard sx={{ flex: 1, width: '100%' }}><Box sx={{ p: { xs: 2.5, sm: 3 } }}><Typography variant="overline" color="text.secondary">MARKET BOARD</Typography><Typography variant="h2" sx={{ mb: 2, mt: .5 }}>銘柄を選ぶ</Typography><ToggleButtonGroup exclusive value={selectedStockId} onChange={(_, next: string | null) => next && setSelectedStockId(next)} aria-label="銘柄を選ぶ" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, '& .MuiToggleButtonGroup-grouped': { minHeight: 60, border: 1, borderColor: 'divider !important', borderRadius: '12px !important', px: 2, py: 1, textTransform: 'none', '&.Mui-selected': { bgcolor: 'action.selected', color: 'text.primary', boxShadow: 'inset 0 -3px 0 currentColor' } } }}>{Object.values(companies).map((company) => <ToggleButton value={company.id} key={company.id} aria-label={`${company.name}を選ぶ`}><Stack sx={{ alignItems: 'flex-start' }}><Typography sx={{ fontWeight: 800 }}>{company.symbol}</Typography><Typography variant="caption">¥{(prices[company.id]?.price ?? company.basePrice).toLocaleString()}</Typography></Stack></ToggleButton>)}</ToggleButtonGroup>

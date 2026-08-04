@@ -10,7 +10,7 @@ describe('marketStatusLabels', () => {
   })
 
   it('orders the phases from setup to ended', () => {
-    expect(MARKET_PHASE_ORDER).toEqual(['SETUP', 'OPEN', 'ENDING', 'ENDED'])
+    expect(MARKET_PHASE_ORDER).toEqual(['SETUP', 'OPEN', 'PAUSED', 'ENDING', 'ENDED'])
   })
 
   it('falls back to a connecting label before the student has a status yet', () => {
