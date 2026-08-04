@@ -9,7 +9,7 @@ import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation
 import { Box, Button, CssBaseline, Link, Stack, ThemeProvider, Typography } from '@mui/material'
 import { appTheme } from './theme/theme'
 import { NotFoundPage } from './components/ui/NotFoundPage'
-import { TeacherShell } from './components/teacher/TeacherShell'
+import { MarketStocksPage } from './components/teacher/MarketStocksPage'
 
 /** Static public documents, keyed by path. */
 const docPages: Record<string, () => React.JSX.Element> = {
@@ -68,10 +68,8 @@ const LandingPage = () => <main className="landing-page">
 const TemplateShareRoute = () => <TemplateRoutes shareId={useParams().shareId ?? ''} />
 const StudentPlayRoute = () => <StudentMarketPage marketId={useParams().marketId ?? ''} />
 const SignageRoute = () => <SignagePage marketId={useParams().marketId ?? ''} />
-const RoomRoute = () => {
-  const marketId = useParams().marketId ?? ''
-  return <TeacherShell active="room" marketId={marketId}><ControlRoom marketId={marketId} /></TeacherShell>
-}
+const RoomRoute = () => <ControlRoom marketId={useParams().marketId ?? ''} />
+const StocksRoute = () => <MarketStocksPage marketId={useParams().marketId ?? ''} />
 /** Keeps old links (bookmarks, printed handouts) working after the host console was renamed to the control room. */
 const HostRouteRedirect = () => {
   const marketId = useParams().marketId ?? ''
@@ -93,6 +91,7 @@ const AppRoutes = () => <><TrailingSlashRedirect /><Routes>
   <Route path="/templates/share/:shareId" element={<TemplateShareRoute />} />
   <Route path="/teacher/markets" element={<WorkspacePicker />} />
   <Route path="/teacher/markets/:marketId/room" element={<RoomRoute />} />
+  <Route path="/teacher/markets/:marketId/stocks" element={<StocksRoute />} />
   <Route path="/teacher/markets/:marketId/host" element={<HostRouteRedirect />} />
   <Route path="/join" element={<StudentMarketJoin />} />
   <Route path="/markets/:marketId/play" element={<StudentPlayRoute />} />
