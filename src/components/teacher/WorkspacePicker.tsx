@@ -36,7 +36,8 @@ export const WorkspacePicker = () => {
   const [authReady, setAuthReady] = useState(false)
   const [templates, setTemplates] = useState<PersonalTemplate[]>([]), [official, setOfficial] = useState(officialTemplateSeeds), [selectedId, setSelectedId] = useState('official:school-festival'), [visibility, setVisibility] = useState<MarketVisibility>('private')
   const [markets, setMarkets] = useState<MarketRecord[]>([])
-  const [marketStates, setMarketStates] = useState<Record<string, LiveMarketState | null>>({})
+  const [marketMeta, setMarketMeta] = useState<Record<string, LiveMarketState['meta'] | undefined>>({})
+  const [marketParticipants, setMarketParticipants] = useState<Record<string, LiveMarketState['participants']>>({})
   const [notice, setNotice] = useState(''), [creating, setCreating] = useState(false)
   const [status, setStatus] = useState<ServiceStatus>({ acceptingNewMarkets: true, message: '' })
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -58,9 +59,14 @@ export const WorkspacePicker = () => {
   }, [services.firestore])
   useEffect(() => { if (!teacher || !user) return; void refreshOwned(user.uid).catch((error) => setNotice(handleFailure(error, 'テンプレートまたは市場を読み込めませんでした。'))) }, [refreshOwned, teacher, user])
   useEffect(() => {
-    const stops: Unsubscribe[] = markets.map((market) => onValue(ref(services.database, `liveMarkets/${market.id}`), (snapshot) => {
-      setMarketStates((current) => ({ ...current, [market.id]: snapshot.val() as LiveMarketState | null }))
-    }))
+    const stops: Unsubscribe[] = markets.flatMap((market) => [
+      onValue(ref(services.database, `liveMarkets/${market.id}/meta`), (snapshot) => {
+        setMarketMeta((current) => ({ ...current, [market.id]: snapshot.val() as LiveMarketState['meta'] | undefined }))
+      }),
+      onValue(ref(services.database, `liveMarkets/${market.id}/participants`), (snapshot) => {
+        setMarketParticipants((current) => ({ ...current, [market.id]: snapshot.val() as LiveMarketState['participants'] }))
+      }),
+    ])
     return () => stops.forEach((stop) => stop())
   }, [markets, services.database])
   useEffect(() => {
@@ -139,9 +145,8 @@ export const WorkspacePicker = () => {
         </Box>
         {hasMarkets && <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' } }}>
           {markets.map((market) => {
-            const state = marketStates[market.id]
-            const activeCount = Object.values(state?.participants ?? {}).filter((participant) => participant.connected).length
-            const marketStatus = state?.meta?.status ?? 'SETUP'
+            const activeCount = Object.values(marketParticipants[market.id] ?? {}).filter((participant) => participant.connected).length
+            const marketStatus = marketMeta[market.id]?.status ?? 'SETUP'
             return <Card key={market.id} variant="outlined">
               <CardActionArea component="a" href={`/teacher/markets/${market.id}/room`}>
                 <CardContent>
