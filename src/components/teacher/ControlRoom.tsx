@@ -5,7 +5,7 @@ import { onValue, ref } from 'firebase/database'
 import { useSearchParams } from 'react-router'
 import { bootstrapFirebase } from '../../lib/firebase/bootstrap'
 import { isTeacherIdentity } from '../../lib/auth/roles'
-import { acquireHostLease, armHostLeaseDisconnect, openMarket, publishManualNews, requestMarketEnding, runHostTick } from '../../lib/market/hostTrading'
+import { acquireHostLease, armHostLeaseDisconnect, openMarket, pauseMarket, publishManualNews, requestMarketEnding, runHostTick } from '../../lib/market/hostTrading'
 import { serverNow } from '../../lib/firebase/serverTime'
 import { AdmissionPanel } from './AdmissionPanel'
 import { PhaseBand } from './PhaseBand'
@@ -19,11 +19,10 @@ import type { TemplateSpec } from '../../lib/templates/types'
 import { useDatabaseOffline } from '../../lib/firebase/connectionState'
 import { useHostInterruption, useUnloadWarning, useWakeLock } from '../../lib/host/hostContinuity'
 import { handleFailure } from '../../lib/monitoring/describeError'
-import { AppVersion } from '../AppVersion'
 import { AuthLoadingScreen } from './TeacherShell'
+import { AdminShell } from './AdminShell'
 import {
   Alert,
-  AppBar,
   Box,
   Button,
   Chip,
@@ -33,7 +32,6 @@ import {
   Stack,
   Tab,
   Tabs,
-  Toolbar,
   Typography,
 } from '@mui/material'
 
@@ -142,14 +140,8 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
   const requestedTab = searchParams.get('tab')
   const activeTab: ControlRoomTab = isControlRoomTab(requestedTab) ? requestedTab : defaultTab
   const selectTab = (tab: ControlRoomTab) => setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', tab); return next }, { replace: true })
-  return <Box component="main" className="host-page" sx={{ pb: 6 }}>
-    <AppBar component="header" position="static" color="transparent" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
-      <Toolbar component={Container} maxWidth="xl" disableGutters sx={{ gap: 2, px: { xs: 2, sm: 3 } }}>
-        <Link href="/teacher/markets" color="inherit" underline="none" variant="h6" sx={{ flexGrow: 1 }}>Stock League Classroom</Link>
-        <Button href="/teacher/markets" variant="text">市場の管理へ</Button><AppVersion />
-      </Toolbar>
-    </AppBar>
-    <Container maxWidth="xl" sx={{ pt: { xs: 4, md: 6 } }}>
+  return <AdminShell active="room" marketId={marketId} marketTitle={template?.title} marketStatus={marketStatus}>
+    <Container maxWidth="xl" sx={{ py: { xs: 4, md: 6 } }}>
       <Stack spacing={4}>
         <Stack component="section" direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
           <Box><Typography variant="overline" color="text.secondary">CONTROL ROOM</Typography><Typography component="h1" variant="h2">市場のコントロールルーム</Typography><Typography color="text.secondary">市場ID: <Box component="code">{marketId}</Box></Typography></Box>
@@ -201,6 +193,7 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
                 ending={ending}
                 onTakeLease={() => void takeLease().catch((error) => setNotice(handleFailure(error, 'ホストを取得できませんでした。')))}
                 onOpenMarket={() => void openMarket(services.database, marketId, user.uid, lease).then(() => setNotice('市場を開始しました。')).catch((error) => setNotice(handleFailure(error, '開始できません。準備中の市場か確認してください。')))}
+                onPauseMarket={() => void pauseMarket(services.database, marketId, user.uid, lease).then((ok) => setNotice(ok ? '市場を一時停止しました。「銘柄」メニューから内容を編集できます。' : '一時停止できませんでした。')).catch((error) => setNotice(handleFailure(error, '一時停止できませんでした。')))}
                 onRequestEnd={() => setEndingConfirm(true)}
                 onCancelEnd={() => setEndingConfirm(false)}
                 onConfirmEnd={() => { setEnding(true); void requestMarketEnding(services.database, marketId, user.uid, lease).then((result) => { setNotice(result.committed ? '終了処理を開始しました。完了後も市場を再開できます。' : '市場を終了できません。市場が取引中で、この端末がホストであることを確認してください。'); setEnding(false); setEndingConfirm(!result.committed) }).catch((error) => { setNotice(handleFailure(error, '市場を終了できません。もう一度お試しください。')); setEnding(false) }) }}
@@ -223,5 +216,5 @@ export const ControlRoom = ({ marketId }: { marketId: string }) => {
         </Box>
       </Stack>
     </Container>
-  </Box>
+  </AdminShell>
 }
