@@ -1,0 +1,83 @@
+# Codex への引き継ぎ
+
+作成日: 2026-08-05 13:40 JST
+引き継ぎ理由: Claude Code の週次利用上限接近
+
+## まず読む順番
+
+1. `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md` — **正本。すべての機能・データモデル・不変条件はここに定義される。** 2905行あるので、作業対象のセクションだけを都度読めばよい。全文を一度に読み込む必要はない。
+2. `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md` — 正本の中で曖昧・矛盾していた8点（A〜H）を解消した補遺。**正本とこの文書が矛盾する場合はこの文書を優先する。**
+3. `docs/superpowers/specs/2026-08-05-lesson-platform-roadmap-design.md` — 旧設計。**正本ではない。** 冒頭に「置き換えられた」旨の注記あり。判断の理由とコード調査の事実（先読み脆弱性の詳細、RTDBルールカスケードの仕組みなど）を残すためだけに保持している。参照は任意。
+4. `docs/superpowers/plans/2026-08-05-master-plan-phase-a-to-h.md` — Phase A〜H の依存関係、完了条件、外部依存、Feature Flag方針をまとめた上位計画。**次に何をすべきか迷ったらここを見る。**
+
+## 現在地
+
+| Phase | 計画 | 実装 |
+| --- | --- | --- |
+| A（安全化と新基盤） | 完了（14タスク） `docs/superpowers/plans/2026-08-05-phase-a-foundation-plan.md` | **未着手** |
+| B（共通授業基盤） | **計画そのものが存在しない** | 未着手 |
+| C（社会科完成） | **Task 1〜8のみ完了**、9〜19は一覧のみ `docs/superpowers/plans/2026-08-05-phase-c-market-plan.md` | 未着手 |
+| D〜H | 未着手 | 未着手 |
+
+**コードへの変更は一切行っていない。** ここまでの全作業は設計・計画のドキュメント作成のみで、リポジトリのソースコードは元のままである（`git log --oneline` で `docs:` コミットのみが積まれている）。
+
+## ブランチ
+
+`docs/lesson-platform-roadmap`（`main` から分岐）。PR のベースブランチは `codex/classroom` だが、このロードマップ作業自体は `main` 上のコード（コミット `4c2591e`）を前提に検証している。`codex/classroom` へ実装を進める場合、まず `main` との差分（24コミット、`e806571` 等）を踏まえること。
+
+## 直近の作業指示（次にやること）
+
+**優先順位: Phase C の Task 9〜19 を書き上げるより、先に Phase B の計画を作ること。**
+
+理由: Phase C 計画の冒頭「前提として確認が必要な事項」に3つのチェック項目があり、いずれも「Phase B が実際に何を作るか」に依存している。Phase B の計画がないまま Phase C の実装へ進むと、型定義パス・RTDBルールの前提が二度手戻りする。
+
+Phase B の計画を作る際は、以下のプロンプトの型で進めること（このセッションで使っていたパターン）。
+
+```
+統合仕様書 §25 の Phase B（共通授業基盤）の実装計画を作成する。
+実装はせず計画ドキュメントのみ。
+
+読むもの:
+- superpowers:writing-plans スキル（体裁）
+- 統合仕様書の §5(利用者と画面)、§8(授業のライフサイクル)、
+  §9(参加・識別・チーム)、§10(共通入力コンポーネント)、
+  §11(結果・振り返り・分析)、§16.2(複製)、§27.3(受け入れテスト・授業)
+- 矛盾解消ドキュメントの G・H（家庭科とMARKETフェーズの関係、
+  REFLECTION状態と市場停止の関係）
+- docs/superpowers/plans/2026-08-05-phase-a-foundation-plan.md
+  （Phase Aが何を作るか。draft/version分離、LessonRun、LessonEvent、
+  LessonCheckpoint、公開/非公開パスの分離パターン）
+
+Phase C計画（2026-08-05-phase-c-market-plan.md）の冒頭にある
+「前提として確認が必要な事項」3点に明示的に答える形で書くこと:
+1. lessonRunPublic の読み取り許可に生徒参加者を含めるか
+2. チーム帰属を検証するRTDBミラー（teamMembership等）の設計
+3. teamId・participantId の型定義をどこに置くか
+```
+
+## この作業で確立した設計上の約束（Phase B 以降も守ること）
+
+- **RTDBルールカスケード対策**: 祖先ノードの `.read` 許可は子孫の `.read: false` で取り消せない。生徒に読ませないデータは、教師へ全読み取りを許可する `liveMarkets` 相当のツリーの配下ではなく、独立したトップレベルパスに置く（Phase C 計画の `lessonRunPublic` / `lessonRunPrivate` / `lessonRunTeamState` を参照）。
+- **乱数は `packages/deterministic-random` のみ**。`Math.random()` は一切使わない。旧 `pricingCore.ts` の `createPhaseRuntime` が `seed = Math.random() * 1000` を既定引数に持っていたことがこの制約の直接の理由（Phase A で該当ファイルごと削除済み）。
+- **公開/非公開の型分離はJSのimportグラフではなくFirestore/RTDBのセキュリティルールで強制する**。教師UIは非公開データを正当に読み書きするため、importパスの制約だけでは境界にならない。実際に効くのは (1) 生データを含むドキュメントが組織メンバーにしか読めないこと、(2) 生徒が読む唯一の経路にはサーバーが機械的に間引いた後のデータしか書かれないこと、の2点。
+- **冪等性**: 注文・約定・権限変更などの重要操作はすべて `idempotencyKey` または同等のキーを要求する。
+- **需給計算は相殺後、出来高表示は相殺前**（矛盾解消 C）。取り違えを防ぐため、価格計算関数は2つを別フィールドで返す型にする。
+
+## 検証済みの事実（再調査不要）
+
+- `main` ブランチは `codex/classroom` から24コミット先行（`git rev-list --count codex/classroom..main` = 24）
+- 現行コードの先読み脆弱性2件を確認済み: `database.rules.json` の `prices.runtime`（`endPrice`・`seed`）と `companies.phases`（授業全体の値動き計画）が生徒に読める。Phase A でこれらを含むファイルごと削除するため、個別の修正は不要
+- `.info/serverTimeOffset` は `src/lib/firebase/serverTime.ts` に実装済み（新規実装ではなく削除・引き継ぎの判断対象）
+- App.tsx の既存ルート9件、`src/lib/teacher/marketDeletion.ts` と `resultsExport.ts` の実在を確認済み（Phase A 計画の削除対象一覧に反映済み）
+
+## 進め方の注意（このセッションで学んだこと）
+
+- サブエージェント（Sonnet）に計画作成を任せる際、**「早い段階で骨組みを書き出し、タスクを1つ埋めるごとに保存する」よう明示的に指示しないと、調査に予算を使い切って何も保存せずに停止することがある。** Phase C 計画はこの指示を入れてから安定して進んだ。
+- 統合仕様書は非常に長い（2905行）。サブエージェントには「全文を読むな、該当セクションだけ grep で探して読め」と指示すること。
+- 各計画の完了条件は、統合仕様書の §27（受け入れテスト）と §31（チェックリスト）から測定可能な形に落とし込む。統合仕様書自体には完了条件が書かれていない。
+
+## Codex 利用時の実務上の注意
+
+- Codex はこのセッションの会話内容を一切引き継がない。**上記1〜4の文書を読ませることが唯一の引き継ぎ経路。**
+- コミットメッセージは日本語で書いてきた（このリポジトリの既存コミット履歴が日本語のため）。`Co-Authored-By` はツールに応じて書き換えて構わない。
+- ここまでの全コミットは `docs/lesson-platform-roadmap` ブランチ上にあり、`main` へは未マージ・未PR。マージするかどうかは指示していないので、Codex 側で判断せず持ち主に確認すること。
