@@ -449,7 +449,7 @@ Expected: PASS
 
 - [ ] **Step 13: ルート`package.json`と`functions/package.json`に依存として組み込む**
 
-ルート`package.json`の`workspaces`を`["functions", "functions/packages/deterministic-random"]`にする。`functions/package.json`の`dependencies`に`"@stock-league/deterministic-random": "file:packages/deterministic-random"`を追加する。`src/`側（クライアント）での利用は、このFunctions同梱パッケージを直接参照せず、必要になった時点でクライアント配布用の共有方法を別途確定する。
+ルート`package.json`の`workspaces`を`["functions", "functions/packages/deterministic-random"]`にする。`functions/package.json`の`dependencies`に`"@stock-league/deterministic-random": "file:packages/deterministic-random"`を追加する。root workspaceからも同じpackage名を解決できるため、`src/`側で乱数が必要になった時点では`@stock-league/deterministic-random`をimportし、Functionsと同じ実装を使う。Phase Aではまだクライアント側の乱数処理がないため、実importは追加しない。
 
 - [ ] **Step 14: `npm install`をルートから実行し、両ワークスペースが解決することを確認する**
 

@@ -6,7 +6,7 @@
 
 > **正本は統合仕様書。** `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`（§12、§27.2、§28、§30-4）と `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md`（矛盾解消 A・B・C・D・F）が優先する。本計画と両文書が矛盾する場合は両文書を優先し、本計画側の誤りとして扱う。
 >
-> **前提: Phase A・Phase B は完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`functions/packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`のRTDBパス分離、`functions/`パッケージ、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行が揃っている。**ただしPhase Bの実装計画ドキュメントは本リポジトリに存在しない**（`docs/superpowers/plans/`にPhase B専用の計画がない）。本計画はチーム帰属の検証手段・生徒の`lessonRunPublic`読み取り許可がPhase Bで提供されている前提で設計するが、正確なルール文字列・RTDBパス名はPhase Bの実装成果物（コード）と突き合わせて確認すること。差異があれば本計画のTask 13・Task 7のルール定義を実際の形へ合わせる。
+> **前提: Phase A・Phase B は完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`functions/packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`のRTDBパス分離、`functions/`パッケージ、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行が揃っている。Phase Bの実装計画は`docs/superpowers/plans/2026-08-05-phase-b-common-lesson-platform-plan.md`を正本の補助として参照する。本計画はチーム帰属の検証手段・生徒の`lessonRunPublic`読み取り許可がPhase Bで提供されている前提で設計するが、正確なルール文字列・RTDBパス名はPhase Bの実装成果物（コード）と突き合わせて確認すること。差異があれば本計画のTask 13・Task 7のルール定義を実際の形へ合わせる。
 >
 > **旧実装（`hostTrading.ts`、`pricingCore.ts`、`liveMarketTypes.ts`等）はPhase Aで削除済みの前提。** 参照する場合は`git log`のみとし、詳細を読み込む必要はない。
 >
