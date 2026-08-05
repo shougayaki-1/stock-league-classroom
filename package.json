@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "workspaces": ["functions"],
+  "workspaces": ["functions", "packages/deterministic-random"],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
