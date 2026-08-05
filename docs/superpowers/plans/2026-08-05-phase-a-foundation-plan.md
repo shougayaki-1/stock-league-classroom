@@ -25,6 +25,7 @@
 - 本計画では**学校組織のUIは作らないが、個人組織で権限3層・イベントログ・チェックポイントが実際に動く状態まで実装する**（統合仕様書の指示メモに明記）。`organizations/{orgId}/members/{uid}` の複数メンバー対応・招待は本計画に含めないが、ルール自体は「1メンバー」を前提にしない形で書く。
 - 決定的ID `organizations/personal_{uid}` はどの層（クライアント、Functions、Firestore/RTDBルール）でも同じ文字列連結 `'personal_' + uid` で計算する。フォーマットを変えるときは3箇所すべてを同時に直す。
 - 生徒へ将来価格・非公開係数・乱数シードを送らない（統合仕様書 §26-1）。同一冪等キーを複数回実行しない（§26-4）。組織アクセスミラーの不整合時は許可側へ倒さない（§26-18）。旧データ互換のために新モデルを複雑化しない（§26-10）。
+- 冪等キーをFirestore/RTDB pathへ生で使わず、`sha256(scope + '\0' + key)`へ変換する。再試行の意味が同一であることは、オブジェクトキー順を正規化する`canonicalJson`のrequest digestで検証し、同じキー・異なる意味は拒否する。
 - 乱数は `Math.random()` を使わない。決定的な文字列ハッシュ＋擬似乱数（FNV-1a・mulberry32等）で導出し、クライアント・サーバーで同一モジュールを共有する（統合仕様書矛盾解消D）。
 - Rules Emulatorテストは権限のみを検証する。帯域測定は本計画に含めない（Phase 0bの既存知見のとおり）。
 
@@ -91,8 +92,9 @@
 | `firebase.json` | Modify（`functions`セクション、`emulators.functions`追加） |
 | `packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 3、決定的PRNG共有パッケージ） |
 | `src/lib/org/personalOrgId.ts`, `.test.ts` / `functions/src/lib/personalOrgId.ts`, `.test.ts` | Create（Task 3） |
+| `functions/src/lib/idempotency.ts`, `.test.ts` | Create（Task 3、path-safe keyとcanonical request digest） |
 | `firestore.rules` | Modify（Task 1で旧ブロック削除、Task 4/6/7/8/9で新ブロック追加） |
-| `database.rules.json` | Modify（Task 1で`liveMarkets`削除、Task 4/10で`orgAccess`・`lessonRunPublic`・`lessonRunPrivate`追加） |
+| `database.rules.json` | Modify（Task 1で`liveMarkets`削除、Task 4/10で`orgAccess`・`orgAccessMeta`・`lessonRunPublic`・`lessonRunPrivate`追加） |
 | `functions/src/organizations/personalOrg.ts`, `.test.ts`, `onCall.ts`, `.test.ts` | Create（Task 5） |
 | `src/lib/org/ensurePersonalOrg.ts`, `.test.ts` | Create（Task 5） |
 | `src/lib/firebase/firebaseConfig.ts`, `useEmulators.ts`, `bootstrap.ts`（+対応test） | Modify（Task 2・5、`Functions`サービスと`ensurePersonalOrg`呼び出し配線） |
@@ -296,16 +298,20 @@ git commit -m "build: scaffold functions/ workspace with a smoke-test callable"
 
 **Files:**
 - Create: `src/lib/org/personalOrgId.ts`, `.test.ts` / `functions/src/lib/personalOrgId.ts`, `.test.ts`
+- Create: `functions/src/lib/idempotency.ts`, `.test.ts`
 - Create: `packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
 - Modify: ルート`package.json`（`workspaces`に`packages/deterministic-random`を追加）, `functions/package.json`（依存に追加）
 
 **Interfaces:**
 - Produces: `personalOrgId(uid: string): string`（`docs/superpowers/plans/2026-08-05-phase1a-org-schema-functions-plan.md` Task 2と同一実装。以降すべてのタスクが使う）
+- Produces: `idempotencyDocumentId(scope, key)`、`canonicalJson(value)`、`requestDigest(value)`（Task 6〜9・12で共用）
 - Produces: `fnv1aHash(input: string): number`、`mulberry32(seed: number): () => number`、`deriveSeed(parts: (string | number)[]): number`（Task 8・9および将来のPhase C/Dが使う）
 
 - [ ] **Step 1〜7: `personalOrgId`** — `phase1a`計画 Task 2 のStep 1〜7をそのまま実施する（クライアント側`src/lib/org/personalOrgId.ts`、Functions側`functions/src/lib/personalOrgId.ts`、同一実装・同一テスト）。
 
 - [ ] **Step 8: 決定的PRNGパッケージの失敗するテストを書く**
+
+その前に`functions/src/lib/idempotency.test.ts`で、slash/長大キーが常に64桁hex IDになること、scopeが違えばIDが違うこと、`{a:1,b:2}`と`{b:2,a:1}`のdigestが一致すること、配列順や値が違えばdigestが変わることを失敗テストとして追加する。`idempotency.ts`はSHA-256と、plain objectのキーを再帰的にソートする`canonicalJson`を実装する（`undefined`、循環参照、非JSON値は拒否）。後続タスクの生の`createHash`/`JSON.stringify`はこのhelperへ置き換える。Task 6/7/8/9/12の各テストにも、意味が同じでobject key順だけ異なる再試行がdeduplicateされるケースを最低1件ずつ入れる。
 
 統合仕様書矛盾解消D「同一入力に対して同一出力になることをテストで保証する」に対応する。`packages/deterministic-random/src/index.test.ts`:
 
@@ -471,7 +477,7 @@ git commit -m "feat: add personalOrgId and a shared deterministic PRNG for repla
 
 **Interfaces:**
 - Consumes: `personalOrgId` (Task 3)
-- Produces: `organizations/{orgId}`・`organizations/{orgId}/members/{uid}`・`users/{uid}`（Firestore、Admin SDK専用書き込み）、`orgAccess/{orgId}/{uid}`（RTDB、Admin SDK専用書き込み、`membershipVersion`必須）
+- Produces: `organizations/{orgId}`・`organizations/{orgId}/members/{uid}`・`users/{uid}`（Firestore、Admin SDK専用書き込み）、`orgAccess/{orgId}/{uid}`と`orgAccessMeta/{orgId}/{uid}`（RTDB、Admin SDK専用書き込み、メンバー単位の版一致必須）
 
 - [ ] **Step 1: Firestore側の失敗するルールテストを書く**
 
@@ -537,7 +543,10 @@ Expected: FAIL — `organizations`/`users`に既存ルールがなく`{document=
     }
 
     match /organizations/{orgId} {
-      allow get: if teacher() && orgId == 'personal_' + request.auth.uid;
+      // Personal organizations are created first, but the authorization
+      // rule is membership-based from day one so Phase F can add school
+      // organizations without replacing the security model.
+      allow get: if teacher() && activeMember(orgId);
       allow list: if false;
       allow write: if false;
     }
@@ -546,7 +555,7 @@ Expected: FAIL — `organizations`/`users`に既存ルールがなく`{document=
       // A member may always read their own membership doc, even if suspended
       // — they must be able to see their own status. Resource rules (not
       // this one) are what actually gate access once status != 'active'.
-      allow get: if teacher() && orgId == 'personal_' + request.auth.uid && uid == request.auth.uid;
+      allow get: if teacher() && uid == request.auth.uid;
       allow list: if false;
       allow write: if false;
     }
@@ -583,6 +592,7 @@ describe('orgAccess mirror', () => {
     const other = environment.authenticatedContext('teacher-b', teacherToken).database()
     await assertFails(get(ref(other, 'orgAccess/personal_teacher-a/teacher-a')))
   })
+
 })
 ```
 
@@ -601,6 +611,14 @@ describe('orgAccess mirror', () => {
           ".write": false
         }
       }
+    },
+    "orgAccessMeta": {
+      "$orgId": {
+        "$uid": {
+          ".read": false,
+          ".write": false
+        }
+      }
     }
   }
 }
@@ -611,9 +629,9 @@ describe('orgAccess mirror', () => {
 Run: `npm run test:rules`
 Expected: PASS
 
-- [ ] **Step 8: 不整合時に拒否側へ倒ることを、Task 6のリソースルールで検証する旨をこのタスクの完了条件として記録する**
+- [ ] **Step 8: 不整合時に各データストアが独立して拒否側へ倒る契約を記録する**
 
-このタスク単体では「ミラーが書けない・読めるのは本人だけ」までを保証する。「Firestoreメンバーシップと`orgAccess`のミラーが食い違ったときに許可側へ倒さない」という統合仕様書§26-18の完全な検証は、実際にリソース（`lessonTemplates`/`lessonRuns`）のルールが両方を参照するTask 6・7で行う——ここではその前提条件（ミラーが改ざん不能であること）だけを固める。
+Firestore RulesからRTDBを参照することも、RTDB RulesからFirestoreを参照することもできないため、「単一Rules式で両者を比較する」とは書かない。Firestoreリソースは`activeMember(orgId)`を必須にし、RTDBリソースは`orgAccess` entryの`membershipVersion`が`orgAccessMeta/{orgId}/{auth.uid}/membershipVersion`と一致し、かつ`status == 'active'`であることを必須にする。metaをメンバー単位にすることで、学校組織で1人のrole/statusを変えても無関係なメンバーをdenyしない。ミラーentry欠落・meta欠落・版不一致・停止のすべてをRTDBで拒否する。Task 5のAdmin SDK同期は対象メンバーのentryとmetaをRTDB rootのmulti-location `update()`で原子的に書く。
 
 - [ ] **Step 9: `npm run verify` を通す**
 
@@ -635,12 +653,16 @@ git commit -m "feat: add Firestore membership rules and the read-only orgAccess 
 
 **Files:**
 - Create: `functions/src/organizations/personalOrg.ts`, `.test.ts`, `onCall.ts`, `.test.ts`
+- Create: `functions/src/organizations/membershipSync.ts`, `.test.ts`
+- Create: `functions/src/organizations/authorization.ts`, `.test.ts`
 - Create: `src/lib/org/ensurePersonalOrg.ts`, `.test.ts`
 - Modify: `src/lib/firebase/firebaseConfig.ts`, `useEmulators.ts`, `bootstrap.ts`（+対応テスト）
 
 **Interfaces:**
 - Consumes: `personalOrgId`（Task 3）
 - Produces: `ensurePersonalOrg(uid, deps): Promise<{ orgId: string; created: boolean }>`（Functions内部）、`ensurePersonalOrgCallable`（`onCall`）、`ensurePersonalOrg(functions): Promise<{ orgId; created }>`（クライアントラッパー）
+- Produces: `syncOrganizationMembershipChange(deps, change)`（RTDBを`PENDING`へ倒してからFirestore正本を更新し、最後にRTDB entry/metaを原子的に`SYNCED`へ確定する再試行可能な内部関数）
+- Produces: `requireActiveOrgMember(firestore, orgId, uid): Promise<ActiveMembership>`（Admin SDK Callable共通guard）
 
 - [ ] **Step 1〜7:** `phase1a`計画 Task 3 のStep 1〜7を実施する。ただし`personalOrg.ts`の`ensurePersonalOrg`実装内、`writeOrgAccessMirror`の呼び出し値に`revokedAtSeconds: 0`を含める（Task 4のRTDBルールがフィールド不足を拒否しないため必須ではないが、統合仕様書§6.6の`revokedAtSeconds`の存在を組織作成の時点から前提にするため）。
 
@@ -655,16 +677,90 @@ export interface OrgAccessMirrorPayload {
 }
 ```
 
-`ensurePersonalOrgWithAdminSdk`内の`writeOrgAccessMirror`呼び出しへ`revokedAtSeconds: 0`を追加する。
+`ensurePersonalOrgWithAdminSdk`内の`writeOrgAccessMirror`呼び出しへ`revokedAtSeconds: 0`を追加する。実RTDB adapterはrootのmulti-location updateを使う。
 
-- [ ] **Step 8〜15:** `phase1a`計画 Task 4（`ensurePersonalOrgCallable`と`isCallerTeacher`）、Task 5（クライアント側`getFunctionsService`・`connectToEmulators`の4引数化・`ensurePersonalOrg`クライアントラッパー・`bootstrap.ts`への配線）をそのまま実施する。
+```ts
+await getDatabase().ref().update({
+  [`orgAccess/${payload.orgId}/${payload.uid}`]: {
+    role: payload.role,
+    status: payload.status,
+    membershipVersion: payload.membershipVersion,
+    revokedAtSeconds: payload.revokedAtSeconds,
+  },
+  [`orgAccessMeta/${payload.orgId}/${payload.uid}`]: {
+    membershipVersion: payload.membershipVersion,
+    syncState: 'SYNCED',
+  },
+})
+```
 
-- [ ] **Step 16: `npm run verify` を通す**
+- [ ] **Step 8: ミラー不整合を常に拒否側へ倒す同期関数の失敗するテストを書く**
+
+`membershipSync.test.ts`で、(a)最初に`markMirrorPending`、(b)次に`updateFirestoreMembership`、(c)最後に`commitMirrorSynced`の順で呼ばれることを検証する。Firestore更新または最終RTDB更新が失敗した場合はmetaが`PENDING`のままで、再試行により同じ`membershipVersion`で`SYNCED`へ収束することを検証する。grant・suspend・role changeのすべてを同じ関数へ通し、RTDBを直接更新する別経路を作らない。
+
+- [ ] **Step 9: `syncOrganizationMembershipChange`を実装する**
+
+```ts
+export interface MembershipChange {
+  orgId: string
+  uid: string
+  role: 'owner' | 'admin' | 'teacher'
+  status: 'active' | 'suspended'
+  membershipVersion: number
+  revokedAtSeconds: number
+}
+
+export const syncOrganizationMembershipChange = async (
+  deps: {
+    markMirrorPending: (orgId: string, membershipVersion: number) => Promise<void>
+    updateFirestoreMembership: (change: MembershipChange) => Promise<void>
+    commitMirrorSynced: (change: MembershipChange) => Promise<void>
+  },
+  change: MembershipChange,
+): Promise<void> => {
+  await deps.markMirrorPending(change.orgId, change.membershipVersion)
+  await deps.updateFirestoreMembership(change)
+  await deps.commitMirrorSynced(change)
+}
+```
+
+Admin adapterの`markMirrorPending`は`orgAccessMeta/{orgId}/{uid}`を`{ membershipVersion, syncState: 'PENDING' }`へ更新し、`commitMirrorSynced`は同じuidのentryとmetaをroot multi-location updateで一度に確定する。このpreflight denyを統合仕様書§6.6の失効手順より前へ置くことで、Firestore/RTDBのどちらかだけが新状態になっている期間も対象メンバーのRTDB readを拒否し、他メンバーには影響させない。
+
+- [ ] **Step 10: Callable共通active-member guardをTDDで実装する**
+
+```ts
+import { HttpsError } from 'firebase-functions/v2/https'
+
+export interface ActiveMembership {
+  role: 'owner' | 'admin' | 'teacher'
+  membershipVersion: number
+}
+
+export const requireActiveOrgMember = async (
+  firestore: FirebaseFirestore.Firestore,
+  orgId: string,
+  uid: string,
+): Promise<ActiveMembership> => {
+  const snap = await firestore.doc(`organizations/${orgId}/members/${uid}`).get()
+  if (!snap.exists || snap.get('status') !== 'active') {
+    throw new HttpsError('permission-denied', '有効な組織メンバーではありません。')
+  }
+  return { role: snap.get('role'), membershipVersion: snap.get('membershipVersion') }
+}
+```
+
+テストはactiveを返し、missingと`suspended`を`permission-denied`にする。Task 7のrun作成、Task 9の復元、Task 11/12のprivacy CallableはAdmin SDK処理前にこのguardを必ず呼ぶ。
+
+- [ ] **Step 11〜18: Callableとクライアント配線をTDDで実装する**
+
+`onCall.test.ts`でverified Google教師を許可し、未認証・匿名・未確認emailを拒否する`isCallerTeacher`を先に固定する。`ensurePersonalOrgCallable`は認証と教師identityを検証して`ensurePersonalOrgWithAdminSdk(uid)`だけを呼び、`functions/src/index.ts`からexportする。クライアント側は`getFunctions(getFirebaseApp(), 'asia-northeast1')`を返す`getFunctionsService`、Functions Emulator (`localhost:5001`)を第4引数として接続する`connectToEmulators`、`httpsCallable<void, EnsurePersonalOrgResult>(functions, 'ensurePersonalOrgCallable')`ラッパーをそれぞれテストして実装する。`bootstrap.ts`の`FirebaseServices`へFunctionsを追加し、教師サインイン確定後に冪等なラッパーを1回呼ぶ。既存のfirebase config/emulator/bootstrapテストを引数追加に合わせ、UIコンポーネントは変更しない。
+
+- [ ] **Step 19: `npm run verify` を通す**
 
 Run: `npm run verify`
 Expected: 成功。
 
-- [ ] **Step 17: Commit**
+- [ ] **Step 20: Commit**
 
 ```bash
 git add functions/src/organizations src/lib/org src/lib/firebase
@@ -679,11 +775,13 @@ git commit -m "feat: add idempotent ensurePersonalOrg callable and client wiring
 
 **Files:**
 - Create: `src/lib/lessonTemplates/types.ts`, `repository.ts`, `.test.ts`
+- Create: `functions/src/lessonTemplates/publishLessonVersion.ts`, `.test.ts`, `onCall.ts`, `.test.ts`
+- Create: `src/lib/lessonTemplates/publishLessonVersion.ts`, `.test.ts`
 - Modify: `firestore.rules`, `test/firestore.rules.test.ts`
 
 **Interfaces:**
 - Consumes: `personalOrgId`（Task 3）、`activeMember`関数（Task 4、`firestore.rules`内）
-- Produces: `LessonContent`（型は本タスクではプレースホルダーの最小構造とし、内容の充実はPhase B/Cで拡張する——構造そのものが本計画の関心事）、`createLessonTemplate`、`saveDraft`、`publishVersion`、`setCurrentPublishedVersion`
+- Produces: Phase A最小`LessonContent` envelope、クライアント`createLessonTemplate`・`saveDraft`、サーバー`publishLessonVersion(deps, input)`、`publishLessonVersionCallable`
 
 - [ ] **Step 1: `LessonTemplate`/`LessonVersion`の型を定義する**
 
@@ -693,7 +791,7 @@ git commit -m "feat: add idempotent ensurePersonalOrg callable and client wiring
 import type { Timestamp } from 'firebase/firestore'
 
 /**
- * Placeholder shape for Phase A. The full authoring content (rounds, market
+ * Minimum content envelope for Phase A. The full authoring content (rounds, market
  * config, assessment rubric, etc. — spec §12/§13) is Phase C/D's concern.
  * Phase A only needs a content envelope stable enough to version.
  */
@@ -739,7 +837,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createLessonTemplate, publishVersion, saveDraft, setCurrentPublishedVersion } from './repository'
+import { createLessonTemplate, saveDraft } from './repository'
 import type { LessonContent } from './types'
 
 const draft: LessonContent = { schemaVersion: 1, title: '仮タイトル', description: '', subject: 'SOCIAL_STUDIES' }
@@ -755,7 +853,7 @@ beforeEach(async () => { await environment.clearFirestore() })
 afterAll(async () => { await environment.cleanup() })
 
 describe('lessonTemplates repository', () => {
-  it('creates a draft-only template, edits the draft, then publishes an immutable version', async () => {
+  it('creates a draft-only template and autosaves only the draft', async () => {
     const firestore = environment.authenticatedContext('teacher-a', { email_verified: true, firebase: { sign_in_provider: 'google.com' } }).firestore()
     await environment.withSecurityRulesDisabled(async (context) => {
       const { setDoc, doc } = await import('firebase/firestore')
@@ -764,8 +862,6 @@ describe('lessonTemplates repository', () => {
     const templateId = await createLessonTemplate(firestore, 'teacher-a', draft)
     const edited = await saveDraft(firestore, templateId, { ...draft, title: '編集後' })
     expect(edited.title).toBe('編集後')
-    const versionId = await publishVersion(firestore, templateId, 'teacher-a', '初版')
-    await setCurrentPublishedVersion(firestore, templateId, versionId)
   })
 })
 ```
@@ -780,13 +876,11 @@ Expected: FAIL — module not found
 `src/lib/lessonTemplates/repository.ts`:
 
 ```ts
-import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, type Firestore } from 'firebase/firestore'
+import { addDoc, collection, doc, serverTimestamp, setDoc, type Firestore } from 'firebase/firestore'
 import { personalOrgId } from '../org/personalOrgId'
 import type { LessonContent } from './types'
 
 const templates = (db: Firestore) => collection(db, 'lessonTemplates')
-const versions = (db: Firestore, templateId: string) => collection(db, 'lessonTemplates', templateId, 'versions')
-
 export const createLessonTemplate = async (db: Firestore, createdByUid: string, draft: LessonContent): Promise<string> => {
   const ref = await addDoc(templates(db), {
     orgId: personalOrgId(createdByUid), createdByUid, draft,
@@ -802,61 +896,53 @@ export const saveDraft = async (db: Firestore, templateId: string, draft: Lesson
   return draft
 }
 
-/** Snapshots the current draft into an immutable LessonVersion. */
-export const publishVersion = async (db: Firestore, templateId: string, createdByUid: string, changeSummary: string): Promise<string> => {
-  const templateSnap = await getDoc(doc(db, 'lessonTemplates', templateId))
-  if (!templateSnap.exists()) throw new Error('LessonTemplate not found')
-  const template = templateSnap.data()
-  const versionRef = await addDoc(versions(db, templateId), {
-    schemaVersion: template.draft.schemaVersion, content: template.draft, createdByUid,
-    createdAt: serverTimestamp(), changeSummary, immutable: true,
-  })
-  await setDoc(doc(db, 'lessonTemplates', templateId), { status: 'READY', updatedAt: serverTimestamp() }, { merge: true })
-  return versionRef.id
-}
-
-/** Points the template at an already-immutable version as "the" published one. */
-export const setCurrentPublishedVersion = async (db: Firestore, templateId: string, versionId: string): Promise<void> => {
-  await setDoc(doc(db, 'lessonTemplates', templateId), { currentPublishedVersionId: versionId, updatedAt: serverTimestamp() }, { merge: true })
-}
 ```
 
-- [ ] **Step 5: `firestore.rules`へ`lessonTemplates`とその`versions`サブコレクションを追加する**
+- [ ] **Step 5: 公開版作成の失敗するFunctionsテストを書く**
+
+`publishLessonVersion.test.ts`で、単一transactionが現在draftを`versions/{versionId}`へ`templateId`・`orgId`付きで固定し、同時にtemplateの`currentPublishedVersionId`と`status: 'READY'`を更新することを検証する。同一`idempotencyKey`・同一request digestの再試行は同じversionIdを返してversionを増やさず、同一キーで`templateId`または`changeSummary`が異なる場合は`Idempotency key payload mismatch`を拒否する。親templateのorg不一致、active membership欠落も拒否する。
+
+- [ ] **Step 6: `publishLessonVersion`とCallableを実装する**
+
+idempotency docは`lessonVersionPublishIdempotency/{sha256(orgId + '\0' + idempotencyKey)}`、versionIdはサーバー`randomUUID()`とする。transaction内でidempotency、templateを読み、version作成、template pointer/status更新、idempotency書込みを一度に行う。idempotency docへ`requestDigest`を保存する。Callableは`requireActiveOrgMember`を通し、`orgId`をクライアント入力から受け取らず、template正本から取得する。クライアントラッパーの入力は`{ templateId, changeSummary, idempotencyKey }`だけとする。
+
+- [ ] **Step 7: `firestore.rules`へ`lessonTemplates`とその`versions`サブコレクションを追加する**
 
 `match /organizations/{orgId}/members/{uid} { ... }`の直後に挿入する。
 
 ```
     match /lessonTemplates/{templateId} {
-      allow get: if teacher() && resource.data.orgId == 'personal_' + request.auth.uid && activeMember(resource.data.orgId);
-      allow list: if teacher() && resource.data.orgId == 'personal_' + request.auth.uid && activeMember(resource.data.orgId);
+      allow get: if teacher() && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
       allow create: if teacher()
-        && request.resource.data.orgId == 'personal_' + request.auth.uid
         && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.currentPublishedVersionId == null
+        && request.resource.data.status == 'DRAFT'
+        && request.resource.data.visibility == 'PRIVATE'
         && activeMember(request.resource.data.orgId);
       allow update: if teacher()
-        && resource.data.orgId == 'personal_' + request.auth.uid
         && request.resource.data.orgId == resource.data.orgId
         && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['draft', 'updatedAt'])
         && activeMember(resource.data.orgId);
-      allow delete: if teacher() && resource.data.orgId == 'personal_' + request.auth.uid && activeMember(resource.data.orgId);
+      // All deletion goes through Task 12 so recovery/audit semantics cannot
+      // be bypassed by a direct client delete.
+      allow delete: if false;
 
       match /versions/{versionId} {
         allow get, list: if teacher()
-          && get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId == 'personal_' + request.auth.uid
           && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId);
-        allow create: if teacher()
-          && get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId == 'personal_' + request.auth.uid
-          && request.resource.data.createdByUid == request.auth.uid
-          && request.resource.data.immutable == true;
-        // No update/delete: a published version is permanent (spec §7.3).
-        allow update, delete: if false;
+        // Publish is a server transaction so version creation and pointer
+        // update cannot split or duplicate. Clients never write versions.
+        allow create, update, delete: if false;
       }
     }
+    match /lessonVersionPublishIdempotency/{key} { allow read, write: if false; }
 ```
 
-`activeMember`は`request.resource.data.orgId`のような未コミット値を直接引数に取れないため（`get`はコミット済みドキュメントのみ参照できる)、create時の`activeMember(request.resource.data.orgId)`は「そのorgIdの`members/{uid}`が存在し`active`である」ことを`get()`で確認する——`personalOrgId`が`uid`から決定的に導出される個人組織である限り、これは常に自分自身のメンバーシップを見ることになる。
+create時の`activeMember(request.resource.data.orgId)`は、指定されたorgのコミット済み`members/{request.auth.uid}`を`get()`し、`status == 'active'`を確認する。これにより個人組織と学校組織で同じ認可モデルを使える。`orgId`自体は作成後に変更できない。
 
-- [ ] **Step 6: `orgId`/`createdByUid`の書き換え拒否テストを追加する**
+- [ ] **Step 8: `orgId`/`createdByUid`の書き換え拒否テストを追加する**
 
 ```ts
 describe('orgId/createdByUid immutability on lessonTemplates', () => {
@@ -873,34 +959,54 @@ describe('orgId/createdByUid immutability on lessonTemplates', () => {
     const valid = { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' }
     await setDoc(doc(owner, 'lessonTemplates', 'immutable'), valid)
     await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { orgId: 'personal_teacher-b' }))
-    await assertSucceeds(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { status: 'READY' }))
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { status: 'READY' }))
   })
 
   it('rejects updating an already-created version', async () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
-    await setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'v1'), { schemaVersion: 1, content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, createdByUid: 'teacher-a', changeSummary: '', immutable: true })
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'lessonTemplates', 't1', 'versions', 'v1'), { templateId: 't1', orgId: 'personal_teacher-a', schemaVersion: 1, content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, createdByUid: 'teacher-a', changeSummary: '', immutable: true })
+    })
     await assertFails(updateDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'v1'), { changeSummary: 'edited' }))
+  })
+
+  it('allows an active member of a non-personal organization without changing the rule model', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'school-1'), { type: 'school' })
+      await setDoc(doc(context.firestore(), 'organizations', 'school-1', 'members', 'teacher-a'), { role: 'teacher', status: 'active', membershipVersion: 1 })
+    })
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertSucceeds(setDoc(doc(teacher, 'lessonTemplates', 'school-template'), {
+      orgId: 'school-1', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' },
+      currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE',
+    }))
+  })
+
+  it('rejects a version whose templateId or orgId does not match its parent template', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
+    await assertFails(setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'bad'), { templateId: 'other', orgId: 'personal_teacher-b', schemaVersion: 1, content: {}, createdByUid: 'teacher-a', immutable: true }))
   })
 })
 ```
 
 こちらのテストを実行する前に、Task 4の`beforeEach`（`test/firestore.rules.test.ts`）へ`organizations/personal_teacher-a/members/teacher-a`（`status: 'active'`）のシードを追加しておく（このテストが`activeMember`を通過するために必要）。
 
-- [ ] **Step 7: テストを通す**
+- [ ] **Step 9: テストを通す**
 
 Run: `npx vitest run src/lib/lessonTemplates/repository.test.ts && npm run test:rules`
 Expected: 両方PASS
 
-- [ ] **Step 8: `npm run verify` を通す**
+- [ ] **Step 10: `npm run verify` を通す**
 
 Run: `npm run verify`
 Expected: 成功。
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add src/lib/lessonTemplates firestore.rules test/firestore.rules.test.ts
+git add src/lib/lessonTemplates functions/src/lessonTemplates firestore.rules test/firestore.rules.test.ts functions/src/index.ts
 git commit -m "feat: add LessonTemplate draft/version repository and org-scoped rules"
 ```
 
@@ -976,10 +1082,11 @@ describe('createLessonRun', () => {
   it('fixes the template snapshot and generates a randomSeed the caller never supplies', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
-    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
     const result = await createLessonRun({
       firestore: fake as never,
       generateRandomSeed: () => 'fixed-test-seed',
+      generateLessonRunId: () => 'run-fixed',
       lessonRunIdempotencyKey: 'idem-1',
       orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
     })
@@ -995,12 +1102,31 @@ describe('createLessonRun', () => {
   it('is idempotent per idempotencyKey: a retried call returns the same lessonRunId without creating a second run', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
-    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
-    const input = { firestore: fake as never, generateRandomSeed: () => 'seed', lessonRunIdempotencyKey: 'idem-1', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a' }
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
+    const input = { firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed', lessonRunIdempotencyKey: 'idem/with unsafe chars', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a' }
     const first = await createLessonRun(input)
     const second = await createLessonRun(input)
     expect(second.lessonRunId).toBe(first.lessonRunId)
     expect(second.created).toBe(false)
+  })
+
+  it('rejects reusing the same idempotencyKey for a different template', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    const base = { firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed', lessonRunIdempotencyKey: 'same-key', orgId: 'personal_teacher-a', primaryTeacherUid: 'teacher-a' }
+    await createLessonRun({ ...base, templateId: 'tpl-1' })
+    await expect(createLessonRun({ ...base, templateId: 'tpl-2' })).rejects.toThrow('Idempotency key payload mismatch')
+  })
+
+  it('rejects a published-version pointer that crosses template or organization ownership', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v-foreign' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v-foreign', { templateId: 'tpl-2', orgId: 'personal_teacher-b', content: { subject: 'SOCIAL_STUDIES' } })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-foreign', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('Published version pointer mismatch')
   })
 })
 ```
@@ -1015,6 +1141,9 @@ Expected: FAIL — module not found
 `functions/src/lessonRuns/createLessonRun.ts`:
 
 ```ts
+import { randomBytes, randomUUID } from 'node:crypto'
+import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
+
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
   set: (path: string, data: Record<string, unknown>) => void
@@ -1022,6 +1151,7 @@ export interface FirestoreTx {
 export interface CreateLessonRunDeps {
   firestore: { runTransaction: (fn: (tx: FirestoreTx) => Promise<string>) => Promise<string> }
   generateRandomSeed: () => string
+  generateLessonRunId: () => string
   lessonRunIdempotencyKey: string
   orgId: string
   templateId: string
@@ -1032,19 +1162,27 @@ export interface CreateLessonRunResult { lessonRunId: string; created: boolean }
 
 /**
  * Idempotent per (orgId, lessonRunIdempotencyKey): a lookup document at
- * `lessonRuns/_idempotency/{orgId}_{lessonRunIdempotencyKey}` records which
- * lessonRunId a given client-supplied key already produced, mirroring spec
+ * `lessonRunIdempotency/{sha256(orgId + '\0' + key)}` records which lessonRunId a
+ * given client-supplied key already produced. Hashing prevents `/`, length,
+ * and information-disclosure problems from using the raw key as a path.
  * §12.13's "同一キーは1回だけ処理する" applied to run creation (§18.9's
  * quota-reservation pattern generalizes the same way).
  */
 export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<CreateLessonRunResult> => {
-  const idempotencyPath = `lessonRuns/_idempotency/${deps.orgId}_${deps.lessonRunIdempotencyKey}`
+  const idempotencyPath = `lessonRunIdempotency/${idempotencyDocumentId(deps.orgId, deps.lessonRunIdempotencyKey)}`
+  const requestDigest = computeRequestDigest({
+    orgId: deps.orgId,
+    templateId: deps.templateId,
+    primaryTeacherUid: deps.primaryTeacherUid,
+  })
   const nowValue = deps.now ? deps.now() : new Date().toISOString()
 
   return deps.firestore.runTransaction(async (tx) => {
     const existing = await tx.get(idempotencyPath)
     if (existing.exists) {
-      return JSON.stringify({ lessonRunId: (existing.data() as { lessonRunId: string }).lessonRunId, created: false })
+      const prior = existing.data() as { lessonRunId: string; requestDigest: string }
+      if (prior.requestDigest !== requestDigest) throw new Error('Idempotency key payload mismatch')
+      return JSON.stringify({ lessonRunId: prior.lessonRunId, created: false })
     }
     const templateSnap = await tx.get(`lessonTemplates/${deps.templateId}`)
     if (!templateSnap.exists) throw new Error('LessonTemplate not found')
@@ -1053,9 +1191,12 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     if (!template.currentPublishedVersionId) throw new Error('Template has no published version to snapshot')
     const versionSnap = await tx.get(`lessonTemplates/${deps.templateId}/versions/${template.currentPublishedVersionId}`)
     if (!versionSnap.exists) throw new Error('Published version not found')
-    const version = versionSnap.data() as { content: unknown }
+    const version = versionSnap.data() as { templateId: string; orgId: string; content: unknown }
+    if (version.templateId !== deps.templateId || version.orgId !== deps.orgId) {
+      throw new Error('Published version pointer mismatch')
+    }
 
-    const lessonRunId = `${deps.orgId}_${deps.lessonRunIdempotencyKey}`
+    const lessonRunId = deps.generateLessonRunId()
     tx.set(`lessonRuns/${lessonRunId}`, {
       orgId: deps.orgId, templateId: deps.templateId, templateVersionId: template.currentPublishedVersionId,
       templateSnapshot: version.content, subject: (version.content as { subject: string }).subject,
@@ -1063,13 +1204,13 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
       currentPhaseId: null, randomSeed: deps.generateRandomSeed(), restoreGeneration: 0,
       startedAt: null, endedAt: null, createdAt: nowValue,
     })
-    tx.set(idempotencyPath, { lessonRunId, createdAt: nowValue })
+    tx.set(idempotencyPath, { lessonRunId, requestDigest, createdAt: nowValue })
     return JSON.stringify({ lessonRunId, created: true })
   }).then((raw) => JSON.parse(raw) as CreateLessonRunResult)
 }
 ```
 
-（`lessonRunId`をidempotencyKeyから決定的に導く設計は、`ensurePersonalOrg`が`personalOrgId`から決定的にIDを導く発想と同じ——衝突しない一意なIDをリトライ安全に得るための一般的パターンとして踏襲する。）
+`lessonRunId`はサーバー生成UUIDとし、クライアントの生キーをIDへ使わない。リトライ時の同一ID返却は`lessonRunIdempotency/{sha256(...)}`の対応表が保証する。
 
 - [ ] **Step 5: テストを通す**
 
@@ -1081,7 +1222,6 @@ Expected: PASS
 同ファイルへ追記する。
 
 ```ts
-import { randomBytes } from 'node:crypto'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 
 /** Cryptographically random, generated once server-side. Never Math.random(). */
@@ -1098,7 +1238,7 @@ export const createLessonRunWithAdminSdk = (input: {
         set: (path, data) => { tx.set(db.doc(path), { ...data, createdAt: FieldValue.serverTimestamp() }) },
       })),
     },
-    generateRandomSeed, ...input,
+    generateRandomSeed, generateLessonRunId: randomUUID, ...input,
   })
 }
 ```
@@ -1108,9 +1248,10 @@ export const createLessonRunWithAdminSdk = (input: {
 `functions/src/lessonRuns/onCall.ts`:
 
 ```ts
+import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { isCallerTeacher } from '../organizations/onCall'
-import { personalOrgId } from '../lib/personalOrgId'
+import { requireActiveOrgMember } from '../organizations/authorization'
 import { createLessonRunWithAdminSdk } from './createLessonRun'
 
 interface CreateLessonRunRequest { templateId: string; lessonRunIdempotencyKey: string }
@@ -1120,12 +1261,18 @@ export const createLessonRunCallable = onCall({ region: 'asia-northeast1' }, asy
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
   const data = request.data as CreateLessonRunRequest
   if (!data.templateId || !data.lessonRunIdempotencyKey) throw new HttpsError('invalid-argument', 'templateId と lessonRunIdempotencyKey は必須です。')
+  const templateSnap = await getFirestore().doc(`lessonTemplates/${data.templateId}`).get()
+  if (!templateSnap.exists) throw new HttpsError('not-found', '教材が見つかりません。')
+  const orgId = templateSnap.get('orgId') as string
+  await requireActiveOrgMember(getFirestore(), orgId, request.auth.uid)
   return createLessonRunWithAdminSdk({
-    orgId: personalOrgId(request.auth.uid), templateId: data.templateId,
+    orgId, templateId: data.templateId,
     primaryTeacherUid: request.auth.uid, lessonRunIdempotencyKey: data.lessonRunIdempotencyKey,
   })
 })
 ```
+
+Callableテストは、template正本の`orgId`を使うため個人組織と学校組織のactive memberが作成でき、missingまたは`suspended`では`permission-denied`となり、Admin SDK側にrun/idempotencyドキュメントが一件も作られないことを検証する。クライアント入力から`orgId`は受け取らない。
 
 `functions/src/index.ts`へ`export { createLessonRunCallable } from './lessonRuns/onCall'`を追記する。
 
@@ -1134,12 +1281,11 @@ export const createLessonRunCallable = onCall({ region: 'asia-northeast1' }, asy
 ```
     match /lessonRuns/{lessonRunId} {
       allow get: if teacher()
-        && resource.data.orgId == 'personal_' + request.auth.uid
         && activeMember(resource.data.orgId);
-      allow list: if teacher() && resource.data.orgId == 'personal_' + request.auth.uid && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
       allow write: if false;
     }
-    match /lessonRuns/_idempotency/{key} { allow read, write: if false; }
+    match /lessonRunIdempotency/{key} { allow read, write: if false; }
 ```
 
 - [ ] **Step 9: クライアントラッパーを実装する**
@@ -1203,12 +1349,11 @@ git commit -m "feat: add idempotent LessonRun creation with a fixed template sna
 統合仕様書 §7.6を実装する。`sequence`の単調増加と`idempotencyKey`の重複排除をFirestoreトランザクションで保証するため、クライアントは直接書けず、Callable経由に限定する（`orgAccess`・`lessonRuns`と同じ「Admin SDK専用書き込み」パターン）。
 
 **Files:**
-- Create: `functions/src/lessonRuns/appendLessonEvent.ts`, `.test.ts`, `onCall.ts`への追記
-- Create: `src/lib/lessonRuns/appendLessonEvent.ts`, `.test.ts`
+- Create: `functions/src/lessonRuns/appendLessonEvent.ts`, `.test.ts`
 - Modify: `firestore.rules`, `test/firestore.rules.test.ts`
 
 **Interfaces:**
-- Produces: `LessonEvent`型、`appendLessonEvent(deps): Promise<{ eventId: string; sequence: number; deduplicated: boolean }>`、`appendLessonEventCallable`
+- Produces: `LessonEvent`型、`appendLessonEventInTransaction(tx, input, nowValue)`、サーバー内部専用の`appendLessonEvent(deps): Promise<{ eventId: string; sequence: number; deduplicated: boolean }>`と`appendLessonEventWithAdminSdk`
 
 - [ ] **Step 1: 失敗するテストを書く（`sequence`の単調増加と`idempotencyKey`重複排除）**
 
@@ -1251,6 +1396,13 @@ describe('appendLessonEvent', () => {
     const third = await appendLessonEvent({ ...deps, idempotencyKey: 'evt-2' })
     expect(third.sequence).toBe(1) // not 2 — the deduplicated retry did not consume a sequence number
   })
+
+  it('hashes slash-containing keys and rejects the same key with a different payload', async () => {
+    const fake = makeFakeFirestore()
+    const base = { firestore: fake as never, lessonRunId: 'run-1', orgId: 'org-1', type: 'NOTE', actorType: 'TEACHER' as const, actorId: 'teacher-1', payload: { text: 'a' }, idempotencyKey: 'unsafe/key' }
+    await appendLessonEvent(base)
+    await expect(appendLessonEvent({ ...base, payload: { text: 'b' } })).rejects.toThrow('Idempotency key payload mismatch')
+  })
 })
 ```
 
@@ -1264,6 +1416,8 @@ Expected: FAIL — module not found
 `functions/src/lessonRuns/appendLessonEvent.ts`:
 
 ```ts
+import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
+
 export interface AppendLessonEventDeps {
   firestore: { runTransaction: (fn: (tx: {
     get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
@@ -1290,14 +1444,20 @@ export interface AppendLessonEventResult { eventId: string; sequence: number; de
  * incrementing from the same base.
  */
 export const appendLessonEvent = async (deps: AppendLessonEventDeps): Promise<AppendLessonEventResult> => {
-  const idempotencyPath = `lessonRuns/${deps.lessonRunId}/eventIdempotency/${deps.idempotencyKey}`
+  const idempotencyId = idempotencyDocumentId(deps.lessonRunId, deps.idempotencyKey)
+  const idempotencyPath = `lessonRuns/${deps.lessonRunId}/eventIdempotency/${idempotencyId}`
   const counterPath = `lessonRuns/${deps.lessonRunId}/meta/eventCounter`
   const nowValue = deps.now ? deps.now() : new Date().toISOString()
+  const requestDigest = computeRequestDigest({
+    orgId: deps.orgId, type: deps.type, actorType: deps.actorType,
+    actorId: deps.actorId ?? null, payload: deps.payload,
+  })
 
   const raw = await deps.firestore.runTransaction(async (tx) => {
     const existing = await tx.get(idempotencyPath)
     if (existing.exists) {
-      const prior = existing.data() as { eventId: string; sequence: number }
+      const prior = existing.data() as { eventId: string; sequence: number; requestDigest: string }
+      if (prior.requestDigest !== requestDigest) throw new Error('Idempotency key payload mismatch')
       return JSON.stringify({ eventId: prior.eventId, sequence: prior.sequence, deduplicated: true })
     }
     const counterSnap = await tx.get(counterPath)
@@ -1309,19 +1469,21 @@ export const appendLessonEvent = async (deps: AppendLessonEventDeps): Promise<Ap
       payload: deps.payload, serverOccurredAt: nowValue, sequence: nextSequence,
     })
     tx.set(counterPath, { value: nextSequence })
-    tx.set(idempotencyPath, { eventId, sequence: nextSequence })
+    tx.set(idempotencyPath, { eventId, sequence: nextSequence, requestDigest })
     return JSON.stringify({ eventId, sequence: nextSequence, deduplicated: false })
   })
   return JSON.parse(raw) as AppendLessonEventResult
 }
 ```
 
+上記のtransaction内部（idempotency read、counter read、event/counter/idempotency set）を、同ファイルの`appendLessonEventInTransaction(tx, input, nowValue)`へ抽出し、`appendLessonEvent`は`runTransaction(tx => appendLessonEventInTransaction(...))`だけを行う。Task 9の復元はこのhelperを同じFirestore transaction内で呼び、`restoreGeneration`更新と必須イベント追記を原子的に確定する。helperの`input`は`Omit<AppendLessonEventDeps, 'firestore' | 'now'>`、戻り値は`AppendLessonEventResult`とする。helper単体テストでもslash入りキーのhash化とsemantic digest不一致を検証する。
+
 - [ ] **Step 4: テストを通す**
 
 Run: `cd functions && npx vitest run src/lessonRuns/appendLessonEvent.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Admin SDK版と`onCall`ハンドラを実装する**
+- [ ] **Step 5: Admin SDK版を実装する**
 
 同ファイル末尾に追記する。
 
@@ -1342,34 +1504,13 @@ export const appendLessonEventWithAdminSdk = (input: Omit<AppendLessonEventDeps,
 }
 ```
 
-`functions/src/lessonRuns/onCall.ts`へ追記する。
-
-```ts
-interface AppendLessonEventRequest { lessonRunId: string; type: string; actorType: 'TEACHER' | 'STUDENT'; payload: unknown; idempotencyKey: string }
-
-export const appendLessonEventCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
-  const data = request.data as AppendLessonEventRequest
-  if (!data.lessonRunId || !data.type || !data.idempotencyKey) throw new HttpsError('invalid-argument', '必須項目が不足しています。')
-  // Phase A does not yet authorize per-lessonRun participation (Phase B).
-  // For now, restrict to the verified-teacher identity used elsewhere; a
-  // student-facing caller will be added once participation exists.
-  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
-  return appendLessonEventWithAdminSdk({
-    lessonRunId: data.lessonRunId, orgId: personalOrgId(request.auth.uid), type: data.type,
-    actorType: 'TEACHER', actorId: request.auth.uid, payload: data.payload, idempotencyKey: data.idempotencyKey,
-  })
-})
-```
-
-`functions/src/index.ts`へ`export { appendLessonEventCallable, createLessonRunCallable } from './lessonRuns/onCall'`を更新する。
+汎用`appendLessonEventCallable`は作らない。任意の`type`・`actorType`・`payload`をクライアントへ開放すると、教師クライアントが`SYSTEM`イベントや将来の約定イベントを偽造でき、監査ログの信頼性が失われるためである。Phase B/Cの各操作Callableが認可と業務処理を完了した後、サーバー内部から`appendLessonEventWithAdminSdk`を呼ぶ。
 
 - [ ] **Step 6: `firestore.rules`へ`events`サブコレクションを追加する（読み取りのみ、書き込みはCallable専用）**
 
 ```
       match /events/{eventId} {
         allow get, list: if teacher()
-          && get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId == 'personal_' + request.auth.uid
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
       }
@@ -1379,9 +1520,9 @@ export const appendLessonEventCallable = onCall({ region: 'asia-northeast1' }, a
 
 （`lessonRuns/{lessonRunId}`の`match`ブロック内、Task 7で追加した本体ルールの直後に挿入する。）
 
-- [ ] **Step 7: クライアントラッパーを実装する**
+- [ ] **Step 7: サーバー内部専用であることを固定するテストを追加する**
 
-`src/lib/lessonRuns/appendLessonEvent.ts`（`createLessonRun.ts`と同じ`httpsCallable`パターン）を実装する。
+`functions/src/index.ts`から`appendLessonEvent`系をexportせず、`functions/src/lessonRuns/onCall.ts`にも汎用Callableを定義しない。実際の防御境界はFirestore Rulesの`allow write: if false`とデプロイexport不在の組合せである。テストは`appendLessonEventWithAdminSdk`へ所有確認済みの`orgId`が渡されたときだけ追記できる内部APIの振る舞いを検証し、クライアント向けテストファイルは作らない。
 
 - [ ] **Step 8: 追記専用性のルールテストを追加する**
 
@@ -1394,12 +1535,14 @@ describe('lessonRun events are append-only', () => {
 })
 ```
 
+Task 9以降の各業務Callableテストでは、`teacher-a`が`personal_teacher-b`所有の`lessonRunId`を指定した場合に`permission-denied`となり、業務変更・イベント・counter・idempotencyドキュメントが一件も作られないことを個別に検証する。Admin SDKはRulesを迂回するため、所有権検証は各Callable境界の必須テストである。
+
 - [ ] **Step 9: `npm run verify` を通す**
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add functions/src/lessonRuns src/lib/lessonRuns firestore.rules test/firestore.rules.test.ts functions/src/index.ts
+git add functions/src/lessonRuns/appendLessonEvent.ts functions/src/lessonRuns/appendLessonEvent.test.ts firestore.rules test/firestore.rules.test.ts
 git commit -m "feat: add append-only LessonEvent log with sequence assignment and idempotency dedup"
 ```
 
@@ -1415,7 +1558,7 @@ git commit -m "feat: add append-only LessonEvent log with sequence assignment an
 - Modify: `firestore.rules`, `test/firestore.rules.test.ts`
 
 **Interfaces:**
-- Consumes: `appendLessonEventWithAdminSdk`（Task 8）
+- Consumes: `appendLessonEventInTransaction`（Task 8）、`requireActiveOrgMember`（Task 5）
 - Produces: `LessonCheckpoint`型、`writeCheckpoint(deps)`、`restoreCheckpoint(deps)`、対応する`onCall`
 
 - [ ] **Step 1: 失敗するテストを書く**
@@ -1423,7 +1566,7 @@ git commit -m "feat: add append-only LessonEvent log with sequence assignment an
 `functions/src/lessonRuns/checkpoint.test.ts`:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { restoreCheckpoint, writeCheckpoint } from './checkpoint'
 
 const makeFakeFirestore = () => {
@@ -1446,8 +1589,18 @@ describe('writeCheckpoint', () => {
   it('stores a checkpoint tagged with the current restoreGeneration', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonRuns/run-1', { restoreGeneration: 0 })
-    const result = await writeCheckpoint({ firestore: fake as never, lessonRunId: 'run-1', phaseId: 'phase-1', sequence: 5, snapshot: { cash: 1000 }, createdBy: 'TEACHER' })
+    const result = await writeCheckpoint({ firestore: fake as never, lessonRunId: 'run-1', phaseId: 'phase-1', sequence: 5, snapshot: { cash: 1000 }, createdBy: 'TEACHER', idempotencyKey: 'cp/key' })
     expect(fake.docs.get(`lessonRuns/run-1/checkpoints/${result.checkpointId}`)).toMatchObject({ sequence: 5, phaseId: 'phase-1', restoreGeneration: 0 })
+  })
+
+  it('never overwrites a checkpoint when the same sequence occurs in another restoreGeneration', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { restoreGeneration: 0 })
+    const first = await writeCheckpoint({ firestore: fake as never, lessonRunId: 'run-1', phaseId: 'p', sequence: 5, snapshot: { value: 1 }, createdBy: 'SYSTEM', idempotencyKey: 'cp-1' })
+    fake.docs.set('lessonRuns/run-1', { restoreGeneration: 1 })
+    const second = await writeCheckpoint({ firestore: fake as never, lessonRunId: 'run-1', phaseId: 'p', sequence: 5, snapshot: { value: 2 }, createdBy: 'SYSTEM', idempotencyKey: 'cp-2' })
+    expect(second.checkpointId).not.toBe(first.checkpointId)
+    expect(fake.docs.get(`lessonRuns/run-1/checkpoints/${first.checkpointId}`)).toMatchObject({ snapshot: { value: 1 } })
   })
 })
 
@@ -1456,14 +1609,25 @@ describe('restoreCheckpoint', () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonRuns/run-1', { restoreGeneration: 0, orgId: 'org-1' })
     fake.docs.set('lessonRuns/run-1/checkpoints/cp-1', { id: 'cp-1', sequence: 5, restoreGeneration: 0 })
-    const appendLessonEvent = vi.fn().mockResolvedValue({ eventId: 'evt-x', sequence: 10, deduplicated: false })
-    const result = await restoreCheckpoint({ firestore: fake as never, appendLessonEvent, lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'テスト復元', actorId: 'teacher-a', idempotencyKey: 'restore-1' })
+    const result = await restoreCheckpoint({ firestore: fake as never, lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'テスト復元', actorId: 'teacher-a', idempotencyKey: 'restore-1' })
     expect(result.newRestoreGeneration).toBe(1)
     expect(fake.docs.get('lessonRuns/run-1')).toMatchObject({ restoreGeneration: 1 })
-    expect(appendLessonEvent).toHaveBeenCalledWith(expect.objectContaining({
-      lessonRunId: 'run-1', type: 'CHECKPOINT_RESTORED', idempotencyKey: 'restore-1',
+    expect([...fake.docs.values()]).toContainEqual(expect.objectContaining({
+      lessonRunId: 'run-1', type: 'CHECKPOINT_RESTORED',
       payload: { checkpointId: 'cp-1', reason: 'テスト復元', newRestoreGeneration: 1 },
     }))
+  })
+
+  it('does not increment restoreGeneration twice when the same idempotencyKey is retried', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { restoreGeneration: 0, orgId: 'org-1' })
+    fake.docs.set('lessonRuns/run-1/checkpoints/cp-1', { id: 'cp-1', sequence: 5, restoreGeneration: 0 })
+    const input = { firestore: fake as never, lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '再試行', actorId: 'teacher-a', idempotencyKey: 'restore/unsafe-key' }
+    const first = await restoreCheckpoint(input)
+    const retry = await restoreCheckpoint(input)
+    expect(first).toMatchObject({ newRestoreGeneration: 1, deduplicated: false, eventId: expect.any(String) })
+    expect(retry).toMatchObject({ newRestoreGeneration: 1, deduplicated: true, eventId: first.eventId })
+    expect(fake.docs.get('lessonRuns/run-1')).toMatchObject({ restoreGeneration: 1 })
   })
 })
 ```
@@ -1478,6 +1642,9 @@ Expected: FAIL — module not found
 `functions/src/lessonRuns/checkpoint.ts`:
 
 ```ts
+import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
+import { appendLessonEventInTransaction } from './appendLessonEvent'
+
 interface Tx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
   set: (path: string, data: Record<string, unknown>) => void
@@ -1485,33 +1652,41 @@ interface Tx {
 }
 export interface WriteCheckpointDeps {
   firestore: { runTransaction: (fn: (tx: Tx) => Promise<string>) => Promise<string> }
-  lessonRunId: string; phaseId: string; sequence: number; snapshot: unknown; createdBy: 'SYSTEM' | 'TEACHER'
+  lessonRunId: string; phaseId: string; sequence: number; snapshot: unknown; createdBy: 'SYSTEM' | 'TEACHER'; idempotencyKey: string
 }
-export interface WriteCheckpointResult { checkpointId: string }
+export interface WriteCheckpointResult { checkpointId: string; deduplicated: boolean }
 
 export const writeCheckpoint = async (deps: WriteCheckpointDeps): Promise<WriteCheckpointResult> => {
   const raw = await deps.firestore.runTransaction(async (tx) => {
     const runSnap = await tx.get(`lessonRuns/${deps.lessonRunId}`)
-    const restoreGeneration = runSnap.exists ? ((runSnap.data() as { restoreGeneration: number }).restoreGeneration ?? 0) : 0
-    const checkpointId = `${deps.lessonRunId}_cp_${deps.sequence}`
-    tx.set(`lessonRuns/${deps.lessonRunId}/checkpoints/${checkpointId}`, {
-      id: checkpointId, lessonRunId: deps.lessonRunId, sequence: deps.sequence, phaseId: deps.phaseId,
-      snapshot: deps.snapshot, createdBy: deps.createdBy, restoreGeneration,
+    if (!runSnap.exists) throw new Error('LessonRun not found')
+    const restoreGeneration = (runSnap.data() as { restoreGeneration: number }).restoreGeneration ?? 0
+    const keyHash = idempotencyDocumentId(deps.lessonRunId, deps.idempotencyKey)
+    const checkpointId = `cp_${restoreGeneration}_${deps.sequence}_${keyHash.slice(0, 16)}`
+    const checkpointPath = `lessonRuns/${deps.lessonRunId}/checkpoints/${checkpointId}`
+    const requestDigest = computeRequestDigest({
+      phaseId: deps.phaseId, sequence: deps.sequence, snapshot: deps.snapshot,
+      createdBy: deps.createdBy, restoreGeneration,
     })
-    return JSON.stringify({ checkpointId })
+    const existing = await tx.get(checkpointPath)
+    if (existing.exists) {
+      if ((existing.data() as { requestDigest: string }).requestDigest !== requestDigest) throw new Error('Idempotency key payload mismatch')
+      return JSON.stringify({ checkpointId, deduplicated: true })
+    }
+    tx.set(checkpointPath, {
+      id: checkpointId, lessonRunId: deps.lessonRunId, sequence: deps.sequence, phaseId: deps.phaseId,
+      snapshot: deps.snapshot, createdBy: deps.createdBy, restoreGeneration, requestDigest,
+    })
+    return JSON.stringify({ checkpointId, deduplicated: false })
   })
   return JSON.parse(raw) as WriteCheckpointResult
 }
 
-export interface AppendLessonEventFn {
-  (input: { lessonRunId: string; orgId: string; type: string; actorType: 'TEACHER'; actorId: string; payload: unknown; idempotencyKey: string }): Promise<unknown>
-}
 export interface RestoreCheckpointDeps {
   firestore: { runTransaction: (fn: (tx: Tx) => Promise<string>) => Promise<string> }
-  appendLessonEvent: AppendLessonEventFn
   lessonRunId: string; checkpointId: string; reason: string; actorId: string; idempotencyKey: string
 }
-export interface RestoreCheckpointResult { newRestoreGeneration: number }
+export interface RestoreCheckpointResult { newRestoreGeneration: number; eventId: string; deduplicated: boolean }
 
 /**
  * "Restore" is append, not rewind (resolutions.md section E): nothing is
@@ -1522,24 +1697,39 @@ export interface RestoreCheckpointResult { newRestoreGeneration: number }
  * superseded rather than deleting them.
  */
 export const restoreCheckpoint = async (deps: RestoreCheckpointDeps): Promise<RestoreCheckpointResult> => {
+  const restoreKey = idempotencyDocumentId(deps.lessonRunId, deps.idempotencyKey)
+  const idempotencyPath = `lessonRuns/${deps.lessonRunId}/checkpointRestoreIdempotency/${restoreKey}`
+  const requestDigest = computeRequestDigest({
+    checkpointId: deps.checkpointId, reason: deps.reason, actorId: deps.actorId,
+  })
   const raw = await deps.firestore.runTransaction(async (tx) => {
+    const existing = await tx.get(idempotencyPath)
+    if (existing.exists) {
+      const prior = existing.data() as { newRestoreGeneration: number; eventId: string; requestDigest: string }
+      if (prior.requestDigest !== requestDigest) throw new Error('Idempotency key payload mismatch')
+      return JSON.stringify({ newRestoreGeneration: prior.newRestoreGeneration, eventId: prior.eventId, deduplicated: true })
+    }
     const runSnap = await tx.get(`lessonRuns/${deps.lessonRunId}`)
     if (!runSnap.exists) throw new Error('LessonRun not found')
     const run = runSnap.data() as { restoreGeneration: number; orgId: string }
     const checkpointSnap = await tx.get(`lessonRuns/${deps.lessonRunId}/checkpoints/${deps.checkpointId}`)
     if (!checkpointSnap.exists) throw new Error('Checkpoint not found')
     const newRestoreGeneration = run.restoreGeneration + 1
+    const event = await appendLessonEventInTransaction(tx, {
+      lessonRunId: deps.lessonRunId, orgId: run.orgId, type: 'CHECKPOINT_RESTORED',
+      actorType: 'TEACHER', actorId: deps.actorId,
+      payload: { checkpointId: deps.checkpointId, reason: deps.reason, newRestoreGeneration },
+      idempotencyKey: deps.idempotencyKey,
+    }, new Date().toISOString())
     tx.update(`lessonRuns/${deps.lessonRunId}`, { restoreGeneration: newRestoreGeneration })
-    return JSON.stringify({ newRestoreGeneration, orgId: run.orgId })
+    tx.set(idempotencyPath, { newRestoreGeneration, eventId: event.eventId, checkpointId: deps.checkpointId, requestDigest })
+    return JSON.stringify({ newRestoreGeneration, eventId: event.eventId, deduplicated: false })
   })
-  const { newRestoreGeneration, orgId } = JSON.parse(raw) as { newRestoreGeneration: number; orgId: string }
-  await deps.appendLessonEvent({
-    lessonRunId: deps.lessonRunId, orgId, type: 'CHECKPOINT_RESTORED', actorType: 'TEACHER', actorId: deps.actorId,
-    payload: { checkpointId: deps.checkpointId, reason: deps.reason, newRestoreGeneration }, idempotencyKey: deps.idempotencyKey,
-  })
-  return { newRestoreGeneration }
+  return JSON.parse(raw) as RestoreCheckpointResult
 }
 ```
+
+`checkpointRestoreIdempotency`はクライアントからread/writeとも拒否する。復元のgeneration更新、復元idempotency、event counter、event、event-idempotencyはすべて同じFirestore transactionで確定し、必須イベントだけ欠落する状態を作らない。Callableは対象`LessonRun`をAdmin SDKで読み、`orgId`、`teacherRoles[request.auth.uid]`、Task 5の`requireActiveOrgMember`を確認してから実行する。他組織runと`suspended`メンバーの拒否テストを追加する。
 
 - [ ] **Step 4: テストを通す**
 
@@ -1548,16 +1738,18 @@ Expected: PASS
 
 - [ ] **Step 5: Admin SDK版と`onCall`ハンドラを実装する**
 
-`writeCheckpoint`/`restoreCheckpoint`のAdmin SDKラッパーを`appendLessonEventWithAdminSdk`（Task 8）を注入する形で実装し、`restoreCheckpointCallable`（教師のみ、idempotencyKey必須）を`functions/src/lessonRuns/onCall.ts`へ追記する。パターンはTask 7 Step 6・Task 8 Step 5と同一のため、実装時はそれらのコードをそのまま踏襲する。
+Admin SDK adapterは`getFirestore().runTransaction()`をTask 8の`Tx` adapterへ変換する。`restoreCheckpointCallable`は`lessonRunId`、`checkpointId`、空でない`reason`、`idempotencyKey`を必須にし、認証・教師identity確認後にrunを読み、`teacherRoles[uid]`が`PRIMARY`または`ASSISTANT`、`requireActiveOrgMember(db, run.orgId, uid)`成功を確認する。その後だけ`restoreCheckpoint`を呼ぶ。orgIdはrun正本から取得し、クライアント入力から受け取らない。VIEWER、別組織、suspended、存在しないrun/checkpointをそれぞれ拒否するCallableテストを書く。
 
 - [ ] **Step 6: `firestore.rules`へ`checkpoints`サブコレクションを追加する**
 
 ```
       match /checkpoints/{checkpointId} {
         allow get, list: if teacher()
-          && get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId == 'personal_' + request.auth.uid
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
+      }
+      match /checkpointRestoreIdempotency/{key} {
+        allow read, write: if false;
       }
 ```
 
@@ -1650,6 +1842,7 @@ describe('lessonRun public/private RTDB path split', () => {
   it('lets an org member read the public lessonRun state', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-a/teacher-a').set({ membershipVersion: 1, syncState: 'SYNCED' })
       await context.database().ref('lessonRunPublic/run-1').set({ status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'personal_teacher-a' })
     })
     const owner = environment.authenticatedContext('teacher-a', teacherToken).database()
@@ -1659,6 +1852,7 @@ describe('lessonRun public/private RTDB path split', () => {
   it('never lets a non-owner read the private lessonRun state, even though they can read the public state at the same lessonRunId', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await context.database().ref('orgAccess/personal_teacher-b/teacher-b').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-b/teacher-b').set({ membershipVersion: 1, syncState: 'SYNCED' })
       await context.database().ref('lessonRunPublic/run-2').set({ status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'personal_teacher-b' })
       await context.database().ref('lessonRunPrivate/run-2').set({ randomSeed: 'top-secret-seed', restoreGeneration: 0, updatedAtMillis: 1, orgId: 'personal_teacher-b' })
     })
@@ -1672,6 +1866,7 @@ describe('lessonRun public/private RTDB path split', () => {
   it('lets only the owning teacher read their own private lessonRun state', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-a/teacher-a').set({ membershipVersion: 1, syncState: 'SYNCED' })
       await context.database().ref('lessonRunPrivate/run-1').set({ randomSeed: 'seed', restoreGeneration: 0, updatedAtMillis: 1, orgId: 'personal_teacher-a' })
     })
     const owner = environment.authenticatedContext('teacher-a', teacherToken).database()
@@ -1704,13 +1899,13 @@ Expected: FAIL — `lessonRunPublic`/`lessonRunPrivate`に既存ルールがな�
     "orgAccess": { "...": "変更なし（Task 4）" },
     "lessonRunPublic": {
       "$lessonRunId": {
-        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active'",
+        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()",
         ".write": false
       }
     },
     "lessonRunPrivate": {
       "$lessonRunId": {
-        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('role').val() === 'owner'",
+        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('role').val() === 'owner' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()",
         ".write": false
       }
     }
@@ -1719,6 +1914,8 @@ Expected: FAIL — `lessonRunPublic`/`lessonRunPrivate`に既存ルールがな�
 ```
 
 `lessonRunPublic`と`lessonRunPrivate`はどちらも`orgAccess`ミラーを参照する点で対称だが、**祖先を共有しない別々のトップレベルノード**であることが本タスクの核心である——将来Phase Cで`lessonRunPublic/{lessonRunId}`配下にフェーズ表示用の新しいフィールドを追加しても、`lessonRunPrivate`のルールには一切影響しない。逆に`lessonRunPrivate`を`lessonRunPublic/{lessonRunId}/private`のような子ノードにした場合、`lessonRunPublic/{lessonRunId}`の`.read`が既に`true`を返す条件下では、子ノードにどんな`.read: false`を書いても上書きされてしまう（RTDBのルールカスケード）。**この理由により、`lessonRunPrivate`を`lessonRunPublic`の子として実装することを本計画では禁止する。**
+
+Rulesテストの教師tokenには秒単位の`auth_time`を明示する。entry versionとmeta versionの不一致、`syncState: 'PENDING'`、`auth_time < revokedAtSeconds`、entry欠落、meta欠落をそれぞれ拒否し、`auth_time >= revokedAtSeconds`かつ版一致・`SYNCED`だけを許可する表駆動テストを追加する。
 
 - [ ] **Step 5: テストを通す**
 
@@ -1760,7 +1957,7 @@ git commit -m "feat: split public/private lessonRun RTDB paths as cascade-safe s
 
 ## Task 11: 個人データのエクスポート
 
-統合仕様書 §21.1「個人単位のエクスポートは基盤機能として提供する」、§21.7（形式: JSON/CSV等）を実装する。Phase Aでは生徒参加者データが存在しないため、対象は**個人組織オーナー自身が作成した`LessonTemplate`/`LessonVersion`/`LessonRun`/`LessonEvent`/`LessonCheckpoint`**とする。
+統合仕様書 §21.1「個人単位のエクスポートは基盤機能として提供する」、§21.7（形式: JSON/CSV等）を実装する。Phase Aでは生徒参加者データが存在しないため、対象は本人の`users/{uid}`、個人組織、membership、RTDB access mirror、および個人組織が所有する`LessonTemplate`/`LessonVersion`/`LessonRun`/`LessonEvent`/`LessonCheckpoint`とする。所有データだけでなく、本人と認可を表す基盤レコードも漏らさない。
 
 **Files:**
 - Create: `functions/src/privacy/exportPersonalData.ts`, `.test.ts`, `onCall.ts`
@@ -1786,7 +1983,13 @@ describe('exportPersonalData', () => {
     const events = { r1: [{ eventId: 'e1', sequence: 0 }] }
     const checkpoints = { r1: [{ id: 'c1', sequence: 0 }] }
     const result = await exportPersonalData({
+      uid: 'teacher-a',
       orgId: 'personal_teacher-a',
+      getUser: async () => ({ id: 'teacher-a', displayName: 'Teacher A' }),
+      getOrganization: async () => ({ id: 'personal_teacher-a', type: 'personal' }),
+      getMembership: async () => ({ uid: 'teacher-a', role: 'owner', status: 'active' }),
+      getOrgAccessMirror: async () => ({ role: 'owner', status: 'active', membershipVersion: 1 }),
+      getOrgAccessMeta: async () => ({ membershipVersion: 1, syncState: 'SYNCED' }),
       listLessonTemplates: async () => templates,
       listLessonVersions: async (templateId: string) => versions[templateId as keyof typeof versions] ?? [],
       listLessonRuns: async () => runs,
@@ -1795,7 +1998,13 @@ describe('exportPersonalData', () => {
     })
     expect(result).toEqual({
       exportedAt: expect.any(String),
+      uid: 'teacher-a',
       orgId: 'personal_teacher-a',
+      user: { id: 'teacher-a', displayName: 'Teacher A' },
+      organization: { id: 'personal_teacher-a', type: 'personal' },
+      membership: { uid: 'teacher-a', role: 'owner', status: 'active' },
+      orgAccessMirror: { role: 'owner', status: 'active', membershipVersion: 1 },
+      orgAccessMeta: { membershipVersion: 1, syncState: 'SYNCED' },
       lessonTemplates: [{ ...templates[0], versions: versions.t1 }],
       lessonRuns: [{ ...runs[0], events: events.r1, checkpoints: checkpoints.r1 }],
     })
@@ -1814,7 +2023,13 @@ Expected: FAIL — module not found
 
 ```ts
 export interface ExportPersonalDataDeps {
+  uid: string
   orgId: string
+  getUser: () => Promise<Record<string, unknown> | null>
+  getOrganization: () => Promise<Record<string, unknown> | null>
+  getMembership: () => Promise<Record<string, unknown> | null>
+  getOrgAccessMirror: () => Promise<Record<string, unknown> | null>
+  getOrgAccessMeta: () => Promise<Record<string, unknown> | null>
   listLessonTemplates: () => Promise<Record<string, unknown>[]>
   listLessonVersions: (templateId: string) => Promise<Record<string, unknown>[]>
   listLessonRuns: () => Promise<Record<string, unknown>[]>
@@ -1826,11 +2041,16 @@ export interface ExportPersonalDataDeps {
 /**
  * Spec §21.1: personal export is a baseline feature, not paid/enterprise
  * only. Phase A's scope is everything a personal org owns directly —
- * templates, their versions, runs, and runs' event/checkpoint history.
+ * identity, authorization records, templates, their versions, runs, and
+ * runs' event/checkpoint history.
  * Phase B+ will extend this once participant-owned data (results,
  * transcripts) exists.
  */
 export const exportPersonalData = async (deps: ExportPersonalDataDeps) => {
+  const [user, organization, membership, orgAccessMirror, orgAccessMeta] = await Promise.all([
+    deps.getUser(), deps.getOrganization(), deps.getMembership(),
+    deps.getOrgAccessMirror(), deps.getOrgAccessMeta(),
+  ])
   const templates = await deps.listLessonTemplates()
   const lessonTemplates = await Promise.all(templates.map(async (template) => ({
     ...template, versions: await deps.listLessonVersions(template.id as string),
@@ -1841,7 +2061,12 @@ export const exportPersonalData = async (deps: ExportPersonalDataDeps) => {
     events: await deps.listLessonEvents(run.id as string),
     checkpoints: await deps.listLessonCheckpoints(run.id as string),
   })))
-  return { exportedAt: (deps.now ?? (() => new Date().toISOString()))(), orgId: deps.orgId, lessonTemplates, lessonRuns }
+  return {
+    exportedAt: (deps.now ?? (() => new Date().toISOString()))(),
+    uid: deps.uid, orgId: deps.orgId,
+    user, organization, membership, orgAccessMirror, orgAccessMeta,
+    lessonTemplates, lessonRuns,
+  }
 }
 ```
 
@@ -1852,7 +2077,7 @@ Expected: PASS
 
 - [ ] **Step 5: Admin SDK版と`onCall`ハンドラを実装する**
 
-Admin SDKの`getFirestore().collection(...).where('orgId', '==', orgId).get()`クエリで各`list*`関数を実装し、`exportPersonalDataCallable`（`isCallerTeacher`必須、呼び出し元uidの個人組織のみ対象——他組織のデータは`orgId`をリクエストから受け取らず`personalOrgId(request.auth.uid)`で固定することで、他組織のエクスポートが原理的に不可能な設計にする）を追加する。`functions/src/index.ts`へ追記する。
+Admin SDKのFirestore queryとRTDB readで各adapterを実装する。`exportPersonalDataCallable`は本人のprivacy権を通常のresource認可から分離する。`orgId`をリクエストから受け取らず`personalOrgId(request.auth.uid)`で固定し、`organizations/{orgId}.ownerUid == request.auth.uid`をAdmin SDKで検証する。membershipが`suspended`でも本人exportは許可する一方、他人・別org・匿名は拒否する。高リスク操作と同様にrecent sign-in（`request.auth.token.auth_time`がサーバー現在時刻の10分以内）を要求する。operator代理経路を追加する場合は`operator == true`と正式request IDを別入力・別監査ログで必須にし、本人経路と混ぜない。上記の基盤レコードを含む完全なJSON shapeをテストし、`functions/src/index.ts`へ追記する。
 
 - [ ] **Step 6: クライアントラッパーを実装する**
 
@@ -1864,7 +2089,7 @@ Admin SDKの`getFirestore().collection(...).where('orgId', '==', orgId).get()`�
 
 ```bash
 git add functions/src/privacy/exportPersonalData.ts functions/src/privacy/exportPersonalData.test.ts src/lib/privacy/exportPersonalData.ts src/lib/privacy/exportPersonalData.test.ts functions/src/index.ts
-git commit -m "feat: add personal data export covering owned lessonTemplates and lessonRuns"
+git commit -m "feat: add complete personal-organization data export"
 ```
 
 ---
@@ -1875,11 +2100,12 @@ git commit -m "feat: add personal data export covering owned lessonTemplates and
 
 **Files:**
 - Create: `functions/src/privacy/deletePersonalData.ts`, `.test.ts`、`onCall.ts`への追記
+- Create: `functions/src/privacy/purgeExpiredSoftDeletes.ts`, `.test.ts`（daily scheduled Function）
 - Create: `src/lib/privacy/deletePersonalData.ts`, `.test.ts`
 - Modify: `functions/src/index.ts`
 
 **Interfaces:**
-- Produces: `requestSoftDelete(deps)`（30日後に完全削除対象としてマークするだけで即時削除しない）、`purgeHardDelete(deps)`（即時・復元不可）、`restoreSoftDeleted(deps)`（30日以内の取り消し）
+- Produces: `requestSoftDelete(deps)`（30日後に完全削除対象としてマークするだけで即時削除しない）、`purgeHardDelete(deps)`（単一教材/授業の即時・復元不可削除）、`restoreSoftDeleted(deps)`（30日以内の取り消し）、`purgePersonalOrganization(deps)`（正式な本人要求で個人組織スコープ全体を即時・復元不可削除）
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -1891,7 +2117,13 @@ import { purgeHardDelete, requestSoftDelete, restoreSoftDeleted } from './delete
 
 const makeFakeStore = () => {
   const docs = new Map<string, Record<string, unknown>>()
-  return { docs, get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }), update: async (path: string, data: Record<string, unknown>) => { docs.set(path, { ...docs.get(path), ...data }) }, delete: async (path: string) => { docs.delete(path) } }
+  return {
+    docs,
+    get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
+    update: async (path: string, data: Record<string, unknown>) => { docs.set(path, { ...docs.get(path), ...data }) },
+    clearPendingDeletion: async (path: string) => { const { pendingDeletion: _, ...rest } = docs.get(path) ?? {}; docs.set(path, rest) },
+    recursiveDelete: async (path: string) => { for (const key of docs.keys()) if (key === path || key.startsWith(`${path}/`)) docs.delete(key) },
+  }
 }
 
 describe('requestSoftDelete', () => {
@@ -1910,8 +2142,15 @@ describe('restoreSoftDeleted', () => {
   it('clears pendingDeletion within the 30-day window', async () => {
     const store = makeFakeStore()
     store.docs.set('lessonRuns/run-1', { orgId: 'personal_teacher-a', pendingDeletion: { reason: 'x', purgeAfter: '2026-09-04T00:00:00.000Z' } })
-    await restoreSoftDeleted({ store, path: 'lessonRuns/run-1' })
+    await restoreSoftDeleted({ store, path: 'lessonRuns/run-1', now: () => new Date('2026-08-20T00:00:00.000Z') })
     expect(store.docs.get('lessonRuns/run-1')?.pendingDeletion).toBeUndefined()
+  })
+
+  it('rejects restore once the 30-day deadline has elapsed', async () => {
+    const store = makeFakeStore()
+    store.docs.set('lessonRuns/run-1', { pendingDeletion: { purgeAfter: '2026-09-04T00:00:00.000Z' } })
+    await expect(restoreSoftDeleted({ store, path: 'lessonRuns/run-1', now: () => new Date('2026-09-05T00:00:00.000Z') }))
+      .rejects.toThrow('Restore window expired')
   })
 })
 
@@ -1919,8 +2158,11 @@ describe('purgeHardDelete', () => {
   it('deletes immediately with no restore path, for a formal complete-deletion request (spec §21.3 priority 1, §26-9)', async () => {
     const store = makeFakeStore()
     store.docs.set('lessonRuns/run-1', { orgId: 'personal_teacher-a' })
+    store.docs.set('lessonRuns/run-1/events/e1', { orgId: 'personal_teacher-a' })
+    store.docs.set('lessonRuns/run-1/checkpoints/c1', { orgId: 'personal_teacher-a' })
     await purgeHardDelete({ store, path: 'lessonRuns/run-1' })
     expect(store.docs.has('lessonRuns/run-1')).toBe(false)
+    expect([...store.docs.keys()].some((key) => key.startsWith('lessonRuns/run-1/'))).toBe(false)
   })
 })
 ```
@@ -1940,28 +2182,29 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 export interface Store {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
   update: (path: string, data: Record<string, unknown>) => Promise<void>
-  delete: (path: string) => Promise<void>
+  clearPendingDeletion: (path: string) => Promise<void>
+  recursiveDelete: (path: string) => Promise<void>
 }
 
 /**
  * Normal (accidental-deletion-recovery) path: spec §21.4's "通常削除は30日間
  * 復元可能" and §21.3 priority 4 "教師の誤操作 → 30日復元". Marks the
- * document rather than deleting it — an actual purge job (out of Phase A's
- * scope; a scheduled Function in a later phase) reads `pendingDeletion.purgeAfter`.
+ * document rather than deleting it. Task 12's scheduled purge reads
+ * `pendingDeletion.purgeAfter` and permanently deletes it once due.
  */
 export const requestSoftDelete = async (input: { store: Store; path: string; reason: string; now?: () => Date }): Promise<void> => {
   const now = (input.now ?? (() => new Date()))()
   await input.store.update(input.path, { pendingDeletion: { reason: input.reason, requestedAt: now.toISOString(), purgeAfter: new Date(now.getTime() + THIRTY_DAYS_MS).toISOString() } })
 }
 
-export const restoreSoftDeleted = async (input: { store: Store; path: string }): Promise<void> => {
+export const restoreSoftDeleted = async (input: { store: Store; path: string; now?: () => Date }): Promise<void> => {
   const snap = await input.store.get(input.path)
   if (!snap.exists) throw new Error('Document not found')
-  const { pendingDeletion: _pendingDeletion, ...rest } = snap.data() as Record<string, unknown>
-  // Admin SDK's real update() with FieldValue.delete() removes the key
-  // outright; this fake models the same end state (no pendingDeletion key).
-  await input.store.update(input.path, rest)
-  await input.store.update(input.path, { pendingDeletion: undefined })
+  const pendingDeletion = snap.data()?.pendingDeletion as { purgeAfter?: string } | undefined
+  if (!pendingDeletion?.purgeAfter) throw new Error('Document is not pending deletion')
+  const now = (input.now ?? (() => new Date()))()
+  if (now.getTime() >= new Date(pendingDeletion.purgeAfter).getTime()) throw new Error('Restore window expired')
+  await input.store.clearPendingDeletion(input.path)
 }
 
 /**
@@ -1972,7 +2215,7 @@ export const restoreSoftDeleted = async (input: { store: Store; path: string }):
  * complete-deletion request.
  */
 export const purgeHardDelete = async (input: { store: Store; path: string }): Promise<void> => {
-  await input.store.delete(input.path)
+  await input.store.recursiveDelete(input.path)
 }
 ```
 
@@ -1983,37 +2226,57 @@ Expected: PASS
 
 - [ ] **Step 5: Admin SDK版と`onCall`ハンドラを実装する**
 
-`requestSoftDeleteCallable`・`restoreSoftDeletedCallable`・`purgeHardDeleteCallable`の3つを追加する。いずれも`isCallerTeacher`必須、対象パスの`orgId`が`personalOrgId(request.auth.uid)`と一致することを呼び出し前に検証する（他組織のデータを削除できない設計）。`purgeHardDeleteCallable`は追加で確認フラグ（例: リクエストに`confirm: true`かつドキュメントIDの再入力を要求）を必須にし、誤操作でソフト削除の30日枠を飛び越えられないようにする。
+`requestSoftDeleteCallable`・`restoreSoftDeletedCallable`・`purgeHardDeleteCallable`・`purgePersonalOrganizationCallable`を追加する。resource操作の3 Callableは`isCallerTeacher`とTask 5の`requireActiveOrgMember`を必須にし、対象パスを`lessonTemplates/{id}`または`lessonRuns/{id}`の2セグメントだけに正規化して、対象ドキュメントの`orgId`とactive membershipを検証する（path traversal、他組織、`suspended`を拒否）。Admin SDK実装の`clearPendingDeletion`は`FieldValue.delete()`、`recursiveDelete`は`getFirestore().recursiveDelete(docRef)`を使い、subcollectionを残さない。`lessonRuns`のhard deleteではRTDBの`lessonRunPublic/{id}`・`lessonRunPrivate/{id}`もAdmin SDKのroot updateで`null`化する。
 
-- [ ] **Step 6: クライアントラッパーを実装する**
+正式な本人要求を扱う`purgePersonalOrganizationCallable`はactive membershipを要求しない。Task 11と同じownerUid照合、recent sign-in、`confirm: true`、uid再入力で本人性を検証し、`suspended`本人も実行できる。個人org配下の全template/version/run/event/checkpoint、`organizations/{orgId}`とmembers、`users/{uid}`、RTDBの`orgAccess/{orgId}`・`orgAccessMeta/{orgId}`・全run public/private nodeを対象にする。operator代理経路は正式request IDと監査ログを必須にする。
 
-`src/lib/privacy/deletePersonalData.ts`に3つの`httpsCallable`ラッパーを実装する。
+すべてのhard delete（単一resourceと個人org全体）へ同じoperation-doc sagaを適用する。各Firestore/RTDB resource groupの削除完了状態を記録し、途中失敗後は未完了部分だけを再試行する。操作docは`privacyDeletionOperations/{idempotencyDocumentId(orgId, idempotencyKey)}`、digestは`requestDigest({ uid, orgId, operationKind, target, confirmedIdentifier })`とし、同じキーを別要求へ再利用した場合は拒否する。操作doc自身は全削除完了後に個人情報を含まないhash、完了時刻、結果だけを保持する。
 
-- [ ] **Step 7: `npm run verify` を通す**
+hard-delete Callableは追加で`confirm: true`、対象ID（個人全体ならuid）の再入力、`idempotencyKey`を必須にし、誤操作でソフト削除の30日枠を飛び越えられないようにする。テストでは、resource削除でroot/subcollection/対応RTDBノードが消えること、個人全体削除でTask 11が列挙する全データと認可mirrorが消えること、Firestore成功/RTDB失敗および逆順失敗後の同一key再試行、semantic digest不一致、期限後restore、別組織・不正path、resource操作の`suspended`拒否、本人privacy操作の`suspended`許可を検証する。
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: 期限到達したソフト削除をpurgeするscheduled FunctionをTDDで実装する**
+
+`purgeExpiredSoftDeletes.ts`は`onSchedule({ schedule: 'every day 03:00', timeZone: 'Asia/Tokyo', region: 'asia-northeast1' })`を使う。`lessonTemplates`と`lessonRuns`を`pendingDeletion.purgeAfter <= now`でページングし、各docを上記と同じoperation-doc sagaへ渡す。未到来は削除しない、期限ちょうどは削除する、1件失敗しても他件を処理して失敗を記録する、同じdocの次回実行はdeduplicate/再開することをfake clock/storeでテストする。`functions/src/index.ts`からexportする。予定実行の本番有効化はTask 13のBlaze外部ゲートに従う。
+
+- [ ] **Step 7: クライアントラッパーを実装する**
+
+`src/lib/privacy/deletePersonalData.ts`に4つの`httpsCallable`ラッパーを実装する。
+
+- [ ] **Step 8: `npm run verify` を通す**
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add functions/src/privacy/deletePersonalData.ts functions/src/privacy/deletePersonalData.test.ts src/lib/privacy/deletePersonalData.ts src/lib/privacy/deletePersonalData.test.ts functions/src/index.ts
-git commit -m "feat: add soft-delete-with-30-day-restore and hard-delete callables for personal data"
+git add functions/src/privacy/deletePersonalData.ts functions/src/privacy/deletePersonalData.test.ts functions/src/privacy/purgeExpiredSoftDeletes.ts functions/src/privacy/purgeExpiredSoftDeletes.test.ts src/lib/privacy/deletePersonalData.ts src/lib/privacy/deletePersonalData.test.ts functions/src/index.ts
+git commit -m "feat: add recoverable resource deletion and complete personal purge"
 ```
 
 ---
 
-## Task 13: Blazeプラン移行と予算アラート（本番）
+## Task 13: Blazeプラン・予算アラートの外部リリースゲート
 
 `phase1a`計画 Task 1 Step 1と同一内容。Task 2で暫定的に触れているが、本タスクで実施記録を確定する。
 
-**Files:** なし（インフラ作業）
+**Files:**
+- Create: `docs/operations/firebase-billing-readiness.md`
 
-- [ ] **Step 1: 実施済みであることを確認する**
+- [ ] **Step 1: 機密値を含まない確認記録テンプレートを作る**
 
-Task 2 Step 1で実施済みであれば、実施日・担当者・予算アラートのしきい値をこのファイルまたはチームの運用メモに転記する。未実施であれば今実施する。
+`docs/operations/firebase-billing-readiness.md`へ、Firebase project ID、Blaze移行状態、予算アラート設定状態、確認日、確認者、証跡URL（アクセス制限付き管理画面へのリンクのみ。billing account ID・認証情報は書かない）のチェック欄を作る。実装者に本番課金変更権限がない場合は`PENDING_EXTERNAL_APPROVAL`と記録し、コード完了を妨げない一方、本番公開は明確にブロックする。
+
+- [ ] **Step 2: 読み取り権限とbilling account IDがユーザーから明示提供された場合だけ確認コマンドを実行する**
 
 Run: `gcloud billing budgets list --billing-account=<ACCOUNT_ID>`
 Expected: 予算が1件以上表示される。
 
-- [ ] **Step 2: Commit** — コード変更がないため省略可能。実施記録のみをチームの運用メモへ残す。
+`<ACCOUNT_ID>`を推測しない。権限・値が提供されていない場合はコマンドを実行せず、Step 1の状態を`PENDING_EXTERNAL_APPROVAL`にする。
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/operations/firebase-billing-readiness.md
+git commit -m "docs: Firebase課金のリリースゲートを記録"
+```
 
 ---
 
@@ -2058,8 +2321,12 @@ Expected: Task 1で意図的に削除した旧テスト以外、すべて成功�
 
 - [ ] **Step 5: UIに変更がないことを確認する（Task 1の意図的な削除を除く）**
 
-Run: `git diff --stat codex/classroom...HEAD -- src/components`
+Run: `git diff --stat "$(git merge-base docs/lesson-platform-roadmap HEAD)"...HEAD -- src/components`
 Expected: Task 1で削除したファイル（`WorkspacePicker.tsx`等）以外の`src/components`への変更がないこと。
+
+- [ ] **Step 6: 外部リリースゲートを判定する**
+
+`docs/operations/firebase-billing-readiness.md`が`VERIFIED`なら本番公開準備済み、`PENDING_EXTERNAL_APPROVAL`ならPhase Aのコード実装は完了扱いにできるが、Functionsを必要とする本番公開は不可と記録する。外部権限不足をテスト成功で代替しない。
 
 ---
 
