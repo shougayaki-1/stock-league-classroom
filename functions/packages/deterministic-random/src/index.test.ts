@@ -57,19 +57,12 @@ describe('deriveSeed', () => {
     expect(beforeRestore).not.toBe(afterRestore)
   })
 
-  it('uses an unambiguous type-preserving encoding instead of colon joining', () => {
-    expect(deriveSeed(['1'])).not.toBe(deriveSeed([1]))
-    expect(deriveSeed(['a:b', 'c'])).not.toBe(deriveSeed(['a', 'b:c']))
+  it('uses the canonical colon-delimited seed format from resolution D', () => {
+    const parts = ['run-abc', 0, 'acme', 3] as const
+    expect(deriveSeed([...parts])).toBe(fnv1aHash('run-abc:0:acme:3'))
   })
 
-  it('matches the seed derivation fixed vector', () => {
-    expect(deriveSeed(['run-abc', 0, 'acme', 3])).toBe(997618770)
+  it('matches the colon-delimited seed derivation fixed vector', () => {
+    expect(deriveSeed(['run-abc', 0, 'acme', 3])).toBe(3149992328)
   })
-
-  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
-    'rejects a non-finite numeric seed part: %s',
-    (part) => {
-      expect(() => deriveSeed(['run-abc', part])).toThrow(/finite/i)
-    },
-  )
 })

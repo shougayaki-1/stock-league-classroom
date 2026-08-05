@@ -6,7 +6,7 @@
 
 > **正本は統合仕様書。** `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`（§12、§27.2、§28、§30-4）と `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md`（矛盾解消 A・B・C・D・F）が優先する。本計画と両文書が矛盾する場合は両文書を優先し、本計画側の誤りとして扱う。
 >
-> **前提: Phase A・Phase B は完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`のRTDBパス分離、`functions/`パッケージ、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行が揃っている。**ただしPhase Bの実装計画ドキュメントは本リポジトリに存在しない**（`docs/superpowers/plans/`にPhase B専用の計画がない）。本計画はチーム帰属の検証手段・生徒の`lessonRunPublic`読み取り許可がPhase Bで提供されている前提で設計するが、正確なルール文字列・RTDBパス名はPhase C着手時にPhase Bの実装成果物（コード）と突き合わせて確認すること。差異があれば本計画のTask 13・Task 7のルール定義を実際の形へ合わせる。
+> **前提: Phase A・Phase B は完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`functions/packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`のRTDBパス分離、`functions/`パッケージ、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行が揃っている。**ただしPhase Bの実装計画ドキュメントは本リポジトリに存在しない**（`docs/superpowers/plans/`にPhase B専用の計画がない）。本計画はチーム帰属の検証手段・生徒の`lessonRunPublic`読み取り許可がPhase Bで提供されている前提で設計するが、正確なルール文字列・RTDBパス名はPhase Bの実装成果物（コード）と突き合わせて確認すること。差異があれば本計画のTask 13・Task 7のルール定義を実際の形へ合わせる。
 >
 > **旧実装（`hostTrading.ts`、`pricingCore.ts`、`liveMarketTypes.ts`等）はPhase Aで削除済みの前提。** 参照する場合は`git log`のみとし、詳細を読み込む必要はない。
 >
@@ -14,16 +14,16 @@
 
 **Goal:** 教師が作成した企業・情報・決算・指標を教材として、生徒が授業時間中いつでも注文でき、サーバーが3秒ごとに区間を締め切って同一価格で約定し、需給・情報・ノイズから次価格を計算し、資金・株を正しく拘束し、市場停止・再開・予想チェックポイント・評価・チャートまでを一貫して提供する、社会科・市場経済シミュレーションの中核機能を実装する。
 
-**Architecture:** 3秒区間の駆動はCloud Tasksの自己連鎖（矛盾解消A）とし、教師のブラウザに依存しない。区間締切のたびにCloud Functionsが起動し、`lessonRuns/{id}/orders`サブコレクション（Firestore）に溜まった`PENDING`注文を検証・相殺・約定し、`LessonEvent`へ追記し、次価格をRTDBの`lessonRunPublic/{lessonRunId}`（生徒が読める）へ書き込み、企業の非公開係数と内部計算ログは`lessonRunPrivate/{lessonRunId}`（教師のみ）へ、チーム別の拘束中資金・保有株・自分の注文状態は新設する`lessonRunTeamState/{lessonRunId}/{teamId}`（そのチームのメンバーのみ）へ書き込む——3つとも祖先を共有しない別々のトップレベルRTDBノードとし、Phase Aが確立したルールカスケード対策（祖先の`.read`は子孫の`.read: false`で取り消せない）を踏襲する。価格計算・需給集計・資金拘束判定・バッチ約定はすべて純粋関数として`functions/src/market/engine/`に実装し、Cloud Tasksハンドラ・Callableはこれらの純粋関数を呼ぶ薄いI/O層にする。乱数はPhase Aの`packages/deterministic-random`（`deriveSeed`/`mulberry32`）のみを使い、`Math.random()`は一切使わない。
+**Architecture:** 3秒区間の駆動はCloud Tasksの自己連鎖（矛盾解消A）とし、教師のブラウザに依存しない。区間締切のたびにCloud Functionsが起動し、`lessonRuns/{id}/orders`サブコレクション（Firestore）に溜まった`PENDING`注文を検証・相殺・約定し、`LessonEvent`へ追記し、次価格をRTDBの`lessonRunPublic/{lessonRunId}`（生徒が読める）へ書き込み、企業の非公開係数と内部計算ログは`lessonRunPrivate/{lessonRunId}`（教師のみ）へ、チーム別の拘束中資金・保有株・自分の注文状態は新設する`lessonRunTeamState/{lessonRunId}/{teamId}`（そのチームのメンバーのみ）へ書き込む——3つとも祖先を共有しない別々のトップレベルRTDBノードとし、Phase Aが確立したルールカスケード対策（祖先の`.read`は子孫の`.read: false`で取り消せない）を踏襲する。価格計算・需給集計・資金拘束判定・バッチ約定はすべて純粋関数として`functions/src/market/engine/`に実装し、Cloud Tasksハンドラ・Callableはこれらの純粋関数を呼ぶ薄いI/O層にする。乱数はPhase Aの`functions/packages/deterministic-random`（`deriveSeed`/`mulberry32`）のみを使い、`Math.random()`は一切使わない。
 
 企業・情報の型は「誰が読めるか」で2段に分ける。**この境界はJSのimportグラフではなく、Firestore/RTDBのセキュリティルール（どのドキュメント/ノードを誰が読めるか）で強制する**——教師の認証済みブラウザは教材作成のために非公開の影響設定（`impactSensitivities`・`InformationImpact`）を当然読み書きする必要があり、「`src/`からimportしない」という制約では教師UIが成立しない。実際に効くのは、(1) 生の非公開データを含む`LessonTemplate.draft`・`LessonRun.templateSnapshot`（Firestore）が組織メンバー（教師）にしか読めないこと、(2) 生徒が読める唯一の経路であるRTDB`lessonRunPublic`には、サーバー（Functions）が`toPublicView`で機械的に間引いた後のデータしか書き込まれないこと、の2点である。型としては`packages/market-authoring-content`（`SimulatedCompany`・`InformationItem`・`InformationImpact`・`EconomicIndicatorAuthoring`。教師authoring UIとFunctions engineの両方がimportする）と`packages/market-public-content`（`CompanyPublicView`・`InformationPublicView`・`EconomicIndicatorPublicView`。生徒向けUIとFunctionsの両方がimportする）に分ける。**間引き変換関数`toPublicView`自体はFunctions専用**とする——「生徒に何を見せてよいかを決める権限をクライアントコードに持たせない」ことが目的であり、実際に生徒へ届く値を作る唯一の場所をサーバーに固定するための設計判断であって、import境界そのものがセキュリティ境界ではない点に注意。
 
-**Tech Stack:** TypeScript, Firebase Firestore（`lessonRuns/{id}/orders`サブコレクション、トランザクション）, Firebase Realtime Database（`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`）, Cloud Functions for Firebase v2（`onCall`、Cloud Tasksタスクキュー`onTaskDispatched`系）, `packages/deterministic-random`, Vitest, `@firebase/rules-unit-testing`。
+**Tech Stack:** TypeScript, Firebase Firestore（`lessonRuns/{id}/orders`サブコレクション、トランザクション）, Firebase Realtime Database（`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`）, Cloud Functions for Firebase v2（`onCall`、Cloud Tasksタスクキュー`onTaskDispatched`系）, `functions/packages/deterministic-random`, Vitest, `@firebase/rules-unit-testing`。
 
 ## Global Constraints
 
 - 各タスクは完了時に `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*` の `verify`）を通すこと。
-- 乱数は`Math.random()`禁止。`packages/deterministic-random`の`deriveSeed`/`mulberry32`のみを使う（矛盾解消D）。シード導出式は `derive(`${randomSeed}:${restoreGeneration}:${stockId}:${batchIndex}`)` に固定する。
+- 乱数は`Math.random()`禁止。`functions/packages/deterministic-random`の`deriveSeed`/`mulberry32`のみを使う（矛盾解消D）。シード導出式は `derive(`${randomSeed}:${restoreGeneration}:${stockId}:${batchIndex}`)` に固定する。
 - 生徒へ将来価格・非公開係数（`impactSensitivities`、`InformationImpact`、`sensitivity`等）・乱数シードを送らない。型を`packages/market-authoring-content`（教師/サーバー用）と`packages/market-public-content`（生徒/サーバー用）に分け、間引き変換（`toPublicView`）はFunctions内の1箇所（`functions/src/market/toPublicView.ts`）に固定する。実際の遮断はFirestore/RTDBルール（教師のみ読める`lessonRuns`、間引き後データのみが書かれる`lessonRunPublic`）が担う。
 - 冪等性: 注文送信・取消・バッチ処理・市場停止/再開のすべてに`idempotencyKey`または`batchId`を要求し、Phase Aの`appendLessonEvent`のパターン（トランザクション内でidempotencyドキュメントを確認）を踏襲する。
 - 需給影響には相殺後（正味）の金額を使い、出来高表示には相殺前（総額）を使う（矛盾解消C）。この2つの値は同じ関数から別フィールドとして返し、呼び出し側が取り違えられない型にする。
@@ -166,7 +166,7 @@ describe('InformationPublicView', () => {
 Run: `cd packages/market-public-content && npx vitest run src/index.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: `package.json`・`tsconfig.json`を作成する（`packages/deterministic-random`と同一構成）**
+- [ ] **Step 3: `package.json`・`tsconfig.json`を作成する（決定的PRNGパッケージと同じ共有パッケージ構成）**
 
 `packages/market-public-content/package.json`:
 
@@ -187,7 +187,7 @@ Expected: FAIL — module not found
 }
 ```
 
-`tsconfig.json`は`packages/deterministic-random/tsconfig.json`をそのまま複製する。ルート`package.json`の`workspaces`へ`"packages/market-public-content"`を追加し、`functions/package.json`の`dependencies`へ`"@stock-league/market-public-content": "*"`を追加する。
+`tsconfig.json`は対象パッケージの実行環境に合わせて設定する。ルート`package.json`の`workspaces`へ`"packages/market-public-content"`を追加し、`functions/package.json`の`dependencies`へ`"@stock-league/market-public-content": "*"`を追加する。
 
 - [ ] **Step 4: 公開DTOを実装する**
 
@@ -820,7 +820,7 @@ git commit -m "feat: add SocialStudiesMarketContent and validate it at LessonRun
 
 ### Task 3: 価格計算エンジン（情報+需給+ノイズ、価格ガード、内訳）
 
-統合仕様書 §12.20（概念式）・§12.21（需給影響）・§12.22（市場ノイズ）・§12.23（価格ガード）・§12.24（急変表示）・§12.31（内訳表示）を実装する。純粋関数とし、Cloud Tasksハンドラ（Task 10）から呼ばれる。**乱数は`packages/deterministic-random`のみを使う。**
+統合仕様書 §12.20（概念式）・§12.21（需給影響）・§12.22（市場ノイズ）・§12.23（価格ガード）・§12.24（急変表示）・§12.31（内訳表示）を実装する。純粋関数とし、Cloud Tasksハンドラ（Task 10）から呼ばれる。**乱数は`functions/packages/deterministic-random`のみを使う。**
 
 `priceSensitivityPreset`（情報重視/バランス/需給重視）が情報影響と需給影響の相対的な重みをどう変えるかの具体的な倍率、および§12.24の「急変」をどの変化率から警告とするかは、統合仕様書にもPhase A・矛盾解消ドキュメントにも数値が示されていない（矛盾解消ドキュメント「残る未確定事項」の「需給感度の既定値」「市場ノイズの実値」に該当し、「試運転で決める」と明記されている）。本タスクでは動作する具体的な既定値を置くが、**これは試運転で調整される暫定値であり最終値ではない**——値を1箇所（`PRICE_SENSITIVITY_PRESETS`定数と`DEFAULT_SUDDEN_CHANGE_WARNING_THRESHOLD_PERCENT`)にまとめ、テストが期待する数値もそこを参照する形にして、後から調整するときに変更箇所が1つで済むようにする。
 

@@ -4,7 +4,7 @@ import { deriveSeed, fnv1aHash, mulberry32 } from './deterministicRandom'
 describe('deterministicRandom package consumption', () => {
   it('loads the built CommonJS package from the Functions dependency', () => {
     expect(fnv1aHash('a')).toBe(3826002220)
-    expect(deriveSeed(['run-abc', 0, 'acme', 3])).toBe(997618770)
+    expect(deriveSeed(['run-abc', 0, 'acme', 3])).toBe(3149992328)
 
     const random = mulberry32(42)
     expect([random(), random(), random()]).toEqual([

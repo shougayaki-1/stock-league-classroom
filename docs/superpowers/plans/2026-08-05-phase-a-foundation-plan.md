@@ -90,7 +90,7 @@
 | `functions/package.json`, `functions/tsconfig.json`, `functions/.gitignore`, `functions/src/index.ts`, `functions/src/ping.ts`, `.test.ts` | Create（Task 1、`phase1a`計画Task 1をそのまま流用） |
 | `package.json` | Modify（`workspaces`追加、`verify`スクリプト拡張） |
 | `firebase.json` | Modify（`functions`セクション、`emulators.functions`追加） |
-| `packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 3、決定的PRNG共有パッケージ） |
+| `functions/packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 3、決定的PRNG共有パッケージ） |
 | `src/lib/org/personalOrgId.ts`, `.test.ts` / `functions/src/lib/personalOrgId.ts`, `.test.ts` | Create（Task 3） |
 | `functions/src/lib/idempotency.ts`, `.test.ts` | Create（Task 3、path-safe keyとcanonical request digest） |
 | `firestore.rules` | Modify（Task 1で旧ブロック削除、Task 4/6/7/8/9で新ブロック追加） |
@@ -299,8 +299,8 @@ git commit -m "build: scaffold functions/ workspace with a smoke-test callable"
 **Files:**
 - Create: `src/lib/org/personalOrgId.ts`, `.test.ts` / `functions/src/lib/personalOrgId.ts`, `.test.ts`
 - Create: `functions/src/lib/idempotency.ts`, `.test.ts`
-- Create: `packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
-- Modify: ルート`package.json`（`workspaces`に`packages/deterministic-random`を追加）, `functions/package.json`（依存に追加）
+- Create: `functions/packages/deterministic-random/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
+- Modify: ルート`package.json`（`workspaces`に`functions/packages/deterministic-random`を追加）, `functions/package.json`（依存に追加）
 
 **Interfaces:**
 - Produces: `personalOrgId(uid: string): string`（`docs/superpowers/plans/2026-08-05-phase1a-org-schema-functions-plan.md` Task 2と同一実装。以降すべてのタスクが使う）
@@ -313,7 +313,7 @@ git commit -m "build: scaffold functions/ workspace with a smoke-test callable"
 
 その前に`functions/src/lib/idempotency.test.ts`で、slash/長大キーが常に64桁hex IDになること、scopeが違えばIDが違うこと、`{a:1,b:2}`と`{b:2,a:1}`のdigestが一致すること、配列順や値が違えばdigestが変わることを失敗テストとして追加する。`idempotency.ts`はSHA-256と、plain objectのキーを再帰的にソートする`canonicalJson`を実装する（`undefined`、循環参照、非JSON値は拒否）。後続タスクの生の`createHash`/`JSON.stringify`はこのhelperへ置き換える。Task 6/7/8/9/12の各テストにも、意味が同じでobject key順だけ異なる再試行がdeduplicateされるケースを最低1件ずつ入れる。
 
-統合仕様書矛盾解消D「同一入力に対して同一出力になることをテストで保証する」に対応する。`packages/deterministic-random/src/index.test.ts`:
+統合仕様書矛盾解消D「同一入力に対して同一出力になることをテストで保証する」に対応する。`functions/packages/deterministic-random/src/index.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -361,13 +361,13 @@ describe('deriveSeed', () => {
 
 - [ ] **Step 9: 失敗を確認する**
 
-Run: `cd packages/deterministic-random && npx vitest run src/index.test.ts`
+Run: `cd functions/packages/deterministic-random && npx vitest run src/index.test.ts`
 Expected: FAIL — module not found
 
 - [ ] **Step 10: 実装する**
 
 ```ts
-// packages/deterministic-random/src/index.ts
+// functions/packages/deterministic-random/src/index.ts
 
 /**
  * FNV-1a 32-bit hash. Deterministic across platforms and Node/browser — no
@@ -410,21 +410,22 @@ export const mulberry32 = (seed: number): (() => number) => {
 export const deriveSeed = (parts: (string | number)[]): number => fnv1aHash(parts.join(':'))
 ```
 
-- [ ] **Step 11: `packages/deterministic-random/package.json`・`tsconfig.json`を作成する**
+- [ ] **Step 11: `functions/packages/deterministic-random/package.json`・`tsconfig.json`を作成する**
 
 ```json
 {
   "name": "@stock-league/deterministic-random",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
+    "build": "tsc",
+    "check:dist": "git diff --exit-code -- dist",
     "lint": "oxlint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "npm run lint && npm run typecheck && npm test"
+    "verify": "npm run lint && npm run typecheck && npm run build && npm run check:dist && npm test"
   },
   "devDependencies": { "oxlint": "^1.71.0", "typescript": "~6.0.2", "vitest": "^4.1.10" }
 }
@@ -433,26 +434,27 @@ export const deriveSeed = (parts: (string | number)[]): number => fnv1aHash(part
 ```json
 {
   "compilerOptions": {
-    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
-    "lib": ["ES2022"], "strict": true, "noUnusedLocals": true, "noUnusedParameters": true, "skipLibCheck": true
+    "target": "ES2022", "module": "commonjs", "moduleResolution": "node",
+    "lib": ["ES2022"], "declaration": true, "outDir": "dist", "rootDir": "src",
+    "strict": true, "noUnusedLocals": true, "noUnusedParameters": true, "skipLibCheck": true, "ignoreDeprecations": "6.0"
   },
-  "include": ["src"]
+  "include": ["src/index.ts"]
 }
 ```
 
 - [ ] **Step 12: テストを通す**
 
-Run: `cd packages/deterministic-random && npm install && npx vitest run src/index.test.ts`
+Run: `cd functions && npm ci --workspaces=false && npm test`
 Expected: PASS
 
 - [ ] **Step 13: ルート`package.json`と`functions/package.json`に依存として組み込む**
 
-ルート`package.json`の`workspaces`を`["functions", "packages/deterministic-random"]`にする。`functions/package.json`の`dependencies`に`"@stock-league/deterministic-random": "*"`を追加する。`src/`側（クライアント）でも同様にルートの依存関係経由で`import { deriveSeed, mulberry32 } from '@stock-league/deterministic-random'`が解決できることを、Task 8で実際に使う際に確認する。
+ルート`package.json`の`workspaces`を`["functions", "functions/packages/deterministic-random"]`にする。`functions/package.json`の`dependencies`に`"@stock-league/deterministic-random": "file:packages/deterministic-random"`を追加する。`src/`側（クライアント）での利用は、このFunctions同梱パッケージを直接参照せず、必要になった時点でクライアント配布用の共有方法を別途確定する。
 
 - [ ] **Step 14: `npm install`をルートから実行し、両ワークスペースが解決することを確認する**
 
 Run: `npm install`
-Expected: `node_modules/@stock-league/deterministic-random`と`node_modules/functions`のシンボリックリンクが作成される。
+Expected: ルートの`node_modules/@stock-league/deterministic-random`と、Functions単体の`functions/node_modules/@stock-league/deterministic-random`が同梱パッケージを解決する。
 
 - [ ] **Step 15: `npm run verify` を通す**
 
@@ -462,7 +464,7 @@ Expected: 全ワークスペースの`verify`が成功する。
 - [ ] **Step 16: Commit**
 
 ```bash
-git add src/lib/org packages/deterministic-random functions/src/lib functions/package.json package.json
+git add src/lib/org functions/packages/deterministic-random functions/src/lib functions/package.json package.json
 git commit -m "feat: add personalOrgId and a shared deterministic PRNG for replay"
 ```
 
@@ -2287,7 +2289,7 @@ git commit -m "docs: Firebase課金のリリースゲートを記録"
 - [ ] **Step 1: `npm run verify` が通ることを確認する**
 
 Run: `npm run verify`
-Expected: 全ワークスペース（ルート・`functions`・`packages/deterministic-random`）の`lint`/`typecheck`/`test`/`test:rules`/`build`が成功する。
+Expected: 全ワークスペース（ルート・`functions`・`functions/packages/deterministic-random`）の`lint`/`typecheck`/`test`/`test:rules`/`build`が成功する。
 
 - [ ] **Step 2: 統合仕様書 §31「基盤」チェックリストを、本計画のタスクへ対応づけて確認する**
 

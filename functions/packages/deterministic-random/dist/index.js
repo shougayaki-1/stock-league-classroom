@@ -5,7 +5,8 @@ exports.deriveSeed = exports.mulberry32 = exports.fnv1aHash = void 0;
  * FNV-1a 32-bit hash. It has no crypto API dependency, so it produces the
  * same result in the browser and Cloud Functions runtimes. It is not
  * cryptographic and, as a 32-bit hash, collisions are unavoidable; use it
- * only for deterministic replay seeds, never for identity or security.
+ * only for deterministic replay seeds within the fixed schema components
+ * defined by the specification, never for identity, unique IDs, or security.
  */
 const fnv1aHash = (input) => {
     let hash = 0x811c9dc5;
@@ -32,16 +33,9 @@ const mulberry32 = (seed) => {
 };
 exports.mulberry32 = mulberry32;
 /**
- * Encodes the ordered parts with both type and value, preventing delimiter and
- * string/number collisions before deriving a replay seed for mulberry32.
+ * Derives the canonical colon-delimited replay seed format defined by
+ * resolution D. It is for fixed-schema internal components only; never use it
+ * for identity, unique IDs, or security-sensitive inputs.
  */
-const deriveSeed = (parts) => {
-    const encoded = parts.map((part) => {
-        if (typeof part === 'number' && !Number.isFinite(part)) {
-            throw new TypeError('Seed number parts must be finite');
-        }
-        return [typeof part, part];
-    });
-    return (0, exports.fnv1aHash)(JSON.stringify(encoded));
-};
+const deriveSeed = (parts) => (0, exports.fnv1aHash)(parts.join(':'));
 exports.deriveSeed = deriveSeed;
