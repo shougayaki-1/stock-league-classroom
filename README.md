@@ -1,6 +1,14 @@
 # Stock League Classroom
 
-授業用のリアルタイム株式市場シミュレーターです。教師が市場テンプレートを作成し、生徒は匿名認証でチーム共有口座へ参加します。
+教室向けの授業シミュレーターを開発するリポジトリです。現在は Phase A（安全化と新基盤）の段階であり、公開ページのみを提供しています。旧実装の運用機能は廃止済みです。
+
+正本の要件と実装順は、[統合仕様書](docs/superpowers/specs/2026-08-05-integrated-platform-spec.md) を参照してください。Phase Aの作業計画は [Phase A実装計画](docs/superpowers/plans/2026-08-05-phase-a-foundation-plan.md)、以降の共通授業基盤は [Phase B実装計画](docs/superpowers/plans/2026-08-05-phase-b-common-lesson-platform-plan.md) に記載しています。
+
+## 現在の提供範囲
+
+- 公開ページ: サービス概要、操作方針、利用規約、プライバシーポリシー、お問い合わせ
+- 開発基盤: React/Vite、Firebase Hosting、Firestore/Realtime Database Rules、テスト環境
+- 準備中: 授業教材、授業実施、参加、教室表示、売買・結果。これらは教師ブラウザではなくサーバーが権威を持つ設計で段階的に提供します。
 
 ## ローカル開発
 
@@ -9,7 +17,7 @@
 3. `VITE_USE_EMULATORS=true` にして `firebase emulators:start` を起動します。
 4. 別ターミナルで `npm ci && npm run dev` を実行します。
 
-通常テストは `npm test`、Firestore/RTDBルールテストは `npm run test:rules`、全検証は `npm run verify` です。
+通常テストは `npm test`、Firestore/RTDB Rulesテストは `npm run test:rules`、全検証は `npm run verify` です。
 
 ## Firebase本番設定
 
@@ -18,23 +26,15 @@
 - [x] `VITE_FIREBASE_APP_CHECK_SITE_KEY`を本番ビルドへ設定（`.env.local`、GitHub Actions repository variable）
 - [x] Google Cloud ConsoleでFirebase Web APIキーに本番ドメインのHTTPリファラ制限を設定
 - [x] `.firebaserc` の対象が意図した本番プロジェクト（`oss-stock-league`）であることを確認
-- [ ] **App Checkメトリクスで正規リクエストを確認後、Authentication、Firestore、Realtime Databaseのenforcementを有効化**
+- [ ] App Checkメトリクスで正規リクエストを確認後、将来利用するAuthentication、Firestore、Realtime Databaseのenforcementを有効化
 
 `VITE_FIREBASE_APP_CHECK_DEBUG_TOKEN` はローカル専用です。本番ビルドに設定すると起動時に失敗します。
 
-### App Check enforcementを有効化する前に
-
-現在、本番ビルドはApp Checkトークンを生成していますが、**バックエンド側のenforcementはまだ無効**です。理由は、設定ミスがあった場合にenforcementを先に有効化すると、正規の教師・生徒のリクエストが全て拒否されるためです。
-
-Firebase Console → App Check → APIs で、Firestore・Realtime Database・Authenticationそれぞれについて「検証済み」と「不明」の比率を数日分観察し、検証済みが十分な割合になってから、各APIの「適用を開始」を押してください。不明なリクエストが多い場合は、リファラ制限やドメイン設定を先に見直してください。
-
 ## デプロイ
 
-`firebase deploy` を実行します。Hostingのpredeployが`npm run build`を実行し、SPA rewriteによって各画面の直接リロードにも対応します。ビルド時に`VITE_FIREBASE_APP_CHECK_SITE_KEY`が`.env.local`から読み込まれます。
+`firebase deploy` を実行します。Hostingのpredeployが`npm run build`を実行し、SPA rewriteによって公開ページの直接リロードにも対応します。
 
 `.github/workflows/deploy.yml`によるCI経由のデプロイは、`FIREBASE_SERVICE_ACCOUNT`シークレットと`production` Environmentが未設定のため、現時点では実行できません。当面はローカルからの`firebase deploy`を使ってください。
-
-公開前に、教師ログイン、テンプレート作成、市場作成、生徒参加、承認、複数端末での売買、順位更新、signage、終了結果、削除を実端末で確認してください。
 
 ### 配信中のバージョンを確認する
 
@@ -44,59 +44,6 @@ Firebase Console → App Check → APIs で、Firestore・Realtime Database・Au
 curl -s https://oss-stock-league.web.app/ | grep '<meta name="version"'
 ```
 
-### 直前のバージョンへ戻す
-
-Hostingのみを即座に戻せます。ルールは戻らないため、ルールを含む変更を戻す場合は該当コミットへ`git checkout`してから`firebase deploy`を実行してください。
-
-```bash
-firebase hosting:rollback --project oss-stock-league
-```
-
-## 緊急停止
-
-新規の市場作成だけを止めます。**進行中の授業は止まりません。** 画面ではなくセキュリティルールで強制されるため、改変したクライアントからも回避できません。
-
-Firebase Console → Firestore で `serviceStatus/global` を作成し、次のフィールドを設定します。
-
-| フィールド | 型 | 値 |
-| --- | --- | --- |
-| `acceptingNewMarkets` | boolean | `false` で停止、`true` で再開 |
-| `message` | string | 教師の画面に表示する理由 |
-
-Realtime Database側も塞ぐ場合は、ルートに `serviceStatus/acceptingNewMarkets` を `false` で作成します。教師がRTDBへ直接書き込む経路まで塞ぐための二重化です。
-
-ドキュメントが存在しない状態は「稼働中」として扱われます。ルールを先に配信してもサービスが止まることはありません。
-
 ## エラー監視
 
-`VITE_SENTRY_DSN` を設定するとSentryへ送信されます。未設定時とエミュレータ利用時は何も送信しません。
-
-生徒が未成年であるため、送信前に次を除去しています。プライバシーポリシーの記載と実装を一致させるためのもので、変更する場合は[プライバシーポリシー](src/components/PublicDocs.tsx)も併せて更新してください。
-
-- ユーザー識別子、Cookie、ブレッドクラム、サーバー名
-- エラー本文中の参加コードとメールアドレス
-- セッションリプレイとトレーシング（いずれも無効）
-
-## 同時利用の制約（Sparkプラン）
-
-Realtime Databaseの無料プランは**同時接続100**が上限です。満席の1教室で83接続（生徒80＋教師の管理画面とホスト画面＋教室画面）を使うため、**実質的に同時開催できる教室は1つ**です。
-
-現在、教師になれる人に制限はありません（メール確認済みのGoogleアカウントであれば誰でも市場を作れます）。第三者の教室と接続枠を共有する構成であることを理解したうえで運用してください。
-
-上限に達したときの挙動:
-
-- 生徒・ホストの画面は`.info/connected`を監視し、12秒以上つながらない場合に理由を表示します
-- 売買済みの内容はサーバー側に保存されており、復帰後に続きから再開できます
-- 進行中の授業を優先したい場合は、[緊急停止](#緊急停止)で新規の市場作成だけを止められます
-
-同時接続数はFirebase Console → Realtime Database → 使用状況で確認できます。恒常的に複数教室を開催する必要が生じた場合は、Blazeプランへの移行が必要です（移行後の上限は20万接続）。
-
-## 授業当日の運用
-
-- ホスト画面のタブは**前面に置いたまま**にしてください。バックグラウンドタブでは`setInterval`がブラウザに抑制され、価格更新と約定処理が止まります。PCのスリープも同様です。画面ロックは`WakeLock`で抑止していますが、OS側の設定によっては効かない場合があります。タブが10秒以上隠れてから戻ってくると、中断していた可能性がある旨の警告がホスト画面に表示されます。
-- 市場の結果は`marketResults/{marketId}`（Firestore）に保存されます。市場を削除すると、この結果・取引履歴・参加コード・Realtime Database側の進行データがすべて削除され、**復元できません**。削除前に教師ポータルの「結果をCSVで保存」を実行してください（チーム結果と取引履歴の2ファイルがダウンロードされます）。作成から30日を過ぎると削除の推奨表示が出ますが、自動削除はされません。
-- 生徒が端末を替えた、またはlocalStorageを消してしまった場合は、参加画面で参加コードと**4文字の復帰コード**を入力させると、同じチーム・同じ資産で復帰できます（表示名も前回と同一である必要があります）。復帰コードは承認後、生徒の市場画面に表示され続けます。授業開始時に控えさせておくと安全です。
-- 参加は市場の開始後（`SETUP`・`OPEN`いずれの状態）でも受け付けられます。教師が承認するまで生徒はチームに加わりません。取引を終了（`ENDING`・`ENDED`）した後は新規参加を受け付けません。
-- テンプレートの共有URLは発行後に一覧できません。発行時にコピーして保管してください。失効させる手段はありません。
-- 緊急停止（`serviceStatus/global`）と`operator`カスタムクレームの付与は、Firebase Console / Admin SDKからの手動操作です。誰がこれらの権限を持つかは運用側で管理してください。
-- チームの資産（現金・保有株）はチーム単位で保持されます。教師が生徒を市場から退出させても、チームの資産は残ります。
+`VITE_SENTRY_DSN` を設定するとSentryへ技術的なエラー情報を送信します。未設定時とエミュレータ利用時は何も送信しません。個人を識別しうる情報を送らない方針は [プライバシーポリシー](src/components/PublicDocs.tsx) と合わせて更新してください。

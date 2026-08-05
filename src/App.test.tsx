@@ -5,6 +5,8 @@ import App from './App'
 describe('App', () => {
   it('keeps every landing-page CTA within the surviving public routes', () => {
     render(<App />)
+    expect(screen.getByRole('link', { name: '使い方' })).toHaveAttribute('href', '/guide')
+    expect(screen.getByRole('link', { name: '特徴' })).toHaveAttribute('href', '/about')
     expect(screen.getByRole('link', { name: /詳しく見る/i })).toHaveAttribute('href', '/about')
     expect(screen.getByRole('link', { name: /サービス概要を見る/i })).toHaveAttribute('href', '/about')
   })
@@ -22,12 +24,11 @@ describe('App', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('states on every public document that the market is a simulation', () => {
+  it('states the current Phase A privacy posture', () => {
     window.history.pushState({}, '', '/privacy')
     render(<App />)
-    // Minors' data handling is the reason these pages exist; the claim must be explicit.
-    expect(screen.getByText(/生徒の個人情報は取得しない設計です/)).toBeInTheDocument()
-    expect(screen.getByText(/自動削除の仕組みは実装されていません/)).toBeInTheDocument()
+    expect(screen.getByText(/現在は、生徒の授業データを取得していません/)).toBeInTheDocument()
+    expect(screen.getByText(/保存期間と自動削除は、授業機能の提供開始前に明示/)).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 
