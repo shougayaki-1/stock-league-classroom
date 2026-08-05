@@ -22,3 +22,12 @@ describe('emergency stop (RTDB)', () => {
     await assertFails(environment.authenticatedContext('operator-a', { operator: true }).database().ref('serviceStatus').set({ acceptingNewMarkets: 'yes' }))
   })
 })
+
+describe('removed legacy RTDB tree', () => {
+  it('denies an authenticated read and write at an arbitrary liveMarkets child path', async () => {
+    const legacyPath = environment.authenticatedContext('teacher-a', { operator: true }).database().ref('liveMarkets/legacy-market/private/runtime')
+
+    await assertFails(legacyPath.get())
+    await assertFails(legacyPath.set({ legacy: true }))
+  })
+})
