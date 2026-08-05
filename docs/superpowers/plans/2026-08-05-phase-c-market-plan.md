@@ -59,11 +59,12 @@
 | `functions/src/market/orderTypes.ts` | Create（Task 5。`MarketOrder`型） |
 | `functions/src/lessonRuns/orders/repository.ts`, `.test.ts` | Create（Task 5。`lessonRuns/{id}/orders`サブコレクションCRUD） |
 | `functions/src/market/engine/fundLocking.ts`, `.test.ts` | Create（Task 6。ソフト拘束・ハード拘束の純粋関数） |
-| `functions/src/market/submitOrder.ts`, `.test.ts`, `onCall.ts` / `src/lib/market/submitOrder.ts`, `.test.ts` | Create（Task 7） |
-| `functions/src/market/cancelOrder.ts`, `.test.ts`, `onCall.ts` / `src/lib/market/cancelOrder.ts`, `.test.ts` | Create（Task 8） |
+| `functions/src/lessonRuns/teamAccounts/types.ts`, `repository.ts`, `.test.ts` | Create（Task 7。`TeamAccount`元帳。Task 8で`releaseSoftLock`を追記） |
+| `functions/src/market/submitOrder.ts`, `.test.ts`, `onCall.ts` / `src/lib/market/submitOrder.ts`, `.test.ts` | Create（Task 7。`onCall.ts`はTask 8・11・12・15も同ファイルへ追記する共有Callableエントリポイント） |
+| `functions/src/market/cancelOrder.ts`, `.test.ts` / `src/lib/market/cancelOrder.ts`, `.test.ts` | Create（Task 8） |
 | `functions/src/market/engine/settleBatch.ts`, `.test.ts` | Create（Task 9。バッチ締切処理の中核純粋関数） |
-| `functions/src/market/processBatch.ts`, `.test.ts` | Create（Task 9。Admin SDKラッパー） |
-| `functions/src/market/batchScheduler.ts`, `.test.ts`, `taskHandler.ts` | Create（Task 10。Cloud Tasks自己連鎖） |
+| `functions/src/market/processBatch.ts`, `.test.ts` | Create（Task 9。Admin SDKラッパー。Task 17でライフサイクルイベント分岐を追記） |
+| `functions/src/market/batchScheduler.ts`, `.test.ts`, `taskHandler.ts`, `.test.ts`, `chainWatchdog.ts`, `.test.ts` | Create（Task 10。Cloud Tasks自己連鎖と連鎖切断監視） |
 | `functions/src/market/pauseMarket.ts`, `.test.ts`, `onCall.ts` / `src/lib/market/pauseMarket.ts` | Create（Task 11） |
 | `functions/src/market/resumeMarket.ts`, `.test.ts`, `onCall.ts` / `src/lib/market/resumeMarket.ts` | Create（Task 12） |
 | `src/lib/lessonRuns/liveTypes.ts` | Modify（Task 13。`LessonRunPublicState`/`LessonRunPrivateState`へ市場フィールド追加） |
@@ -75,6 +76,7 @@
 | `functions/src/market/evaluation.ts`, `.test.ts` | Create（Task 16。5観点評価と観点別ランキング） |
 | `functions/src/market/lifecycleEvents.ts`, `.test.ts` | Create（Task 17。倒産・配当・分割、既定オフ） |
 | `functions/src/market/concurrentBatch.test.ts` | Create（Task 18。並行実行テスト） |
+| `functions/src/market/replayDeterminism.test.ts` | Create（Task 19。複数バッチにまたがるリプレイ決定性） |
 | `test/database.rules.test.ts`, `test/firestore.rules.test.ts` | Modify（Task 5・13） |
 
 ---
@@ -1040,13 +1042,58 @@ export const calculateNextPrice = (input: PriceCalculationInput): PriceCalculati
 Run: `cd functions && npx vitest run src/market/engine/priceCalculation.test.ts`
 Expected: PASS
 
-- [ ] **Step 9: `npm run verify`**
+- [ ] **Step 9: `effectiveMarketSize`を企業規模から導出する関数の失敗するテストを書く（§12.21「発行株数を入力させない」）**
 
-- [ ] **Step 10: Commit**
+すべての`settleBatch`/`calculateNextPrice`呼び出しは`effectiveMarketSize`を入力として受け取るが、**この値は教師が直接入力するのではなく`SimulatedCompany.sizeClass`から導出する**——このタスクで導出関数を作らないと、Task 9のprocessBatchが`effectiveMarketSize`をどこから得るかが宙に浮く。`priceCalculation.test.ts`に追記する:
+
+```ts
+describe('effectiveMarketSizeForCompany', () => {
+  it('maps SMALL/MEDIUM/LARGE to increasing market sizes — smaller companies move more per unit of demand', () => {
+    expect(effectiveMarketSizeForCompany('SMALL')).toBeLessThan(effectiveMarketSizeForCompany('MEDIUM'))
+    expect(effectiveMarketSizeForCompany('MEDIUM')).toBeLessThan(effectiveMarketSizeForCompany('LARGE'))
+  })
+})
+```
+
+- [ ] **Step 10: 失敗を確認し、実装する**
+
+Run: `cd functions && npx vitest run src/market/engine/priceCalculation.test.ts`
+Expected: FAIL — `effectiveMarketSizeForCompany` not exported
+
+`functions/src/market/engine/priceCalculation.ts`に追記する:
+
+```ts
+/**
+ * PROVISIONAL — spec resolution doc lists no numeric default for company
+ * size → market size (only "小さい企業: 動きやすい" as qualitative
+ * guidance). These values are a starting point for playtesting, kept in
+ * one place per this plan's Global Constraints. Units are yen — a
+ * netDemandValue equal to this size moves the price by `demandSensitivity`
+ * × 100%, per calculateNextPrice's demandRatio calculation.
+ */
+export const SIZE_CLASS_TO_EFFECTIVE_MARKET_SIZE: Record<import('@stock-league/market-public-content').CompanySizeClass, number> = {
+  SMALL: 50000,
+  MEDIUM: 150000,
+  LARGE: 400000,
+}
+
+export const effectiveMarketSizeForCompany = (
+  sizeClass: import('@stock-league/market-public-content').CompanySizeClass,
+): number => SIZE_CLASS_TO_EFFECTIVE_MARKET_SIZE[sizeClass]
+```
+
+- [ ] **Step 11: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/engine/priceCalculation.test.ts`
+Expected: PASS
+
+- [ ] **Step 12: `npm run verify`**
+
+- [ ] **Step 13: Commit**
 
 ```bash
 git add functions/src/market/engine/priceCalculation.ts functions/src/market/engine/priceCalculation.test.ts
-git commit -m "feat: add deterministic price calculation engine with guard and breakdown"
+git commit -m "feat: add deterministic price calculation engine, guard, breakdown, and size-based market size"
 ```
 
 ---
@@ -2221,4 +2268,1978 @@ git commit -m "feat: add cancelOrder Callable with soft-lock release for PENDING
 
 ---
 
-(以下、各タスクの詳細)
+### Task 9: バッチ締切処理の中核（検証・相殺・約定・不成立・次価格）
+
+統合仕様書 §12.9〜§12.11・§12.14・§12.15・§12.20〜§12.22を1つの純粋関数`settleBatch`に統合する。Task 4〜6の純粋関数を組み合わせる「オーケストレーター」であり、この関数自体はI/Oを持たない——Cloud Tasksハンドラ（Task 10）が実際のFirestore/RTDB読み書きを行う薄いラッパー（`processBatch.ts`）から呼ぶ。
+
+**設計上の要点（実装前に理解すること）:**
+1. **約定価格はこの区間の「現在価格」**——注文はこの区間の締切時点で、締切前から公開されていた価格でそのまま約定する。次価格の計算は約定の**後**に行う（§12.9のフロー通り）。
+2. **同一チーム・同一銘柄の相殺（§12.14）は「元注文」個々のレコードを書き換えない。** 相殺後の正味方向・数量が実際にチームの現金・保有株へ反映される唯一の値であり、個々の注文レコードは（相殺グループが成立した場合）全部`FILLED`として履歴に残る。相殺で完全に打ち消し合った場合（同数）も`FILLED`（正味の効果がゼロだっただけで、注文自体は正しく処理された）として扱う。
+3. **買いの不成立は同一チームの全銘柄へ及ぶが、売りの不成立はその銘柄だけに閉じる**（Task 6の非対称性がそのままここに反映される）。
+4. **不成立になった相殺グループの注文は出来高・需給のどちらにもカウントしない。** 実際に約定していない数量を価格へ反映させないため（矛盾解消C・§26-14）。
+
+**Files:**
+- Create: `functions/src/market/engine/settleBatch.ts`, `.test.ts`
+- Create: `functions/src/market/processBatch.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `nettedFillForParticipant`/`aggregateDemand`（Task 4）、`hardCheckBuyOrders`/`hardCheckSellOrdersForStock`（Task 6）、`calculateNextPrice`（Task 3）
+- Produces: `settleBatch(input): SettleBatchResult`
+
+- [ ] **Step 1: 失敗するテストを書く（矛盾解消Bの非対称性と矛盾解消Cの操作不可能性を1つのバッチで検証する）**
+
+`functions/src/market/engine/settleBatch.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { settleBatch } from './settleBatch'
+
+const stock = (overrides: Partial<Parameters<typeof settleBatch>[0]['stocks'][number]> = {}) => ({
+  stockId: 'acme', currentPrice: 1000, initialPrice: 1000,
+  priceGuard: { type: 'ABSOLUTE' as const, minimumPrice: 1 },
+  effectiveMarketSize: 100000, demandSensitivity: 1, informationImpactPercent: 0,
+  ...overrides,
+})
+
+const baseInput = {
+  lessonRunId: 'run-1', batchId: 'batch-3', batchIndex: 3,
+  randomSeed: 'seed', restoreGeneration: 0,
+  priceSensitivityPreset: 'BALANCED' as const, noiseEnabled: false,
+}
+
+describe('settleBatch', () => {
+  it('fills all orders for a stock at the SAME price — the price in effect before this batch (spec §12.10)', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock()],
+      orders: [
+        { orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 3, referencePrice: 950 },
+        { orderId: 'o2', teamId: 'team-b', stockId: 'acme', side: 'BUY', quantity: 2, referencePrice: 1050 },
+      ],
+      teamAccounts: [
+        { teamId: 'team-a', cash: 10000, holdings: {} },
+        { teamId: 'team-b', cash: 10000, holdings: {} },
+      ],
+    })
+    expect(result.orders).toEqual([
+      { orderId: 'o1', status: 'FILLED', executionPrice: 1000 },
+      { orderId: 'o2', status: 'FILLED', executionPrice: 1000 },
+    ])
+  })
+
+  it('nets 5 buy + 2 sell of the same stock/team into a 3-share buy, both original orders FILLED (spec §12.14)', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock()],
+      orders: [
+        { orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 5, referencePrice: 1000 },
+        { orderId: 'o2', teamId: 'team-a', stockId: 'acme', side: 'SELL', quantity: 2, referencePrice: 1000 },
+      ],
+      teamAccounts: [{ teamId: 'team-a', cash: 10000, holdings: { acme: 2 } }],
+    })
+    expect(result.orders.every((o) => o.status === 'FILLED')).toBe(true)
+    // portfolio effect reflects the NET 3-share buy only, not 5 buy + 2 sell independently
+    expect(result.teamAccountUpdates).toEqual([
+      { teamId: 'team-a', cashDelta: -3000, holdingsDelta: { acme: 3 } },
+    ])
+  })
+
+  it('rejects ALL of a team\'s buy orders ACROSS EVERY STOCK when the aggregated cost exceeds cash (spec §12.15)', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock({ stockId: 'acme' }), stock({ stockId: 'globex', currentPrice: 1500 })],
+      orders: [
+        { orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 3, referencePrice: 1000 }, // 3,000
+        { orderId: 'o2', teamId: 'team-a', stockId: 'globex', side: 'BUY', quantity: 5, referencePrice: 1500 }, // 7,500 → total 10,500
+      ],
+      teamAccounts: [{ teamId: 'team-a', cash: 10000, holdings: {} }],
+    })
+    expect(result.orders).toEqual(expect.arrayContaining([
+      { orderId: 'o1', status: 'REJECTED', rejectionReason: expect.any(String) },
+      { orderId: 'o2', status: 'REJECTED', rejectionReason: expect.any(String) },
+    ]))
+    expect(result.teamAccountUpdates).toEqual([])
+  })
+
+  it('a sell shortfall in one stock does not reject a healthy buy in another stock for the same team', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock({ stockId: 'acme' }), stock({ stockId: 'globex', currentPrice: 500 })],
+      orders: [
+        { orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'SELL', quantity: 10, referencePrice: 1000 }, // only holds 2
+        { orderId: 'o2', teamId: 'team-a', stockId: 'globex', side: 'BUY', quantity: 4, referencePrice: 500 }, // 2,000, affordable
+      ],
+      teamAccounts: [{ teamId: 'team-a', cash: 5000, holdings: { acme: 2 } }],
+    })
+    expect(result.orders).toEqual(expect.arrayContaining([
+      { orderId: 'o1', status: 'REJECTED', rejectionReason: expect.any(String) },
+      { orderId: 'o2', status: 'FILLED', executionPrice: 500 },
+    ]))
+    expect(result.teamAccountUpdates).toEqual([{ teamId: 'team-a', cashDelta: -2000, holdingsDelta: { globex: 4 } }])
+  })
+
+  it('excludes rejected orders from both net demand and displayed volume (矛盾解消C)', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock()],
+      orders: [
+        // team-a's buy fails (insufficient cash) — must not move the price or count as volume
+        { orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 100, referencePrice: 1000 },
+        // team-b's buy succeeds
+        { orderId: 'o2', teamId: 'team-b', stockId: 'acme', side: 'BUY', quantity: 3, referencePrice: 1000 },
+      ],
+      teamAccounts: [
+        { teamId: 'team-a', cash: 500, holdings: {} },
+        { teamId: 'team-b', cash: 10000, holdings: {} },
+      ],
+    })
+    const acmeResult = result.stocks.find((s) => s.stockId === 'acme')!
+    expect(acmeResult.netDemandValue).toBe(3000) // only team-b's 3 shares
+    expect(acmeResult.displayedVolumeShares).toBe(3) // team-a's rejected 100 does not count
+  })
+
+  it('computes the next price from the settled net demand via calculateNextPrice (Task 3)', () => {
+    const result = settleBatch({
+      ...baseInput,
+      stocks: [stock({ informationImpactPercent: 2 })],
+      orders: [{ orderId: 'o1', teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 10, referencePrice: 1000 }],
+      teamAccounts: [{ teamId: 'team-a', cash: 100000, holdings: {} }],
+    })
+    const acmeResult = result.stocks.find((s) => s.stockId === 'acme')!
+    expect(acmeResult.breakdown.informationPercent).toBeCloseTo(2, 9)
+    expect(acmeResult.nextPrice).toBeGreaterThan(1000) // net buying + positive info both push price up
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/engine/settleBatch.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `settleBatch`を実装する**
+
+`functions/src/market/engine/settleBatch.ts`:
+
+```ts
+import type { PriceGuard } from '@stock-league/market-authoring-content'
+import { aggregateDemand, nettedFillForParticipant, type NettedFill, type OrderForNetting } from './demandAggregation'
+import { hardCheckBuyOrders, hardCheckSellOrdersForStock } from './fundLocking'
+import { calculateNextPrice, type PriceSensitivityPreset } from './priceCalculation'
+
+export interface StockBatchInput {
+  stockId: string
+  currentPrice: number
+  initialPrice: number
+  priceGuard: PriceGuard
+  effectiveMarketSize: number
+  demandSensitivity: number
+  /** Pre-aggregated across active information items for this stock this batch. */
+  informationImpactPercent: number
+}
+
+export interface OrderForSettlement {
+  orderId: string
+  teamId: string
+  stockId: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  referencePrice: number
+}
+
+export interface TeamAccountForSettlement {
+  teamId: string
+  /** Cash BEFORE this batch — must not include this batch's own sell proceeds (spec §12.15). */
+  cash: number
+  holdings: Record<string, number>
+}
+
+export interface SettleBatchInput {
+  lessonRunId: string
+  batchId: string
+  batchIndex: number
+  randomSeed: string
+  restoreGeneration: number
+  priceSensitivityPreset: PriceSensitivityPreset
+  noiseEnabled: boolean
+  stocks: StockBatchInput[]
+  orders: OrderForSettlement[]
+  teamAccounts: TeamAccountForSettlement[]
+}
+
+export interface OrderSettlementOutcome {
+  orderId: string
+  status: 'FILLED' | 'REJECTED'
+  executionPrice?: number
+  rejectionReason?: string
+}
+
+export interface StockSettlementResult {
+  stockId: string
+  executionPrice: number
+  nextPrice: number
+  breakdown: ReturnType<typeof calculateNextPrice>['breakdown']
+  guardApplied: boolean
+  suddenChangeWarning: boolean
+  displayedVolumeShares: number
+  netDemandValue: number
+}
+
+export interface TeamAccountUpdate {
+  teamId: string
+  cashDelta: number
+  holdingsDelta: Record<string, number>
+}
+
+export interface SettleBatchResult {
+  orders: OrderSettlementOutcome[]
+  stocks: StockSettlementResult[]
+  teamAccountUpdates: TeamAccountUpdate[]
+}
+
+const groupKey = (teamId: string, stockId: string) => `${teamId}::${stockId}`
+
+export const settleBatch = (input: SettleBatchInput): SettleBatchResult => {
+  const stocksById = new Map(input.stocks.map((s) => [s.stockId, s]))
+  const accountsByTeam = new Map(input.teamAccounts.map((a) => [a.teamId, a]))
+
+  const ordersByGroup = new Map<string, OrderForSettlement[]>()
+  for (const order of input.orders) {
+    const key = groupKey(order.teamId, order.stockId)
+    ordersByGroup.set(key, [...(ordersByGroup.get(key) ?? []), order])
+  }
+
+  const nettedByGroup = new Map<string, NettedFill | null>()
+  for (const [key, orders] of ordersByGroup) {
+    nettedByGroup.set(key, nettedFillForParticipant(orders as OrderForNetting[]))
+  }
+
+  // Hard BUY check: aggregate a team's net-buy groups across ALL stocks.
+  const buyFailedTeams = new Set<string>()
+  for (const account of input.teamAccounts) {
+    const buyOrders = input.stocks
+      .map((stock) => ({ stockId: stock.stockId, netted: nettedByGroup.get(groupKey(account.teamId, stock.stockId)) }))
+      .filter((x): x is { stockId: string; netted: NettedFill } => x.netted !== null && x.netted.side === 'BUY')
+      .map((x) => ({ stockId: x.stockId, quantity: x.netted.quantity, executionPrice: stocksById.get(x.stockId)!.currentPrice }))
+    if (buyOrders.length === 0) continue
+    const result = hardCheckBuyOrders({ cashBeforeBatch: account.cash, buyOrders })
+    if (!result.allSucceed) buyFailedTeams.add(account.teamId)
+  }
+
+  // Hard SELL check: per (team, stock) independently.
+  const sellFailedGroups = new Set<string>()
+  for (const [key, netted] of nettedByGroup) {
+    if (!netted || netted.side !== 'SELL') continue
+    const [teamId, stockId] = key.split('::')
+    const held = accountsByTeam.get(teamId)?.holdings[stockId] ?? 0
+    const result = hardCheckSellOrdersForStock({ heldShares: held, sellOrders: [{ stockId, quantity: netted.quantity }] })
+    if (!result.allSucceed) sellFailedGroups.add(key)
+  }
+
+  const groupSucceeded = (teamId: string, stockId: string): boolean => {
+    const netted = nettedByGroup.get(groupKey(teamId, stockId))
+    if (!netted) return false // fully netted to zero — no trade, not a "success" for volume/demand purposes
+    if (netted.side === 'BUY') return !buyFailedTeams.has(teamId)
+    return !sellFailedGroups.has(groupKey(teamId, stockId))
+  }
+
+  // Order outcomes: every original order is FILLED unless its group hard-failed.
+  const orderOutcomes: OrderSettlementOutcome[] = input.orders.map((order) => {
+    const netted = nettedByGroup.get(groupKey(order.teamId, order.stockId))
+    const executionPrice = stocksById.get(order.stockId)!.currentPrice
+    if (!netted) return { orderId: order.orderId, status: 'FILLED', executionPrice } // netted to zero — no-op, not a failure
+    const failed = netted.side === 'BUY' ? buyFailedTeams.has(order.teamId) : sellFailedGroups.has(groupKey(order.teamId, order.stockId))
+    if (failed) {
+      const reason = netted.side === 'BUY'
+        ? 'このチームの現金が不足したため、この区間の買い注文はすべて不成立になりました。'
+        : '保有株数が不足したため、この銘柄の売り注文はすべて不成立になりました。'
+      return { orderId: order.orderId, status: 'REJECTED', rejectionReason: reason }
+    }
+    return { orderId: order.orderId, status: 'FILLED', executionPrice }
+  })
+
+  // Team account updates: only from successful netted groups.
+  const teamAccountUpdates: TeamAccountUpdate[] = []
+  for (const [key, netted] of nettedByGroup) {
+    if (!netted) continue
+    const [teamId, stockId] = key.split('::')
+    if (!groupSucceeded(teamId, stockId)) continue
+    const price = stocksById.get(stockId)!.currentPrice
+    if (netted.side === 'BUY') {
+      teamAccountUpdates.push({ teamId, cashDelta: -netted.quantity * price, holdingsDelta: { [stockId]: netted.quantity } })
+    } else {
+      teamAccountUpdates.push({ teamId, cashDelta: netted.quantity * price, holdingsDelta: { [stockId]: -netted.quantity } })
+    }
+  }
+
+  // Per-stock price calculation from only the successful groups.
+  const stockResults: StockSettlementResult[] = input.stocks.map((stock) => {
+    const successfulFills: NettedFill[] = []
+    const grossOrders: OrderForNetting[] = []
+    for (const [key, netted] of nettedByGroup) {
+      const [teamId, stockIdOfGroup] = key.split('::')
+      if (stockIdOfGroup !== stock.stockId || !netted) continue
+      if (!groupSucceeded(teamId, stockIdOfGroup)) continue
+      successfulFills.push(netted)
+      grossOrders.push(...(ordersByGroup.get(key) ?? []))
+    }
+    const demand = aggregateDemand({ executionPrice: stock.currentPrice, nettedFills: successfulFills, rawOrders: grossOrders })
+    const priceResult = calculateNextPrice({
+      currentPrice: stock.currentPrice, initialPrice: stock.initialPrice,
+      informationImpactPercent: stock.informationImpactPercent, netDemandValue: demand.netDemandValue,
+      effectiveMarketSize: stock.effectiveMarketSize, demandSensitivity: stock.demandSensitivity,
+      priceSensitivityPreset: input.priceSensitivityPreset, noiseEnabled: input.noiseEnabled,
+      randomSeed: input.randomSeed, restoreGeneration: input.restoreGeneration,
+      stockId: stock.stockId, batchIndex: input.batchIndex, priceGuard: stock.priceGuard,
+    })
+    return {
+      stockId: stock.stockId, executionPrice: stock.currentPrice, nextPrice: priceResult.nextPrice,
+      breakdown: priceResult.breakdown, guardApplied: priceResult.guardApplied,
+      suddenChangeWarning: priceResult.suddenChangeWarning,
+      displayedVolumeShares: demand.displayedVolumeShares, netDemandValue: demand.netDemandValue,
+    }
+  })
+
+  return { orders: orderOutcomes, stocks: stockResults, teamAccountUpdates }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/engine/settleBatch.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/market/engine/settleBatch.ts functions/src/market/engine/settleBatch.test.ts
+git commit -m "feat: add settleBatch — the pure batch-settlement orchestrator"
+```
+
+- [ ] **Step 7: Admin SDKラッパー`processBatch`の責務を書く（実装はTask 10のCloud Tasksハンドラと一体で行うため、ここでは責務とインターフェースのみ固定する）**
+
+`functions/src/market/processBatch.ts`は次の順序でI/Oを行う薄いラッパーとする。個々のFirestore/RTDB呼び出しはPhase A（`appendLessonEvent`、`orgAccess`ミラー書き込み）と同じ形のAdmin SDKコードになるため、実装はそれらのコードをそのまま踏襲する。
+
+1. `lessonRuns/{id}`から`status`・`randomSeed`・`restoreGeneration`・`socialStudiesMarket`（企業・価格ガード等）を読む。**`status !== 'RUNNING'`または`marketPaused === true`なら何もせず終了する**（Task 11の停止・Task 10の連鎖切断対策と整合）。
+2. `listPendingOrdersForBatch`（Task 5）で`batchId`が現在のバッチの注文を全件取得する。
+3. 各チームの`TeamAccount`（Task 7）を取得する。
+4. アクティブな情報項目から`informationImpactPercent`を銘柄ごとに集計する（本タスクの範囲外の補助関数——情報の減衰モデルは統合仕様書に具体式がなく試運転で調整する前提のため、最小実装として「公開直後から一定バッチ数は`shortTermImpact`、それ以降は`longTermImpact`」という単純な窓関数を`functions/src/market/engine/informationImpact.ts`に実装し、`settleBatch`呼び出し前に銘柄ごとの値を計算する。窓の長さも§12.22のノイズ幅と同様に試運転で調整するPROVISIONAL値とする）。**経済指標（§12.8、`EconomicIndicatorAuthoring.companyImpactMultipliers`）が発表済みであれば、同じ集計へ加算する**——指標は特定企業に一律ではなく`companyImpactMultipliers`で企業ごとに重みが違う点を、情報項目の集計と同じ`informationImpactPercent`合算先へそのまま合流させることで満たす（新しい価格計算の項を増やさない）。各銘柄の`effectiveMarketSize`は`SimulatedCompany.sizeClass`から`effectiveMarketSizeForCompany`（Task 3 Step 10）で導出する——教師が発行株数を入力する経路は存在しない。
+5. `settleBatch`を呼ぶ。
+6. トランザクションで: 各注文の`status`を`transitionOrderStatus`で`PROCESSING`→結果へ、各`TeamAccount`へ`teamAccountUpdates`を適用（`releaseSoftLock`で元のソフト拘束を解除してから確定額を反映）、各銘柄の`currentPrice`を更新する。
+7. `LessonEvent`として`BATCH_SETTLED`（`batchId`、価格内訳、拒否件数）を`appendLessonEvent`（Phase A）で追記する。
+8. RTDB`lessonRunPublic`・`lessonRunPrivate`・`lessonRunTeamState`（Task 13）を更新する。
+9. 次のバッチをTask 10のスケジューラへ委譲する。
+
+このステップは実装時にTask 10のテストと合わせて検証するため、`npm run verify`はTask 10の完了条件に含める。
+
+---
+
+### Task 10: Cloud Tasksによる3秒バッチ自己連鎖
+
+矛盾解消Aを実装する。**Firebase Cloud Tasks（`onTaskDispatched`系）の具体的な関数シグネチャ・引数名・バージョンは実装着手時にcontext7で確認すること**——本タスクのコードは概念上のインターフェース（`enqueueNextBatch`/`taskQueueHandler`）で示し、実際のFirebase Tasks APIへ実装時に置き換える。矛盾解消Aが列挙する4つの必須事項を、それぞれ独立してテストできる形に分解する。
+
+**設計判断とリスク（実装者が読むこと）:**
+- **`nextBatchAt`はDBに書いた値を正本とし、クライアントは自前でカウントダウンしない。** Cloud Tasksの発火時刻には揺らぎがあるため（矛盾解消A必須事項1）。
+- **`batchId`は`{lessonRunId}_batch_{batchIndex}`のような決定的な文字列にする。** Cloud Tasksの重複実行（at-least-once配信）に対し、`processBatch`（Task 9）が同一`batchId`を2度処理しないことをFirestoreトランザクションのcompare-and-set（「このbatchIdは処理済みか」を1つのドキュメントで判定）で保証する（矛盾解消A必須事項2）。
+- **連鎖切断の検知は「次のタスクを作る責務を持つ側」と「切断を監視する側」を分離する。** タスク自身が自分の失敗を検知することはできない（実行されなければ何も起きない）ため、監視は別のCloud Scheduler（**このジョブ自体は1分間隔で足りる**——3秒区間を刻む主目的には使えないが、「`nextBatchAt`を過ぎているのに次のバッチが処理された形跡がないか」を1分ごとに確認する監視用途には十分)が`lessonRuns`を横断的にスキャンし、`RUNNING`かつ`nextBatchAt`超過が閾値（既定60秒、教材設定なし——運用値としてコードに1箇所で定数化する）を超えたものを教師へ通知する設計にする（矛盾解消A必須事項3）。**この監視ジョブの実行間隔自体は矛盾解消ドキュメントの「残る未確定事項」に含まれる（連鎖切断の検知間隔は未確定）——本計画は60秒を暫定値として置くが、試運転で調整する前提を明記する。**
+- **停止中に届いた古いタスクは、市場状態を見て何もせず終了する。** タスクハンドラの最初の行で`status`と`marketPaused`と`batchId`の3つを確認し、条件を満たさなければ即座にreturnする（矛盾解消A必須事項4）。
+
+**Files:**
+- Create: `functions/src/market/batchScheduler.ts`, `.test.ts`
+- Create: `functions/src/market/taskHandler.ts`, `.test.ts`
+- Modify: `functions/src/index.ts`（タスクキュー関数のexport）
+
+**Interfaces:**
+- Consumes: `processBatch`（Task 9）
+- Produces: `computeNextBatchId(lessonRunId, batchIndex)`、`shouldProcessBatch(deps): boolean`、`enqueueNextBatch(deps): Promise<void>`、`batchTaskHandler`
+
+- [ ] **Step 1: `batchId`の決定性と`shouldProcessBatch`の失敗するテストを書く**
+
+`functions/src/market/batchScheduler.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeNextBatchId, shouldProcessBatch } from './batchScheduler'
+
+describe('computeNextBatchId', () => {
+  it('is deterministic given the same lessonRunId and batchIndex — the idempotency key for Cloud Tasks at-least-once delivery', () => {
+    expect(computeNextBatchId('run-1', 42)).toBe(computeNextBatchId('run-1', 42))
+    expect(computeNextBatchId('run-1', 42)).toBe('run-1_batch_42')
+  })
+})
+
+describe('shouldProcessBatch', () => {
+  it('processes when the run is RUNNING, not paused, and this batchId has not been processed yet', () => {
+    expect(shouldProcessBatch({
+      status: 'RUNNING', marketPaused: false, batchId: 'run-1_batch_5', lastProcessedBatchId: 'run-1_batch_4',
+    })).toBe(true)
+  })
+
+  it('does nothing for a stale task delivered after the market was paused — 矛盾解消A必須事項4', () => {
+    expect(shouldProcessBatch({
+      status: 'RUNNING', marketPaused: true, batchId: 'run-1_batch_5', lastProcessedBatchId: 'run-1_batch_4',
+    })).toBe(false)
+  })
+
+  it('does nothing for a stale task delivered after the lessonRun ended', () => {
+    expect(shouldProcessBatch({
+      status: 'COMPLETED', marketPaused: false, batchId: 'run-1_batch_5', lastProcessedBatchId: 'run-1_batch_4',
+    })).toBe(false)
+  })
+
+  it('does nothing for a duplicate delivery of an already-processed batchId — Cloud Tasks at-least-once delivery', () => {
+    expect(shouldProcessBatch({
+      status: 'RUNNING', marketPaused: false, batchId: 'run-1_batch_4', lastProcessedBatchId: 'run-1_batch_4',
+    })).toBe(false)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/batchScheduler.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/batchScheduler.ts`:
+
+```ts
+export const computeNextBatchId = (lessonRunId: string, batchIndex: number): string =>
+  `${lessonRunId}_batch_${batchIndex}`
+
+export interface ShouldProcessBatchInput {
+  status: string
+  marketPaused: boolean
+  batchId: string
+  /** The batchId most recently fully processed for this lessonRun — read
+   * from `lessonRuns/{id}` alongside status/marketPaused, in the SAME
+   * read as the idempotency check, so a duplicate Cloud Tasks delivery
+   * short-circuits here before touching orders at all. */
+  lastProcessedBatchId: string | null
+}
+
+/** 矛盾解消A必須事項2・4: refuses to reprocess an already-settled batchId,
+ * and refuses to do anything once the run is no longer RUNNING or the
+ * market has been paused — the only two conditions under which a stale
+ * Cloud Tasks delivery should silently no-op instead of erroring (an
+ * error would trigger a Cloud Tasks retry, which is wasted work once the
+ * lessonRun has moved on). */
+export const shouldProcessBatch = (input: ShouldProcessBatchInput): boolean => {
+  if (input.status !== 'RUNNING') return false
+  if (input.marketPaused) return false
+  if (input.batchId === input.lastProcessedBatchId) return false
+  return true
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/batchScheduler.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `enqueueNextBatch`の失敗するテストを書く（`nextBatchAt`の書き込みと次タスクの予約が一体であることを検証する）**
+
+`functions/src/market/batchScheduler.test.ts`に追記する:
+
+```ts
+describe('enqueueNextBatch', () => {
+  it('writes nextBatchAt to the DB and schedules the next task at exactly that time — the client counts down from nextBatchAt, never from a local timer', async () => {
+    const writeNextBatchAt = vi.fn()
+    const scheduleTask = vi.fn()
+    await enqueueNextBatch({
+      writeNextBatchAt, scheduleTask,
+      lessonRunId: 'run-1', nextBatchIndex: 6, intervalSeconds: 3, now: () => 1_000_000,
+    })
+    const expectedNextBatchAtMillis = 1_000_000 + 3000
+    expect(writeNextBatchAt).toHaveBeenCalledWith(expect.objectContaining({ nextBatchAtMillis: expectedNextBatchAtMillis }))
+    expect(scheduleTask).toHaveBeenCalledWith(expect.objectContaining({
+      batchId: 'run-1_batch_6', scheduleTimeMillis: expectedNextBatchAtMillis,
+    }))
+  })
+})
+```
+
+- [ ] **Step 6: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/batchScheduler.test.ts`
+Expected: FAIL — `enqueueNextBatch` not exported
+
+- [ ] **Step 7: `enqueueNextBatch`を実装する**
+
+`functions/src/market/batchScheduler.ts`に追記する:
+
+```ts
+export interface EnqueueNextBatchDeps {
+  writeNextBatchAt: (input: { lessonRunId: string; nextBatchAtMillis: number; nextBatchId: string }) => Promise<void>
+  /** Wraps the Cloud Tasks enqueue call. The actual Firebase Tasks API
+   * (queue name, target function, OIDC token, retry config) is filled in
+   * at implementation time per this plan's Global Constraints — check
+   * context7 for the current `onTaskDispatched`/`getFunctions().taskQueue()`
+   * signature before writing this function's real body. */
+  scheduleTask: (input: { batchId: string; lessonRunId: string; scheduleTimeMillis: number }) => Promise<void>
+  lessonRunId: string
+  nextBatchIndex: number
+  intervalSeconds: number
+  now: () => number
+}
+
+export const enqueueNextBatch = async (deps: EnqueueNextBatchDeps): Promise<void> => {
+  const nextBatchId = computeNextBatchId(deps.lessonRunId, deps.nextBatchIndex)
+  const nextBatchAtMillis = deps.now() + deps.intervalSeconds * 1000
+  await deps.writeNextBatchAt({ lessonRunId: deps.lessonRunId, nextBatchAtMillis, nextBatchId })
+  await deps.scheduleTask({ batchId: nextBatchId, lessonRunId: deps.lessonRunId, scheduleTimeMillis: nextBatchAtMillis })
+}
+```
+
+- [ ] **Step 8: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/batchScheduler.test.ts`
+Expected: PASS
+
+- [ ] **Step 9: タスクハンドラの失敗するテストを書く（`shouldProcessBatch`のガードが実際に`processBatch`をスキップさせることを検証する）**
+
+`functions/src/market/taskHandler.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { batchTaskHandler } from './taskHandler'
+
+describe('batchTaskHandler', () => {
+  it('skips processing and does not enqueue a follow-up task for a stale/duplicate delivery', async () => {
+    const processBatch = vi.fn()
+    const enqueueNextBatch = vi.fn()
+    await batchTaskHandler({
+      processBatch, enqueueNextBatch,
+      readRunState: async () => ({ status: 'PAUSED', marketPaused: true, lastProcessedBatchId: 'run-1_batch_4' }),
+      lessonRunId: 'run-1', batchId: 'run-1_batch_5', batchIndex: 5,
+    })
+    expect(processBatch).not.toHaveBeenCalled()
+    expect(enqueueNextBatch).not.toHaveBeenCalled()
+  })
+
+  it('processes the batch and immediately enqueues the next one — the self-chain', async () => {
+    const processBatch = vi.fn().mockResolvedValue(undefined)
+    const enqueueNextBatch = vi.fn().mockResolvedValue(undefined)
+    await batchTaskHandler({
+      processBatch, enqueueNextBatch,
+      readRunState: async () => ({ status: 'RUNNING', marketPaused: false, lastProcessedBatchId: 'run-1_batch_4' }),
+      lessonRunId: 'run-1', batchId: 'run-1_batch_5', batchIndex: 5,
+    })
+    expect(processBatch).toHaveBeenCalledWith(expect.objectContaining({ batchId: 'run-1_batch_5' }))
+    expect(enqueueNextBatch).toHaveBeenCalledWith(expect.objectContaining({ nextBatchIndex: 6 }))
+  })
+
+  it('enqueues the next task even if this batch produced zero fills — the chain must never depend on there being activity', async () => {
+    const processBatch = vi.fn().mockResolvedValue(undefined)
+    const enqueueNextBatch = vi.fn().mockResolvedValue(undefined)
+    await batchTaskHandler({
+      processBatch, enqueueNextBatch,
+      readRunState: async () => ({ status: 'RUNNING', marketPaused: false, lastProcessedBatchId: 'run-1_batch_4' }),
+      lessonRunId: 'run-1', batchId: 'run-1_batch_5', batchIndex: 5,
+    })
+    expect(enqueueNextBatch).toHaveBeenCalledTimes(1)
+  })
+})
+```
+
+- [ ] **Step 10: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/taskHandler.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 11: `batchTaskHandler`を実装する**
+
+`functions/src/market/taskHandler.ts`:
+
+```ts
+import { shouldProcessBatch } from './batchScheduler'
+
+export interface BatchTaskHandlerDeps {
+  readRunState: (lessonRunId: string) => Promise<{ status: string; marketPaused: boolean; lastProcessedBatchId: string | null }>
+  processBatch: (input: { lessonRunId: string; batchId: string; batchIndex: number }) => Promise<void>
+  enqueueNextBatch: (input: { lessonRunId: string; nextBatchIndex: number }) => Promise<void>
+  lessonRunId: string
+  batchId: string
+  batchIndex: number
+}
+
+/**
+ * The self-chain lives entirely in this one function: process, THEN
+ * immediately enqueue the next task, unconditionally (spec resolution
+ * A's flow diagram). If this function throws after processBatch succeeds
+ * but before enqueueNextBatch runs, Cloud Tasks' own retry (this handler
+ * is itself invoked via a task) re-enters here — shouldProcessBatch's
+ * batchId dedup means the retry will skip processBatch (already done)
+ * and go straight to enqueueNextBatch, so the chain still continues.
+ */
+export const batchTaskHandler = async (deps: BatchTaskHandlerDeps): Promise<void> => {
+  const runState = await deps.readRunState(deps.lessonRunId)
+  if (!shouldProcessBatch({
+    status: runState.status, marketPaused: runState.marketPaused,
+    batchId: deps.batchId, lastProcessedBatchId: runState.lastProcessedBatchId,
+  })) {
+    return
+  }
+  await deps.processBatch({ lessonRunId: deps.lessonRunId, batchId: deps.batchId, batchIndex: deps.batchIndex })
+  await deps.enqueueNextBatch({ lessonRunId: deps.lessonRunId, nextBatchIndex: deps.batchIndex + 1 })
+}
+```
+
+**注意（べき等性の穴）:** 上記コメントの通り、「`processBatch`成功後・`enqueueNextBatch`前」にクラッシュした場合はCloud Tasksの再試行に頼る。しかし`processBatch`自体が「同一`batchId`は1回だけ」というトランザクションで守られていることが前提（Task 9のStep 7・矛盾解消A必須事項2）。この前提が崩れると多重約定が起こるため、Task 9の`processBatch`実装時に**必ず**`batchId`ごとの処理済みマーカーをFirestoreトランザクションで確認してから約定処理へ進むこと。
+
+- [ ] **Step 12: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/taskHandler.test.ts`
+Expected: PASS
+
+- [ ] **Step 13: 連鎖切断の監視ジョブを実装する（Cloud Scheduler、1分間隔）**
+
+`functions/src/market/chainWatchdog.ts`, `.test.ts`を作成する。設計は「`RUNNING`かつ`marketPaused=false`な`lessonRuns`を横断的にクエリし、`nextBatchAtMillis`から60秒（暫定値、`STALL_DETECTION_THRESHOLD_MILLIS`として1箇所に定数化）以上経過しているものを検出し、教師へ通知するイベント（`LessonEvent`の`type: 'BATCH_CHAIN_STALLED'`、または別途通知の仕組み——教師画面へのアラート表示はPhase Bが持つ通知UIへ委譲する）を発行する」とする。テストは「閾値未満は検出しない」「閾値超過を検出する」「`PAUSED`な授業は対象外」の3点を純粋関数`detectStalledRuns(runs, nowMillis, thresholdMillis)`として検証する。Cloud SchedulerへのFirebase側の登録方法（`onSchedule`)も実装着手時にcontext7で確認する。
+
+- [ ] **Step 14: `functions/src/index.ts`へタスクキュー関数と監視スケジューラをexportする**
+
+- [ ] **Step 15: `npm run verify`**
+
+- [ ] **Step 16: Commit**
+
+```bash
+git add functions/src/market/batchScheduler.ts functions/src/market/batchScheduler.test.ts \
+  functions/src/market/taskHandler.ts functions/src/market/taskHandler.test.ts \
+  functions/src/market/chainWatchdog.ts functions/src/market/chainWatchdog.test.ts functions/src/index.ts
+git commit -m "feat: self-chaining Cloud Tasks batch scheduler with idempotency and stall detection"
+```
+
+---
+
+### Task 11: 市場停止Callable
+
+統合仕様書 §12.25を実装する。**「停止確定前に受理済みの注文は通常どおり約定」という要件と、Task 10の「連鎖切断時は市場状態を見て何もせず終了する」という要件は、次の設計で両立させる**——`pauseMarket`は`marketPaused`フラグを立てるだけでなく、**その場で現在進行中のバッチを`processBatch`（Task 9）に同期的に処理させてから**停止状態にする（「ドレイン」）。これにより「停止確定前に受理済みの注文」は必ずこのドレイン処理で約定し、以後Cloud Tasksから同じ`batchId`のタスクが発火しても、Task 10の`shouldProcessBatch`が`batchId === lastProcessedBatchId`で検出して何もしない——2つの要件の間に競合状態を作らない。
+
+**Files:**
+- Create: `functions/src/market/pauseMarket.ts`, `.test.ts`, `onCall.ts`
+- Create: `src/lib/market/pauseMarket.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `processBatch`（Task 9）
+- Produces: `pauseMarket(deps): Promise<void>`、`pauseMarketCallable`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/market/pauseMarket.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { pauseMarket } from './pauseMarket'
+
+describe('pauseMarket', () => {
+  it('drains the currently in-flight batch before flipping marketPaused, so pre-stop orders still fill', async () => {
+    const processBatch = vi.fn().mockResolvedValue(undefined)
+    const setMarketPaused = vi.fn()
+    const calls: string[] = []
+    processBatch.mockImplementation(async () => { calls.push('processBatch') })
+    setMarketPaused.mockImplementation(async () => { calls.push('setMarketPaused') })
+
+    await pauseMarket({
+      processBatch, setMarketPaused,
+      readCurrentBatch: async () => ({ batchId: 'run-1_batch_9', batchIndex: 9 }),
+      lessonRunId: 'run-1',
+    })
+
+    expect(calls).toEqual(['processBatch', 'setMarketPaused'])
+    expect(processBatch).toHaveBeenCalledWith(expect.objectContaining({ batchId: 'run-1_batch_9' }))
+  })
+
+  it('sets marketPaused even when there is nothing pending to drain (zero orders is a valid batch)', async () => {
+    const setMarketPaused = vi.fn()
+    await pauseMarket({
+      processBatch: vi.fn().mockResolvedValue(undefined), setMarketPaused,
+      readCurrentBatch: async () => ({ batchId: 'run-1_batch_1', batchIndex: 1 }),
+      lessonRunId: 'run-1',
+    })
+    expect(setMarketPaused).toHaveBeenCalledWith(expect.objectContaining({ lessonRunId: 'run-1', paused: true }))
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/pauseMarket.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/pauseMarket.ts`:
+
+```ts
+export interface PauseMarketDeps {
+  readCurrentBatch: (lessonRunId: string) => Promise<{ batchId: string; batchIndex: number }>
+  processBatch: (input: { lessonRunId: string; batchId: string; batchIndex: number }) => Promise<void>
+  setMarketPaused: (input: { lessonRunId: string; paused: boolean }) => Promise<void>
+  lessonRunId: string
+}
+
+/**
+ * Order matters: drain THEN pause. If these were reversed, submitOrder's
+ * isMarketAcceptingOrders check (Task 7) would still see marketPaused=false
+ * for a brief window, letting a new order slip into a batch nobody will
+ * ever process (no task is scheduled after this call).
+ */
+export const pauseMarket = async (deps: PauseMarketDeps): Promise<void> => {
+  const current = await deps.readCurrentBatch(deps.lessonRunId)
+  await deps.processBatch({ lessonRunId: deps.lessonRunId, batchId: current.batchId, batchIndex: current.batchIndex })
+  await deps.setMarketPaused({ lessonRunId: deps.lessonRunId, paused: true })
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/pauseMarket.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `onCall.ts`とクライアントラッパーを実装する（教師のみ。Phase A Task 7 Step 6と同一パターン）。停止表示（最終価格固定・「市場停止中」・再開方法）はTask 13のRTDB`lessonRunPublic`更新で配信する**
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/market/pauseMarket.ts functions/src/market/pauseMarket.test.ts functions/src/market/onCall.ts \
+  src/lib/market/pauseMarket.ts src/lib/market/pauseMarket.test.ts
+git commit -m "feat: add pauseMarket Callable that drains the in-flight batch before pausing"
+```
+
+---
+
+### Task 12: 市場再開Callable
+
+統合仕様書 §12.26を実装する。既定30秒の再開前確認時間を経て、`marketPaused`を解除し、Task 10の自己連鎖を「最後に処理したバッチの次のインデックス」から再始動する。再開後最初の区間は、Task 11のドレインで既に確定している`currentPrice`（＝停止時点価格）でそのまま同一価格約定される——価格計算自体は`processBatch`が毎回行う通常の処理であり、特別な補正コードを足す必要はない（§12.26「特別補正なし」)。
+
+**Files:**
+- Create: `functions/src/market/resumeMarket.ts`, `.test.ts`, `onCall.ts`
+- Create: `src/lib/market/resumeMarket.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `enqueueNextBatch`（Task 10）
+- Produces: `resumeMarket(deps): Promise<void>`、`resumeMarketCallable`
+
+- [ ] **Step 1: 失敗するテストを書く（確認時間ありと即時再開の両方）**
+
+`functions/src/market/resumeMarket.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { resumeMarket } from './resumeMarket'
+
+describe('resumeMarket', () => {
+  it('records a resumeScheduledAtMillis and schedules a one-shot resume task for the default 30-second confirmation window', async () => {
+    const recordResumeSchedule = vi.fn()
+    const scheduleResumeTask = vi.fn()
+    await resumeMarket({
+      recordResumeSchedule, scheduleResumeTask, flipToRunning: vi.fn(),
+      lessonRunId: 'run-1', confirmationSeconds: 30, now: () => 1_000_000,
+    })
+    expect(recordResumeSchedule).toHaveBeenCalledWith(expect.objectContaining({ resumeScheduledAtMillis: 1_030_000 }))
+    expect(scheduleResumeTask).toHaveBeenCalledWith(expect.objectContaining({ scheduleTimeMillis: 1_030_000 }))
+  })
+
+  it('flips to running immediately when confirmationSeconds is 0 (spec §12.26 "確認なしの即時再開")', async () => {
+    const flipToRunning = vi.fn()
+    const scheduleResumeTask = vi.fn()
+    await resumeMarket({
+      recordResumeSchedule: vi.fn(), scheduleResumeTask, flipToRunning,
+      lessonRunId: 'run-1', confirmationSeconds: 0, now: () => 1_000_000,
+    })
+    expect(flipToRunning).toHaveBeenCalledWith(expect.objectContaining({ lessonRunId: 'run-1' }))
+    expect(scheduleResumeTask).not.toHaveBeenCalled()
+  })
+})
+
+describe('executeScheduledResume (the one-shot task body)', () => {
+  it('unpauses and restarts the batch chain from lastProcessedBatchIndex + 1', async () => {
+    const flipToRunning = vi.fn()
+    const enqueueNextBatch = vi.fn()
+    await executeScheduledResume({
+      flipToRunning, enqueueNextBatch,
+      readLastProcessedBatchIndex: async () => 9,
+      lessonRunId: 'run-1',
+    })
+    expect(flipToRunning).toHaveBeenCalledWith(expect.objectContaining({ lessonRunId: 'run-1' }))
+    expect(enqueueNextBatch).toHaveBeenCalledWith(expect.objectContaining({ lessonRunId: 'run-1', nextBatchIndex: 10 }))
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/resumeMarket.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/resumeMarket.ts`:
+
+```ts
+export interface ResumeMarketDeps {
+  recordResumeSchedule: (input: { lessonRunId: string; resumeScheduledAtMillis: number }) => Promise<void>
+  scheduleResumeTask: (input: { lessonRunId: string; scheduleTimeMillis: number }) => Promise<void>
+  flipToRunning: (input: { lessonRunId: string }) => Promise<void>
+  lessonRunId: string
+  /** Default 30 per spec §12.26/§28. 0 means immediate resume, no confirmation window. */
+  confirmationSeconds: number
+  now: () => number
+}
+
+export const resumeMarket = async (deps: ResumeMarketDeps): Promise<void> => {
+  if (deps.confirmationSeconds === 0) {
+    await deps.flipToRunning({ lessonRunId: deps.lessonRunId })
+    return
+  }
+  const resumeScheduledAtMillis = deps.now() + deps.confirmationSeconds * 1000
+  await deps.recordResumeSchedule({ lessonRunId: deps.lessonRunId, resumeScheduledAtMillis })
+  await deps.scheduleResumeTask({ lessonRunId: deps.lessonRunId, scheduleTimeMillis: resumeScheduledAtMillis })
+}
+
+export interface ExecuteScheduledResumeDeps {
+  flipToRunning: (input: { lessonRunId: string }) => Promise<void>
+  enqueueNextBatch: (input: { lessonRunId: string; nextBatchIndex: number }) => Promise<void>
+  readLastProcessedBatchIndex: (lessonRunId: string) => Promise<number>
+  lessonRunId: string
+}
+
+/** The body of the one-shot Cloud Task scheduled by resumeMarket (or
+ * called directly for the confirmationSeconds === 0 path — see Step 5). */
+export const executeScheduledResume = async (deps: ExecuteScheduledResumeDeps): Promise<void> => {
+  await deps.flipToRunning({ lessonRunId: deps.lessonRunId })
+  const lastIndex = await deps.readLastProcessedBatchIndex(deps.lessonRunId)
+  await deps.enqueueNextBatch({ lessonRunId: deps.lessonRunId, nextBatchIndex: lastIndex + 1 })
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/resumeMarket.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `confirmationSeconds === 0`の即時再開でも`executeScheduledResume`（自己連鎖の再始動）を呼ぶよう`resumeMarket`を修正する失敗するテストを書く**
+
+Step 1のテストは`flipToRunning`だけを検証したが、即時再開でも自己連鎖を再始動しなければ市場は「`RUNNING`だが誰もバッチを処理しない」状態で止まる。追記する:
+
+```ts
+it('also restarts the batch chain on immediate resume, not just flipToRunning', async () => {
+  const enqueueNextBatch = vi.fn()
+  await resumeMarket({
+    recordResumeSchedule: vi.fn(), scheduleResumeTask: vi.fn(), flipToRunning: vi.fn(),
+    enqueueNextBatch, readLastProcessedBatchIndex: async () => 9,
+    lessonRunId: 'run-1', confirmationSeconds: 0, now: () => 1_000_000,
+  })
+  expect(enqueueNextBatch).toHaveBeenCalledWith(expect.objectContaining({ nextBatchIndex: 10 }))
+})
+```
+
+- [ ] **Step 6: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/resumeMarket.test.ts`
+Expected: FAIL — `enqueueNextBatch`/`readLastProcessedBatchIndex`が`resumeMarket`のdepsにない
+
+- [ ] **Step 7: `resumeMarket`を修正する**
+
+`confirmationSeconds === 0`の分岐を`executeScheduledResume`の呼び出しに置き換える:
+
+```ts
+export interface ResumeMarketDeps {
+  recordResumeSchedule: (input: { lessonRunId: string; resumeScheduledAtMillis: number }) => Promise<void>
+  scheduleResumeTask: (input: { lessonRunId: string; scheduleTimeMillis: number }) => Promise<void>
+  flipToRunning: (input: { lessonRunId: string }) => Promise<void>
+  enqueueNextBatch: (input: { lessonRunId: string; nextBatchIndex: number }) => Promise<void>
+  readLastProcessedBatchIndex: (lessonRunId: string) => Promise<number>
+  lessonRunId: string
+  confirmationSeconds: number
+  now: () => number
+}
+
+export const resumeMarket = async (deps: ResumeMarketDeps): Promise<void> => {
+  if (deps.confirmationSeconds === 0) {
+    await executeScheduledResume(deps)
+    return
+  }
+  const resumeScheduledAtMillis = deps.now() + deps.confirmationSeconds * 1000
+  await deps.recordResumeSchedule({ lessonRunId: deps.lessonRunId, resumeScheduledAtMillis })
+  await deps.scheduleResumeTask({ lessonRunId: deps.lessonRunId, scheduleTimeMillis: resumeScheduledAtMillis })
+}
+```
+
+- [ ] **Step 8: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/resumeMarket.test.ts`
+Expected: PASS（Step 1・Step 5双方のテストが通ること）
+
+- [ ] **Step 9: `onCall.ts`とクライアントラッパーを実装する（教師のみ）。確認時間中は情報閲覧のみ（新規注文はTask 7の`isMarketAcceptingOrders`が`marketPaused`を見ている限り自動的に拒否される）**
+
+- [ ] **Step 10: `npm run verify`**
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add functions/src/market/resumeMarket.ts functions/src/market/resumeMarket.test.ts functions/src/market/onCall.ts \
+  src/lib/market/resumeMarket.ts src/lib/market/resumeMarket.test.ts
+git commit -m "feat: add resumeMarket Callable with confirmation window and batch-chain restart"
+```
+
+---
+
+### Task 13: RTDBライブ市場スキーマ（公開/非公開/チーム別の3分離）
+
+統合仕様書 §26-1、Phase A Task 10が確立した「祖先を共有しないトップレベルノード」パターンを、社会科市場のランタイムデータへ適用する。**3つの独立したトップレベルRTDBノード**にする: `lessonRunPublic/{lessonRunId}`（全参加者。Phase Aが雛形を作成済み）、`lessonRunPrivate/{lessonRunId}`（教師のみ。Phase Aが雛形を作成済み）、`lessonRunTeamState/{lessonRunId}/{teamId}`（そのチームのメンバーのみ。**本タスクで新設**）。3つ目が必要な理由は、チームの拘束中資金・保有株・自分の注文状態が「生徒全員に見せてよい」わけでも「教師だけに見せる」わけでもない、チーム単位の第3の可視性クラスだからである（旧`phase1b`計画が`teamDecisions`/`predictions`で同じ理由から導入していた設計——本計画も踏襲する）。
+
+**未確認事項（前提チェックリスト参照）:** チーム帰属を検証する仕組みがPhase Bに実在するか確認できていない。本タスクは`teamMembership/{lessonRunId}/{uid}` → `teamId`という最小限のミラーをここで新設する前提で進める。**Phase Bが既に同等の仕組みを持っている場合はそちらを使い、本タスクのミラー新設ステップは省略する。**
+
+**Files:**
+- Modify: `src/lib/lessonRuns/liveTypes.ts`（Phase A。市場フィールドを追加）
+- Create: `src/lib/market/teamState.ts`, `.test.ts`
+- Modify: `database.rules.json`（`lessonRunTeamState`ノード追加、`teamMembership`ミラー追加）
+- Modify: `test/database.rules.test.ts`
+
+**Interfaces:**
+- Consumes: `LessonRunPublicState`/`LessonRunPrivateState`（Phase A）
+- Produces: `LessonRunTeamState`型、`StockPublicState`型、`InformationBreakdownPublicView`型
+
+- [ ] **Step 1: 型拡張の失敗するテストを書く**
+
+`src/lib/lessonRuns/liveTypes.test.ts`（Phase Aの既存ファイル）に追記する:
+
+```ts
+it('LessonRunPublicState carries per-stock price/breakdown but never a coefficient or seed', () => {
+  const state: LessonRunPublicState = {
+    status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
+    marketPaused: false, nextBatchAtMillis: 1003000,
+    stocks: {
+      acme: {
+        currentPrice: 1030, previousPrice: 1000, guardApplied: false, suddenChangeWarning: false,
+        breakdown: { informationPercent: 2.1, demandPercent: 0.8, otherPercent: 0.1, total: 3.0 },
+        displayedVolumeShares: 42,
+      },
+    },
+  }
+  expect(Object.keys(state)).not.toContain('randomSeed')
+  expect(Object.keys(state.stocks.acme.breakdown)).toEqual(['informationPercent', 'demandPercent', 'otherPercent', 'total'])
+})
+
+it('LessonRunTeamState is a type distinct from public/private state — its own visibility class', () => {
+  const state: LessonRunTeamState = {
+    cash: 14000, holdings: { acme: 3 }, lockedBuyValue: 6000, lockedSellQuantity: {},
+    myOrders: [{ orderId: 'o1', stockId: 'acme', side: 'BUY', quantity: 5, status: 'PENDING', referencePrice: 1000 }],
+    updatedAtMillis: 1,
+  }
+  expect(state.cash).toBe(14000)
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `npx vitest run src/lib/lessonRuns/liveTypes.test.ts`
+Expected: FAIL — フィールド/型が存在しない
+
+- [ ] **Step 3: `LessonRunPublicState`/`LessonRunPrivateState`を拡張し、`LessonRunTeamState`を新設する**
+
+`src/lib/lessonRuns/liveTypes.ts`（Phase Aの既存2型はそのまま、フィールドを追加する）:
+
+```ts
+export interface PriceBreakdownPublicView {
+  informationPercent: number
+  demandPercent: number
+  /** 内部係数は含まない。§12.31の「その他要因」表示そのもの。 */
+  otherPercent: number
+  total: number
+}
+
+export interface StockPublicState {
+  currentPrice: number
+  previousPrice: number
+  guardApplied: boolean
+  suddenChangeWarning: boolean
+  breakdown: PriceBreakdownPublicView
+  /** 矛盾解消C: 相殺前の総取引量。 */
+  displayedVolumeShares: number
+}
+
+export interface LessonRunPublicState {
+  status: string
+  currentPhaseId: string | null
+  updatedAtMillis: number
+  marketPaused: boolean
+  /** サーバーが書いた値。クライアントはこれからのカウントダウンのみ表示し、
+   * 自前でタイマーを進めない（矛盾解消A必須事項1）。 */
+  nextBatchAtMillis: number | null
+  resumeScheduledAtMillis?: number
+  stocks: Record<string, StockPublicState>
+}
+
+export interface LessonRunPrivateState {
+  randomSeed: string
+  restoreGeneration: number
+  updatedAtMillis: number
+  /** Task 10の冪等キー整合に使う。教師画面には出さない内部状態。 */
+  lastProcessedBatchId: string | null
+  /** §12.31「教師・教材作成者は詳細設定と計算ログを確認できる」——公開用
+   * breakdownと同じ形だが、感度プリセットの実倍率など内部係数を含めた
+   * 完全な計算ログをここに置く。生徒には絶対に配信しない。 */
+  computationLog: Record<string, { informationImpactPercent: number; demandImpactPercent: number; noisePercent: number; priceSensitivityPreset: string }>
+}
+
+export interface MyOrderView {
+  orderId: string
+  stockId: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  status: 'PENDING' | 'CANCELLED' | 'PROCESSING' | 'FILLED' | 'REJECTED'
+  referencePrice: number
+  executionPrice?: number
+}
+
+/**
+ * Third visibility class: not public (other teams must not see this
+ * team's cash/holdings/orders), not teacher-only (the team itself must
+ * see its own state in real time). A separate top-level RTDB node —
+ * NEVER nested under lessonRunPublic or lessonRunPrivate, same rule-
+ * cascade reasoning as Phase A Task 10.
+ */
+export interface LessonRunTeamState {
+  cash: number
+  holdings: Record<string, number>
+  lockedBuyValue: number
+  lockedSellQuantity: Record<string, number>
+  myOrders: MyOrderView[]
+  updatedAtMillis: number
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `npx vitest run src/lib/lessonRuns/liveTypes.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `lessonRunTeamState`と`teamMembership`ミラーのルールテストを書く（Phase A Task 10と同じ構造のカスケード安全性テストを踏襲する）**
+
+`test/database.rules.test.ts`に追記する:
+
+```ts
+describe('lessonRunTeamState is a third, isolated visibility class', () => {
+  it('lets a team member read their own team\'s state', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('teamMembership/run-1/student-a').set('team-x')
+      await context.database().ref('lessonRunTeamState/run-1/team-x').set({ cash: 10000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1, orgId: 'personal_teacher-a' })
+    })
+    const student = environment.authenticatedContext('student-a', studentToken).database()
+    await assertSucceeds(get(ref(student, 'lessonRunTeamState/run-1/team-x')))
+  })
+
+  it('never lets a DIFFERENT team read this team\'s state', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('teamMembership/run-1/student-b').set('team-y')
+      await context.database().ref('lessonRunTeamState/run-1/team-x').set({ cash: 10000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1, orgId: 'personal_teacher-a' })
+    })
+    const otherStudent = environment.authenticatedContext('student-b', studentToken).database()
+    await assertFails(get(ref(otherStudent, 'lessonRunTeamState/run-1/team-x')))
+  })
+
+  it('lets the teacher read every team\'s state for oversight', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('lessonRunTeamState/run-1/team-x').set({ cash: 10000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1, orgId: 'personal_teacher-a' })
+    })
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertSucceeds(get(ref(teacher, 'lessonRunTeamState/run-1/team-x')))
+  })
+
+  it('rejects any client write — Functions-only, same as lessonRunPublic/Private', async () => {
+    const student = environment.authenticatedContext('student-a', studentToken).database()
+    await assertFails(set(ref(student, 'lessonRunTeamState/run-1/team-x'), { cash: 999999999, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1 }))
+  })
+})
+```
+
+- [ ] **Step 6: 失敗を確認する**
+
+Run: `npm run test:rules`
+Expected: FAIL — `lessonRunTeamState`/`teamMembership`に既存ルールがなくルートの`.read: false`に落ちる
+
+- [ ] **Step 7: `database.rules.json`へ追加する**
+
+`orgAccess`・`lessonRunPublic`・`lessonRunPrivate`と**同じ階層**（ルート直下の兄弟ノード）に追加する:
+
+```json
+"teamMembership": {
+  "$lessonRunId": {
+    "$uid": {
+      ".read": "auth != null && auth.uid === $uid",
+      ".write": false
+    }
+  }
+},
+"lessonRunTeamState": {
+  "$lessonRunId": {
+    "$teamId": {
+      ".read": "auth != null && (root.child('teamMembership').child($lessonRunId).child(auth.uid).val() === $teamId || (data.child('orgId').exists() && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active'))",
+      ".write": false
+    }
+  }
+}
+```
+
+`lessonRunTeamState`の読み取り条件は「自分のチームか」または「その組織のメンバー（教師）か」のOR——教師の全チーム閲覧（オーバーサイト）を許すが、生徒には自分のチームのみを許す非対称なルールになる。**この非対称性を`lessonRunPublic`（全参加者に一律許可）・`lessonRunPrivate`（教師の`owner`ロールのみ）と混同しないこと。**
+
+- [ ] **Step 8: ルールテストを通す**
+
+Run: `npm run test:rules`
+Expected: PASS
+
+- [ ] **Step 9: `lessonRunPublic`の生徒読み取り許可を確認する（前提チェックリスト該当）**
+
+Phase A Task 10の`lessonRunPublic`ルールは組織メンバー（教師）のみを許可していた。本タスクで生徒（参加者）にも市場データを配信する必要があるため、実際のPhase Bコードを確認し、参加者向けの読み取り条件（例: `root.child('teamMembership').child($lessonRunId).child(auth.uid).exists()`を`||`で追加する）が既にあるか、なければここで追加する。追加する場合は`lessonRunTeamState`と同型のOR条件にする。
+
+- [ ] **Step 10: `npm run verify`**
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add src/lib/lessonRuns/liveTypes.ts src/lib/lessonRuns/liveTypes.test.ts \
+  src/lib/market/teamState.ts src/lib/market/teamState.test.ts \
+  database.rules.json test/database.rules.test.ts
+git commit -m "feat: add lessonRunTeamState as a third RTDB visibility class, isolated from public/private"
+```
+
+---
+
+### Task 14: 価格履歴・チャートとCSVエクスポート
+
+統合仕様書 §12.30を実装する。3秒ごとの価格は`lessonRuns/{id}/priceHistory/{stockId}_{batchIndex}`（Firestore、Task 9の`processBatch`が各バッチ処理の一部として書き込む）に保存する。表示集約（10〜30秒単位）とCSVエクスポートは純粋関数として分離し、UIやHTTPエンドポイントから独立してテストする。CSVエクスポートはPhase Aが削除した旧`resultsExport.ts`の「CSVインジェクション対策（先頭`'`付与）」の考え方を引き継ぐ（コードは引き継がない——Phase Aの廃止範囲どおり）。
+
+**Files:**
+- Create: `functions/src/market/priceHistory.ts`, `.test.ts`
+- Create: `functions/src/market/exportCsv.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし
+- Produces: `aggregatePriceHistory(points, bucketSeconds): AggregatedPricePoint[]`、`overlayNewsMarkers(points, newsItems): ChartPoint[]`、`exportPriceHistoryCsv(points): string`
+
+- [ ] **Step 1: 集約の失敗するテストを書く**
+
+`functions/src/market/priceHistory.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { aggregatePriceHistory, exportPriceHistoryCsv, overlayNewsMarkers } from './priceHistory'
+
+const point = (stockId: string, batchIndex: number, timestampMillis: number, price: number) =>
+  ({ stockId, batchIndex, timestampMillis, price })
+
+describe('aggregatePriceHistory', () => {
+  it('groups 3-second points into a 30-second bucket, keeping the LAST price in each bucket', () => {
+    const points = [
+      point('acme', 0, 0, 1000), point('acme', 1, 3000, 1010), point('acme', 2, 6000, 1005),
+      point('acme', 3, 9000, 1020), point('acme', 4, 12000, 1030), // still in bucket 0 (0-29999ms) if 30s
+      point('acme', 10, 30000, 1050), // new bucket
+    ]
+    const result = aggregatePriceHistory(points, 30)
+    expect(result).toEqual([
+      { stockId: 'acme', bucketStartMillis: 0, price: 1030 },
+      { stockId: 'acme', bucketStartMillis: 30000, price: 1050 },
+    ])
+  })
+
+  it('returns one point per bucket when bucketSeconds equals the batch interval (no aggregation)', () => {
+    const points = [point('acme', 0, 0, 1000), point('acme', 1, 3000, 1010)]
+    expect(aggregatePriceHistory(points, 3)).toEqual([
+      { stockId: 'acme', bucketStartMillis: 0, price: 1000 },
+      { stockId: 'acme', bucketStartMillis: 3000, price: 1010 },
+    ])
+  })
+})
+
+describe('overlayNewsMarkers', () => {
+  it('attaches newsIds published within a bucket to that bucket\'s point', () => {
+    const buckets = [{ stockId: 'acme', bucketStartMillis: 0, price: 1000 }, { stockId: 'acme', bucketStartMillis: 30000, price: 1050 }]
+    const news = [{ id: 'news-1', publishedAtMillis: 15000 }, { id: 'news-2', publishedAtMillis: 45000 }]
+    const result = overlayNewsMarkers(buckets, news, 30)
+    expect(result[0].newsIds).toEqual(['news-1'])
+    expect(result[1].newsIds).toEqual(['news-2'])
+  })
+})
+
+describe('exportPriceHistoryCsv', () => {
+  it('produces a header row and one row per point, prefixing any leading =/+/-/@ to prevent CSV injection', () => {
+    const csv = exportPriceHistoryCsv([
+      { stockId: '=CMD|/malicious', bucketStartMillis: 0, price: 1000 },
+    ])
+    expect(csv).toContain("'=CMD|/malicious")
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/priceHistory.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/priceHistory.ts`:
+
+```ts
+export interface PricePoint {
+  stockId: string
+  batchIndex: number
+  timestampMillis: number
+  price: number
+}
+
+export interface AggregatedPricePoint {
+  stockId: string
+  bucketStartMillis: number
+  price: number
+}
+
+export const aggregatePriceHistory = (points: PricePoint[], bucketSeconds: number): AggregatedPricePoint[] => {
+  const bucketMillis = bucketSeconds * 1000
+  const lastByBucket = new Map<string, AggregatedPricePoint>()
+  for (const point of points) {
+    const bucketStartMillis = Math.floor(point.timestampMillis / bucketMillis) * bucketMillis
+    const key = `${point.stockId}::${bucketStartMillis}`
+    lastByBucket.set(key, { stockId: point.stockId, bucketStartMillis, price: point.price })
+  }
+  return Array.from(lastByBucket.values()).sort((a, b) => a.bucketStartMillis - b.bucketStartMillis)
+}
+
+export interface ChartPoint extends AggregatedPricePoint {
+  newsIds: string[]
+}
+
+export const overlayNewsMarkers = (
+  buckets: AggregatedPricePoint[],
+  news: { id: string; publishedAtMillis: number }[],
+  bucketSeconds: number,
+): ChartPoint[] => {
+  const bucketMillis = bucketSeconds * 1000
+  return buckets.map((bucket) => ({
+    ...bucket,
+    newsIds: news
+      .filter((n) => Math.floor(n.publishedAtMillis / bucketMillis) * bucketMillis === bucket.bucketStartMillis)
+      .map((n) => n.id),
+  }))
+}
+```
+
+- [ ] **Step 4: テストを通す（`aggregatePriceHistory`/`overlayNewsMarkers`のみ）**
+
+Run: `cd functions && npx vitest run src/market/priceHistory.test.ts`
+Expected: 一部PASS、`exportPriceHistoryCsv`はまだFAIL
+
+- [ ] **Step 5: `exportPriceHistoryCsv`を実装する**
+
+`functions/src/market/exportCsv.ts`:
+
+```ts
+import type { AggregatedPricePoint } from './priceHistory'
+
+/** Spreadsheet apps treat a leading =/+/-/@ as a formula — prefix a `'` to
+ * neutralize it, the same CSV-injection guard Phase A's deleted
+ * `resultsExport.ts` used (see Phase A plan's 廃止範囲 note; code is not
+ * reused, only the technique). */
+const escapeCsvCell = (value: string): string =>
+  /^[=+\-@]/.test(value) ? `'${value}` : value
+
+export const exportPriceHistoryCsv = (points: AggregatedPricePoint[]): string => {
+  const header = 'stockId,bucketStartMillis,price'
+  const rows = points.map((p) => `${escapeCsvCell(p.stockId)},${p.bucketStartMillis},${p.price}`)
+  return [header, ...rows].join('\n')
+}
+```
+
+`priceHistory.ts`の`import`に`exportPriceHistoryCsv`を再exportするか、テストの`import`元を`exportCsv.ts`に分ける（File Structureの2ファイル構成に合わせる）。
+
+- [ ] **Step 6: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/priceHistory.test.ts src/market/exportCsv.test.ts`
+Expected: PASS
+
+- [ ] **Step 7: `npm run verify`**
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add functions/src/market/priceHistory.ts functions/src/market/priceHistory.test.ts \
+  functions/src/market/exportCsv.ts functions/src/market/exportCsv.test.ts
+git commit -m "feat: add price history aggregation, news overlay, and CSV export"
+```
+
+---
+
+### Task 15: 予想チェックポイント
+
+矛盾解消F・統合仕様書 §12.32を実装する。各予想は`evaluationTarget`を明示的に持ち、「いつの価格と比較して正誤を判定するか」を売買履歴からの推測に頼らず確定させる。`evaluationTarget`が`{ type: 'AFTER_BATCHES', count }`の既定値（本計画では20区間＝3秒間隔で60秒、矛盾解消ドキュメントが「試運転で決める」としている値のPROVISIONAL初期値）である場合、予想提出時のバッチ番号に`count`を足した番号のバッチが確定した時点で解決可能になる。
+
+**Files:**
+- Create: `functions/src/market/predictionCheckpoint.ts`, `.test.ts`, `onCall.ts`
+
+**Interfaces:**
+- Consumes: `PredictionEvaluationTarget`（Task 2）
+- Produces: `PredictionCheckpoint`型、`submitPrediction(deps)`、`resolvePredictionCheckpoint(checkpoint, context): PredictionResolution`
+
+- [ ] **Step 1: 解決ロジックの失敗するテストを書く**
+
+`functions/src/market/predictionCheckpoint.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { resolvePredictionCheckpoint } from './predictionCheckpoint'
+
+const checkpoint = (overrides: Record<string, unknown> = {}) => ({
+  id: 'pred-1', direction: 'UP' as const, submittedAtBatchIndex: 10, submittedPriceReference: 1000,
+  evaluationTarget: { type: 'AFTER_BATCHES' as const, count: 20 },
+  ...overrides,
+})
+
+describe('resolvePredictionCheckpoint', () => {
+  it('is NOT resolvable before the target batch is reached (AFTER_BATCHES)', () => {
+    const result = resolvePredictionCheckpoint(checkpoint(), { currentBatchIndex: 25, priceAtBatchIndex: () => 1100 })
+    expect(result.resolved).toBe(false)
+  })
+
+  it('resolves at exactly submittedAtBatchIndex + count, comparing against that batch\'s settled price', () => {
+    const result = resolvePredictionCheckpoint(checkpoint(), { currentBatchIndex: 30, priceAtBatchIndex: (i: number) => (i === 30 ? 1100 : 999) })
+    expect(result.resolved).toBe(true)
+    if (result.resolved) {
+      expect(result.resolvedPrice).toBe(1100)
+      expect(result.outcome).toBe('CORRECT') // predicted UP, price rose
+    }
+  })
+
+  it('classifies a prediction within ±0.5% of the reference price as FLAT regardless of predicted direction', () => {
+    const flatCheckpoint = checkpoint({ direction: 'FLAT' })
+    const result = resolvePredictionCheckpoint(flatCheckpoint, { currentBatchIndex: 30, priceAtBatchIndex: () => 1002 })
+    expect(result.resolved).toBe(true)
+    if (result.resolved) expect(result.outcome).toBe('CORRECT')
+  })
+
+  it('marks a wrong-direction prediction INCORRECT', () => {
+    const result = resolvePredictionCheckpoint(checkpoint({ direction: 'UP' }), { currentBatchIndex: 30, priceAtBatchIndex: () => 900 })
+    expect(result.resolved).toBe(true)
+    if (result.resolved) expect(result.outcome).toBe('INCORRECT')
+  })
+
+  it('resolves NEXT_INFORMATION targets when the next information item\'s batch index is known', () => {
+    const target = checkpoint({ evaluationTarget: { type: 'NEXT_INFORMATION' } })
+    const notYet = resolvePredictionCheckpoint(target, { currentBatchIndex: 15, priceAtBatchIndex: () => 1000 })
+    expect(notYet.resolved).toBe(false)
+    const resolved = resolvePredictionCheckpoint(target, {
+      currentBatchIndex: 18, priceAtBatchIndex: () => 1050, nextInformationBatchIndex: 18,
+    })
+    expect(resolved.resolved).toBe(true)
+  })
+
+  it('resolves MARKET_CLOSE targets only once the market has closed', () => {
+    const target = checkpoint({ evaluationTarget: { type: 'MARKET_CLOSE' } })
+    const notYet = resolvePredictionCheckpoint(target, { currentBatchIndex: 100, priceAtBatchIndex: () => 1000, marketClosed: false })
+    expect(notYet.resolved).toBe(false)
+    const resolved = resolvePredictionCheckpoint(target, { currentBatchIndex: 100, priceAtBatchIndex: () => 1200, marketClosed: true })
+    expect(resolved.resolved).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/predictionCheckpoint.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/predictionCheckpoint.ts`:
+
+```ts
+import type { PredictionEvaluationTarget } from '../../../src/lib/lessonTemplates/types'
+
+export type PredictionDirection = 'UP' | 'FLAT' | 'DOWN'
+
+export interface PredictionCheckpoint {
+  id: string
+  direction: PredictionDirection
+  submittedAtBatchIndex: number
+  submittedPriceReference: number
+  evaluationTarget: PredictionEvaluationTarget
+}
+
+export interface ResolutionContext {
+  currentBatchIndex: number
+  priceAtBatchIndex: (batchIndex: number) => number
+  nextInformationBatchIndex?: number
+  marketClosed?: boolean
+}
+
+export type PredictionResolution =
+  | { resolved: false }
+  | { resolved: true; resolvedPrice: number; outcome: 'CORRECT' | 'INCORRECT' }
+
+/** Flat band: within ±0.5% counts as FLAT regardless of predicted
+ * direction. PROVISIONAL — no spec default exists for this band; chosen
+ * to roughly match §12.22's noise magnitude so pure noise never scores a
+ * FLAT prediction as wrong. */
+const FLAT_BAND_PERCENT = 0.5
+
+const classify = (direction: PredictionDirection, referencePrice: number, resolvedPrice: number): 'CORRECT' | 'INCORRECT' => {
+  const changePercent = ((resolvedPrice - referencePrice) / referencePrice) * 100
+  const actual: PredictionDirection = Math.abs(changePercent) <= FLAT_BAND_PERCENT
+    ? 'FLAT' : changePercent > 0 ? 'UP' : 'DOWN'
+  return actual === direction ? 'CORRECT' : 'INCORRECT'
+}
+
+export const resolvePredictionCheckpoint = (
+  checkpoint: PredictionCheckpoint,
+  context: ResolutionContext,
+): PredictionResolution => {
+  const target = checkpoint.evaluationTarget
+  let resolvedAtBatchIndex: number | undefined
+
+  if (target.type === 'AFTER_BATCHES') {
+    const targetBatchIndex = checkpoint.submittedAtBatchIndex + target.count
+    if (context.currentBatchIndex < targetBatchIndex) return { resolved: false }
+    resolvedAtBatchIndex = targetBatchIndex
+  } else if (target.type === 'NEXT_INFORMATION') {
+    if (context.nextInformationBatchIndex === undefined) return { resolved: false }
+    resolvedAtBatchIndex = context.nextInformationBatchIndex
+  } else {
+    if (!context.marketClosed) return { resolved: false }
+    resolvedAtBatchIndex = context.currentBatchIndex
+  }
+
+  const resolvedPrice = context.priceAtBatchIndex(resolvedAtBatchIndex)
+  return { resolved: true, resolvedPrice, outcome: classify(checkpoint.direction, checkpoint.submittedPriceReference, resolvedPrice) }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/predictionCheckpoint.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `submitPrediction`Callableを実装する（未入力者は§12.32/矛盾解消Fにより減点ではなく対象外として扱う——Task 16の評価がこの型を消費する際、`myOrders`はあっても予想がないチームを0点にせず「対象外」の集計から除外する）**
+
+`functions/src/market/onCall.ts`へ`submitPredictionCallable`を追加する。冪等キー必須、`PredictionCheckpoint`をFirestore`lessonRuns/{id}/predictions/{predictionId}`へ書く。パターンはTask 7 Step 10と同一。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/market/predictionCheckpoint.ts functions/src/market/predictionCheckpoint.test.ts functions/src/market/onCall.ts
+git commit -m "feat: add prediction checkpoints with explicit evaluationTarget resolution (spec resolution F)"
+```
+
+---
+
+### Task 16: 社会科の評価（5観点・観点別ランキング）
+
+統合仕様書 §12.33を実装する。5観点のうち「運用結果」「予想精度」は**自動計算**、「情報活用」「リスク管理」「振り返り」は**教師によるルーブリック評価**とし、型レベルで分離する（旧`phase1b`計画が明示していた「『根拠の妥当性』を自動採点しない」という設計原則——統合仕様書でも有効なため引き継ぐ、と同計画のヘッダーに明記されている）。予想を一度も出さなかったチームは「予想精度」観点から**0点ではなく対象外**として除外する（矛盾解消F）。
+
+**Files:**
+- Create: `functions/src/market/evaluation.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `SocialStudiesEvaluationWeights`（Task 2）、`PredictionResolution`（Task 15）
+- Produces: `computeOperationResultScore`、`computePredictionAccuracyScore`、`computeWeightedTotalScore`、`rankByCriterion`
+
+- [ ] **Step 1: 自動計算スコアの失敗するテストを書く**
+
+`functions/src/market/evaluation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeOperationResultScore, computePredictionAccuracyScore, computeWeightedTotalScore, rankByCriterion } from './evaluation'
+
+describe('computeOperationResultScore', () => {
+  it('scores a 10% return as a 10-point gain over the 100-point baseline (starting cash = 100)', () => {
+    expect(computeOperationResultScore({ finalAssetValue: 110000, startingCash: 100000 })).toBeCloseTo(110, 9)
+  })
+})
+
+describe('computePredictionAccuracyScore', () => {
+  it('returns the percentage of resolved predictions that were correct', () => {
+    expect(computePredictionAccuracyScore([{ outcome: 'CORRECT' }, { outcome: 'CORRECT' }, { outcome: 'INCORRECT' }])).toBeCloseTo(200 / 3, 6)
+  })
+
+  it('returns null (not zero) for a team that never submitted a resolved prediction (矛盾解消F)', () => {
+    expect(computePredictionAccuracyScore([])).toBeNull()
+  })
+})
+
+describe('computeWeightedTotalScore', () => {
+  const weights = { operationResult: 0.1, predictionAccuracy: 0.3, informationUsage: 0.4, riskManagement: 0.1, reflection: 0.1 }
+
+  it('combines all 5 scores when every one is present', () => {
+    const total = computeWeightedTotalScore(
+      { operationResult: 100, predictionAccuracy: 80, informationUsage: 90, riskManagement: 70, reflection: 60 },
+      weights,
+    )
+    expect(total).toBeCloseTo(100 * 0.1 + 80 * 0.3 + 90 * 0.4 + 70 * 0.1 + 60 * 0.1, 9)
+  })
+
+  it('renormalizes the remaining weights when predictionAccuracy is null (team never predicted)', () => {
+    const total = computeWeightedTotalScore(
+      { operationResult: 100, predictionAccuracy: null, informationUsage: 90, riskManagement: 70, reflection: 60 },
+      weights,
+    )
+    const remainingWeightSum = 0.1 + 0.4 + 0.1 + 0.1 // 0.7
+    const expected = (100 * 0.1 + 90 * 0.4 + 70 * 0.1 + 60 * 0.1) / remainingWeightSum
+    expect(total).toBeCloseTo(expected, 9)
+  })
+})
+
+describe('rankByCriterion', () => {
+  it('sorts teams descending by the given criterion, excluding teams with a null score for it', () => {
+    const teams = [
+      { teamId: 'a', predictionAccuracy: 80 },
+      { teamId: 'b', predictionAccuracy: null },
+      { teamId: 'c', predictionAccuracy: 95 },
+    ]
+    const ranked = rankByCriterion(teams, 'predictionAccuracy')
+    expect(ranked.map((r) => r.teamId)).toEqual(['c', 'a'])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/evaluation.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/evaluation.ts`:
+
+```ts
+import type { SocialStudiesEvaluationWeights } from '../../../src/lib/lessonTemplates/types'
+
+export const computeOperationResultScore = (input: { finalAssetValue: number; startingCash: number }): number =>
+  (input.finalAssetValue / input.startingCash) * 100
+
+export const computePredictionAccuracyScore = (resolutions: { outcome: 'CORRECT' | 'INCORRECT' }[]): number | null => {
+  if (resolutions.length === 0) return null
+  const correct = resolutions.filter((r) => r.outcome === 'CORRECT').length
+  return (correct / resolutions.length) * 100
+}
+
+export interface CriterionScores {
+  operationResult: number | null
+  predictionAccuracy: number | null
+  informationUsage: number | null
+  riskManagement: number | null
+  reflection: number | null
+}
+
+/** Renormalizes weights across only the non-null criteria, so a team that
+ * skipped predictions (矛盾解消F: excluded, not zeroed) is scored on the
+ * remaining criteria's relative weight, not penalized for the gap. */
+export const computeWeightedTotalScore = (
+  scores: CriterionScores,
+  weights: SocialStudiesEvaluationWeights,
+): number | null => {
+  const entries = (Object.keys(scores) as (keyof CriterionScores)[])
+    .map((key) => ({ score: scores[key], weight: weights[key] }))
+    .filter((e): e is { score: number; weight: number } => e.score !== null)
+  if (entries.length === 0) return null
+  const weightSum = entries.reduce((sum, e) => sum + e.weight, 0)
+  const weightedSum = entries.reduce((sum, e) => sum + e.score * e.weight, 0)
+  return weightedSum / weightSum
+}
+
+export const rankByCriterion = <T extends { teamId: string }>(
+  teams: T[],
+  criterion: keyof T,
+): T[] =>
+  teams
+    .filter((t) => t[criterion] !== null && t[criterion] !== undefined)
+    .sort((a, b) => (b[criterion] as unknown as number) - (a[criterion] as unknown as number))
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/evaluation.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/market/evaluation.ts functions/src/market/evaluation.test.ts
+git commit -m "feat: add 5-criteria evaluation with auto/rubric split and per-criterion ranking"
+```
+
+---
+
+### Task 17: 倒産・配当・分割（既定オフ）
+
+統合仕様書 §12.28・§12.29を実装する。**3機能とも`SocialStudiesMarketContent`のフラグ（Task 2、既定`false`）で無効化されており、無効時は通常の授業フローに一切影響してはならない。** 純粋関数として実装し、`processBatch`（Task 9）は各フラグが`true`のときだけこれらを呼ぶ薄い分岐を持つ（`settleBatch`自体は変更しない——倒産・配当・分割はバッチ約定とは別のタイミングで発生するイベントであり、`settleBatch`の中核ロジックに混ぜ込まない）。
+
+**Files:**
+- Create: `functions/src/market/lifecycleEvents.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `PriceGuard`（Task 1）
+- Produces: `applyBankruptcy(stock)`、`applyDividend(teamHoldingsForStock, dividendPerShare)`、`applyStockSplit(price, holdings, splitRatio)`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/market/lifecycleEvents.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { applyBankruptcy, applyDividend, applyStockSplit } from './lifecycleEvents'
+
+describe('applyBankruptcy', () => {
+  it('sets the price to exactly 0, ignoring the price guard (spec §12.23 "倒産イベントだけガードを無視")', () => {
+    const result = applyBankruptcy({ currentPrice: 500, priceGuard: { type: 'ABSOLUTE', minimumPrice: 100 } })
+    expect(result.newPrice).toBe(0)
+    expect(result.tradingHalted).toBe(true)
+  })
+})
+
+describe('applyDividend', () => {
+  it('pays cash proportional to holdings, at the configured per-share amount', () => {
+    expect(applyDividend({ heldShares: 10, dividendPerShare: 20 })).toBe(200)
+  })
+  it('pays nothing for zero holdings', () => {
+    expect(applyDividend({ heldShares: 0, dividendPerShare: 20 })).toBe(0)
+  })
+})
+
+describe('applyStockSplit', () => {
+  it('divides price and multiplies holdings by the split ratio (e.g. a 1:2 split)', () => {
+    const result = applyStockSplit({ price: 2000, heldShares: 10, splitRatio: 2 })
+    expect(result).toEqual({ newPrice: 1000, newHeldShares: 20 })
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/market/lifecycleEvents.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/market/lifecycleEvents.ts`:
+
+```ts
+import type { PriceGuard } from '@stock-league/market-authoring-content'
+
+export const applyBankruptcy = (input: { currentPrice: number; priceGuard: PriceGuard }): { newPrice: number; tradingHalted: boolean } => {
+  // Deliberately ignores input.priceGuard — spec §12.23's sole exception.
+  return { newPrice: 0, tradingHalted: true }
+}
+
+export const applyDividend = (input: { heldShares: number; dividendPerShare: number }): number =>
+  input.heldShares * input.dividendPerShare
+
+export const applyStockSplit = (input: { price: number; heldShares: number; splitRatio: number }): { newPrice: number; newHeldShares: number } => ({
+  newPrice: input.price / input.splitRatio,
+  newHeldShares: input.heldShares * input.splitRatio,
+})
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/market/lifecycleEvents.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `processBatch`（Task 9 Step 7）へフラグ分岐を追記する失敗するテストを書く（`bankruptcyEnabled`等が`false`のとき一切呼ばれないことを検証する）**
+
+`functions/src/market/processBatch.test.ts`に追記する（Task 9で作成済みのテストファイル）:
+
+```ts
+it('never calls applyBankruptcy/applyDividend/applyStockSplit when all three flags are false (default)', async () => {
+  const applyBankruptcy = vi.fn()
+  const applyDividend = vi.fn()
+  const applyStockSplit = vi.fn()
+  await processBatch({
+    /* ...Task 9で確立した他の依存関係... */
+    applyBankruptcy, applyDividend, applyStockSplit,
+    socialStudiesMarket: { bankruptcyEnabled: false, dividendEnabled: false, stockSplitEnabled: false /* ...省略 */ },
+  })
+  expect(applyBankruptcy).not.toHaveBeenCalled()
+  expect(applyDividend).not.toHaveBeenCalled()
+  expect(applyStockSplit).not.toHaveBeenCalled()
+})
+```
+
+- [ ] **Step 6: `processBatch`にフラグ分岐を実装する**
+
+`processBatch`（Task 9 Step 7の責務リストのStep 6の直後）に「有効なライフサイクルイベントがあれば適用する」を追加する。倒産は教師の明示操作（別Callable、本タスクの範囲では純粋関数のみを提供し、Callable自体はTask 11のパターンを踏襲して実装時に追加する）、配当・分割は教材設定の`triggerBatchIndexes: number[]`（`SocialStudiesMarketContent`に追加。既定は空配列＝発生しない）で指定されたバッチでのみ発火させる。
+
+- [ ] **Step 7: `npm run verify`**
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add functions/src/market/lifecycleEvents.ts functions/src/market/lifecycleEvents.test.ts functions/src/market/processBatch.ts functions/src/market/processBatch.test.ts
+git commit -m "feat: add opt-in bankruptcy/dividend/stock-split lifecycle events, default disabled"
+```
+
+---
+
+### Task 18: 並行実行テスト（§30-4）
+
+統合仕様書 §30-4「注文・約定・価格更新は、単体テストだけでなく並行実行テストを作る」を実装する。Task 1〜17までの純粋関数テストはすべて同期的で、真の競合状態（同時書き込みによる取りこぼし）を検出できない。本タスクは**Firestore Emulatorに対して実際に並行リクエストを送る**統合テストとし、`npm run test:rules`とは別に`npm run test`（Vitest、Emulator接続）で実行する。
+
+**Files:**
+- Create: `functions/src/market/concurrentBatch.test.ts`
+
+**Interfaces:**
+- Consumes: `applySoftLockForNewOrder`（Task 7）、`createPendingOrder`（Task 5）、`settleBatch`（Task 9）
+
+- [ ] **Step 1: 同時ソフト拘束が現金超過を許さないことの失敗するテストを書く（最も直接的な二重支出テスト）**
+
+`functions/src/market/concurrentBatch.test.ts`（Firestore Emulatorが起動している前提。`firebase emulators:exec`または既存の`npm run test`のEmulator起動設定に合わせる）:
+
+```ts
+import { initializeApp } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { applySoftLockForNewOrder, getOrInitTeamAccount } from '../lessonRuns/teamAccounts/repository'
+
+let db: FirebaseFirestore.Firestore
+
+beforeAll(() => {
+  initializeApp({ projectId: 'demo-concurrent-test' })
+  db = getFirestore()
+})
+
+describe('concurrent order submission (spec §30-4)', () => {
+  it('never lets the sum of concurrently-accepted buy orders exceed the team\'s cash, even when 20 requests race', async () => {
+    const lessonRunId = 'run-concurrent-1'
+    const teamId = 'team-a'
+    await getOrInitTeamAccount({ firestore: db, lessonRunId, teamId, startingCash: 10000, now: () => Date.now() })
+
+    // 20 concurrent 1,000-yen orders against 10,000 cash — at most 10 may
+    // legitimately succeed. If the transaction has a race, more than 10
+    // will succeed and total locked value will exceed 10,000.
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => applySoftLockForNewOrder({
+        firestore: db, lessonRunId, teamId, side: 'BUY', stockId: 'acme',
+        quantity: 1, referencePrice: 1000, now: () => Date.now(),
+      })),
+    )
+
+    const acceptedCount = results.filter((r) => r.accepted).length
+    expect(acceptedCount).toBeLessThanOrEqual(10)
+
+    const finalAccount = await db.doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).get()
+    expect((finalAccount.data() as { lockedBuyValue: number }).lockedBuyValue).toBeLessThanOrEqual(10000)
+  })
+
+  it('assigns every concurrently-submitted order a unique orderId even under simultaneous idempotencyKeys from different teams', async () => {
+    const lessonRunId = 'run-concurrent-2'
+    const { createPendingOrder } = await import('../lessonRuns/orders/repository')
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => createPendingOrder({
+        firestore: db, lessonRunId, batchId: 'batch-1', teamId: `team-${i}`,
+        stockId: 'acme', side: 'BUY', quantity: 1, referencePrice: 1000,
+        idempotencyKey: `idem-${i}`, now: () => Date.now(),
+      })),
+    )
+    const orderIds = results.map((r) => r.orderId)
+    expect(new Set(orderIds).size).toBe(orderIds.length)
+  })
+})
+
+describe('multiple teams settling in the same batch (spec §27.2 "同一区間の全注文が同価格")', () => {
+  it('produces one uniform execution price for all teams\' orders in the same batch, regardless of submission order', async () => {
+    // Exercises the same settleBatch (Task 9) already covered by unit
+    // tests, but here the ORDERS are submitted concurrently via
+    // createPendingOrder against the emulator first, then read back and
+    // fed into settleBatch — closing the loop between "concurrent writes
+    // land correctly" and "settlement reads them all consistently".
+    const lessonRunId = 'run-concurrent-3'
+    const { createPendingOrder, listPendingOrdersForBatch } = await import('../lessonRuns/orders/repository')
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) => createPendingOrder({
+        firestore: db, lessonRunId, batchId: 'batch-1', teamId: `team-${i}`,
+        stockId: 'acme', side: 'BUY', quantity: 1, referencePrice: 1000 + i,
+        idempotencyKey: `race-${i}`, now: () => Date.now(),
+      })),
+    )
+    const orders = await listPendingOrdersForBatch({ firestore: db as never, lessonRunId, batchId: 'batch-1' })
+    expect(orders).toHaveLength(5)
+    // executionPrice is determined by settleBatch from the stock's
+    // currentPrice, NOT from any individual order's referencePrice — this
+    // assertion documents that submission order/timing cannot influence it.
+    const referencePrices = new Set(orders.map((o) => o.referencePrice))
+    expect(referencePrices.size).toBeGreaterThan(1) // orders WERE submitted with different reference prices
+    // ...settleBatch (Task 9) applied to these orders would fill all 5 at
+    // the single stock.currentPrice, already proven by Task 9's unit tests;
+    // this test's job is only to prove concurrent writes didn't corrupt or
+    // drop any of the 5 orders before settlement reads them.
+  })
+})
+```
+
+- [ ] **Step 2: Emulatorを起動してテストを実行し、失敗を確認する**
+
+Run: `firebase emulators:exec --only firestore "cd functions && npx vitest run src/market/concurrentBatch.test.ts"`
+Expected: FAIL — `db`が空のプロジェクトを指しているためドキュメントが見つからない、または対象モジュールが未実装
+
+- [ ] **Step 3: Task 5・7で実装済みの`createPendingOrder`/`applySoftLockForNewOrder`/`listPendingOrdersForBatch`をAdmin SDKの`Firestore`インスタンスへ直接バインドできることを確認する**
+
+Task 5・7では`FirestoreLike`という最小インターフェース（`runTransaction`のみ）を定義した。Admin SDKの`Firestore`インスタンスはこのインターフェースを満たすため、追加のアダプタなしにそのまま渡せる。もし型が合わない場合は`FirestoreLike`のシグネチャをAdmin SDKの実際の型に合わせて調整する（このタスクで初めてAdmin SDKと接続するため、ここで初めて型の食い違いが顕在化する可能性が高い）。
+
+- [ ] **Step 4: テストを通す**
+
+Run: `firebase emulators:exec --only firestore "cd functions && npx vitest run src/market/concurrentBatch.test.ts"`
+Expected: PASS
+
+- [ ] **Step 5: `package.json`の`verify`スクリプトに、Emulator経由の並行実行テストを含める**
+
+Global Constraintsの`npm run verify`が`test`ステップの一部として本テストも実行するよう、`functions/package.json`の`test`スクリプトが`concurrentBatch.test.ts`を含む対象に含まれていることを確認する（除外設定があれば外す）。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/market/concurrentBatch.test.ts functions/package.json
+git commit -m "test: add Firestore-emulator concurrency tests for order submission and batch settlement (spec §30-4)"
+```
+
+---
+
+### Task 19: 受け入れテスト（§27.2）と完了条件の確定
+
+統合仕様書 §27.2の市場受け入れテスト11項目を、Task 1〜18で書いたテストへ1つずつ対応付ける。**2項目（6・11）は既存タスクのテストだけではカバーできていないため、本タスクで新しいテストを追加して埋める。**
+
+**Files:**
+- Modify: `functions/src/lessonRuns/orders/repository.test.ts`（項目6）
+- Create: `functions/src/market/replayDeterminism.test.ts`（項目11）
+
+**§27.2の11項目と対応するテストの対応表:**
+
+| # | 受け入れ項目 | 対応するテスト |
+| --- | --- | --- |
+| 1 | 同一区間の全注文が同価格 | Task 9 `settleBatch.test.ts`「fills all orders for a stock at the SAME price」 |
+| 2 | 二重送信が1回だけ約定 | Task 5「is idempotent per idempotencyKey」＋ Task 10「does nothing for a duplicate delivery of an already-processed batchId」 |
+| 3 | 処理中取消不可 | Task 8「refuses to cancel an order that already moved to PROCESSING」 |
+| 4 | 資金不足の買い注文が全不成立 | Task 9「rejects ALL of a team's buy orders ACROSS EVERY STOCK」 |
+| 5 | 同一区間売却代金が購入に使われない | Task 6「excludes this batch's own sell proceeds from the cash basis」（`cashBeforeBatch`が呼び出し側の責務であることを明示） |
+| 6 | 参考価格と約定価格が履歴に残る | **未カバー。Step 1で追加する。** |
+| 7 | 価格ガードを下回らない | Task 3「never returns a price below the guard even with a large negative swing」 |
+| 8 | 倒産時だけ0円になる | Task 17「sets the price to exactly 0, ignoring the price guard」＋ Task 3のガードテスト（通常経路では0円に到達しないことの対照） |
+| 9 | 停止後注文が受理されない | Task 7「rejects when the market is paused」 |
+| 10 | 再開確認時間後に同時受付 | Task 12「records a resumeScheduledAtMillis...」＋「unpauses and restarts the batch chain」（`marketPaused`が単一の書き込みで全員へ同時に反映される設計） |
+| 11 | リプレイで同じイベント列を再現できる | Task 3「is deterministic for the same seed inputs」が単一バッチの決定性を示すのみ。**複数バッチにまたがる決定性は未カバー。Step 3で追加する。** |
+
+- [ ] **Step 1: 項目6（参考価格と約定価格が履歴に残る）の失敗するテストを書く**
+
+`functions/src/lessonRuns/orders/repository.test.ts`に追記する:
+
+```ts
+describe('order history retains both reference price and execution price (spec §12.11/§27.2 item 6)', () => {
+  it('keeps referencePrice unchanged and adds executionPrice when transitioning to FILLED', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/orders/order-1', {
+      orderId: 'order-1', status: 'PROCESSING', referencePrice: 1000,
+    })
+    await transitionOrderStatus({
+      firestore: fake as never, lessonRunId: 'run-1', orderId: 'order-1',
+      from: 'PROCESSING', to: 'FILLED', patch: { executionPrice: 1030 },
+    })
+    const stored = fake.docs.get('lessonRuns/run-1/orders/order-1')
+    expect(stored).toMatchObject({ referencePrice: 1000, executionPrice: 1030, status: 'FILLED' })
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認し、実装を確認する**
+
+Run: `cd functions && npx vitest run src/lessonRuns/orders/repository.test.ts`
+Expected: `transitionOrderStatus`はTask 5で`patch`引数を既に受け取る設計になっているため、このテストは追加のプロダクションコード変更なしにPASSするはずである。FAILする場合はTask 5の`transitionOrderStatus`実装が`patch`を`tx.update`へ渡していない不具合であり、その場で修正する。
+
+- [ ] **Step 3: 項目11（複数バッチにまたがるリプレイ決定性）の失敗するテストを書く**
+
+`functions/src/market/replayDeterminism.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { settleBatch, type SettleBatchInput } from './engine/settleBatch'
+
+describe('multi-batch replay determinism (spec §27.2 item 11 / 矛盾解消D)', () => {
+  it('re-running the same sequence of batches with the same randomSeed+restoreGeneration reproduces identical prices and outcomes', () => {
+    const runSequence = (): unknown[] => {
+      let currentPrice = 1000
+      const results: unknown[] = []
+      for (let batchIndex = 0; batchIndex < 5; batchIndex += 1) {
+        const input: SettleBatchInput = {
+          lessonRunId: 'run-1', batchId: `run-1_batch_${batchIndex}`, batchIndex,
+          randomSeed: 'replay-seed', restoreGeneration: 0,
+          priceSensitivityPreset: 'BALANCED', noiseEnabled: true,
+          stocks: [{
+            stockId: 'acme', currentPrice, initialPrice: 1000,
+            priceGuard: { type: 'ABSOLUTE', minimumPrice: 1 },
+            effectiveMarketSize: 100000, demandSensitivity: 1, informationImpactPercent: 0,
+          }],
+          orders: [{ orderId: `o${batchIndex}`, teamId: 'team-a', stockId: 'acme', side: 'BUY', quantity: 1, referencePrice: currentPrice }],
+          teamAccounts: [{ teamId: 'team-a', cash: 1000000, holdings: {} }],
+        }
+        const result = settleBatch(input)
+        currentPrice = result.stocks[0].nextPrice
+        results.push(result)
+      }
+      return results
+    }
+
+    expect(runSequence()).toEqual(runSequence())
+  })
+
+  it('a DIFFERENT restoreGeneration produces a different sequence — replay after a checkpoint restore is not a silent no-op (矛盾解消E/D)', () => {
+    const runWithGeneration = (restoreGeneration: number) => settleBatch({
+      lessonRunId: 'run-1', batchId: 'run-1_batch_0', batchIndex: 0,
+      randomSeed: 'replay-seed', restoreGeneration,
+      priceSensitivityPreset: 'BALANCED', noiseEnabled: true,
+      stocks: [{
+        stockId: 'acme', currentPrice: 1000, initialPrice: 1000,
+        priceGuard: { type: 'ABSOLUTE', minimumPrice: 1 },
+        effectiveMarketSize: 100000, demandSensitivity: 1, informationImpactPercent: 0,
+      }],
+      orders: [], teamAccounts: [],
+    })
+    expect(runWithGeneration(0).stocks[0].nextPrice).not.toBe(runWithGeneration(1).stocks[0].nextPrice)
+  })
+})
+```
+
+- [ ] **Step 4: 失敗を確認し、テストを通す**
+
+Run: `cd functions && npx vitest run src/market/replayDeterminism.test.ts`
+Expected: `settleBatch`・`calculateNextPrice`はTask 3・9で既に決定的に実装されているため、実装済みコードのままPASSするはずである。FAILする場合は`Date.now()`や`Math.random()`がどこかに紛れ込んでいる可能性が高く、その箇所を洗い出して修正する。
+
+- [ ] **Step 5: Phase C全体の完了条件を確認する**
+
+以下すべてを満たすことをPhase C完了の条件とする:
+
+1. `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*`の`verify`）が全ワークスペースでPASSする。
+2. 上表の§27.2 11項目すべてに対応するテストが存在し、PASSする。
+3. Task 18の並行実行テスト（Firestore Emulator）がPASSする。
+4. 生徒向けに配信されるデータ（`lessonRunPublic`・`lessonRunTeamState`のRTDB書き込み内容、および`toPublicView`の出力）を目視確認し、`impactSensitivities`・`InformationImpact`・`randomSeed`・将来バッチの価格のいずれも含まれていないことを確認する（Task 1・13の型テストは構造を保証するが、実際のAdmin SDK書き込みコードが型を無視して余分なフィールドを書いていないかは目視確認が必要）。
+5. 本計画内でPROVISIONAL（試運転で調整する暫定値）と明記した定数——`PRICE_SENSITIVITY_PRESETS`（Task 3）、`DEFAULT_NOISE_MAGNITUDE_PERCENT`（Task 3）、`DEFAULT_SUDDEN_CHANGE_WARNING_THRESHOLD_PERCENT`（Task 3）、`SHORT_TERM_WINDOW_BATCHES`（Task 9 Step 7）、`FLAT_BAND_PERCENT`（Task 15）、`STALL_DETECTION_THRESHOLD_MILLIS`（Task 10）——を1箇所の一覧（教師向け「詳細設定」画面、または`functions/src/market/engine/tuningConstants.ts`のような単一ファイル）にまとめ、後続の試運転フェーズで参照できるようにする。この一覧化自体をタスクの完了条件に含める。
+6. Task 13 Step 9の前提チェックリスト（`lessonRunPublic`の生徒読み取り許可、`teamMembership`ミラーの実在確認）が解消されている。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/lessonRuns/orders/repository.test.ts functions/src/market/replayDeterminism.test.ts
+git commit -m "test: close the two §27.2 acceptance-test gaps (order history, multi-batch replay determinism)"
+```
