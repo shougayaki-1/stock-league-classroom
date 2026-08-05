@@ -3,11 +3,10 @@ import { describe, expect, it } from 'vitest'
 import App from './App'
 
 describe('App', () => {
-  it('renders the landing page and its primary paths', () => {
+  it('keeps every landing-page CTA within the surviving public routes', () => {
     render(<App />)
-    expect(screen.getByRole('heading', { name: /株式市場を/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /授業をはじめる/i })).toHaveAttribute('href', '/teacher/markets')
-    expect(screen.getByRole('link', { name: /生徒として参加/i })).toHaveAttribute('href', '/join')
+    expect(screen.getByRole('link', { name: /詳しく見る/i })).toHaveAttribute('href', '/about')
+    expect(screen.getByRole('link', { name: /サービス概要を見る/i })).toHaveAttribute('href', '/about')
   })
 
   it.each([
@@ -47,11 +46,10 @@ describe('App', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('redirects the legacy host console URL to the control room, keeping the query string', () => {
+  it('does not leave the removed host console route reachable', () => {
     window.history.pushState({}, '', '/teacher/markets/demo-market/host?tab=news')
     render(<App />)
-    expect(window.location.pathname).toBe('/teacher/markets/demo-market/room')
-    expect(window.location.search).toBe('?tab=news')
+    expect(screen.getByRole('heading', { name: 'ページが見つかりません' })).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 })

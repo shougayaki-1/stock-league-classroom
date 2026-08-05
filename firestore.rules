@@ -8,103 +8,18 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
     function operator() { return teacher() && request.auth.token.operator == true; }
-    // Emergency stop. An absent document means "open", so publishing these rules
-    // before the document is seeded cannot take the service down.
+    // Retained until the new lesson-run emergency control is introduced.
     function serviceOpen() {
       return !exists(/databases/$(database)/documents/serviceStatus/global)
         || get(/databases/$(database)/documents/serviceStatus/global).data.acceptingNewMarkets != false;
     }
 
     match /serviceStatus/{documentId} {
-      // Readable by anyone so a maintenance notice can be shown before sign-in.
-      // It holds no personal data.
+      // It contains no personal data, so the maintenance notice is readable
+      // before sign-in. Only operators may change it.
       allow get: if true;
       allow list: if false;
       allow write: if operator();
-    }
-
-    match /templates/{templateId} {
-      // A personal template can never be fetched or enumerated by another user.
-      allow get: if teacher() && resource.data.ownerUid == request.auth.uid;
-      // Firestore evaluates this against every possible returned document, so
-      // callers must constrain their query to their own ownerUid.
-      allow list: if teacher() && resource.data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.visibility == 'private';
-      allow update: if teacher()
-        && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.visibility == 'private';
-      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
-    }
-
-    match /officialTemplates/{templateId} {
-      allow get, list: if teacher() || operator();
-      allow create, update, delete: if operator();
-    }
-
-    match /templateShares/{shareId} {
-      // Capability links are deliberately unlistable; their snapshot is write-once.
-      allow get: if teacher();
-      allow list: if false;
-      allow create: if teacher()
-        && request.resource.data.createdByUid == request.auth.uid
-        // A share is a self-contained, non-claimable capability. In particular,
-        // it must not retain a private template ID that could name another user.
-        && request.resource.data.keys().hasOnly(['snapshot', 'createdByUid', 'createdAt']);
-      allow update, delete: if false;
-    }
-
-    match /markets/{marketId} {
-      allow get, list: if teacher() && resource.data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && serviceOpen()
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.capacity == 80
-        && request.resource.data.joinCode is string
-        && request.resource.data.joinCode.size() == 6
-        && request.resource.data.creationStatus == 'CREATING';
-      allow update: if teacher() && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.capacity == resource.data.capacity
-        && request.resource.data.joinCode == resource.data.joinCode
-        && request.resource.data.templateSnapshot == resource.data.templateSnapshot
-        && request.resource.data.visibility == resource.data.visibility
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['creationStatus', 'initializedAt']);
-      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
-    }
-
-    match /marketJoinCodes/{code} {
-      // A code is a capability: authenticated anonymous students may direct-get
-      // it, but nobody can enumerate all active classrooms.
-      allow get: if signedIn();
-      allow list: if false;
-      allow create: if teacher()
-        && request.resource.data.ownerUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.ownerUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.joinCode == code;
-      allow update, delete: if teacher()
-        && resource.data.ownerUid == request.auth.uid;
-    }
-
-    match /marketResults/{marketId}/participants/{participantId} {
-      // The host writes deterministic finalization checkpoints. Students may
-      // only read their own participant result; market ownership is immutable.
-      allow get: if signedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.participantUid == request.auth.uid);
-      allow list: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid;
-      allow delete: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
-    }
-
-    match /marketResults/{marketId}/teams/{teamId} {
-      allow get, list, create, update, delete: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
     }
 
     match /{document=**} { allow read, write: if false; }
