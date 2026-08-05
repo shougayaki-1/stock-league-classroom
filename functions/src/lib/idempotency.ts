@@ -71,7 +71,7 @@ const canonicalize = (value: unknown, ancestors: Set<object>): string => {
         }
         return [key, descriptor.value] as const
       })
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 
     return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalize(entryValue, ancestors)}`).join(',')}}`
   } finally {

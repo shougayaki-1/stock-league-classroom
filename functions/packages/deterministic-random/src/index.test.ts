@@ -9,6 +9,10 @@ describe('fnv1aHash', () => {
   it('differs for different inputs', () => {
     expect(fnv1aHash('a')).not.toBe(fnv1aHash('b'))
   })
+
+  it('matches a fixed 32-bit FNV-1a vector', () => {
+    expect(fnv1aHash('lesson-run-1:0:acme:3')).toBe(506829764)
+  })
 })
 
 describe('mulberry32', () => {
@@ -27,6 +31,15 @@ describe('mulberry32', () => {
       expect(value).toBeLessThan(1)
     }
   })
+
+  it('matches a fixed sequence vector', () => {
+    const rand = mulberry32(42)
+    expect([rand(), rand(), rand()]).toEqual([
+      0.6011037519201636,
+      0.44829055899754167,
+      0.8524657934904099,
+    ])
+  })
 })
 
 describe('deriveSeed', () => {
@@ -43,4 +56,20 @@ describe('deriveSeed', () => {
 
     expect(beforeRestore).not.toBe(afterRestore)
   })
+
+  it('uses an unambiguous type-preserving encoding instead of colon joining', () => {
+    expect(deriveSeed(['1'])).not.toBe(deriveSeed([1]))
+    expect(deriveSeed(['a:b', 'c'])).not.toBe(deriveSeed(['a', 'b:c']))
+  })
+
+  it('matches the seed derivation fixed vector', () => {
+    expect(deriveSeed(['run-abc', 0, 'acme', 3])).toBe(997618770)
+  })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects a non-finite numeric seed part: %s',
+    (part) => {
+      expect(() => deriveSeed(['run-abc', part])).toThrow(/finite/i)
+    },
+  )
 })

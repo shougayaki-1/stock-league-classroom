@@ -29,6 +29,10 @@ describe('canonicalJson and requestDigest', () => {
     expect(requestDigest({ a: 1, b: 2 })).toBe(requestDigest({ b: 2, a: 1 }))
   })
 
+  it('uses UTF-16 code-unit ordering rather than locale collation for object keys', () => {
+    expect(canonicalJson({ a: 1, Z: 2 })).toBe('{"Z":2,"a":1}')
+  })
+
   it('preserves array order and values in the digest', () => {
     expect(requestDigest([1, 2])).not.toBe(requestDigest([2, 1]))
     expect(requestDigest({ count: 1 })).not.toBe(requestDigest({ count: 2 }))
