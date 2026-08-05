@@ -29,7 +29,20 @@ describe('emergency stop', () => {
 
   it('denies all removed legacy collections', async () => {
     const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
-    await assertFails(getDoc(doc(db, 'markets', 'legacy-market')))
-    await assertFails(getDoc(doc(db, 'templates', 'legacy-template')))
+    const legacyPaths = [
+      ['templates', 'legacy-template'],
+      ['officialTemplates', 'legacy-template'],
+      ['templateShares', 'legacy-share'],
+      ['markets', 'legacy-market'],
+      ['marketJoinCodes', 'LEGACY'],
+      ['marketResults', 'legacy-market', 'participants', 'legacy-participant'],
+      ['marketResults', 'legacy-market', 'teams', 'legacy-team'],
+    ] as const
+
+    for (const path of legacyPaths) {
+      const reference = doc(db, path.join('/'))
+      await assertFails(getDoc(reference))
+      await assertFails(setDoc(reference, { legacy: true }))
+    }
   })
 })

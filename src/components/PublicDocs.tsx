@@ -102,7 +102,7 @@ export const PrivacyPage = () => <DocLayout title="プライバシーポリシ�
   <p>本サービスは以下の外部サービスを利用しています。授業機能の提供開始後に認証や授業データを扱う場合も、利用目的を本ポリシーで更新します。</p>
   <ul>
     <li><strong>Google Firebase</strong>（Google LLC） — 現在は配信基盤として利用します。認証とデータ保存は授業機能の提供開始後に利用する予定です</li>
-    <li><strong>Sentry</strong>（Functional Software, Inc.） — 不具合の検知に利用します。<strong>表示名、メールアドレス、匿名ID、IPアドレス等の個人を識別しうる情報は送信しない設定にしています。</strong>送信されるのはエラーの内容と発生箇所、ブラウザの種類に限られます</li>
+    <li><strong>Sentry</strong>（Functional Software, Inc.） — 不具合の検知に利用します。<span>アプリケーションは氏名、表示名、メールアドレス、匿名IDを event payloadへ意図的に添付しません。</span> <span>接続時に外部事業者が処理する技術情報は、各社のプライバシーポリシーに従います。</span></li>
   </ul>
   <p>これらのサービスでは、情報が日本国外のサーバーで処理される場合があります。</p>
 

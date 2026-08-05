@@ -33,4 +33,12 @@ describe('Phase A public documents', () => {
     expect(screen.getByText(/現在は公開ページのみを提供しています/)).toBeInTheDocument()
     expect(screen.queryByText(/市場の参加コード/)).not.toBeInTheDocument()
   })
+
+  it('limits the Sentry statement to application payloads', () => {
+    render(<PrivacyPage />)
+
+    expect(screen.getByText(/event payloadへ意図的に添付しません/)).toBeInTheDocument()
+    expect(screen.getByText(/接続時に外部事業者が処理する技術情報/)).toBeInTheDocument()
+    expect(screen.queryByText(/IPアドレス等の個人を識別しうる情報は送信しない/)).not.toBeInTheDocument()
+  })
 })
