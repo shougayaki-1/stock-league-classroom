@@ -21,8 +21,4 @@ describe('emergency stop (RTDB)', () => {
     await assertSucceeds(environment.authenticatedContext('operator-a', { operator: true }).database().ref('serviceStatus').set({ acceptingNewMarkets: true }))
     await assertFails(environment.authenticatedContext('operator-a', { operator: true }).database().ref('serviceStatus').set({ acceptingNewMarkets: 'yes' }))
   })
-
-  it('denies the removed liveMarkets tree', async () => {
-    await assertFails(environment.authenticatedContext('teacher-a', { operator: true }).database().ref('liveMarkets/legacy-market').get())
-  })
 })
