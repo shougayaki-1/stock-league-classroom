@@ -6,4 +6,11 @@ export { ping } from './ping'
 export { ensurePersonalOrgCallable } from './organizations/onCall'
 export { publishLessonVersionCallable } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
-export { exportPersonalDataCallable } from './privacy/onCall'
+export {
+  exportPersonalDataCallable,
+  purgeHardDeleteCallable,
+  purgePersonalOrganizationCallable,
+  requestSoftDeleteCallable,
+  restoreSoftDeletedCallable,
+} from './privacy/onCall'
+export { purgeExpiredSoftDeletesScheduled } from './privacy/purgeExpiredSoftDeletes'
