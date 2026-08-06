@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
@@ -80,5 +80,56 @@ describe('organization membership Firestore rules', () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
 
     await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a')))
+  })
+})
+
+describe('orgId/createdByUid immutability on lessonTemplates', () => {
+  beforeEach(async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+    })
+  })
+
+  it('rejects a template whose orgId does not match the deterministic personal org id', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(owner, 'lessonTemplates', 'bad'), {
+      orgId: 'personal_teacher-b', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' },
+      currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE',
+    }))
+  })
+
+  it('rejects changing orgId or createdByUid on update', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const valid = { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' }
+    await setDoc(doc(owner, 'lessonTemplates', 'immutable'), valid)
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { orgId: 'personal_teacher-b' }))
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { status: 'READY' }))
+  })
+
+  it('rejects updating an already-created version', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'lessonTemplates', 't1', 'versions', 'v1'), { templateId: 't1', orgId: 'personal_teacher-a', schemaVersion: 1, content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, createdByUid: 'teacher-a', changeSummary: '', immutable: true })
+    })
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'v1'), { changeSummary: 'edited' }))
+  })
+
+  it('allows an active member of a non-personal organization without changing the rule model', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'school-1'), { type: 'school' })
+      await setDoc(doc(context.firestore(), 'organizations', 'school-1', 'members', 'teacher-a'), { role: 'teacher', status: 'active', membershipVersion: 1 })
+    })
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertSucceeds(setDoc(doc(teacher, 'lessonTemplates', 'school-template'), {
+      orgId: 'school-1', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' },
+      currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE',
+    }))
+  })
+
+  it('rejects a version whose templateId or orgId does not match its parent template', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
+    await assertFails(setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'bad'), { templateId: 'other', orgId: 'personal_teacher-b', schemaVersion: 1, content: {}, createdByUid: 'teacher-a', immutable: true }))
   })
 })

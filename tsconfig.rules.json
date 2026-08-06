@@ -9,5 +9,5 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["test/**/*.ts", "vite.rules.config.ts"]
+  "include": ["test/**/*.ts", "vite.rules.config.ts", "src/lib/lessonTemplates/repository.test.ts"]
 }

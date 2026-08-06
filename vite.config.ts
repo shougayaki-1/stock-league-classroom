@@ -24,6 +24,6 @@ export default defineConfig({
     setupFiles: './src/testSetup.ts',
     // Security/emulator tests require the RTDB or Firestore emulator and run only via test:rules.
     include: ['src/**/*.test.{ts,tsx}'],
-    exclude: ['**/node_modules/**'],
+    exclude: ['**/node_modules/**', 'src/lib/lessonTemplates/repository.test.ts'],
   },
 })

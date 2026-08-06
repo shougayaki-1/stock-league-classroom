@@ -4,3 +4,4 @@ initializeApp()
 
 export { ping } from './ping'
 export { ensurePersonalOrgCallable } from './organizations/onCall'
+export { publishLessonVersionCallable } from './lessonTemplates/onCall'

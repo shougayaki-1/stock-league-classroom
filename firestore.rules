@@ -53,6 +53,34 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /lessonTemplates/{templateId} {
+      allow get: if teacher() && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
+      allow create: if teacher()
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.currentPublishedVersionId == null
+        && request.resource.data.status == 'DRAFT'
+        && request.resource.data.visibility == 'PRIVATE'
+        && activeMember(request.resource.data.orgId);
+      allow update: if teacher()
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['draft', 'updatedAt'])
+        && activeMember(resource.data.orgId);
+      // All deletion goes through Task 12 so recovery/audit semantics cannot
+      // be bypassed by a direct client delete.
+      allow delete: if false;
+
+      match /versions/{versionId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId);
+        // Publish is a server transaction so version creation and pointer
+        // update cannot split or duplicate. Clients never write versions.
+        allow create, update, delete: if false;
+      }
+    }
+    match /lessonVersionPublishIdempotency/{key} { allow read, write: if false; }
+
     match /{document=**} { allow read, write: if false; }
   }
 }
