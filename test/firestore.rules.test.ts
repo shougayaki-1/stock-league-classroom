@@ -45,6 +45,13 @@ describe('emergency stop', () => {
       await assertFails(setDoc(reference, { legacy: true }))
     }
   })
+
+  it('denies all client read/write of the publish idempotency store', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonVersionPublishIdempotency', 'some-key')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { versionId: 'v1' }))
+  })
 })
 
 describe('organization membership Firestore rules', () => {
