@@ -2,6 +2,7 @@ import { getApps, initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, type Auth } from 'firebase/auth'
 import { getDatabase, type Database } from 'firebase/database'
 import { getFirestore, type Firestore } from 'firebase/firestore'
+import { getFunctions, type Functions } from 'firebase/functions'
 
 export interface FirebaseEnvConfig {
   apiKey: string; authDomain: string; projectId: string; storageBucket: string
@@ -30,3 +31,4 @@ export const getFirebaseApp = (env: Record<string, string | undefined> = import.
 export const getFirebaseAuth = (): Auth => getAuth(getFirebaseApp())
 export const getFirestoreDb = (): Firestore => getFirestore(getFirebaseApp())
 export const getRealtimeDb = (): Database => getDatabase(getFirebaseApp())
+export const getFunctionsService = (): Functions => getFunctions(getFirebaseApp(), 'asia-northeast1')

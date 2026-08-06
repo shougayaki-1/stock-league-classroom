@@ -2,4 +2,5 @@ import { initializeApp } from 'firebase-admin/app'
 
 initializeApp()
 
-export * from './ping'
+export { ping } from './ping'
+export { ensurePersonalOrgCallable } from './organizations/onCall'
