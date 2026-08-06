@@ -46,3 +46,39 @@ describe('emergency stop', () => {
     }
   })
 })
+
+describe('organization membership Firestore rules', () => {
+  it('lets an active member read their organization and own membership and user documents only', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a'), { type: 'personal', ownerUid: 'teacher-a' })
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(context.firestore(), 'users', 'teacher-a'), { personalOrgId: 'personal_teacher-a' })
+    })
+
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+
+    await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a')))
+    await assertFails(getDoc(doc(other, 'organizations', 'personal_teacher-a')))
+    await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a')))
+    await assertSucceeds(getDoc(doc(owner, 'users', 'teacher-a')))
+  })
+
+  it('rejects client writes to organizations, memberships, and user profiles', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+
+    await assertFails(setDoc(doc(owner, 'organizations', 'personal_teacher-a'), { type: 'personal', ownerUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 }))
+    await assertFails(setDoc(doc(owner, 'users', 'teacher-a'), { personalOrgId: 'personal_teacher-a' }))
+  })
+
+  it('lets a suspended member read their own membership status', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'suspended', membershipVersion: 2 })
+    })
+
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+
+    await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a')))
+  })
+})

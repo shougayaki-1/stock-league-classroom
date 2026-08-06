@@ -22,6 +22,37 @@ service cloud.firestore {
       allow write: if operator();
     }
 
+    // Firestore is the source of truth for organization membership. Future
+    // resource rules require this active status; membership-status reads stay
+    // separate so suspended users can still see their own status.
+    function activeMember(orgId) {
+      return exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
+    }
+
+    match /users/{uid} {
+      // Set only by server-side organization provisioning.
+      allow get: if teacher() && uid == request.auth.uid;
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /organizations/{orgId} {
+      // Membership-based from the outset, including future school orgs with
+      // more than one active member.
+      allow get: if teacher() && activeMember(orgId);
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /organizations/{orgId}/members/{uid} {
+      // Resource rules, rather than this status document, deny suspended
+      // members. They may always inspect their own membership status.
+      allow get: if teacher() && uid == request.auth.uid;
+      allow list: if false;
+      allow write: if false;
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

@@ -6,6 +6,22 @@
       ".read": "auth != null",
       ".write": "auth != null && auth.token.operator === true",
       ".validate": "newData.hasChild('acceptingNewMarkets') && newData.child('acceptingNewMarkets').isBoolean()"
+    },
+    "orgAccess": {
+      "$orgId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        }
+      }
+    },
+    "orgAccessMeta": {
+      "$orgId": {
+        "$uid": {
+          ".read": false,
+          ".write": false
+        }
+      }
     }
   }
 }
