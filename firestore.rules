@@ -94,6 +94,15 @@ service cloud.firestore {
       }
       match /eventIdempotency/{key} { allow read, write: if false; }
       match /meta/{docId} { allow read, write: if false; }
+
+      match /checkpoints/{checkpointId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /checkpointRestoreIdempotency/{key} {
+        allow read, write: if false;
+      }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
 

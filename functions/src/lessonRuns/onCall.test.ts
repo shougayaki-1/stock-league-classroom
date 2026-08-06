@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpsError } from 'firebase-functions/v2/https'
 import type { CallableRequest } from 'firebase-functions/v2/https'
-import { createLessonRunCallable } from './onCall'
+import { createLessonRunCallable, restoreCheckpointCallable } from './onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { createLessonRunWithAdminSdk } from './createLessonRun'
+import { restoreCheckpointWithAdminSdk } from './checkpoint'
 
 const templateGetMock = vi.fn()
+const docGetMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./createLessonRun', () => ({ createLessonRunWithAdminSdk: vi.fn() }))
+vi.mock('./checkpoint', () => ({ restoreCheckpointWithAdminSdk: vi.fn() }))
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ doc: () => ({ get: templateGetMock }) }),
+  getFirestore: () => ({ doc: (path: string) => ({ get: path.startsWith('lessonTemplates/') ? templateGetMock : docGetMock }) }),
 }))
 
 interface CreateLessonRunRequest { templateId: string; lessonRunIdempotencyKey: string }
@@ -109,5 +112,104 @@ describe('createLessonRunCallable', () => {
     await createLessonRunCallable.run(request)
 
     expect(createLessonRunWithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({ orgId: 'personal_teacher-a' }))
+  })
+})
+
+interface RestoreCheckpointRequest { lessonRunId: string; checkpointId: string; reason: string; idempotencyKey: string }
+
+const makeRestoreRequest = (uid = 'teacher-a'): CallableRequest<RestoreCheckpointRequest> => ({
+  auth: {
+    uid,
+    token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } },
+  },
+  data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '巻き戻し', idempotencyKey: 'restore-1' },
+  rawRequest: {},
+} as unknown as CallableRequest<RestoreCheckpointRequest>)
+
+const makeRunSnap = (exists: boolean, fields: Record<string, unknown> = {}) => ({
+  exists,
+  get: (field: string) => fields[field],
+})
+
+describe('restoreCheckpointCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('rejects unauthenticated callers without touching Firestore', async () => {
+    const request = { auth: undefined, data: {}, rawRequest: {} } as unknown as CallableRequest<RestoreCheckpointRequest>
+    await expect(restoreCheckpointCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(docGetMock).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the target lessonRun does not exist, never calling restoreCheckpoint', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(false))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'not-found' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a VIEWER on the run, never calling restoreCheckpoint', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'VIEWER' } }))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller who is not on the run\'s teacherRoles at all, never calling restoreCheckpoint', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: {} }))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the run belongs to a different org than the caller is an active member of, never calling restoreCheckpoint', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-other', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockRejectedValue(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-other', 'teacher-a')
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a suspended member (PRIMARY on the run but inactive in the org), never calling restoreCheckpoint', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockRejectedValue(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the checkpoint does not exist, surfacing the underlying restoreCheckpoint failure', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Checkpoint not found'))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toThrow('Checkpoint not found')
+    expect(restoreCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '巻き戻し', actorId: 'teacher-a', idempotencyKey: 'restore-1',
+    })
+  })
+
+  it('allows an ASSISTANT (not just PRIMARY) who is an active org member to restore', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockResolvedValue({ newRestoreGeneration: 1, eventId: 'run-1_1', deduplicated: false })
+
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).resolves.toEqual({ newRestoreGeneration: 1, eventId: 'run-1_1', deduplicated: false })
+
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-1', 'teacher-a')
+    expect(restoreCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '巻き戻し', actorId: 'teacher-a', idempotencyKey: 'restore-1',
+    })
+  })
+
+  it('rejects a request missing a non-empty reason, never touching Firestore', async () => {
+    const request = {
+      auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+      data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '   ', idempotencyKey: 'restore-1' },
+      rawRequest: {},
+    } as unknown as CallableRequest<RestoreCheckpointRequest>
+    await expect(restoreCheckpointCallable.run(request)).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(docGetMock).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
   })
 })

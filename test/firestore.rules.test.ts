@@ -198,3 +198,34 @@ describe('lessonRun events are append-only', () => {
     await assertFails(setDoc(reference, { value: 0 }))
   })
 })
+
+describe('checkpoints are append-only and restoreGeneration only moves forward', () => {
+  it('rejects any client write to checkpoints', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-1', 'checkpoints', 'cp-x'), { sequence: 0 }))
+  })
+
+  it('rejects a client attempt to edit lessonRuns.restoreGeneration directly', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(updateDoc(doc(owner, 'lessonRuns', 'run-1'), { restoreGeneration: 999 }))
+  })
+
+  it('lets the owning teacher read checkpoints but not another teacher\'s', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'DRAFT', restoreGeneration: 0 })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', 'checkpoints', 'cp-1'), { id: 'cp-1', sequence: 5, restoreGeneration: 0 })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(owner, 'lessonRuns', 'run-1', 'checkpoints', 'cp-1')))
+    await assertFails(getDoc(doc(other, 'lessonRuns', 'run-1', 'checkpoints', 'cp-1')))
+  })
+
+  it('denies all client read/write of the checkpoint restore idempotency store', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'checkpointRestoreIdempotency', 'some-key')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { newRestoreGeneration: 1 }))
+  })
+})
