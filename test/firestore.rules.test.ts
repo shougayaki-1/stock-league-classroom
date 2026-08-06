@@ -165,3 +165,36 @@ describe('lessonRuns Firestore rules', () => {
     await assertFails(setDoc(reference, { lessonRunId: 'run-1' }))
   })
 })
+
+describe('lessonRun events are append-only', () => {
+  it('lets the owning teacher read events but not another teacher\'s', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'DRAFT' })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', 'events', 'evt-0'), { type: 'PARTICIPANT_JOINED', sequence: 0 })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(owner, 'lessonRuns', 'run-1', 'events', 'evt-0')))
+    await assertFails(getDoc(doc(other, 'lessonRuns', 'run-1', 'events', 'evt-0')))
+  })
+
+  it('rejects any client write to the events subcollection', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-1', 'events', 'evt-x'), { type: 'FAKE', sequence: 0 }))
+  })
+
+  it('denies all client read/write of the per-run event idempotency store', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'eventIdempotency', 'some-key')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { eventId: 'run-1_0' }))
+  })
+
+  it('denies all client read/write of the per-run meta collection', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'meta', 'eventCounter')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { value: 0 }))
+  })
+})

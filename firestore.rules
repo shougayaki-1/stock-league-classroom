@@ -86,6 +86,14 @@ service cloud.firestore {
         && activeMember(resource.data.orgId);
       allow list: if teacher() && activeMember(resource.data.orgId);
       allow write: if false;
+
+      match /events/{eventId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /eventIdempotency/{key} { allow read, write: if false; }
+      match /meta/{docId} { allow read, write: if false; }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
 
