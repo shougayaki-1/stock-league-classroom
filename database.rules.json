@@ -22,6 +22,18 @@
           ".write": false
         }
       }
+    },
+    "lessonRunPublic": {
+      "$lessonRunId": {
+        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()",
+        ".write": false
+      }
+    },
+    "lessonRunPrivate": {
+      "$lessonRunId": {
+        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('role').val() === 'owner' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()",
+        ".write": false
+      }
     }
   }
 }
