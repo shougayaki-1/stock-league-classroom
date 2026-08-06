@@ -61,4 +61,22 @@ describe('restoreCheckpoint', () => {
     expect(retry).toMatchObject({ newRestoreGeneration: 1, deduplicated: true, eventId: first.eventId })
     expect(fake.docs.get('lessonRuns/run-1')).toMatchObject({ restoreGeneration: 1 })
   })
+
+  it('rejects and performs zero writes when the checkpoint does not exist', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { restoreGeneration: 0, orgId: 'org-1' })
+    const sizeBefore = fake.docs.size
+    const runBefore = fake.docs.get('lessonRuns/run-1')
+
+    await expect(restoreCheckpoint({
+      firestore: fake as never, lessonRunId: 'run-1', checkpointId: 'missing-cp',
+      reason: 'テスト復元', actorId: 'teacher-a', idempotencyKey: 'restore-missing',
+    })).rejects.toThrow('Checkpoint not found')
+
+    // Zero writes: no new docs (idempotency record, event) and the run doc is untouched.
+    expect(fake.docs.size).toBe(sizeBefore)
+    expect(fake.docs.get('lessonRuns/run-1')).toEqual(runBefore)
+    expect([...fake.docs.keys()].some((k) => k.includes('checkpointRestoreIdempotency'))).toBe(false)
+    expect([...fake.docs.values()].some((v) => (v as { type?: string }).type === 'CHECKPOINT_RESTORED')).toBe(false)
+  })
 })
