@@ -81,6 +81,14 @@ service cloud.firestore {
     }
     match /lessonVersionPublishIdempotency/{key} { allow read, write: if false; }
 
+    match /lessonRuns/{lessonRunId} {
+      allow get: if teacher()
+        && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
+      allow write: if false;
+    }
+    match /lessonRunIdempotency/{key} { allow read, write: if false; }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

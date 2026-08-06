@@ -140,3 +140,28 @@ describe('orgId/createdByUid immutability on lessonTemplates', () => {
     await assertFails(setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'bad'), { templateId: 'other', orgId: 'personal_teacher-b', schemaVersion: 1, content: {}, createdByUid: 'teacher-a', immutable: true }))
   })
 })
+
+describe('lessonRuns Firestore rules', () => {
+  it('lets the owning teacher read their own lessonRun but not another teacher\'s', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'DRAFT' })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(owner, 'lessonRuns', 'run-1')))
+    await assertFails(getDoc(doc(other, 'lessonRuns', 'run-1')))
+  })
+
+  it('rejects any client write to lessonRuns', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-x'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'DRAFT' }))
+  })
+
+  it('denies all client read/write of the lessonRun idempotency store', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRunIdempotency', 'some-key')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { lessonRunId: 'run-1' }))
+  })
+})
