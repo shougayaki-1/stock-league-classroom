@@ -25,6 +25,15 @@ export interface PurgeExpiredSoftDeletesResult { purged: string[]; failed: strin
 const RESOURCE_COLLECTIONS: ResourceCollection[] = ['lessonTemplates', 'lessonRuns']
 
 /**
+ * Page size for the scheduled sweep's due-document listing query (Task 12
+ * Step 6's "ページングし" requirement). An unbounded `.get()` over
+ * lessonTemplates/lessonRuns would issue one huge query as the number of due
+ * documents grows without bound; this caps each round-trip and cursors
+ * through with `.startAfter(lastDoc)` until a page comes back short.
+ */
+export const PURGE_LIST_PAGE_SIZE = 500
+
+/**
  * Daily scheduled sweep (Task 12 Step 6): pages through `lessonTemplates`
  * and `lessonRuns`, permanently purging every document whose
  * `pendingDeletion.purgeAfter` deadline has arrived, via the same deletion
@@ -81,8 +90,21 @@ export const purgeExpiredSoftDeletesWithAdminSdk = (): Promise<PurgeExpiredSoftD
   const store: ScheduledPurgeStore = {
     listCollectionDocs: async (collection) => {
       const nowIso = new Date().toISOString()
-      const snap = await db.collection(collection).where('pendingDeletion.purgeAfter', '<=', nowIso).get()
-      return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }))
+      const results: Array<{ id: string; data: Record<string, unknown> }> = []
+      let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined
+      for (;;) {
+        let query = db.collection(collection)
+          .where('pendingDeletion.purgeAfter', '<=', nowIso)
+          .orderBy('pendingDeletion.purgeAfter')
+          .limit(PURGE_LIST_PAGE_SIZE)
+        if (lastDoc) query = query.startAfter(lastDoc)
+        const snap = await query.get()
+        if (snap.empty) break
+        for (const doc of snap.docs) results.push({ id: doc.id, data: doc.data() })
+        lastDoc = snap.docs[snap.docs.length - 1]
+        if (snap.docs.length < PURGE_LIST_PAGE_SIZE) break
+      }
+      return results
     },
     purgeResource: async (collection, id) => {
       const snap = await db.doc(`${collection}/${id}`).get()
