@@ -274,7 +274,7 @@ C と D は互いに依存せず、両方が B にのみ依存する兄弟関係
 
 | Phase | 状態 | 実装計画ドキュメント | 備考 |
 | --- | --- | --- | --- |
-| Phase A（安全化と新基盤） | 未着手 | なし | 個別実装計画は未作成。旧`docs/superpowers/plans/2026-08-05-phase0-*`系は旧ロードマップ（ラウンド制市場）向けであり、統合仕様書の常時売買市場・orgId基盤とは前提が異なるため流用不可。参照のみ可 |
+| Phase A（安全化と新基盤） | 完了（14タスク、`codex/phase-a-foundation`ブランチ） | `docs/superpowers/plans/2026-08-05-phase-a-foundation-plan.md` | Task 1〜14すべて実装・レビュー完了（各タスク1〜2回の指摘修正込み、subagent-driven-developmentのタスクレビューで検証）。`npm run verify`全ワークスペース成功（root 72件・rules 46件・functions 154件・deterministic-random 10件）。Task 13（Blaze/予算アラート外部ゲート）は`PENDING_EXTERNAL_APPROVAL`のまま——コード完了は妨げないが、Functionsを要する本番公開は別途この確認が必要。人間が判断すべき未決事項2件が残る:（1）Task 9の`writeCheckpoint`の`checkpointId`が`idempotencyKey`のハッシュに依存し`(restoreGeneration, sequence)`だけでは一意にならない設計（現状呼び出し元ゼロにつき実害なし）、（2）Task 12のhard-delete sagaで最後のグループが部分失敗した場合、操作が`IN_PROGRESS`のまま滞留し得る設計（レア・非セキュリティ、監視機構が必要）。`main`未マージ・PR未作成。 |
 | Phase B（共通授業基盤） | 未着手 | なし | Aの完了が前提 |
 | Phase C（社会科完成） | 未着手 | なし | Bの完了が前提。矛盾解消ドキュメント§Aの「未確定事項」（連鎖切断の検知間隔、需給感度、市場ノイズ実値、予想の評価区間数）の決定が必要 |
 | Phase D（家庭科完成） | 未着手 | なし | Bの完了が前提。Cとは独立して並行着手可能 |
