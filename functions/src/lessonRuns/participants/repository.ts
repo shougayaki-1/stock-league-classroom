@@ -1,5 +1,17 @@
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, type FieldValue, type Timestamp } from 'firebase-admin/firestore'
 import type { ParticipantId, ParticipantStatus, TeamId } from '@stock-league/lesson-runtime-types'
+
+/**
+ * A Firestore timestamp field that is either already-resolved (read back
+ * from a snapshot, or set by a test/caller to a fixed instant) or still a
+ * server-timestamp sentinel awaiting resolution (written via
+ * `FieldValue.serverTimestamp()`, matching the `createdAt` fields in
+ * createLessonRun.ts and personalOrg.ts). Functions-local: `firebase-admin`'s
+ * `Timestamp`/`FieldValue` types are Admin SDK-specific and would mean
+ * something different if reused from a client bundle, so this alias is not
+ * hoisted into the shared `@stock-league/lesson-runtime-types` package.
+ */
+export type FirestoreTimestampField = Timestamp | FieldValue
 
 /**
  * Firestore system of record for lesson-run participants. `syncLessonRunMembership`
@@ -18,8 +30,8 @@ export interface LessonParticipant {
   teamId?: TeamId
   status: ParticipantStatus
   sessionVersion: number
-  joinedAt: unknown
-  lastSeenAt: unknown
+  joinedAt: FirestoreTimestampField
+  lastSeenAt: FirestoreTimestampField
 }
 
 interface FirestoreDoc {

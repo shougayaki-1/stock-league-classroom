@@ -1,6 +1,10 @@
+import { Timestamp } from 'firebase-admin/firestore'
 import { describe, expect, it } from 'vitest'
 import type { LessonParticipant } from './repository'
 import { upsertParticipant } from './repository'
+
+const joinedAt = Timestamp.fromDate(new Date('2024-01-01T00:00:00Z'))
+const lastSeenAt = Timestamp.fromDate(new Date('2024-01-01T00:05:00Z'))
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -20,8 +24,8 @@ const baseParticipant: LessonParticipant = {
   teamId: 'team-a',
   status: 'ACTIVE',
   sessionVersion: 1,
-  joinedAt: 'joined-at' as never,
-  lastSeenAt: 'last-seen-at' as never,
+  joinedAt,
+  lastSeenAt,
 }
 
 describe('upsertParticipant', () => {
@@ -55,8 +59,8 @@ describe('upsertParticipant', () => {
       externalIdentifier: 'ext-123',
       status: 'OBSERVER',
       sessionVersion: 1,
-      joinedAt: 'joined-at' as never,
-      lastSeenAt: 'last-seen-at' as never,
+      joinedAt,
+      lastSeenAt,
     }
     await upsertParticipant({ firestore: fake }, observer)
     const stored = fake.docs.get('lessonRuns/run-1/participants/participant-2')

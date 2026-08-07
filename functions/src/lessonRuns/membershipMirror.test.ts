@@ -1,3 +1,4 @@
+import { Timestamp } from 'firebase-admin/firestore'
 import { describe, expect, it, vi } from 'vitest'
 import type { LessonParticipant } from './participants/repository'
 import { syncLessonRunMembership } from './membershipMirror'
@@ -12,8 +13,8 @@ const activeParticipant: LessonParticipant = {
   teamId: 'team-a',
   status: 'ACTIVE',
   sessionVersion: 1,
-  joinedAt: 'joined-at' as never,
-  lastSeenAt: 'last-seen-at' as never,
+  joinedAt: Timestamp.fromDate(new Date('2024-01-01T00:00:00Z')),
+  lastSeenAt: Timestamp.fromDate(new Date('2024-01-01T00:05:00Z')),
 }
 
 describe('syncLessonRunMembership', () => {

@@ -121,6 +121,14 @@ interface MirrorCase {
   authTimeSeconds: number
   expectPublic: boolean
   expectPrivate: boolean
+  // lessonRunTeamState's org-membership branch (the OR'd teacher fallback
+  // used when no lessonRunMembership entry exists) is textually identical
+  // to lessonRunPublic's — same fields, same operators, no extra role
+  // check — so every case below expects the same outcome for both. This
+  // column exists to make that assumption an executable assertion: if the
+  // two branches are ever hand-edited to drift apart, this table will fail
+  // instead of silently under-testing lessonRunTeamState's teacher path.
+  expectTeamState: boolean
 }
 
 const mirrorCases: MirrorCase[] = [
@@ -131,6 +139,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: true,
     expectPrivate: true,
+    expectTeamState: true,
   },
   {
     description: 'active non-owner member with an otherwise-perfect mirror',
@@ -139,6 +148,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: true,
     expectPrivate: false,
+    expectTeamState: true,
   },
   {
     description: 'membershipVersion mismatch between orgAccess and orgAccessMeta',
@@ -147,6 +157,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: false,
     expectPrivate: false,
+    expectTeamState: false,
   },
   {
     description: 'orgAccessMeta.syncState still PENDING (mid-sync), even though versions already match',
@@ -155,6 +166,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: false,
     expectPrivate: false,
+    expectTeamState: false,
   },
   {
     description: 'auth.token.auth_time before revokedAtSeconds, even though the mirror looks fully synced',
@@ -163,6 +175,16 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 100,
     expectPublic: false,
     expectPrivate: false,
+    expectTeamState: false,
+  },
+  {
+    description: 'orgAccess.status is not "active" (e.g. a revoked membership), even though versions match and auth_time is fresh',
+    entry: { role: 'owner', status: 'revoked', membershipVersion: 3, revokedAtSeconds: 100 },
+    meta: { membershipVersion: 3, syncState: 'SYNCED' },
+    authTimeSeconds: 200,
+    expectPublic: false,
+    expectPrivate: false,
+    expectTeamState: false,
   },
   {
     description: 'missing orgAccess entry entirely',
@@ -171,6 +193,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: false,
     expectPrivate: false,
+    expectTeamState: false,
   },
   {
     description: 'missing orgAccessMeta entry entirely',
@@ -179,6 +202,7 @@ const mirrorCases: MirrorCase[] = [
     authTimeSeconds: 200,
     expectPublic: false,
     expectPrivate: false,
+    expectTeamState: false,
   },
 ]
 
@@ -213,6 +237,23 @@ describe('lessonRun public/private RTDB mirror-consistency table', () => {
       })
       const attempt = get(ref(actorFor(testCase), 'lessonRunPrivate/run-table'))
       if (testCase.expectPrivate) await assertSucceeds(attempt)
+      else await assertFails(attempt)
+    })
+
+    // Teacher/org-membership branch only — there is deliberately no
+    // lessonRunMembership entry seeded for this uid/run, so this exercises
+    // exactly the same six independent rejection reasons (version
+    // mismatch, stale auth_time, non-active status, missing orgAccess,
+    // missing orgAccessMeta, PENDING syncState) against
+    // lessonRunTeamState's teacher fallback branch that the table already
+    // covers for lessonRunPublic/lessonRunPrivate above.
+    it(`lessonRunTeamState — ${testCase.description} — ${testCase.expectTeamState ? 'allowed' : 'rejected'}`, async () => {
+      await seedMirror(testCase)
+      await environment.withSecurityRulesDisabled(async (context) => {
+        await context.database().ref('lessonRunTeamState/run-table/team-table').set({ orgId, score: 0 })
+      })
+      const attempt = get(ref(actorFor(testCase), 'lessonRunTeamState/run-table/team-table'))
+      if (testCase.expectTeamState) await assertSucceeds(attempt)
       else await assertFails(attempt)
     })
   }
@@ -298,15 +339,17 @@ describe('lessonRunPublic/lessonRunTeamState: student OR-branch added without we
     await assertSucceeds(get(ref(teacher, 'lessonRunTeamState/run-3/team-a')))
   })
 
-  it('still rejects a teacher whose mirror is version-mismatched, mid-PENDING-sync, or stale auth_time after revocation — proves the pre-existing strict teacher condition was not replaced by a weaker one', async () => {
-    await environment.withSecurityRulesDisabled(async (context) => {
-      await context.database().ref('orgAccess/personal_teacher-b/teacher-b').set({ role: 'owner', status: 'active', membershipVersion: 2, revokedAtSeconds: 500 })
-      await context.database().ref('orgAccessMeta/personal_teacher-b/teacher-b').set({ membershipVersion: 2, syncState: 'PENDING' })
-      await context.database().ref('lessonRunPublic/run-4').set({ status: 'RUNNING', currentPhaseId: null, updatedAtMillis: 1, orgId: 'personal_teacher-b' })
-      await context.database().ref('lessonRunTeamState/run-4/team-a').set({ orgId: 'personal_teacher-b', score: 0 })
-    })
-    const teacher = environment.authenticatedContext('teacher-b', { ...teacherToken, auth_time: 1000 }).database()
-    await assertFails(get(ref(teacher, 'lessonRunPublic/run-4')))
-    await assertFails(get(ref(teacher, 'lessonRunTeamState/run-4/team-a')))
-  })
+  // The complementary "still rejects a teacher whose mirror is broken"
+  // coverage lives in the `lessonRun public/private RTDB mirror-consistency
+  // table` above (see its `expectTeamState` column): each of version
+  // mismatch, PENDING syncState, stale auth_time, non-active status, and
+  // missing orgAccess/orgAccessMeta is exercised there as an independent
+  // case against lessonRunPublic, lessonRunPrivate, AND lessonRunTeamState.
+  // A prior version of this suite asserted all of those conditions at once
+  // in a single non-parameterized test here, but the seeded data actually
+  // only violated PENDING syncState (membershipVersion was 2 on both sides,
+  // and auth_time 1000 >= revokedAtSeconds 500) — so it silently failed to
+  // prove the version-mismatch and stale-auth_time checks were still
+  // enforced. That test name overstated its own coverage; it has been
+  // replaced by the parameterized table.
 })

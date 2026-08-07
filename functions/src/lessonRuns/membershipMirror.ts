@@ -10,6 +10,12 @@ export interface SyncLessonRunMembershipInput {
    * lesson-run membership version, the same way Phase A's
    * `syncOrganizationMembershipChange` threads `membershipVersion` in from
    * its caller rather than deriving it from the participant record.
+   *
+   * NOTE: unlike Phase A's orgAccess/orgAccessMeta pair, this value is not
+   * currently checked by any RTDB rule — see the JSDoc on
+   * `LessonRunMembershipMirror.membershipVersion` in
+   * `@stock-league/lesson-runtime-types` for why that is safe today and
+   * what a future task needs to decide.
    */
   membershipVersion: number
 }
