@@ -145,6 +145,21 @@ service cloud.firestore {
         allow get, list: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
+
+        // Survey responses (Task 14): same server-write-only shape as
+        // responses/ above. Students never read/write these directly —
+        // they go through submitSurveyCallable (surveys/onCall.ts), which
+        // authorizes each call against the Firestore participant record
+        // (including ABSENT students, per submitSurvey.ts's
+        // `resolveParticipant` JSDoc) rather than through a Firestore or
+        // RTDB rule grant.
+        match /surveyResponses/{surveyResponseId} {
+          allow get, list: if teacher()
+            && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+          allow write: if false;
+
+          match /submitSurveyIdempotency/{key} { allow read, write: if false; }
+        }
       }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
