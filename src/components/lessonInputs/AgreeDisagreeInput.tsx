@@ -19,15 +19,28 @@ export interface AgreeDisagreeInputProps {
 export function AgreeDisagreeInput({ id, label, config, value, errors, disabledReason, onChange }: AgreeDisagreeInputProps) {
   const options = config.options ?? DEFAULT_OPTIONS
   const describedBy = messageIds(id, errors, disabledReason)
+  const disabled = Boolean(disabledReason)
   return (
-    <FormControl component="fieldset" disabled={Boolean(disabledReason)} error={errors.length > 0} sx={{ width: '100%' }}>
-      <FormLabel component="legend" sx={{ fontWeight: 700 }}>{label}</FormLabel>
-      <RadioGroup row aria-describedby={describedBy} value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+    <FormControl component="fieldset" error={errors.length > 0} sx={{ width: '100%' }}>
+      <FormLabel component="legend" sx={{ fontWeight: 700, ...(disabled && { color: 'text.disabled' }) }}>{label}</FormLabel>
+      <RadioGroup
+        row
+        value={value ?? ''}
+        onChange={(e) => {
+          if (disabled) return
+          onChange(e.target.value)
+        }}
+      >
         {options.map((option) => (
           <FormControlLabel
             key={option}
             value={option}
-            control={<Radio sx={{ p: 1.25 }} />}
+            control={
+              <Radio
+                sx={{ p: 1.25, ...(disabled && { opacity: 0.6 }) }}
+                slotProps={{ input: { 'aria-describedby': describedBy, 'aria-disabled': disabled || undefined } }}
+              />
+            }
             label={option}
             sx={{ minHeight: MIN_TOUCH_TARGET }}
           />

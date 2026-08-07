@@ -56,20 +56,60 @@ describe('LessonInputRenderer', () => {
     expect(input).toHaveAttribute('aria-describedby', expect.stringContaining('error'))
   })
 
-  it('shows the disabled reason as adjacent text without hiding the control', () => {
+  it('shows the disabled reason as adjacent text and keeps the control keyboard-reachable', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
     render(
       <LessonInputRenderer
         config={{ type: 'NUMBER', min: 0, max: 10 }}
         value={5}
-        onChange={vi.fn()}
+        onChange={onChange}
         label="株数"
         disabledReason="回答締切"
       />,
     )
     const input = screen.getByRole('spinbutton', { name: '株数' })
     expect(input).toBeInTheDocument()
-    expect(input).toBeDisabled()
-    expect(screen.getByText('回答締切のため操作できません。')).toBeInTheDocument()
+    // Native `disabled` would remove the element from the tab order and silence
+    // aria-describedby for most screen readers, so keyboard-only users could never
+    // learn why the control is inert. aria-disabled keeps it focusable instead.
+    expect(input).toHaveAttribute('aria-disabled', 'true')
+    expect((input as HTMLInputElement).disabled).toBeFalsy()
+
+    const reasonText = screen.getByText('回答締切のため操作できません。')
+    expect(reasonText).toBeInTheDocument()
+    expect(input.getAttribute('aria-describedby')).toContain(reasonText.id)
+
+    await user.tab()
+    expect(input).toHaveFocus()
+
+    await user.keyboard('9')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps a disabled SINGLE_CHOICE radio focusable and wires aria-describedby to its native input, not the RadioGroup container', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <LessonInputRenderer
+        config={{ type: 'SINGLE_CHOICE', options: ['買う', '売る'] }}
+        value={undefined}
+        onChange={onChange}
+        label="どうしますか"
+        disabledReason="回答締切"
+      />,
+    )
+    const buy = screen.getByRole('radio', { name: '買う' })
+    expect(buy).toHaveAttribute('aria-disabled', 'true')
+    expect((buy as HTMLInputElement).disabled).toBeFalsy()
+
+    const reasonText = screen.getByText('回答締切のため操作できません。')
+    expect(buy.getAttribute('aria-describedby')).toContain(reasonText.id)
+
+    await user.tab()
+    expect(buy).toHaveFocus()
+    await user.keyboard(' ')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('lets a RANKING widget be fully reordered with keyboard-operable buttons and no drag required', async () => {

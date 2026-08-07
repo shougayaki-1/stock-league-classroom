@@ -17,14 +17,16 @@ export interface AllocationInputProps {
 export function AllocationInput({ id, label, config, value, errors, disabledReason, onChange }: AllocationInputProps) {
   const current = value ?? {}
   const describedBy = messageIds(id, errors, disabledReason)
+  const disabled = Boolean(disabledReason)
   const sum = config.items.reduce((total, item) => total + (current[item] ?? 0), 0)
   const isBalanced = sum === config.total
   const handleItemChange = (item: string, amount: number) => {
+    if (disabled) return
     onChange({ ...current, [item]: amount })
   }
   return (
-    <FormControl component="fieldset" disabled={Boolean(disabledReason)} error={errors.length > 0} sx={{ width: '100%' }}>
-      <FormLabel component="legend" sx={{ fontWeight: 700 }}>{label}</FormLabel>
+    <FormControl component="fieldset" error={errors.length > 0} sx={{ width: '100%' }}>
+      <FormLabel component="legend" sx={{ fontWeight: 700, ...(disabled && { color: 'text.disabled' }) }}>{label}</FormLabel>
       <Stack spacing={1.5} sx={{ mt: 1 }}>
         {config.items.map((item) => {
           const itemId = `${id}-${item}`
@@ -36,10 +38,16 @@ export function AllocationInput({ id, label, config, value, errors, disabledReas
                 type="number"
                 value={current[item] ?? ''}
                 onChange={(e) => handleItemChange(item, e.target.value === '' ? 0 : Number(e.target.value))}
-                disabled={Boolean(disabledReason)}
                 fullWidth
-                slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', 'aria-describedby': describedBy } }}
-                sx={{ '& .MuiOutlinedInput-root': { minHeight: MIN_TOUCH_TARGET } }}
+                slotProps={{
+                  htmlInput: {
+                    min: 0,
+                    inputMode: 'numeric',
+                    'aria-describedby': describedBy,
+                    'aria-disabled': disabled || undefined,
+                  },
+                }}
+                sx={{ '& .MuiOutlinedInput-root': { minHeight: MIN_TOUCH_TARGET, ...(disabled && { opacity: 0.6 }) } }}
               />
             </Stack>
           )

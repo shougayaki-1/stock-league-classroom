@@ -16,6 +16,7 @@ export interface ShortTextInputProps {
 /** 短い自由記述。文字数上限を明示し、残り文字数を併記する。 */
 export function ShortTextInput({ id, label, config, value, errors, disabledReason, onChange }: ShortTextInputProps) {
   const describedBy = messageIds(id, errors, disabledReason)
+  const disabled = Boolean(disabledReason)
   const text = value ?? ''
   return (
     <Stack spacing={0.75}>
@@ -25,11 +26,19 @@ export function ShortTextInput({ id, label, config, value, errors, disabledReaso
         multiline
         minRows={2}
         value={text}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={Boolean(disabledReason)}
+        onChange={(e) => {
+          if (disabled) return
+          onChange(e.target.value)
+        }}
         error={errors.length > 0}
-        slotProps={{ htmlInput: { maxLength: config.maxLength, 'aria-describedby': describedBy } }}
-        sx={{ '& .MuiOutlinedInput-root': { minHeight: MIN_TOUCH_TARGET } }}
+        slotProps={{
+          htmlInput: {
+            maxLength: config.maxLength,
+            'aria-describedby': describedBy,
+            'aria-disabled': disabled || undefined,
+          },
+        }}
+        sx={{ '& .MuiOutlinedInput-root': { minHeight: MIN_TOUCH_TARGET, ...(disabled && { opacity: 0.6 }) } }}
       />
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>{text.length} / {config.maxLength}</Typography>
       <LessonInputMessages id={id} errors={errors} disabledReason={disabledReason} />

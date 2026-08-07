@@ -17,17 +17,26 @@ export interface MultipleChoiceInputProps {
 export function MultipleChoiceInput({ id, label, config, value, errors, disabledReason, onChange }: MultipleChoiceInputProps) {
   const selected = value ?? []
   const describedBy = messageIds(id, errors, disabledReason)
+  const disabled = Boolean(disabledReason)
   const toggle = (option: string, checked: boolean) => {
+    if (disabled) return
     onChange(checked ? [...selected, option] : selected.filter((v) => v !== option))
   }
   return (
-    <FormControl component="fieldset" disabled={Boolean(disabledReason)} error={errors.length > 0} sx={{ width: '100%' }}>
-      <FormLabel component="legend" sx={{ fontWeight: 700 }}>{label}</FormLabel>
-      <FormGroup aria-describedby={describedBy}>
+    <FormControl component="fieldset" error={errors.length > 0} sx={{ width: '100%' }}>
+      <FormLabel component="legend" sx={{ fontWeight: 700, ...(disabled && { color: 'text.disabled' }) }}>{label}</FormLabel>
+      <FormGroup>
         {config.options.map((option) => (
           <FormControlLabel
             key={option}
-            control={<Checkbox checked={selected.includes(option)} onChange={(e) => toggle(option, e.target.checked)} sx={{ p: 1.25 }} />}
+            control={
+              <Checkbox
+                checked={selected.includes(option)}
+                onChange={(e) => toggle(option, e.target.checked)}
+                sx={{ p: 1.25, ...(disabled && { opacity: 0.6 }) }}
+                slotProps={{ input: { 'aria-describedby': describedBy, 'aria-disabled': disabled || undefined } }}
+              />
+            }
             label={option}
             sx={{ minHeight: MIN_TOUCH_TARGET }}
           />

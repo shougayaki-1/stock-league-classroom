@@ -24,14 +24,25 @@ export function ReasonChoiceInput({ id, label, config, value, errors, disabledRe
   const reasonId = `${id}-reason`
   const maxLength = config.reasonMaxLength ?? DEFAULT_REASON_MAX_LENGTH
   return (
-    <FormControl component="fieldset" disabled={disabled} error={errors.length > 0} sx={{ width: '100%' }}>
-      <FormLabel component="legend" sx={{ fontWeight: 700 }}>{label}</FormLabel>
-      <RadioGroup value={choice} onChange={(e) => onChange({ choice: e.target.value, reason })}>
+    <FormControl component="fieldset" error={errors.length > 0} sx={{ width: '100%' }}>
+      <FormLabel component="legend" sx={{ fontWeight: 700, ...(disabled && { color: 'text.disabled' }) }}>{label}</FormLabel>
+      <RadioGroup
+        value={choice}
+        onChange={(e) => {
+          if (disabled) return
+          onChange({ choice: e.target.value, reason })
+        }}
+      >
         {config.options.map((option) => (
           <FormControlLabel
             key={option}
             value={option}
-            control={<Radio sx={{ p: 1.25 }} />}
+            control={
+              <Radio
+                sx={{ p: 1.25, ...(disabled && { opacity: 0.6 }) }}
+                slotProps={{ input: { 'aria-describedby': describedBy, 'aria-disabled': disabled || undefined } }}
+              />
+            }
             label={option}
             sx={{ minHeight: MIN_TOUCH_TARGET }}
           />
@@ -44,9 +55,18 @@ export function ReasonChoiceInput({ id, label, config, value, errors, disabledRe
           multiline
           minRows={2}
           value={reason}
-          onChange={(e) => onChange({ choice, reason: e.target.value })}
-          disabled={disabled}
-          slotProps={{ htmlInput: { maxLength, 'aria-describedby': describedBy } }}
+          onChange={(e) => {
+            if (disabled) return
+            onChange({ choice, reason: e.target.value })
+          }}
+          slotProps={{
+            htmlInput: {
+              maxLength,
+              'aria-describedby': describedBy,
+              'aria-disabled': disabled || undefined,
+            },
+          }}
+          sx={{ ...(disabled && { opacity: 0.6 }) }}
         />
       </Stack>
       <LessonInputMessages id={id} errors={errors} disabledReason={disabledReason} />
