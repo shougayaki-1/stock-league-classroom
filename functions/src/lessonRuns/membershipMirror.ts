@@ -2,8 +2,25 @@ import { getDatabase } from 'firebase-admin/database'
 import { activeParticipantStatuses, type LessonRunMembershipMirror } from '@stock-league/lesson-runtime-types'
 import type { LessonParticipant } from './participants/repository'
 
+/**
+ * Only the fields `syncLessonRunMembership` actually reads to build the
+ * mirror. Narrowed from the full `LessonParticipant` (rather than requiring
+ * every field, e.g. `displayName`/`identityMode`/`joinedAt`/`lastSeenAt`
+ * that this function never touches) so a caller that already has these
+ * specific values in hand — e.g. `joinLessonRun.ts`'s production wiring,
+ * which computes them inside its own Firestore transaction — can pass them
+ * straight through instead of performing a redundant extra Firestore read
+ * just to reconstruct a full `LessonParticipant` object. A real
+ * `LessonParticipant` still satisfies this type structurally, so existing
+ * callers (checkpoint/participant flows) are unaffected.
+ */
+export type MembershipMirrorParticipant = Pick<
+  LessonParticipant,
+  'id' | 'lessonRunId' | 'orgId' | 'authUid' | 'teamId' | 'status' | 'sessionVersion'
+>
+
 export interface SyncLessonRunMembershipInput {
-  participant: LessonParticipant
+  participant: MembershipMirrorParticipant
   /**
    * Not carried on `LessonParticipant` itself — the caller (a future
    * join/leave/status-change Callable, Task 3+) supplies the current

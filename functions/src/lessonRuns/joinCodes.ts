@@ -2,6 +2,22 @@ import { randomBytes } from 'node:crypto'
 import { getFirestore } from 'firebase-admin/firestore'
 
 /**
+ * KNOWN GAP (Important #3, task-3-report.md): `issueJoinCode`/`invalidateJoinCode`
+ * are not currently reachable from anywhere except their own tests — neither
+ * is exported as a Callable (see `onCall.ts`, which only wraps
+ * `joinLessonRun`). This means the join flow does not yet close end-to-end:
+ * `createLessonRun.ts` only ever creates a LessonRun with `status: 'DRAFT'`,
+ * there is no DRAFT -> READY/WAITING transition implemented anywhere yet,
+ * and `issueJoinCode`'s own gate (`JOINABLE_STATUSES` below) requires
+ * READY/WAITING — so no real LessonRun in this codebase can have a join
+ * code issued for it today. Fixing this is explicitly out of scope for this
+ * task: a follow-up task needs to (1) add a Callable that lets a teacher
+ * invoke `issueJoinCodeWithAdminSdk`/`invalidateJoinCodeWithAdminSdk`, and
+ * (2) implement the lesson-run phase-transition machinery that moves a
+ * LessonRun out of DRAFT.
+ */
+
+/**
  * Excludes 0/O/1/I to avoid characters students can confuse when copying a
  * code off a projector or whiteboard. Deliberately sized to exactly 32
  * (2^5) characters: 24 letters (A-Z minus I, O) + 8 digits (2-9). This lets

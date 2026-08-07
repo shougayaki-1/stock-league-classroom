@@ -5,13 +5,26 @@ const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
   return {
     docs,
+    // `written` is scoped per-transaction (reset on every `runTransaction`
+    // call, not shared across calls): it reproduces Firestore Admin SDK's
+    // real "all reads before all writes" constraint within a single
+    // transaction (see transaction.js's READ_AFTER_WRITE_ERROR_MSG) — once
+    // `set` has run once, any further `get` in the *same* transaction must
+    // throw, exactly like production. Without this guard the fake let
+    // Critical #1's read-after-write bug slip through every test.
     runTransaction: async <T>(fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
       set: (path: string, data: Record<string, unknown>) => void
-    }) => Promise<T>) => fn({
-      get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
-      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
-    }),
+    }) => Promise<T>) => {
+      let written = false
+      return fn({
+        get: async (path: string) => {
+          if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
+          return { exists: docs.has(path), data: () => docs.get(path) }
+        },
+        set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
+      })
+    },
   }
 }
 
@@ -162,5 +175,69 @@ describe('joinLessonRun', () => {
     const deps = makeDeps(fake)
     await expect(joinLessonRun(deps, baseInput())).rejects.toThrow('Join code not found')
     expect(deps.syncMembership).not.toHaveBeenCalled()
+  })
+
+  // Important #1: appendLessonEventInTransaction scopes its own idempotency
+  // dedup doc by lessonRunId only, not by authUid. Before the fix, two
+  // different students sending the same client-generated idempotencyKey
+  // string (a realistic scenario if a naive client just uses a fixed value
+  // like 'join-1') would collide on that single doc: the second student's
+  // request digest (which embeds their own authUid/displayName) would not
+  // match the first's, throwing 'Idempotency key payload mismatch' and
+  // permanently blocking that student from joining with that key.
+  it('allows two different students to join using the exact same idempotencyKey string without colliding on PARTICIPANT_JOINED event dedup', async () => {
+    const fake = makeFakeFirestore()
+    setUpLessonRun(fake.docs)
+    const deps = makeDeps(fake)
+
+    const studentA = await joinLessonRun(deps, baseInput({ idempotencyKey: 'join-1', displayName: 'Aさん' }))
+    const studentB = await joinLessonRun(
+      { ...deps, authUid: 'student-b' },
+      baseInput({ idempotencyKey: 'join-1', displayName: 'Bさん' }),
+    )
+
+    expect(studentA.deduplicated).toBe(false)
+    expect(studentB.deduplicated).toBe(false)
+    expect(studentB.participantId).not.toBe(studentA.participantId)
+    const events = [...fake.docs.keys()].filter((k) => k.includes('/events/'))
+    expect(events).toHaveLength(2)
+  })
+
+  // Important #2: reconnecting must not let a student silently regain
+  // operate rights after a teacher has demoted them to OBSERVER — only
+  // transient statuses (TEMPORARILY_DISCONNECTED/ABSENT/MIGRATING_DEVICE)
+  // should be healed back to ACTIVE by a reconnect.
+  it('preserves OBSERVER status across a reconnect instead of resetting it to ACTIVE', async () => {
+    const fake = makeFakeFirestore()
+    setUpLessonRun(fake.docs)
+    const deps = makeDeps(fake)
+    const first = await joinLessonRun(deps, baseInput({ idempotencyKey: 'join-1' }))
+    fake.docs.set(`lessonRuns/run-1/participants/${first.participantId}`, {
+      ...fake.docs.get(`lessonRuns/run-1/participants/${first.participantId}`),
+      status: 'OBSERVER',
+    })
+
+    const rejoin = await joinLessonRun(deps, baseInput({ idempotencyKey: 'join-2' }))
+
+    expect(rejoin.participantId).toBe(first.participantId)
+    const participant = fake.docs.get(`lessonRuns/run-1/participants/${first.participantId}`)
+    expect(participant).toMatchObject({ status: 'OBSERVER', sessionVersion: 1 })
+    expect(deps.syncMembership).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'OBSERVER' }))
+  })
+
+  it('resets a TEMPORARILY_DISCONNECTED participant back to ACTIVE on reconnect', async () => {
+    const fake = makeFakeFirestore()
+    setUpLessonRun(fake.docs)
+    const deps = makeDeps(fake)
+    const first = await joinLessonRun(deps, baseInput({ idempotencyKey: 'join-1' }))
+    fake.docs.set(`lessonRuns/run-1/participants/${first.participantId}`, {
+      ...fake.docs.get(`lessonRuns/run-1/participants/${first.participantId}`),
+      status: 'TEMPORARILY_DISCONNECTED',
+    })
+
+    await joinLessonRun(deps, baseInput({ idempotencyKey: 'join-2' }))
+
+    const participant = fake.docs.get(`lessonRuns/run-1/participants/${first.participantId}`)
+    expect(participant).toMatchObject({ status: 'ACTIVE' })
   })
 })

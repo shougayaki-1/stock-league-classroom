@@ -5,13 +5,23 @@ const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
   return {
     docs,
+    // Reproduces Firestore Admin SDK's real "all reads before all writes"
+    // per-transaction constraint (see joinLessonRun.test.ts's fake for the
+    // full rationale): `written` resets on every `runTransaction` call, and
+    // any `get` after a `set` within that same transaction throws.
     runTransaction: async (fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
       set: (path: string, data: Record<string, unknown>) => void
-    }) => Promise<string>) => fn({
-      get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
-      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
-    }),
+    }) => Promise<string>) => {
+      let written = false
+      return fn({
+        get: async (path: string) => {
+          if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
+          return { exists: docs.has(path), data: () => docs.get(path) }
+        },
+        set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
+      })
+    },
   }
 }
 

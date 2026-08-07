@@ -5,13 +5,26 @@ const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
   return {
     docs,
+    // Same read-after-write guard as joinLessonRun.test.ts's fake (see its
+    // comment for why): `written` resets per-transaction and any `get`
+    // after a `set` in the same transaction throws, reproducing Firestore
+    // Admin SDK's real transaction ordering constraint. `issueJoinCode`'s
+    // retry loop reads-then-writes-then-returns per attempt so this fake
+    // enhancement should not change behavior here, but keeps this fake
+    // consistent with the others now that the constraint is known to bite.
     runTransaction: async <T>(fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
       set: (path: string, data: Record<string, unknown>) => void
-    }) => Promise<T>) => fn({
-      get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
-      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
-    }),
+    }) => Promise<T>) => {
+      let written = false
+      return fn({
+        get: async (path: string) => {
+          if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
+          return { exists: docs.has(path), data: () => docs.get(path) }
+        },
+        set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
+      })
+    },
   }
 }
 
