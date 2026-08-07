@@ -36,6 +36,9 @@ export const transitionPhaseCallable = onCall({ region: 'asia-northeast1' }, asy
   if (!data.targetStatus && !data.targetPhaseId) {
     throw new HttpsError('invalid-argument', 'targetStatus または targetPhaseId のいずれかが必要です。')
   }
+  if (data.targetStatus && data.targetPhaseId) {
+    throw new HttpsError('invalid-argument', 'targetStatus と targetPhaseId は同時に指定できません。')
+  }
   if (data.targetStatus && !VALID_STATUSES.has(data.targetStatus)) {
     throw new HttpsError('invalid-argument', 'targetStatus の値が不正です。')
   }
@@ -79,6 +82,12 @@ const translateTransitionPhaseError = (error: unknown): unknown => {
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Nothing to transition: targetStatus or targetPhaseId is required') {
       return new HttpsError('invalid-argument', error.message)
+    }
+    if (error.message === 'targetStatus and targetPhaseId cannot both be specified in a single transition') {
+      return new HttpsError('invalid-argument', error.message)
+    }
+    if (error.message.startsWith('Lesson failed start validation')) {
+      return new HttpsError('failed-precondition', error.message)
     }
   }
   return error

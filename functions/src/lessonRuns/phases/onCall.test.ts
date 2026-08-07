@@ -48,6 +48,16 @@ describe('transitionPhaseCallable', () => {
     expect(docGetMock).not.toHaveBeenCalled()
   })
 
+  // Critical fix: reject targetStatus + targetPhaseId at the Callable's own
+  // input-validation boundary too (not only in the pure transitionPhase
+  // layer), so a malformed request never reaches Firestore at all.
+  it('rejects when both targetStatus and targetPhaseId are supplied', async () => {
+    await expect(transitionPhaseCallable.run(makeRequest({ targetStatus: 'RUNNING', targetPhaseId: 'phase-a' })))
+      .rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(docGetMock).not.toHaveBeenCalled()
+    expect(transitionPhaseWithAdminSdk).not.toHaveBeenCalled()
+  })
+
   it('rejects an unrecognized targetStatus value', async () => {
     await expect(transitionPhaseCallable.run(makeRequest({ targetStatus: 'NOT_A_STATUS' })))
       .rejects.toMatchObject({ code: 'invalid-argument' })
@@ -92,6 +102,8 @@ describe('transitionPhaseCallable', () => {
     ['Invalid status transition: WAITING -> RUNNING', 'failed-precondition'],
     ['Idempotency key payload mismatch', 'failed-precondition'],
     ['Nothing to transition: targetStatus or targetPhaseId is required', 'invalid-argument'],
+    ['targetStatus and targetPhaseId cannot both be specified in a single transition', 'invalid-argument'],
+    ['Lesson failed start validation: HOME_ECONOMICS_MARKET_FORBIDDEN', 'failed-precondition'],
   ] as const)('translates a bare "%s" Error from transitionPhase into %s', async (message, code) => {
     docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })

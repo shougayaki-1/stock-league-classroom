@@ -25,10 +25,22 @@ const makeFakeFirestore = () => {
   }
 }
 
+// A minimal, well-formed phase graph (single REFLECTION phase, immediately
+// terminal) so tests that transition into RUNNING pass validateLessonForStart
+// by default. Tests that specifically exercise Important #1's
+// HOME_ECONOMICS/MARKET rejection (or other validation failures) override
+// `templateSnapshot`/`subject` via `overrides`.
+const validTemplateSnapshot = {
+  phases: [
+    { id: 'reflection', type: 'REFLECTION', progression: 'SUBMISSION_BASED', requiredCompletionRatio: 0.5, nextPhaseIds: [], displayConfig: {} },
+  ],
+}
+
 const setUpRun = (docs: Map<string, Record<string, unknown>>, overrides: Record<string, unknown> = {}) => {
   docs.set('lessonRuns/run-1', {
     id: 'run-1', orgId: 'org-1', status: 'WAITING', currentPhaseId: null,
     templateId: 'tpl-1', extraField: 'preserved',
+    subject: 'SOCIAL_STUDIES', templateSnapshot: validTemplateSnapshot,
     ...overrides,
   })
 }
@@ -155,5 +167,97 @@ describe('transitionPhase', () => {
       firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
     }, { lessonRunId: 'run-1', reason: '何もしない', idempotencyKey: 'tx-8' } as never))
       .rejects.toThrow('Nothing to transition')
+  })
+
+  // Critical fix: targetStatus and targetPhaseId are mutually exclusive.
+  // Before this guard existed, specifying both caused
+  // appendLessonEventInTransaction to be called twice inside the same
+  // transaction — the second call's `tx.get(idempotencyPath)` ran AFTER the
+  // first call's `tx.set(...)`s, violating Firestore's "all reads before all
+  // writes" transaction rule and crashing at runtime with
+  // "Firestore transactions require all reads to be executed before all
+  // writes." This test's fake enforces that same rule (see makeFakeFirestore
+  // above), so it reproduces the crash directly if the guard is removed.
+  it('rejects a transition that specifies both targetStatus and targetPhaseId', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { status: 'WAITING' })
+    const writeCheckpoint = vi.fn()
+
+    await expect(transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint,
+    }, {
+      lessonRunId: 'run-1', targetStatus: 'RUNNING', targetPhaseId: 'phase-a',
+      reason: '同時指定', idempotencyKey: 'tx-9',
+    })).rejects.toThrow('targetStatus and targetPhaseId cannot both be specified')
+
+    expect(writeCheckpoint).not.toHaveBeenCalled()
+    const events = [...fake.docs.entries()].filter(([path]) => path.includes('/events/'))
+    expect(events).toHaveLength(0)
+  })
+
+  // Important #1: validateLessonForStart (validation.ts) was never wired
+  // into any code path that actually starts a lesson, so a HOME_ECONOMICS
+  // lesson containing a forbidden MARKET phase (矛盾解消G) could reach
+  // RUNNING unchecked. This wires the check into the RUNNING transition.
+  describe('validateLessonForStart wiring (Important #1, 矛盾解消G)', () => {
+    it('rejects a transition into RUNNING when the lesson is HOME_ECONOMICS with a MARKET phase', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, {
+        status: 'WAITING',
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: {
+          phases: [
+            { id: 'market', type: 'MARKET', progression: 'TIMED', durationSeconds: 60, nextPhaseIds: ['reflection'], displayConfig: {} },
+            { id: 'reflection', type: 'REFLECTION', progression: 'SUBMISSION_BASED', requiredCompletionRatio: 0.5, nextPhaseIds: [], displayConfig: {} },
+          ],
+        },
+      })
+      const writeCheckpoint = vi.fn()
+
+      await expect(transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-10' }))
+        .rejects.toThrow('HOME_ECONOMICS_MARKET_FORBIDDEN')
+
+      expect(writeCheckpoint).not.toHaveBeenCalled()
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.status).toBe('WAITING')
+    })
+
+    it('allows a transition into RUNNING for a well-formed lesson (baseline: validation does not block valid lessons)', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-11' })
+
+      expect(result.status).toBe('RUNNING')
+    })
+
+    it('does not run validateLessonForStart for a phase-only transition (not entering RUNNING)', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, {
+        status: 'RUNNING',
+        currentPhaseId: 'phase-a',
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: {
+          phases: [
+            { id: 'market', type: 'MARKET', progression: 'TIMED', durationSeconds: 60, nextPhaseIds: [], displayConfig: {} },
+          ],
+        },
+      })
+      const writeCheckpoint = vi.fn()
+
+      // Even though this lesson would fail validateLessonForStart, moving
+      // between phases while already RUNNING is not a start action and must
+      // not be blocked by it.
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint,
+      }, { lessonRunId: 'run-1', targetPhaseId: 'phase-b', reason: '次のフェーズへ', idempotencyKey: 'tx-12' })
+
+      expect(result.currentPhaseId).toBe('phase-b')
+    })
   })
 })
