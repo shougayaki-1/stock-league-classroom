@@ -1,7 +1,8 @@
+import { getFirestore } from 'firebase-admin/firestore'
 import { appendLessonEventWithAdminSdk } from './appendLessonEvent'
 import { writeCheckpointWithAdminSdk } from './checkpoint'
 import { transitionPhaseWithAdminSdk } from './phases/transitionPhase'
-import type { LessonRunStatus } from './phases/stateMachine'
+import { canTransitionRun, type LessonRunStatus } from './phases/stateMachine'
 
 /**
  * Pluggable "safe stop" extension point for the subject engines (Phase C's
@@ -115,6 +116,17 @@ export interface InterruptLessonResult {
  * `writeCheckpoint` (see that file's JSDoc), for the same reason:
  * `appendLessonEventWithAdminSdk` opens its own self-contained
  * `db.runTransaction()` and cannot be nested inside another one.
+ *
+ * NOTE (unverified client input): `interimResults`, `resumePhaseId`, and
+ * `resumeCheckpointId` are recorded verbatim from the caller with no
+ * server-side validation — in particular, `resumeCheckpointId` is never
+ * checked against `lessonRuns/{id}/checkpoints` to confirm it actually
+ * exists. Unlike `abortLesson`'s `completedPhaseIds` below, these fields do
+ * not currently feed grading/evaluation, so this is lower risk, but the same
+ * "client can write arbitrary values into an audit event" caveat applies. If
+ * a future resume flow starts trusting `resumeCheckpointId` to actually
+ * locate a checkpoint, validate it server-side (e.g. a existence check
+ * against the checkpoints subcollection) before relying on it.
  */
 export const interruptLesson = async (
   deps: InterruptLessonDeps,
@@ -133,6 +145,8 @@ export const interruptLesson = async (
     actorType: 'TEACHER',
     actorId: deps.actorId,
     payload: {
+      // See this function's JSDoc "NOTE (unverified client input)": these
+      // three fields are unvalidated, caller-supplied data.
       reason: input.reason,
       interimResults: input.interimResults,
       resumePhaseId: input.resumePhaseId,
@@ -202,6 +216,23 @@ export interface CompleteLessonDeps {
   adapter?: SubjectLifecycleAdapter
   writeCheckpoint: LifecycleWriteCheckpointFn
   transitionPhase: LifecycleTransitionFn
+  /**
+   * Lightweight pre-check dependency: a single Firestore read (no
+   * transaction) of the target `LessonRun`'s current `status`, used ONLY to
+   * verify up front that a REFLECTION transition is actually legal before
+   * any adapter hook or checkpoint write runs (see `completeLesson`'s own
+   * JSDoc for why this exists). This intentionally duplicates part of what
+   * `transitionPhase` itself re-checks inside its own transaction — that
+   * duplication is by design: `transitionPhase`'s check is the source of
+   * truth and still runs, this one is only a fast-fail guard so an invalid
+   * call never reaches the adapter/checkpoint side effects in the first
+   * place. A race between this read and the real transition is harmless: at
+   * worst it lets an actually-invalid call proceed past this guard, in which
+   * case `transitionPhase`'s own check still catches it (just after the
+   * side effects already ran) — exactly today's pre-fix behavior, not a
+   * regression.
+   */
+  getCurrentStatus: (lessonRunId: string) => Promise<LessonRunStatus>
   actorId: string
 }
 
@@ -257,11 +288,32 @@ export interface CompleteLessonResult {
  * `idempotencyKey`s (`final:...` vs `transition:...`) so they never collide
  * or dedupe against each other. `stopActiveOperations` is left unset for
  * this call — see `SubjectLifecycleAdapter`'s JSDoc for why.
+ *
+ * Before any of the above runs, `deps.getCurrentStatus` performs a single,
+ * transaction-free Firestore read of the run's current `status` and checks
+ * it against Task 5's `canTransitionRun` table for a REFLECTION target. This
+ * closes a gap where, without the pre-check, a `completeLesson` call against
+ * a run that is already REFLECTION/COMPLETED/ABORTED (i.e. not a valid
+ * source state for this transition) would still run the adapter's
+ * stop/drain/snapshot hooks and write an orphaned `final:` checkpoint before
+ * ever discovering — only once `transitionPhase`'s own internal
+ * `canTransitionRun` check runs — that the transition itself is invalid.
+ * Phase B's adapter is a no-op so this has no observable effect today, but
+ * Phase C/D's real market/household adapters will have genuine, generally
+ * non-reversible side effects, so failing fast here (before touching the
+ * adapter or writing a checkpoint) matters once those land. This is a plain
+ * `await` on a single doc read, not a second transaction, so it does not
+ * disturb the existing read-after-write transaction ordering used elsewhere
+ * in this file and in `transitionPhase`.
  */
 export const completeLesson = async (
   deps: CompleteLessonDeps,
   input: CompleteLessonInput,
 ): Promise<CompleteLessonResult> => {
+  const currentStatus = await deps.getCurrentStatus(input.lessonRunId)
+  if (!canTransitionRun(currentStatus, 'REFLECTION')) {
+    throw new Error(`Invalid status transition: ${currentStatus} -> REFLECTION`)
+  }
   const adapter = deps.adapter ?? noopSubjectLifecycleAdapter
   await adapter.stopNewOperations(input.lessonRunId)
   await adapter.drainAcceptedOperations(input.lessonRunId)
@@ -297,7 +349,26 @@ export interface AbortLessonInput {
   lessonRunId: string
   orgId: string
   reason: string
-  /** Phases already completed at the moment of abort — frozen as-is into the ABORTED event's `evaluatedPhaseIds`; anything not in this list is excluded from evaluation. */
+  /**
+   * Phases already completed at the moment of abort — frozen as-is into the
+   * ABORTED event's `evaluatedPhaseIds`; anything not in this list is
+   * excluded from evaluation.
+   *
+   * UNVALIDATED CLIENT INPUT: this array is supplied by the caller
+   * (ultimately the teacher's client, via `lifecycle/onCall.ts`'s
+   * `abortLessonCallable`) and is recorded verbatim with no server-side
+   * verification that it matches the run's actual `PHASE_CHANGED` event
+   * history. Because `evaluatedPhaseIds` can influence downstream
+   * grading/evaluation, this is a real (if currently low-probability, since
+   * the UI is the only caller today) integrity gap relative to
+   * `appendLessonEvent.ts`'s documented principle that letting the client
+   * dictate arbitrary audit-event payload data undermines audit-log
+   * integrity. Phase B does not yet have a phase-completion-tracking
+   * mechanism a server-side recomputation could use, so a full fix (deriving
+   * `completedPhaseIds` server-side from the run's own event log rather than
+   * trusting the client's copy) is deferred to whenever that tracking
+   * exists.
+   */
   completedPhaseIds: string[]
   idempotencyKey: string
 }
@@ -335,6 +406,8 @@ export const abortLesson = async (
     type: 'LESSON_ABORTED',
     actorType: 'TEACHER',
     actorId: deps.actorId,
+    // evaluatedPhaseIds: unverified client input — see the "UNVALIDATED
+    // CLIENT INPUT" note on `AbortLessonInput.completedPhaseIds` above.
     payload: { reason: input.reason, evaluatedPhaseIds: input.completedPhaseIds },
     idempotencyKey: `aborted:${input.idempotencyKey}`,
   })
@@ -370,6 +443,21 @@ const bindTransitionPhase = (actorId: string): LifecycleTransitionFn => (input) 
 
 const bindAppendEvent = (): LifecycleAppendEventFn => (input) => appendLessonEventWithAdminSdk(input)
 
+/**
+ * Production wiring for `CompleteLessonDeps.getCurrentStatus`: a bare
+ * `db.doc(...).get()`, deliberately NOT a transaction — see that field's
+ * JSDoc on `CompleteLessonDeps` for why a plain read is sufficient here. The
+ * 'LessonRun not found' message matches `transitionPhase`'s own wording so
+ * `translateLifecycleError` (lifecycle/onCall.ts) maps it to the same
+ * `not-found` HttpsError code regardless of which check happened to catch a
+ * missing run first.
+ */
+const getCurrentStatusWithAdminSdk = async (lessonRunId: string): Promise<LessonRunStatus> => {
+  const snap = await getFirestore().doc(`lessonRuns/${lessonRunId}`).get()
+  if (!snap.exists) throw new Error('LessonRun not found')
+  return snap.get('status') as LessonRunStatus
+}
+
 export const interruptLessonWithAdminSdk = (
   input: InterruptLessonInput & { actorId: string },
 ): Promise<InterruptLessonResult> => {
@@ -392,7 +480,13 @@ export const completeLessonWithAdminSdk = (
 ): Promise<CompleteLessonResult> => {
   const { actorId, adapter, ...rest } = input
   return completeLesson(
-    { adapter, writeCheckpoint: writeCheckpointWithAdminSdk, transitionPhase: bindTransitionPhase(actorId), actorId },
+    {
+      adapter,
+      writeCheckpoint: writeCheckpointWithAdminSdk,
+      transitionPhase: bindTransitionPhase(actorId),
+      getCurrentStatus: getCurrentStatusWithAdminSdk,
+      actorId,
+    },
     rest,
   )
 }

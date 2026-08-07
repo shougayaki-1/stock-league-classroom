@@ -46,8 +46,9 @@ describe('Step 1: completeLesson — 終了順序', () => {
     }
     const writeCheckpoint = vi.fn(async () => { callOrder.push('writeCheckpoint'); return { checkpointId: 'cp-final', deduplicated: false } })
     const transitionPhase = vi.fn(async () => { callOrder.push('REFLECTION'); return { status: 'REFLECTION' as const, currentPhaseId: 'reflection', deduplicated: false } })
+    const getCurrentStatus = vi.fn().mockResolvedValue('RUNNING')
 
-    const result = await completeLesson({ adapter, writeCheckpoint, transitionPhase, actorId: 'teacher-1' }, {
+    const result = await completeLesson({ adapter, writeCheckpoint, transitionPhase, getCurrentStatus, actorId: 'teacher-1' }, {
       lessonRunId: 'run-1', reason: '通常終了', idempotencyKey: 'complete-1',
     })
 
@@ -67,8 +68,9 @@ describe('Step 1: completeLesson — 終了順序', () => {
   it('uses distinct idempotencyKeys for the explicit final-results checkpoint and the REFLECTION transition (writeCheckpoint is self-contained and cannot dedupe two different snapshots under one key)', async () => {
     const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-final', deduplicated: false })
     const transitionPhase = vi.fn().mockResolvedValue({ status: 'REFLECTION', currentPhaseId: null, deduplicated: false })
+    const getCurrentStatus = vi.fn().mockResolvedValue('RUNNING')
 
-    await completeLesson({ adapter: noopSubjectLifecycleAdapter, writeCheckpoint, transitionPhase, actorId: 'teacher-1' }, {
+    await completeLesson({ adapter: noopSubjectLifecycleAdapter, writeCheckpoint, transitionPhase, getCurrentStatus, actorId: 'teacher-1' }, {
       lessonRunId: 'run-1', reason: '通常終了', idempotencyKey: 'complete-2',
     })
 
@@ -80,12 +82,47 @@ describe('Step 1: completeLesson — 終了順序', () => {
   it('defaults to the no-op SubjectLifecycleAdapter when none is injected (Phase B has no subject-specific engine yet)', async () => {
     const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-final', deduplicated: false })
     const transitionPhase = vi.fn().mockResolvedValue({ status: 'REFLECTION', currentPhaseId: null, deduplicated: false })
+    const getCurrentStatus = vi.fn().mockResolvedValue('RUNNING')
 
-    const result = await completeLesson({ writeCheckpoint, transitionPhase, actorId: 'teacher-1' }, {
+    const result = await completeLesson({ writeCheckpoint, transitionPhase, getCurrentStatus, actorId: 'teacher-1' }, {
       lessonRunId: 'run-1', reason: '通常終了', idempotencyKey: 'complete-3',
     })
 
     expect(result.finalResults).toEqual({})
+  })
+
+  it('rejects up front — before touching the adapter or writing any checkpoint — when the run is already in a status that cannot transition to REFLECTION', async () => {
+    const adapter: SubjectLifecycleAdapter = {
+      stopNewOperations: vi.fn(),
+      drainAcceptedOperations: vi.fn(),
+      buildSubjectSnapshot: vi.fn(),
+    }
+    const writeCheckpoint = vi.fn()
+    const transitionPhase = vi.fn()
+    const getCurrentStatus = vi.fn().mockResolvedValue('REFLECTION')
+
+    await expect(completeLesson({ adapter, writeCheckpoint, transitionPhase, getCurrentStatus, actorId: 'teacher-1' }, {
+      lessonRunId: 'run-1', reason: '二重終了', idempotencyKey: 'complete-4',
+    })).rejects.toThrow('Invalid status transition: REFLECTION -> REFLECTION')
+
+    expect(adapter.stopNewOperations).not.toHaveBeenCalled()
+    expect(adapter.drainAcceptedOperations).not.toHaveBeenCalled()
+    expect(adapter.buildSubjectSnapshot).not.toHaveBeenCalled()
+    expect(writeCheckpoint).not.toHaveBeenCalled()
+    expect(transitionPhase).not.toHaveBeenCalled()
+  })
+
+  it.each(['COMPLETED', 'ABORTED'] as const)('also rejects up front when the run is already %s', async (status) => {
+    const writeCheckpoint = vi.fn()
+    const transitionPhase = vi.fn()
+    const getCurrentStatus = vi.fn().mockResolvedValue(status)
+
+    await expect(completeLesson({ writeCheckpoint, transitionPhase, getCurrentStatus, actorId: 'teacher-1' }, {
+      lessonRunId: 'run-1', reason: '二重終了', idempotencyKey: 'complete-5',
+    })).rejects.toThrow(`Invalid status transition: ${status} -> REFLECTION`)
+
+    expect(writeCheckpoint).not.toHaveBeenCalled()
+    expect(transitionPhase).not.toHaveBeenCalled()
   })
 })
 
