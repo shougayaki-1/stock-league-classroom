@@ -1,4 +1,5 @@
 import { httpsCallable, type Functions } from 'firebase/functions'
+import { canControlLesson, type LessonRunRole } from './authorization'
 
 /**
  * Mirrors functions/src/lessonRuns/interventions.ts's server-side union
@@ -18,6 +19,30 @@ export type LessonInterventionType =
   | 'RESTORE_PREVIOUS_PHASE'
   | 'EMERGENCY_STOP'
   | 'HIDE_INFORMATION'
+
+/**
+ * Client-side mirror of functions/src/lessonRuns/interventions.ts's
+ * `interventionPermissions`/`canApplyIntervention`. Needed so
+ * `InterventionPanel` (Task 11) can decide, before ever calling the
+ * Callable, which of the 9 intervention types this teacher's role is even
+ * allowed to see — an authorization-driven omission (never rendered), not a
+ * disabled-with-reason state (see InterventionPanel.tsx's own comment for
+ * why those two are kept distinct). Keep in sync with the server table.
+ */
+export const interventionPermissions: Record<Exclude<LessonInterventionType, 'EXTEND_TIME'>, LessonRunRole[]> = {
+  PROXY_CONFIRM: ['PRIMARY', 'ASSISTANT'],
+  CHANGE_REPRESENTATIVE: ['PRIMARY', 'ASSISTANT'],
+  RECONNECT_PARTICIPANT: ['PRIMARY', 'ASSISTANT'],
+  SWITCH_DISPLAY_SLIDE: ['PRIMARY', 'ASSISTANT'],
+  CORRECT_STATE: ['PRIMARY'],
+  RESTORE_PREVIOUS_PHASE: ['PRIMARY'],
+  EMERGENCY_STOP: ['PRIMARY'],
+  HIDE_INFORMATION: ['PRIMARY', 'ASSISTANT'],
+}
+
+/** Mirrors the server's `canApplyIntervention` — EXTEND_TIME delegates to `canControlLesson` (single source of truth), the other 8 types read `interventionPermissions`. */
+export const canApplyIntervention = (role: LessonRunRole, type: LessonInterventionType): boolean =>
+  type === 'EXTEND_TIME' ? canControlLesson(role, 'EXTEND_TIME') : interventionPermissions[type].includes(role)
 
 export type InterventionImpactScope =
   | { level: 'PARTICIPANT'; participantId: string }
