@@ -9,6 +9,12 @@ export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns
 export { joinLessonRunCallable } from './lessonRuns/participants/onCall'
 export { transitionPhaseCallable } from './lessonRuns/phases/onCall'
 export {
+  confirmResponseCallable,
+  decideProposalCallable,
+  saveResponseDraftCallable,
+  submitProposalCallable,
+} from './lessonRuns/responses/onCall'
+export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,

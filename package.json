@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "workspaces": ["functions", "functions/packages/deterministic-random", "functions/packages/lesson-runtime-types", "packages/lesson-inputs"],
+  "workspaces": ["functions", "functions/packages/deterministic-random", "functions/packages/lesson-runtime-types", "functions/packages/lesson-inputs"],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
