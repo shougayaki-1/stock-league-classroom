@@ -116,6 +116,11 @@ service cloud.firestore {
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
       }
+      // Server-internal join-time indexes (same-authUid lookup,
+      // externalIdentifier soft-collision check). No client, teacher or
+      // student, ever needs to read these directly.
+      match /participantsByAuthUid/{authUid} { allow read, write: if false; }
+      match /participantsByExternalIdentifier/{key} { allow read, write: if false; }
       match /teams/{teamId} {
         allow get, list: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
@@ -133,6 +138,13 @@ service cloud.firestore {
       }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
+
+    // Join codes and join-request idempotency are server-internal (issued
+    // and consumed only by joinLessonRunCallable/issueJoinCode via the
+    // Admin SDK, which bypasses these rules entirely) — no client reads or
+    // writes them directly.
+    match /lessonJoinCodes/{code} { allow read, write: if false; }
+    match /lessonJoinIdempotency/{key} { allow read, write: if false; }
 
     match /{document=**} { allow read, write: if false; }
   }
