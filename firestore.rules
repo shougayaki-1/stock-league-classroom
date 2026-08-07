@@ -104,6 +104,33 @@ service cloud.firestore {
       match /checkpointRestoreIdempotency/{key} {
         allow read, write: if false;
       }
+
+      // Firestore is the system of record for participants/teams/responses/
+      // results, but students never read it directly — they subscribe to
+      // the independent lessonRunMembership/lessonRunPublic/
+      // lessonRunTeamState RTDB projections instead (database.rules.json).
+      // These follow the same teacher-read/server-write-only shape as
+      // events/checkpoints above.
+      match /participants/{participantId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /teams/{teamId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /responses/{responseId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /results/{resultId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
 

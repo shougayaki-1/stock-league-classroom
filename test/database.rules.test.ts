@@ -217,3 +217,96 @@ describe('lessonRun public/private RTDB mirror-consistency table', () => {
     })
   }
 })
+
+// Task 2: participant membership mirror. lessonRunMembership/{runId}/{uid} is
+// an Admin-SDK-only mirror of the Firestore participant record. Every
+// visibility class below (own-entry read, public read, per-team read) must
+// stay on an independent top-level path — see the design note above the
+// mirror-consistency table for why an ancestor `.read` would be
+// unrevokable by a descendant `.read: false`.
+describe('lessonRunMembership mirror (participant own-entry read only)', () => {
+  const seedMembership = async (runId: string, uid: string, entry: { access: 'ACTIVE' | 'REVOKED'; teamId?: string }) =>
+    environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref(`lessonRunMembership/${runId}/${uid}`).set(entry)
+    })
+
+  it('lets a participant read only their own membership mirror entry, not another participant\'s', async () => {
+    await seedMembership('run-1', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    const studentB = environment.authenticatedContext('student-b').database()
+    await assertSucceeds(get(ref(studentA, 'lessonRunMembership/run-1/student-a')))
+    await assertFails(get(ref(studentB, 'lessonRunMembership/run-1/student-a')))
+  })
+
+  it('rejects any client write to the membership mirror, even by the mirrored uid writing their own entry', async () => {
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertFails(set(ref(studentA, 'lessonRunMembership/run-1/student-a'), { access: 'ACTIVE', teamId: 'team-a' }))
+  })
+})
+
+describe('lessonRunPublic/lessonRunTeamState: student OR-branch added without weakening the existing teacher branch', () => {
+  const seedMembership = async (runId: string, uid: string, entry: { access: 'ACTIVE' | 'REVOKED'; teamId?: string }) =>
+    environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref(`lessonRunMembership/${runId}/${uid}`).set(entry)
+    })
+
+  it('lets an active participant read public state and only their own team state', async () => {
+    await seedMembership('run-1', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertSucceeds(get(ref(studentA, 'lessonRunPublic/run-1')))
+    await assertSucceeds(get(ref(studentA, 'lessonRunTeamState/run-1/team-a')))
+    await assertFails(get(ref(studentA, 'lessonRunTeamState/run-1/team-b')))
+    await assertFails(get(ref(studentA, 'lessonRunPrivate/run-1')))
+  })
+
+  it('fails closed when the membership mirror is absent entirely', async () => {
+    const unknownStudent = environment.authenticatedContext('unknown-student').database()
+    await assertFails(get(ref(unknownStudent, 'lessonRunPublic/run-1')))
+    await assertFails(get(ref(unknownStudent, 'lessonRunTeamState/run-1/team-a')))
+  })
+
+  it('fails closed when the participant has been REVOKED', async () => {
+    await seedMembership('run-1', 'student-b', { access: 'REVOKED', teamId: 'team-b' })
+    const studentB = environment.authenticatedContext('student-b').database()
+    await assertFails(get(ref(studentB, 'lessonRunPublic/run-1')))
+    await assertFails(get(ref(studentB, 'lessonRunTeamState/run-1/team-b')))
+  })
+
+  it('does not let an active participant of one run read another run\'s public or team state', async () => {
+    await seedMembership('run-1', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertFails(get(ref(studentA, 'lessonRunPublic/run-2')))
+    await assertFails(get(ref(studentA, 'lessonRunTeamState/run-2/team-a')))
+  })
+
+  it('rejects any client write from a student, even one with a fully valid ACTIVE mirror', async () => {
+    await seedMembership('run-1', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertFails(set(ref(studentA, 'lessonRunPublic/run-1'), { status: 'RUNNING' }))
+    await assertFails(set(ref(studentA, 'lessonRunTeamState/run-1/team-a'), { score: 100 }))
+  })
+
+  it('still lets a fully-synced active teacher read public and team state with no membership mirror entry at all', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-a/teacher-a').set({ membershipVersion: 1, syncState: 'SYNCED' })
+      await context.database().ref('lessonRunPublic/run-3').set({ status: 'RUNNING', currentPhaseId: null, updatedAtMillis: 1, orgId: 'personal_teacher-a' })
+      await context.database().ref('lessonRunTeamState/run-3/team-a').set({ orgId: 'personal_teacher-a', score: 0 })
+    })
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertSucceeds(get(ref(teacher, 'lessonRunPublic/run-3')))
+    await assertSucceeds(get(ref(teacher, 'lessonRunTeamState/run-3/team-a')))
+  })
+
+  it('still rejects a teacher whose mirror is version-mismatched, mid-PENDING-sync, or stale auth_time after revocation — proves the pre-existing strict teacher condition was not replaced by a weaker one', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-b/teacher-b').set({ role: 'owner', status: 'active', membershipVersion: 2, revokedAtSeconds: 500 })
+      await context.database().ref('orgAccessMeta/personal_teacher-b/teacher-b').set({ membershipVersion: 2, syncState: 'PENDING' })
+      await context.database().ref('lessonRunPublic/run-4').set({ status: 'RUNNING', currentPhaseId: null, updatedAtMillis: 1, orgId: 'personal_teacher-b' })
+      await context.database().ref('lessonRunTeamState/run-4/team-a').set({ orgId: 'personal_teacher-b', score: 0 })
+    })
+    const teacher = environment.authenticatedContext('teacher-b', { ...teacherToken, auth_time: 1000 }).database()
+    await assertFails(get(ref(teacher, 'lessonRunPublic/run-4')))
+    await assertFails(get(ref(teacher, 'lessonRunTeamState/run-4/team-a')))
+  })
+})

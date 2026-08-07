@@ -260,3 +260,30 @@ describe('checkpoints are append-only and restoreGeneration only moves forward',
     await assertFails(setDoc(reference, { newRestoreGeneration: 1 }))
   })
 })
+
+// Task 2: participants/teams/responses/results are Firestore's system of
+// record for lesson-run membership, but students never read Firestore
+// directly — they subscribe to the independent lessonRunMembership/
+// lessonRunPublic/lessonRunTeamState RTDB projections instead (see
+// database.rules.json). These subcollections therefore follow the exact
+// same teacher-only get/list-plus-no-write pattern already established for
+// events/checkpoints; no student-facing Firestore rule is added here.
+describe('lessonRuns participant/team/response/result subcollections are teacher-read, server-write-only', () => {
+  const subcollections = ['participants', 'teams', 'responses', 'results'] as const
+
+  for (const subcollection of subcollections) {
+    it(`lets the owning teacher read ${subcollection} but not another teacher's, and rejects any client write`, async () => {
+      await environment.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'DRAFT' })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', subcollection, 'doc-1'), { seeded: true })
+      })
+      const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+      const other = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+
+      await assertSucceeds(getDoc(doc(owner, 'lessonRuns', 'run-1', subcollection, 'doc-1')))
+      await assertFails(getDoc(doc(other, 'lessonRuns', 'run-1', subcollection, 'doc-1')))
+      await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-1', subcollection, 'doc-x'), { fake: true }))
+    })
+  }
+})
