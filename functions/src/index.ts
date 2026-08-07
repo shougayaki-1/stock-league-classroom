@@ -31,6 +31,10 @@ export {
   transferPrimaryTeacherCallable,
 } from './lessonRuns/interventions/onCall'
 export {
+  exchangeDisplaySessionTokenCallable,
+  issueDisplaySessionTokenCallable,
+} from './lessonRuns/projections/onCall'
+export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,

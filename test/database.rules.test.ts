@@ -259,6 +259,75 @@ describe('lessonRun public/private RTDB mirror-consistency table', () => {
   }
 })
 
+// Task 10: lessonRunDisplay (classroom-projector state). Independent
+// top-level path, same shape as lessonRunPublic/lessonRunPrivate above —
+// readable by (a) a session whose Firebase custom-token claim
+// `displayRunId` matches this specific $lessonRunId (minted only via
+// exchangeDisplaySessionTokenCallable, functions/src/lessonRuns/
+// projections/onCall.ts, after redeeming a one-time hashed session token —
+// there is deliberately no direct/unauthenticated read path), or (b) the
+// same strict orgAccess/orgAccessMeta teacher condition lessonRunPublic
+// uses. No client write is ever allowed (Functions/Admin SDK only, via
+// publishLessonProjection).
+describe('lessonRunDisplay RTDB path (classroom display projection)', () => {
+  it('denies an unauthenticated read entirely (no public URL bypass)', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunDisplay/run-1').set({ orgId: 'org-1', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    await assertFails(get(ref(environment.unauthenticatedContext().database(), 'lessonRunDisplay/run-1')))
+  })
+
+  it('lets an authenticated session whose displayRunId claim matches this run read it', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunDisplay/run-1').set({ orgId: 'org-1', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    const displaySession = environment.authenticatedContext('display-run-1', { displayRunId: 'run-1' }).database()
+    await assertSucceeds(get(ref(displaySession, 'lessonRunDisplay/run-1')))
+  })
+
+  it('rejects a displayRunId claim scoped to a different run (no cross-run leakage from a stolen/shared display session)', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunDisplay/run-2').set({ orgId: 'org-1', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    const displaySession = environment.authenticatedContext('display-run-1', { displayRunId: 'run-1' }).database()
+    await assertFails(get(ref(displaySession, 'lessonRunDisplay/run-2')))
+  })
+
+  it('rejects a plain authenticated user with no displayRunId claim and no teacher org membership', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunDisplay/run-1').set({ orgId: 'org-1', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    await assertFails(get(ref(environment.authenticatedContext('random-user').database(), 'lessonRunDisplay/run-1')))
+  })
+
+  it('still lets a fully-synced active teacher read via the existing orgAccess condition, without any displayRunId claim', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-a/teacher-a').set({ membershipVersion: 1, syncState: 'SYNCED' })
+      await context.database().ref('lessonRunDisplay/run-3').set({ orgId: 'personal_teacher-a', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertSucceeds(get(ref(teacher, 'lessonRunDisplay/run-3')))
+  })
+
+  it('rejects a teacher whose orgAccess mirror is broken (membershipVersion mismatch), even with no displayRunId claim', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('orgAccess/personal_teacher-b/teacher-b').set({ role: 'owner', status: 'active', membershipVersion: 3, revokedAtSeconds: 0 })
+      await context.database().ref('orgAccessMeta/personal_teacher-b/teacher-b').set({ membershipVersion: 4, syncState: 'SYNCED' })
+      await context.database().ref('lessonRunDisplay/run-4').set({ orgId: 'personal_teacher-b', mode: 'LIVE', title: 't', goal: null, teams: [], teacherGuidance: null, updatedAtMillis: 1 })
+    })
+    const teacher = environment.authenticatedContext('teacher-b', teacherToken).database()
+    await assertFails(get(ref(teacher, 'lessonRunDisplay/run-4')))
+  })
+
+  it('rejects any client write, from a display session, a student, or a teacher alike', async () => {
+    const displaySession = environment.authenticatedContext('display-run-1', { displayRunId: 'run-1' }).database()
+    await assertFails(set(ref(displaySession, 'lessonRunDisplay/run-1'), { mode: 'LIVE' }))
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertFails(set(ref(teacher, 'lessonRunDisplay/run-1'), { mode: 'LIVE' }))
+  })
+})
+
 // Task 2: participant membership mirror. lessonRunMembership/{runId}/{uid} is
 // an Admin-SDK-only mirror of the Firestore participant record. Every
 // visibility class below (own-entry read, public read, per-team read) must
