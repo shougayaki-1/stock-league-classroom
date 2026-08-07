@@ -140,6 +140,19 @@ describe('orgId/createdByUid immutability on lessonTemplates', () => {
     await assertFails(setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'bad'), { templateId: 'other', orgId: 'personal_teacher-b', schemaVersion: 1, content: {}, createdByUid: 'teacher-a', immutable: true }))
   })
 
+  it('allows a normal draft/updatedAt-only edit on a template with no pendingDeletion set', async () => {
+    // Companion to the pendingDeletion-rejection test below: without this,
+    // an assertFails-only suite cannot distinguish "the rule correctly
+    // blocks pending-deletion edits" from "the rule now blocks all updates".
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const valid = { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' }
+    await setDoc(doc(owner, 'lessonTemplates', 'not-pending-delete'), valid)
+    await assertSucceeds(updateDoc(doc(owner, 'lessonTemplates', 'not-pending-delete'), {
+      draft: { schemaVersion: 1, title: '編集後', description: '', subject: 'SOCIAL_STUDIES' },
+      updatedAt: '2026-08-07T00:00:00.000Z',
+    }))
+  })
+
   it('rejects updating a template that is pending deletion, even with an otherwise-allowed draft/updatedAt-only diff', async () => {
     // Finding 5: requestSoftDelete (Task 12) sets pendingDeletion on a
     // template, but the update rule had no awareness of it, so a client
