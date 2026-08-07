@@ -25,8 +25,21 @@ export interface EnsurePersonalOrgResult { orgId: string; created: boolean }
 /**
  * Idempotent: Firestore is the system of record, so a retry after a partial
  * failure (e.g. the RTDB mirror write below fails) simply re-reads the
- * existing org and re-applies the same mirror values — never creates a
- * duplicate org, per design.md:99's "既に個人組織がある → 既存のorgIdを返す".
+ * existing org and reports created: false — never creates a duplicate org,
+ * per design.md:99's "既に個人組織がある → 既存のorgIdを返す".
+ *
+ * The RTDB mirror write only happens when `created` is true (i.e. this call
+ * is the one that actually created the org/membership docs). On a retry
+ * where the org already exists, this function must NOT touch the RTDB
+ * mirror: this Callable has no idempotency guard and is reachable by any
+ * verified teacher at any time, so unconditionally re-applying hardcoded
+ * `{ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 }`
+ * values here would silently overwrite whatever state
+ * syncOrganizationMembershipChange's PENDING→SYNCED protocol has since
+ * established (e.g. a suspension) — bypassing Firestore, the system of
+ * record, and every RTDB rule that trusts the mirror. Once the org already
+ * exists, the mirror's ongoing state is syncOrganizationMembershipChange's
+ * responsibility, not this function's.
  */
 export const ensurePersonalOrg = async (uid: string, deps: EnsurePersonalOrgDeps): Promise<EnsurePersonalOrgResult> => {
   const orgId = personalOrgId(uid)
@@ -44,7 +57,9 @@ export const ensurePersonalOrg = async (uid: string, deps: EnsurePersonalOrgDeps
     return true
   })
 
-  await deps.writeOrgAccessMirror({ orgId, uid, role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+  if (created) {
+    await deps.writeOrgAccessMirror({ orgId, uid, role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
+  }
 
   return { orgId, created }
 }

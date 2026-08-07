@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ensurePersonalOrg } from './personalOrg'
 
 const makeFakeFirestore = () => {
@@ -33,17 +33,24 @@ describe('ensurePersonalOrg', () => {
     expect(rtdbWrites).toEqual([{ orgId: 'personal_uid-1', uid: 'uid-1', role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 }])
   })
 
-  it('is idempotent: a second call makes no further Firestore writes', async () => {
+  it('is idempotent: a second call makes no further Firestore writes and does not touch the RTDB mirror', async () => {
     const fake = makeFakeFirestore()
     const rtdbWrites: unknown[] = []
-    const deps = { firestore: fake as never, writeOrgAccessMirror: async (payload: unknown) => { rtdbWrites.push(payload) } }
+    const writeOrgAccessMirror = vi.fn(async (payload: unknown) => { rtdbWrites.push(payload) })
+    const deps = { firestore: fake as never, writeOrgAccessMirror }
     await ensurePersonalOrg('uid-1', deps)
+    expect(writeOrgAccessMirror).toHaveBeenCalledTimes(1)
     const before = fake.docs.size
     const second = await ensurePersonalOrg('uid-1', deps)
     expect(second).toEqual({ orgId: 'personal_uid-1', created: false })
     expect(fake.docs.size).toBe(before)
-    // The RTDB mirror is re-applied unconditionally on every call — that is
-    // deliberately safe because it always writes the same values.
-    expect(rtdbWrites).toHaveLength(2)
+    // The RTDB mirror must NOT be re-applied when the org already existed:
+    // syncOrganizationMembershipChange's PENDING->SYNCED protocol owns the
+    // mirror's ongoing state (e.g. a suspension) once the org exists, and a
+    // client-callable retry here must never reset it back to hardcoded
+    // owner/active/v1 values. Assert the write function was never invoked
+    // again on this idempotent-retry path.
+    expect(writeOrgAccessMirror).toHaveBeenCalledTimes(1)
+    expect(rtdbWrites).toHaveLength(1)
   })
 })
