@@ -79,6 +79,14 @@ export const useLessonResponseDraft = (input: UseLessonResponseDraftInput): UseL
   const dirtyRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const savingRef = useRef<Promise<void> | undefined>(undefined)
+  // Set once `reconcileRevision` detects the server has moved ahead of an
+  // unsaved local edit (see `reconcileRevision` below). While true,
+  // `performSave` refuses to run — the server's stale-revision guard exists
+  // precisely to stop a blind overwrite, and auto-save must not route
+  // around it by silently re-syncing `revisionRef` to the newer value.
+  // Nothing clears this ref yet; resolving a conflict via explicit user
+  // action is a separate, later piece of UI (out of scope here).
+  const conflictRef = useRef(false)
 
   const setRevision = (next: number) => {
     revisionRef.current = next
@@ -86,7 +94,13 @@ export const useLessonResponseDraft = (input: UseLessonResponseDraftInput): UseL
   }
 
   const performSave = useCallback(async (): Promise<void> => {
+    // Never let two saves be in flight at once: awaiting an in-progress
+    // save before reading `revisionRef.current` below ensures the next
+    // save always uses the revision the server just confirmed, instead of
+    // racing ahead with a now-stale `expectedRevision` (Important #4).
+    if (savingRef.current) await savingRef.current
     if (!dirtyRef.current) return
+    if (conflictRef.current) return
     dirtyRef.current = false
     const valueToSave = valueRef.current
     const expectedRevisionAtSaveTime = revisionRef.current
@@ -153,22 +167,45 @@ export const useLessonResponseDraft = (input: UseLessonResponseDraftInput): UseL
     }
     if (serverRevision > revisionRef.current) {
       setRevision(serverRevision)
+      // Stop auto-save rather than silently adopting the server's revision
+      // for the *next* save — doing so would let this hook route around
+      // the server's stale-revision guard and quietly overwrite someone
+      // else's change (Important #5). `performSave` checks this ref and
+      // refuses to run until a conflict-resolution flow (out of scope
+      // here) clears it.
+      conflictRef.current = true
       setStatus('conflict')
     }
   }, [])
 
-  // Unmount-flush: fires the last pending debounced save (if any) rather
-  // than dropping it. Fire-and-forget is intentional — React effect cleanup
-  // cannot be awaited, and the underlying Callable call is idempotent
-  // (fresh idempotencyKey per attempt, expectedRevision-guarded) so letting
-  // it complete after unmount is safe.
+  // Latest-ref pattern: the unmount effect below must run its cleanup
+  // exactly once, on unmount, regardless of how many times `performSave`'s
+  // identity changes across renders (it depends on `saveResponseDraft` /
+  // `createIdempotencyKey`, which callers may pass as fresh inline
+  // functions every render). Keeping the dependency array as `[]` and
+  // reading the latest `performSave` through this ref avoids re-running
+  // the cleanup — and thus firing a save — on every such render
+  // (Important #3).
+  const performSaveRef = useRef(performSave)
+  performSaveRef.current = performSave
+
+  // Unmount-flush: fires the last pending save (if any) rather than
+  // dropping it. This must trigger whenever there is unsaved local state
+  // (`dirtyRef.current`), not only when a debounce timer is still pending
+  // — a save that already fired once and failed re-marks `dirtyRef` but
+  // clears `timerRef`, so gating on `timerRef.current` alone would drop
+  // that edit silently on unmount (Important #2). Fire-and-forget is
+  // intentional — React effect cleanup cannot be awaited, and the
+  // underlying Callable call is idempotent (fresh idempotencyKey per
+  // attempt, expectedRevision-guarded) so letting it complete after
+  // unmount is safe.
   useEffect(() => () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = undefined
-      if (dirtyRef.current) void performSave()
     }
-  }, [performSave])
+    if (dirtyRef.current) void performSaveRef.current()
+  }, [])
 
   return { value, setValue, status, revision, error, flush, reconcileRevision }
 }

@@ -130,6 +130,16 @@ service cloud.firestore {
         allow get, list: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
+
+        // Server-internal idempotency records for saveResponseDraft/
+        // submitProposal/decideProposal/confirmResponse — same
+        // deny-by-default shape as eventIdempotency/checkpointRestoreIdempotency
+        // above. No client, teacher or student, ever needs to read or
+        // write these directly.
+        match /saveDraftIdempotency/{key} { allow read, write: if false; }
+        match /submitProposalIdempotency/{key} { allow read, write: if false; }
+        match /decideProposalIdempotency/{key} { allow read, write: if false; }
+        match /confirmIdempotency/{key} { allow read, write: if false; }
       }
       match /results/{resultId} {
         allow get, list: if teacher()

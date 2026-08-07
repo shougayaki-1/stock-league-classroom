@@ -18,6 +18,19 @@ const stampVersion = () => ({
 export default defineConfig({
   define: { 'import.meta.env.VITE_COMMIT_SHA': JSON.stringify(commitSha) },
   plugins: [react(), stampVersion()],
+  // `@stock-league/lesson-inputs` is a symlinked workspace package (npm
+  // workspaces -> node_modules/@stock-league/lesson-inputs) whose `main`
+  // is CommonJS (functions/packages/lesson-inputs's tsconfig targets
+  // `module: commonjs` for the Cloud Functions runtime). Vite does not
+  // pre-bundle symlinked deps by default, so without this it is served
+  // straight from `dist/index.js` as-is under `npm run dev`, and the
+  // browser's native ESM loader cannot resolve CJS `module.exports` as
+  // named imports (`import { validateLessonInput } from
+  // '@stock-league/lesson-inputs'` in LessonInputRenderer.tsx). Forcing
+  // it through esbuild's dependency pre-bundling converts it to ESM like
+  // any other dependency. `vite build` and `vitest` are unaffected
+  // (Rollup's commonjs plugin / Vite's SSR transform already handle this).
+  optimizeDeps: { include: ['@stock-league/lesson-inputs'] },
   test: {
     environment: 'jsdom',
     globals: true,

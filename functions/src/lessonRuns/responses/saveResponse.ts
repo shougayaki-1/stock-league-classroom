@@ -102,6 +102,27 @@ export interface SaveResponseDraftResult {
  * required reject case). Editing while `PROPOSED`/`APPROVED`/`REJECTED`
  * resets the response back to `DRAFT` with `approvals: []`, since a changed
  * value invalidates whatever proposal/decision round was in progress.
+ *
+ * NOTE on `LessonInputValue` validation (`@stock-league/lesson-inputs`'s
+ * `validateLessonInput`, imported above only as a type): this layer
+ * deliberately does not call it. `validateLessonInput` needs the input's
+ * `LessonInputConfig` (its widget type, options, min/max, etc.) to check a
+ * value against, and that config lives in the lesson template/version
+ * (functions/src/lessonTemplates) keyed by phase/input id — Phase B's
+ * response layer here is only ever given `phaseId`/`inputId` strings, with
+ * no lookup path from those back to the template's per-input config (no
+ * lessonRun -> lessonVersion -> phase -> input config resolver exists yet
+ * anywhere in functions/src). Wiring that up is a template-repository
+ * change, not a one-line addition here, and is out of scope for Task 7.
+ * Until it exists, this is a known, intentional gap: a malformed `value`
+ * (wrong shape/out of range/etc.) is accepted and stored as-is, exactly
+ * like `rationaleInformationIds` and `contextSnapshot` are today. It is
+ * bounded by the same `deny-by-default` Firestore rules and Callable-only
+ * write path as everything else in this file — a malformed value cannot be
+ * written directly to Firestore, only through this validated-elsewhere
+ * Callable — so the risk is display/consumption of an odd value, not an
+ * integrity or security hole. Revisit once a template/input-config
+ * resolver exists for the server side.
  */
 export const saveResponseDraft = async (
   deps: ResponseFirestoreDeps,

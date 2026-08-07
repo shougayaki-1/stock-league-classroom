@@ -287,3 +287,26 @@ describe('lessonRuns participant/team/response/result subcollections are teacher
     })
   }
 })
+
+// Task 7: saveResponseDraft/submitProposal/decideProposal/confirmResponse
+// each keep their own idempotency subcollection under a response doc, same
+// deny-by-default shape as eventIdempotency/checkpointRestoreIdempotency
+// above. No client, teacher or student, ever needs to read or write these
+// directly.
+describe('lessonRuns response idempotency subcollections are server-internal only', () => {
+  const idempotencySubcollections = [
+    'saveDraftIdempotency',
+    'submitProposalIdempotency',
+    'decideProposalIdempotency',
+    'confirmIdempotency',
+  ] as const
+
+  for (const subcollection of idempotencySubcollections) {
+    it(`denies all client read/write of the response ${subcollection} store`, async () => {
+      const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+      const reference = doc(db, 'lessonRuns', 'run-1', 'responses', 'response-1', subcollection, 'some-key')
+      await assertFails(getDoc(reference))
+      await assertFails(setDoc(reference, { requestDigest: 'fake' }))
+    })
+  }
+})
