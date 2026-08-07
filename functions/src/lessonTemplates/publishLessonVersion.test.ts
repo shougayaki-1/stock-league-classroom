@@ -25,7 +25,6 @@ const makeDeps = (fake: ReturnType<typeof makeFakeFirestore>, uuids: string[] = 
   return {
     firestore: fake as never,
     randomUUID: () => uuids[call++] ?? `version-${call}`,
-    sha256: (input: string) => `digest(${input})`,
   }
 }
 
@@ -71,6 +70,19 @@ describe('publishLessonVersion', () => {
     await publishLessonVersion(deps, { templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '初版', idempotencyKey: 'key-1' })
 
     await expect(publishLessonVersion(deps, { templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '別の要約', idempotencyKey: 'key-1' }))
+      .rejects.toThrow('Idempotency key payload mismatch')
+  })
+
+  it('rejects a retry under the same idempotencyKey/templateId/changeSummary but a different caller uid', async () => {
+    // Regression test for Finding 4: the idempotency digest must include the
+    // caller's uid, otherwise two different teachers in the same org could
+    // reuse the same idempotency key against the same template and get each
+    // other's replayed result.
+    const fake = makeFakeFirestore([{ path: 'lessonTemplates/t1', data: baseTemplate }])
+    const deps = makeDeps(fake)
+    await publishLessonVersion(deps, { templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '初版', idempotencyKey: 'key-1' })
+
+    await expect(publishLessonVersion(deps, { templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-b', changeSummary: '初版', idempotencyKey: 'key-1' }))
       .rejects.toThrow('Idempotency key payload mismatch')
   })
 

@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { HttpsError } from 'firebase-functions/v2/https'
+import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 
 interface FirestoreTransaction {
   get: (path: string) => Promise<{ exists: boolean; data?: Record<string, unknown> }>
@@ -10,7 +11,6 @@ interface FirestoreTransaction {
 export interface PublishLessonVersionDeps {
   firestore: { runTransaction: (fn: (tx: FirestoreTransaction) => Promise<PublishLessonVersionResult>) => Promise<PublishLessonVersionResult> }
   randomUUID: () => string
-  sha256: (input: string) => string
   now?: () => unknown
 }
 
@@ -29,12 +29,6 @@ export interface PublishLessonVersionResult {
   alreadyPublished: boolean
 }
 
-const idempotencyDocPath = (deps: PublishLessonVersionDeps, orgId: string, idempotencyKey: string): string =>
-  `lessonVersionPublishIdempotency/${deps.sha256(`${orgId}\0${idempotencyKey}`)}`
-
-const requestDigestOf = (deps: PublishLessonVersionDeps, templateId: string, changeSummary: string | undefined): string =>
-  deps.sha256(JSON.stringify({ templateId, changeSummary: changeSummary ?? null }))
-
 /**
  * Publishes the template's current draft as a new immutable LessonVersion and
  * advances the template's currentPublishedVersionId/status pointer — all
@@ -47,8 +41,11 @@ const requestDigestOf = (deps: PublishLessonVersionDeps, templateId: string, cha
  * rather than silently succeeding against the wrong draft.
  */
 export const publishLessonVersion = (deps: PublishLessonVersionDeps, input: PublishLessonVersionInput): Promise<PublishLessonVersionResult> => {
-  const idempotencyPath = idempotencyDocPath(deps, input.orgId, input.idempotencyKey)
-  const requestDigest = requestDigestOf(deps, input.templateId, input.changeSummary)
+  const idempotencyPath = `lessonVersionPublishIdempotency/${idempotencyDocumentId(input.orgId, input.idempotencyKey)}`
+  // uid is included so two different teachers in the same org cannot reuse
+  // the same idempotency key against the same template and replay each
+  // other's result (Finding 4).
+  const requestDigest = computeRequestDigest({ templateId: input.templateId, changeSummary: input.changeSummary ?? null, createdByUid: input.uid })
   const templatePath = `lessonTemplates/${input.templateId}`
   const now = deps.now ? deps.now() : new Date().toISOString()
 
@@ -106,7 +103,6 @@ export const publishLessonVersionWithAdminSdk = (input: PublishLessonVersionInpu
       })),
     },
     randomUUID: () => randomUUID(),
-    sha256: (value) => createHash('sha256').update(value).digest('hex'),
     now: () => FieldValue.serverTimestamp(),
   }, input)
 }
