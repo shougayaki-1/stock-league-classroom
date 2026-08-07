@@ -66,6 +66,7 @@ service cloud.firestore {
         && request.resource.data.orgId == resource.data.orgId
         && request.resource.data.createdByUid == resource.data.createdByUid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['draft', 'updatedAt'])
+        && resource.data.get('pendingDeletion', null) == null
         && activeMember(resource.data.orgId);
       // All deletion goes through Task 12 so recovery/audit semantics cannot
       // be bypassed by a direct client delete.

@@ -139,6 +139,24 @@ describe('orgId/createdByUid immutability on lessonTemplates', () => {
     await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
     await assertFails(setDoc(doc(owner, 'lessonTemplates', 't1', 'versions', 'bad'), { templateId: 'other', orgId: 'personal_teacher-b', schemaVersion: 1, content: {}, createdByUid: 'teacher-a', immutable: true }))
   })
+
+  it('rejects updating a template that is pending deletion, even with an otherwise-allowed draft/updatedAt-only diff', async () => {
+    // Finding 5: requestSoftDelete (Task 12) sets pendingDeletion on a
+    // template, but the update rule had no awareness of it, so a client
+    // could still edit the draft of a template already queued for deletion.
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const valid = { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' }
+    await setDoc(doc(owner, 'lessonTemplates', 'pending-delete'), valid)
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), 'lessonTemplates', 'pending-delete'), {
+        pendingDeletion: { requestedAt: '2026-08-07T00:00:00.000Z', requestedByUid: 'teacher-a', reason: 'test', purgeAfter: '2026-08-14T00:00:00.000Z' },
+      })
+    })
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'pending-delete'), {
+      draft: { schemaVersion: 1, title: '編集後', description: '', subject: 'SOCIAL_STUDIES' },
+      updatedAt: '2026-08-07T00:00:00.000Z',
+    }))
+  })
 })
 
 describe('lessonRuns Firestore rules', () => {
