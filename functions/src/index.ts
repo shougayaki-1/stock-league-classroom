@@ -34,6 +34,7 @@ export {
   exchangeDisplaySessionTokenCallable,
   issueDisplaySessionTokenCallable,
 } from './lessonRuns/projections/onCall'
+export { submitSurveyCallable } from './lessonRuns/surveys/onCall'
 export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
