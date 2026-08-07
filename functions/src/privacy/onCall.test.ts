@@ -306,12 +306,28 @@ describe('restoreSoftDeletedCallable', () => {
     expect(restoreSoftDeletedWithAdminSdk).not.toHaveBeenCalled()
   })
 
-  it('propagates the underlying "Restore window expired" failure once past authorization', async () => {
+  it('translates the underlying "Restore window expired" failure into failed-precondition', async () => {
     setResourceDoc('lessonRuns/run-1', true, { orgId: 'personal_teacher-a' })
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
     vi.mocked(restoreSoftDeletedWithAdminSdk).mockRejectedValue(new Error('Restore window expired'))
     const request = makeTeacherRequest({ path: 'lessonRuns/run-1' })
-    await expect(restoreSoftDeletedCallable.run(request)).rejects.toThrow('Restore window expired')
+    await expect(restoreSoftDeletedCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: 'Restore window expired' })
+  })
+
+  it('translates "Document not found" from restoreSoftDeleted into not-found', async () => {
+    setResourceDoc('lessonRuns/run-1', true, { orgId: 'personal_teacher-a' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(restoreSoftDeletedWithAdminSdk).mockRejectedValue(new Error('Document not found'))
+    const request = makeTeacherRequest({ path: 'lessonRuns/run-1' })
+    await expect(restoreSoftDeletedCallable.run(request)).rejects.toMatchObject({ code: 'not-found', message: 'Document not found' })
+  })
+
+  it('translates "Document is not pending deletion" from restoreSoftDeleted into failed-precondition', async () => {
+    setResourceDoc('lessonRuns/run-1', true, { orgId: 'personal_teacher-a' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(restoreSoftDeletedWithAdminSdk).mockRejectedValue(new Error('Document is not pending deletion'))
+    const request = makeTeacherRequest({ path: 'lessonRuns/run-1' })
+    await expect(restoreSoftDeletedCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: 'Document is not pending deletion' })
   })
 
   it('restores for an active member within the window', async () => {
@@ -380,6 +396,14 @@ describe('purgeHardDeleteCallable', () => {
     expect(purgeHardDeleteResourceWithAdminSdk).toHaveBeenCalledWith({
       orgId: 'personal_teacher-a', collection: 'lessonRuns', id: 'run-1', uid: 'teacher-a', idempotencyKey: 'k1',
     })
+  })
+
+  it('translates an idempotency key payload mismatch from the deletion saga into failed-precondition', async () => {
+    setResourceDoc('lessonRuns/run-1', true, { orgId: 'personal_teacher-a' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(purgeHardDeleteResourceWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+    const request = makeTeacherRequest({ path: 'lessonRuns/run-1', confirm: true, confirmTargetId: 'run-1', idempotencyKey: 'k1' })
+    await expect(purgeHardDeleteCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
   })
 })
 
@@ -452,5 +476,12 @@ describe('purgePersonalOrganizationCallable', () => {
     const request = makeOrgPurgeRequest()
     await expect(purgePersonalOrganizationCallable.run(request)).resolves.toEqual({ operationId: 'op-1', completed: true, alreadyCompleted: false })
     expect(requireActiveOrgMember).not.toHaveBeenCalled()
+  })
+
+  it('translates an idempotency key payload mismatch from the deletion saga into failed-precondition', async () => {
+    orgDocGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'ownerUid' ? 'teacher-a' : undefined) })
+    vi.mocked(purgePersonalOrganizationWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+    const request = makeOrgPurgeRequest()
+    await expect(purgePersonalOrganizationCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
   })
 })

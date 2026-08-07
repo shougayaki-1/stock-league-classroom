@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
-import { HttpsError } from 'firebase-functions/v2/https'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 
 interface FirestoreTransaction {
@@ -53,17 +52,17 @@ export const publishLessonVersion = (deps: PublishLessonVersionDeps, input: Publ
     const idempotencySnap = await tx.get(idempotencyPath)
     if (idempotencySnap.exists) {
       if (idempotencySnap.data?.requestDigest !== requestDigest) {
-        throw new HttpsError('failed-precondition', 'Idempotency key payload mismatch')
+        throw new Error('Idempotency key payload mismatch')
       }
       return { versionId: idempotencySnap.data?.versionId as string, alreadyPublished: true }
     }
 
     const templateSnap = await tx.get(templatePath)
     if (!templateSnap.exists || !templateSnap.data) {
-      throw new HttpsError('not-found', 'Lesson template not found')
+      throw new Error('Lesson template not found')
     }
     if (templateSnap.data.orgId !== input.orgId) {
-      throw new HttpsError('permission-denied', 'Lesson template does not belong to the expected organization')
+      throw new Error('Lesson template does not belong to the expected organization')
     }
 
     const versionId = deps.randomUUID()

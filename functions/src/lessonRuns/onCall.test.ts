@@ -113,6 +113,24 @@ describe('createLessonRunCallable', () => {
 
     expect(createLessonRunWithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({ orgId: 'personal_teacher-a' }))
   })
+
+  it.each([
+    ['LessonTemplate not found', 'not-found'],
+    ['Template does not belong to this organization', 'failed-precondition'],
+    ['Template has no published version to snapshot', 'failed-precondition'],
+    ['Published version not found', 'not-found'],
+    ['Published version pointer mismatch', 'failed-precondition'],
+    ['Idempotency key payload mismatch', 'failed-precondition'],
+  ] as const)('translates a bare "%s" Error from createLessonRun into %s', async (message, code) => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'personal_teacher-a' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValue(new Error(message))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code, message })
+  })
 })
 
 interface RestoreCheckpointRequest { lessonRunId: string; checkpointId: string; reason: string; idempotencyKey: string }
@@ -179,14 +197,28 @@ describe('restoreCheckpointCallable', () => {
     expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
   })
 
-  it('rejects when the checkpoint does not exist, surfacing the underlying restoreCheckpoint failure', async () => {
+  it('rejects when the checkpoint does not exist, translating the bare Error into not-found', async () => {
     docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
     vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Checkpoint not found'))
-    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toThrow('Checkpoint not found')
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'not-found', message: 'Checkpoint not found' })
     expect(restoreCheckpointWithAdminSdk).toHaveBeenCalledWith({
       lessonRunId: 'run-1', checkpointId: 'cp-1', reason: '巻き戻し', actorId: 'teacher-a', idempotencyKey: 'restore-1',
     })
+  })
+
+  it('rejects with not-found when restoreCheckpoint reports the lessonRun missing at write time', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('LessonRun not found'))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'not-found', message: 'LessonRun not found' })
+  })
+
+  it('rejects with failed-precondition when restoreCheckpoint reports an idempotency key payload mismatch', async () => {
+    docGetMock.mockResolvedValue(makeRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+    await expect(restoreCheckpointCallable.run(makeRestoreRequest())).rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
   })
 
   it('allows an ASSISTANT (not just PRIMARY) who is an active org member to restore', async () => {

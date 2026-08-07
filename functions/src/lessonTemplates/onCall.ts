@@ -32,11 +32,34 @@ export const publishLessonVersionCallable = onCall({ region: 'asia-northeast1' }
   const orgId = templateSnap.get('orgId') as string
   await requireActiveOrgMember(firestore, orgId, request.auth.uid)
 
-  return publishLessonVersionWithAdminSdk({
-    templateId: request.data.templateId,
-    orgId,
-    uid: request.auth.uid,
-    changeSummary: request.data.changeSummary,
-    idempotencyKey: request.data.idempotencyKey,
-  })
+  try {
+    return await publishLessonVersionWithAdminSdk({
+      templateId: request.data.templateId,
+      orgId,
+      uid: request.auth.uid,
+      changeSummary: request.data.changeSummary,
+      idempotencyKey: request.data.idempotencyKey,
+    })
+  } catch (error) {
+    throw translatePublishLessonVersionError(error)
+  }
 })
+
+/**
+ * Translates publishLessonVersion's bare Error messages into the same
+ * HttpsError codes previously thrown inline from the pure layer — moving
+ * WHERE the translation happens (to the Callable boundary, matching every
+ * other task's pure-layer convention) without changing what the client
+ * observes. Errors this function doesn't recognize pass through unchanged so
+ * onCall's default `internal` handling still applies to genuinely
+ * unexpected failures.
+ */
+const translatePublishLessonVersionError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'Lesson template not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Lesson template does not belong to the expected organization') return new HttpsError('permission-denied', error.message)
+    if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}

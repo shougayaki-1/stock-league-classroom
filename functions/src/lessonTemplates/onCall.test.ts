@@ -79,4 +79,31 @@ describe('publishLessonVersionCallable', () => {
       idempotencyKey: 'key-1',
     }))
   })
+
+  it('translates a bare "Lesson template not found" Error from the pure layer into not-found', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(publishLessonVersionWithAdminSdk).mockRejectedValue(new Error('Lesson template not found'))
+
+    await expect(publishLessonVersionCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'not-found', message: 'Lesson template not found',
+    })
+  })
+
+  it('translates a bare org-mismatch Error from the pure layer into permission-denied', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(publishLessonVersionWithAdminSdk).mockRejectedValue(new Error('Lesson template does not belong to the expected organization'))
+
+    await expect(publishLessonVersionCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'permission-denied', message: 'Lesson template does not belong to the expected organization',
+    })
+  })
+
+  it('translates a bare "Idempotency key payload mismatch" Error from the pure layer into failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(publishLessonVersionWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+
+    await expect(publishLessonVersionCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'failed-precondition', message: 'Idempotency key payload mismatch',
+    })
+  })
 })

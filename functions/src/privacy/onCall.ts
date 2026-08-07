@@ -140,9 +140,29 @@ export const restoreSoftDeletedCallable = onCall({ region: 'asia-northeast1' }, 
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
   const data = request.data as RestoreSoftDeletedInput
   const { path } = await authorizeResourceOperation(request.auth.uid, data?.path)
-  await restoreSoftDeletedWithAdminSdk({ path })
+  try {
+    await restoreSoftDeletedWithAdminSdk({ path })
+  } catch (error) {
+    throw translateRestoreSoftDeletedError(error)
+  }
   return { path }
 })
+
+/**
+ * Translates restoreSoftDeleted's (deletePersonalData.ts) bare Error
+ * messages into HttpsError codes at the Callable boundary. "Restore window
+ * expired" in particular needs to be told to the user plainly, not surfaced
+ * as an opaque internal error.
+ */
+const translateRestoreSoftDeletedError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'Document not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Document is not pending deletion') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'Restore window expired') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
 
 interface PurgeHardDeleteInput { path: string; confirm: true; confirmTargetId: string; idempotencyKey: string }
 
@@ -168,10 +188,27 @@ export const purgeHardDeleteCallable = onCall({ region: 'asia-northeast1' }, asy
   if (data.confirmTargetId !== id) {
     throw new HttpsError('invalid-argument', 'confirmTargetId が対象と一致しません。')
   }
-  return purgeHardDeleteResourceWithAdminSdk({
-    orgId, collection, id, uid: request.auth.uid, idempotencyKey: data.idempotencyKey,
-  })
+  try {
+    return await purgeHardDeleteResourceWithAdminSdk({
+      orgId, collection, id, uid: request.auth.uid, idempotencyKey: data.idempotencyKey,
+    })
+  } catch (error) {
+    throw translateIdempotencyMismatchError(error)
+  }
 })
+
+/**
+ * Shared translation for deletionSaga.ts's bare "Idempotency key payload
+ * mismatch" Error, reused by both purgeHardDeleteCallable and
+ * purgePersonalOrganizationCallable below.
+ */
+const translateIdempotencyMismatchError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error && error.message === 'Idempotency key payload mismatch') {
+    return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
 
 interface PurgePersonalOrganizationInput { confirm: true; confirmUid: string; idempotencyKey: string }
 
@@ -210,5 +247,9 @@ export const purgePersonalOrganizationCallable = onCall({ region: 'asia-northeas
     throw new HttpsError('permission-denied', '本人の組織のみ削除できます。')
   }
 
-  return purgePersonalOrganizationWithAdminSdk({ uid, orgId, idempotencyKey: data.idempotencyKey })
+  try {
+    return await purgePersonalOrganizationWithAdminSdk({ uid, orgId, idempotencyKey: data.idempotencyKey })
+  } catch (error) {
+    throw translateIdempotencyMismatchError(error)
+  }
 })
