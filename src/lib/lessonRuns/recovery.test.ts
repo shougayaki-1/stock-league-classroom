@@ -49,6 +49,15 @@ describe('mapRecoveryError', () => {
     ['functions/permission-denied', 'PERMISSION_DENIED'],
     ['functions/not-found', 'CODE_NOT_FOUND'],
     ['functions/failed-precondition', 'CODE_ALREADY_USED_OR_EXPIRED'],
+    // Distinct from CODE_ALREADY_USED_OR_EXPIRED: this is "retrying
+    // issueRecoveryCode with an idempotencyKey that already issued a code
+    // cannot be replayed" (the plaintext was never persisted, so there is
+    // nothing to hand back) — not "the recovery code itself is invalid".
+    // The UI needs to tell these apart (e.g. "もう一度お試しください" vs
+    // "コードは既に使用済みか期限切れです"), so the Callable boundary maps
+    // them to different HttpsError codes; see participants/onCall.ts's
+    // translateRecoveryError.
+    ['functions/already-exists', 'RECOVERY_CODE_ALREADY_ISSUED'],
   ] as const)('maps %s to %s', (code, expected) => {
     expect(mapRecoveryError({ code })).toBe(expected)
   })

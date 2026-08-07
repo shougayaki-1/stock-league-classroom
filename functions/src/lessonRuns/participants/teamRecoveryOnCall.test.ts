@@ -146,4 +146,31 @@ describe('recoverParticipantCallable', () => {
     await expect(recoverParticipantCallable.run(makeRequest(baseData, 'student-new')))
       .rejects.toMatchObject({ code: 'failed-precondition', message: 'Recovery code has expired' })
   })
+
+  it('translates "code already used" (the redeemed code itself is invalid) to failed-precondition, distinct from an idempotency-retry failure', async () => {
+    vi.mocked(recoverParticipantWithAdminSdk).mockRejectedValue(new Error('Recovery code has already been used'))
+    await expect(recoverParticipantCallable.run(makeRequest(baseData, 'student-new')))
+      .rejects.toMatchObject({ code: 'failed-precondition', message: 'Recovery code has already been used' })
+  })
+})
+
+describe('issueRecoveryCodeCallable error translation', () => {
+  const baseData = { lessonRunId: 'run-1', participantId: 'p-1', idempotencyKey: 'k3' }
+
+  /**
+   * Regression test for task-4-report.md Important #2: an idempotencyKey
+   * retry failure ("this code was already issued, and the plaintext cannot
+   * be safely re-displayed") must map to a *different* HttpsError code than
+   * "the recovery code itself is already used/expired" — otherwise the
+   * client-side `mapRecoveryError` cannot tell the two apart and the UI
+   * cannot show a distinct message for either.
+   */
+  it('translates an idempotencyKey-retry failure to already-exists, not failed-precondition', async () => {
+    runGetMock.mockResolvedValue(teacherRunDoc('PRIMARY'))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(issueRecoveryCodeWithAdminSdk).mockRejectedValue(new Error('Recovery code already issued for this idempotencyKey'))
+
+    await expect(issueRecoveryCodeCallable.run(makeRequest(baseData)))
+      .rejects.toMatchObject({ code: 'already-exists', message: 'Recovery code already issued for this idempotencyKey' })
+  })
 })

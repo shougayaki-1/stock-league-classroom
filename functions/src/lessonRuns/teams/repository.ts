@@ -66,7 +66,24 @@ export interface UpsertTeamDeps {
   firestore: FirestoreDoc
 }
 
-/** Upsert primitive, matching participants/repository.ts's upsertParticipant shape. Not used inside Firestore transactions (assignTeam.ts writes team docs directly via its own `tx.set`) — this is for team-creation flows outside a transaction. */
+/**
+ * Upsert primitive, matching participants/repository.ts's upsertParticipant
+ * shape. Not used inside Firestore transactions (assignTeam.ts writes team
+ * docs directly via its own `tx.set`) — this is for team-creation flows
+ * outside a transaction.
+ *
+ * IMPORTANT: this function does NOT update
+ * `lessonRuns/{lessonRunId}/meta/teamsIndex` (the `{ teamIds: TeamId[] }`
+ * doc `assignParticipantToTeam`, assignTeam.ts, reads to know which teams
+ * exist). It only writes `lessonRuns/{lessonRunId}/teams/{team.id}`. A
+ * caller that creates a new team here and wants it eligible for
+ * `assignParticipantToTeam`'s load-balancing is responsible for also
+ * appending the new team's id to `teamsIndex.teamIds` itself — this
+ * function will not do it for them. As of this writing `upsertTeam` has no
+ * production caller, so this has not yet caused an incident, but a future
+ * team-creation Callable that overlooks this will silently produce teams
+ * that never receive members.
+ */
 export const upsertTeam = async (deps: UpsertTeamDeps, team: LessonTeam): Promise<LessonTeam> => {
   const path = `lessonRuns/${team.lessonRunId}/teams/${team.id}`
   await deps.firestore.set(path, { ...team })

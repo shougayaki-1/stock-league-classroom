@@ -325,6 +325,18 @@ export const recoverParticipantWithAdminSdk = (
     now: () => FieldValue.serverTimestamp(),
     nowMillis: () => Date.now(),
     syncMirror: async (authUid, access, result) => {
+      // Both the old and new UID's participant record is, at this instant,
+      // genuinely `MIGRATING_DEVICE` in Firestore (recoverParticipant's
+      // transaction sets it before this runs) — that is the honest status
+      // for both mirror writes. What differs between them is only `access`
+      // (old UID must stop being trusted, new UID must start), which is
+      // exactly what `accessOverride` (membershipMirror.ts) is for: it lets
+      // this call force `mirror.access` to the caller's chosen value while
+      // `mirror.participantStatus` still always reflects the real status.
+      // (Previously this passed a fabricated `status: 'SUSPENDED'` for the
+      // old UID to indirectly coerce `access` to REVOKED via
+      // `activeParticipantStatuses` — that permanently wrote a false
+      // participantStatus into RTDB; see task-4-report.md Critical #1.)
       await syncLessonRunMembershipWithAdminSdk({
         participant: {
           id: result.participantId,
@@ -332,17 +344,11 @@ export const recoverParticipantWithAdminSdk = (
           orgId: result.orgId,
           authUid,
           ...(result.teamId !== undefined ? { teamId: result.teamId } : {}),
-          // SUSPENDED here is not the participant's real status (that field
-          // holds MIGRATING_DEVICE in Firestore at this point) — it is used
-          // purely to make syncLessonRunMembership's status-derivation
-          // (`activeParticipantStatuses.includes(status)`) resolve this
-          // specific mirror entry's `access` to REVOKED. SUSPENDED is the
-          // only ParticipantStatus excluded from activeParticipantStatuses
-          // that does not itself imply an ongoing transient condition.
-          status: access === 'REVOKED' ? 'SUSPENDED' : 'MIGRATING_DEVICE',
+          status: 'MIGRATING_DEVICE',
           sessionVersion: result.sessionVersion,
         },
         membershipVersion: result.membershipVersion,
+        accessOverride: access,
       })
     },
     finalizeStatus: async (result) => {

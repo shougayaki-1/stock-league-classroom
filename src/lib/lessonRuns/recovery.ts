@@ -66,6 +66,16 @@ export type RecoveryErrorCode =
   | 'PERMISSION_DENIED'
   | 'CODE_NOT_FOUND'
   | 'CODE_ALREADY_USED_OR_EXPIRED'
+  /**
+   * Distinct from CODE_ALREADY_USED_OR_EXPIRED: this means retrying
+   * issueRecoveryCode with an idempotencyKey that already issued a code
+   * failed, not that the (redeemed) recovery code itself is invalid. The
+   * plaintext code was never persisted, so a retry cannot replay it — the
+   * caller should treat this as "issue a brand-new code," not "the code you
+   * have is dead." Maps from the Callable's `already-exists` error code
+   * (participants/onCall.ts's translateRecoveryError).
+   */
+  | 'RECOVERY_CODE_ALREADY_ISSUED'
   | 'UNKNOWN'
 
 interface FunctionsLikeError {
@@ -78,6 +88,7 @@ const FUNCTIONS_ERROR_CODE_MAP: Record<string, RecoveryErrorCode> = {
   'functions/permission-denied': 'PERMISSION_DENIED',
   'functions/not-found': 'CODE_NOT_FOUND',
   'functions/failed-precondition': 'CODE_ALREADY_USED_OR_EXPIRED',
+  'functions/already-exists': 'RECOVERY_CODE_ALREADY_ISSUED',
 }
 
 /**

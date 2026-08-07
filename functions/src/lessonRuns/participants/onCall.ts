@@ -231,6 +231,27 @@ export const recoverParticipantCallable = onCall({ region: 'asia-northeast1' }, 
   }
 })
 
+/**
+ * Deliberately maps two similar-sounding failures to different HttpsError
+ * codes (task-4-report.md Important #2):
+ *
+ *  - 'Recovery code already issued for this idempotencyKey' (thrown by
+ *    issueRecoveryCode) means the *idempotencyKey retry itself* cannot be
+ *    honored — a code was already minted for this key and its plaintext was
+ *    never persisted, so there is nothing to replay. This is `already-exists`:
+ *    the request, as an idempotent operation, already has a prior result
+ *    that cannot be handed back.
+ *  - 'Recovery code has already been used' / 'Recovery code has expired'
+ *    (thrown by recoverParticipant) mean the *recovery code itself* — a
+ *    value a student typed in — is no longer valid. This stays
+ *    `failed-precondition`.
+ *
+ * Collapsing both into `failed-precondition` (as this used to) made them
+ * indistinguishable to the client's `mapRecoveryError`
+ * (src/lib/lessonRuns/recovery.ts), even though the correct UI response
+ * differs: "try issuing a fresh code" vs. "ask the teacher to re-verify and
+ * issue a new code because this one is dead."
+ */
 const translateRecoveryError = (error: unknown): unknown => {
   if (error instanceof HttpsError) return error
   if (error instanceof Error) {
@@ -238,7 +259,7 @@ const translateRecoveryError = (error: unknown): unknown => {
     if (error.message === 'Recovery code not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Recovery code has already been used') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Recovery code has expired') return new HttpsError('failed-precondition', error.message)
-    if (error.message === 'Recovery code already issued for this idempotencyKey') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'Recovery code already issued for this idempotencyKey') return new HttpsError('already-exists', error.message)
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
   }
   return error

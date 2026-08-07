@@ -35,6 +35,24 @@ export interface SyncLessonRunMembershipInput {
    * what a future task needs to decide.
    */
   membershipVersion: number
+  /**
+   * Escape hatch for a caller that needs this mirror entry's `access` to
+   * diverge from what `participant.status` would normally derive — e.g.
+   * device recovery (recovery.ts), where the old-UID mirror must become
+   * REVOKED even though the participant's real Firestore status at that
+   * instant is the transient (and itself "active") `MIGRATING_DEVICE`, not
+   * anything suspension-like. When supplied, it is used verbatim as
+   * `mirror.access` instead of deriving it from
+   * `activeParticipantStatuses.includes(participant.status)`.
+   *
+   * This must NEVER be used to fabricate `mirror.participantStatus` — that
+   * field always reflects the real `participant.status`, override or not,
+   * so the RTDB mirror stays truthful even when its `access` is being
+   * forced. (Before this option existed, the only way to force `access` to
+   * REVOKED was to pass a fake `participant.status` — see recovery.ts's
+   * git history / task-4-report.md Critical #1 for why that was wrong.)
+   */
+  accessOverride?: LessonRunMembershipMirror['access']
 }
 
 export interface SyncLessonRunMembershipDeps {
@@ -59,9 +77,9 @@ export const syncLessonRunMembership = async (
   deps: SyncLessonRunMembershipDeps,
   input: SyncLessonRunMembershipInput,
 ): Promise<LessonRunMembershipMirror> => {
-  const { participant, membershipVersion } = input
+  const { participant, membershipVersion, accessOverride } = input
   const access: LessonRunMembershipMirror['access'] =
-    activeParticipantStatuses.includes(participant.status) ? 'ACTIVE' : 'REVOKED'
+    accessOverride ?? (activeParticipantStatuses.includes(participant.status) ? 'ACTIVE' : 'REVOKED')
 
   const mirror: LessonRunMembershipMirror = {
     orgId: participant.orgId,

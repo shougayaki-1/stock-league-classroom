@@ -69,6 +69,52 @@ describe('syncLessonRunMembership', () => {
     expect(mirror.access).toBe('REVOKED')
   })
 
+  it('honors an explicit accessOverride, forcing access REVOKED while still recording the true participantStatus (not a fabricated one)', async () => {
+    const setMirror = vi.fn(async () => {})
+    // A participant whose real, honest status is MIGRATING_DEVICE (an
+    // *active* status per activeParticipantStatuses) must still be able to
+    // have this specific mirror entry forced to REVOKED — e.g. the old-UID
+    // mirror during device recovery — without lying about participantStatus
+    // to get there.
+    const migrating: LessonParticipant = { ...activeParticipant, status: 'MIGRATING_DEVICE' }
+
+    const mirror = await syncLessonRunMembership(
+      { setMirror, now: () => 5_000 },
+      { participant: migrating, membershipVersion: 7, accessOverride: 'REVOKED' },
+    )
+
+    expect(mirror.access).toBe('REVOKED')
+    expect(mirror.participantStatus).toBe('MIGRATING_DEVICE')
+    expect(setMirror).toHaveBeenCalledWith('run-1', 'student-a', expect.objectContaining({
+      access: 'REVOKED',
+      participantStatus: 'MIGRATING_DEVICE',
+    }))
+  })
+
+  it('honors an explicit accessOverride of ACTIVE even for a non-active participant status', async () => {
+    const setMirror = vi.fn(async () => {})
+    const suspended: LessonParticipant = { ...activeParticipant, status: 'SUSPENDED' }
+
+    const mirror = await syncLessonRunMembership(
+      { setMirror, now: () => 6_000 },
+      { participant: suspended, membershipVersion: 8, accessOverride: 'ACTIVE' },
+    )
+
+    expect(mirror.access).toBe('ACTIVE')
+    expect(mirror.participantStatus).toBe('SUSPENDED')
+  })
+
+  it('falls back to deriving access from participant.status when accessOverride is not supplied (existing callers unaffected)', async () => {
+    const setMirror = vi.fn(async () => {})
+
+    const mirror = await syncLessonRunMembership(
+      { setMirror, now: () => 7_000 },
+      { participant: activeParticipant, membershipVersion: 9 },
+    )
+
+    expect(mirror.access).toBe('ACTIVE')
+  })
+
   it('omits teamId from the mirror when the participant has none (e.g. an OBSERVER not yet assigned to a team)', async () => {
     const setMirror = vi.fn(async () => {})
     const { teamId: _omit, ...withoutTeam } = activeParticipant
