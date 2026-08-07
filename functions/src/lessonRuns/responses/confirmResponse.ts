@@ -28,6 +28,20 @@ export interface ConfirmResponseResult {
  *  - a non-member of the response's team (§ "別チーム操作");
  *  - a team member who is not eligible to confirm per `canConfirmTeamResponse`
  *    — in REPRESENTATIVE mode, only the representative (§ "代表者でない確定").
+ *
+ * PROXY_CONFIRM (Task 9's teacher-intervention "代理確定") extension point:
+ * `deps.actorType` defaults to `'STUDENT'` (every pre-Task-9 call site is
+ * unaffected) but a caller may pass `'TEACHER'` together with
+ * `deps.proxyForParticipantId` to record that a teacher confirmed *on behalf
+ * of* the named participant — `deps.actorParticipantId` still has to satisfy
+ * the same `canConfirmTeamResponse`/individual-ownership authorization gate
+ * below (the caller resolves which participant identity legitimizes the
+ * confirm; this function does not special-case "is this actually a
+ * teacher-proxied call" for authorization purposes, only for what gets
+ * written to the audit event). `proxyForParticipantId` is recorded on both
+ * the `RESPONSE_CONFIRMED` event payload and the response doc itself, so the
+ * proxy nature of the confirm survives in the result history that Task 9's
+ * brief requires, not just in the transient function call.
  */
 export const confirmResponse = async (
   deps: ResponseFirestoreDeps,
@@ -65,13 +79,19 @@ export const confirmResponse = async (
       lessonRunId: input.lessonRunId,
       orgId,
       type: 'RESPONSE_CONFIRMED',
-      actorType: 'STUDENT',
+      actorType: deps.actorType ?? 'STUDENT',
       actorId: deps.actorId,
-      payload: { responseId, phaseId: input.phaseId, inputId: input.inputId },
+      payload: {
+        responseId, phaseId: input.phaseId, inputId: input.inputId,
+        ...(deps.proxyForParticipantId ? { proxyForParticipantId: deps.proxyForParticipantId } : {}),
+      },
       idempotencyKey: `${responseId}:${input.idempotencyKey}`,
     }, nowValue)
 
-    const updated: LessonResponse = { ...response, status: 'CONFIRMED', confirmedAt: nowValue }
+    const updated: LessonResponse = {
+      ...response, status: 'CONFIRMED', confirmedAt: nowValue,
+      ...(deps.proxyForParticipantId ? { proxyConfirmedForParticipantId: deps.proxyForParticipantId } : {}),
+    }
     tx.set(responsePath, { ...updated })
     tx.set(idempotencyPath, { requestDigest, status: 'CONFIRMED', confirmedAt: nowValue })
 
@@ -91,8 +111,13 @@ const adminSdkFirestore = () => {
 }
 
 export const confirmResponseWithAdminSdk = (
-  input: ConfirmResponseInput & { actorId: string; actorParticipantId: ParticipantId },
+  input: ConfirmResponseInput & {
+    actorId: string
+    actorParticipantId: ParticipantId
+    actorType?: 'STUDENT' | 'TEACHER'
+    proxyForParticipantId?: ParticipantId
+  },
 ): Promise<ConfirmResponseResult> => {
-  const { actorId, actorParticipantId, ...rest } = input
-  return confirmResponse({ firestore: adminSdkFirestore(), actorId, actorParticipantId }, rest)
+  const { actorId, actorParticipantId, actorType, proxyForParticipantId, ...rest } = input
+  return confirmResponse({ firestore: adminSdkFirestore(), actorId, actorParticipantId, actorType, proxyForParticipantId }, rest)
 }

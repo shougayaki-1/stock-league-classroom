@@ -54,6 +54,13 @@ export interface LessonResponse {
    */
   contextSnapshot: Record<string, JsonValue>
   confirmedAt?: unknown
+  /**
+   * Set when `confirmResponse` was called with `actorType: 'TEACHER'`
+   * (Task 9's PROXY_CONFIRM intervention): the participant the teacher
+   * confirmed on behalf of, so the proxy nature of the confirmation is
+   * visible directly on the response record, not only in the event log.
+   */
+  proxyConfirmedForParticipantId?: ParticipantId
 }
 
 /**

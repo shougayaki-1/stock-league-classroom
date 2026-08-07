@@ -21,6 +21,10 @@ export {
   submitProposalCallable,
 } from './lessonRuns/responses/onCall'
 export {
+  applyTeacherInterventionCallable,
+  transferPrimaryTeacherCallable,
+} from './lessonRuns/interventions/onCall'
+export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,

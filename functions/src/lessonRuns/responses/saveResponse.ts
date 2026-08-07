@@ -13,6 +13,22 @@ export interface ResponseFirestoreDeps {
   actorId: string
   /** The participant identity of the caller, resolved server-side (onCall.ts) before this pure layer runs — never trusted from client input, matching how teams/assignTeam.ts's `deps.actorId` is always server-resolved. */
   actorParticipantId: ParticipantId
+  /**
+   * Defaults to `'STUDENT'`. Task 9's PROXY_CONFIRM intervention passes
+   * `'TEACHER'` when a teacher confirms a response on a student's behalf —
+   * see confirmResponse.ts's JSDoc. Only confirmResponse.ts reads this today;
+   * saveResponseDraft/submitProposal/decideProposal remain student-only flows
+   * and ignore it.
+   */
+  actorType?: 'STUDENT' | 'TEACHER'
+  /**
+   * Set together with `actorType: 'TEACHER'` for a PROXY_CONFIRM call: the
+   * participant the teacher is confirming on behalf of. Recorded on the
+   * `RESPONSE_CONFIRMED` event and the response doc so the proxy nature of
+   * the confirm is visible in the result history, not just implied by
+   * `actorType`.
+   */
+  proxyForParticipantId?: ParticipantId
   now?: () => unknown
   /**
    * Phase C extension point (see repository.ts's `contextSnapshot` JSDoc):
