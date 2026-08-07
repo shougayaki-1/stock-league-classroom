@@ -6,15 +6,16 @@
   "engines": { "node": "20" },
   "main": "lib/index.js",
   "scripts": {
-    "build": "npm --prefix packages/deterministic-random run build && tsc",
+    "build": "npm --prefix packages/deterministic-random run build && npm --prefix ../packages/lesson-runtime-types run build && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
-    "pretest": "npm --prefix packages/deterministic-random run build",
+    "pretest": "npm --prefix packages/deterministic-random run build && npm --prefix ../packages/lesson-runtime-types run build",
     "test": "vitest run",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@stock-league/deterministic-random": "file:packages/deterministic-random",
+    "@stock-league/lesson-runtime-types": "file:../packages/lesson-runtime-types",
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^6.0.0"
   },
