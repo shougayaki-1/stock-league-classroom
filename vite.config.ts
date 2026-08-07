@@ -36,7 +36,13 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/testSetup.ts',
     // Security/emulator tests require the RTDB or Firestore emulator and run only via test:rules.
-    include: ['src/**/*.test.{ts,tsx}'],
+    // `test/*.acceptance.test.ts` (Task 18) is the one exception: it imports
+    // functions/src/lessonRuns/* directly (no Firestore/RTDB emulator, no
+    // Cloud Functions runtime — pure in-memory fakes, same pattern as every
+    // functions/src/**/*.test.ts) to exercise Task 1-17's already-shipped
+    // functions together as one cross-cutting lesson lifecycle, the way no
+    // single task's own test file does.
+    include: ['src/**/*.test.{ts,tsx}', 'test/*.acceptance.test.{ts,tsx}'],
     exclude: ['**/node_modules/**', 'src/lib/lessonTemplates/repository.test.ts'],
   },
 })

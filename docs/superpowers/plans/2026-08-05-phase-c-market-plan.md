@@ -10,6 +10,8 @@
 >
 > **旧実装（`hostTrading.ts`、`pricingCore.ts`、`liveMarketTypes.ts`等）はPhase Aで削除済みの前提。** 参照する場合は`git log`のみとし、詳細を読み込む必要はない。
 >
+> **Phase Bのコード完成 ≠ 実生徒での試運転許可。** Phase Bは18タスク全完了・`npm run verify`全PASS（`.superpowers/sdd/task-18-report.md`参照）だが、実生徒を巻き込む試運転を始める前に以下を人間側で確認し、記録すること（本セッション内では確認不能）: (1) 法務確認、(2) 学校側の規程確認、(3) 保存データ一覧の確認、(4) 保護者向け案内、(5) 削除手続きの確認。これらが未確認の間は、`VITE_FEATURE_LESSON_PLATFORM_V2`（`src/lib/features/lessonPlatformV2.ts`、既定off）を本番環境で`'true'`にしないこと。Phase Cの着手・実装自体はこの制約と独立で進めてよいが、Phase B/Cどちらの成果物であっても、実生徒に触れさせる前には同じ5項目の確認が要る。
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 教師が作成した企業・情報・決算・指標を教材として、生徒が授業時間中いつでも注文でき、サーバーが3秒ごとに区間を締め切って同一価格で約定し、需給・情報・ノイズから次価格を計算し、資金・株を正しく拘束し、市場停止・再開・予想チェックポイント・評価・チャートまでを一貫して提供する、社会科・市場経済シミュレーションの中核機能を実装する。
@@ -39,9 +41,11 @@
 
 ## 前提として確認が必要な事項（Task着手前チェックリスト）
 
-- [ ] Phase Bが`lessonRunPublic/{lessonRunId}`の読み取りルールに、org member（教師）だけでなく当該`lessonRun`の生徒参加者も含めているか（Phase Aの雛形は教師のみ）。含まれていなければ、Task 13の前提として先にPhase B側のルールを拡張する必要がある。
-- [ ] チーム帰属を検証するRTDBミラー（例: `teamMembership/{lessonRunId}/{uid}` → `teamId`）がPhase Bで存在するか。存在しない場合、Task 13で新設する`lessonRunTeamState`のルールが書けないため、Task 13の最初のステップとして実際のパス・形を確認し、なければ最小限のミラーをTask 13内で追加する。
-- [ ] `teamId`・`participantId`の実際の型定義ファイルパス（Phase Bがどこに置いたか）。本計画では`string`型として扱い、Phase Bの実際の型が確認でき次第、該当箇所のimportをそちらに差し替える。
+Phase B（`docs/superpowers/plans/2026-08-05-phase-b-common-lesson-platform-plan.md`、18タスク全完了、`.superpowers/sdd/task-18-report.md`参照）が以下を確定済みの契約として提供する。Task 13以降はこれらを前提に実装してよく、以下の再確認・新設ステップは不要。
+
+- [x] `lessonRunPublic`は`lessonRunMembership/{lessonRunId}/{uid}.access == 'ACTIVE'`の生徒参加者を許可する（Phase B Task 2）。
+- [x] チーム帰属は`lessonRunMembership/{lessonRunId}/{uid}.teamId`で検証する（Phase B Task 2）。
+- [x] `ParticipantId` / `TeamId` は `@stock-league/lesson-runtime-types` から import する（Phase B Task 1）。
 
 ---
 
@@ -3194,12 +3198,12 @@ git commit -m "feat: add resumeMarket Callable with confirmation window and batc
 
 統合仕様書 §26-1、Phase A Task 10が確立した「祖先を共有しないトップレベルノード」パターンを、社会科市場のランタイムデータへ適用する。**3つの独立したトップレベルRTDBノード**にする: `lessonRunPublic/{lessonRunId}`（全参加者。Phase Aが雛形を作成済み）、`lessonRunPrivate/{lessonRunId}`（教師のみ。Phase Aが雛形を作成済み）、`lessonRunTeamState/{lessonRunId}/{teamId}`（そのチームのメンバーのみ。**本タスクで新設**）。3つ目が必要な理由は、チームの拘束中資金・保有株・自分の注文状態が「生徒全員に見せてよい」わけでも「教師だけに見せる」わけでもない、チーム単位の第3の可視性クラスだからである（旧`phase1b`計画が`teamDecisions`/`predictions`で同じ理由から導入していた設計——本計画も踏襲する）。
 
-**未確認事項（前提チェックリスト参照）:** チーム帰属を検証する仕組みがPhase Bに実在するか確認できていない。本タスクは`teamMembership/{lessonRunId}/{uid}` → `teamId`という最小限のミラーをここで新設する前提で進める。**Phase Bが既に同等の仕組みを持っている場合はそちらを使い、本タスクのミラー新設ステップは省略する。**
+**確定済み（前提チェックリスト参照）:** チーム帰属を検証する仕組みはPhase B Task 2で`lessonRunMembership/{lessonRunId}/{uid}`（`LessonRunMembershipMirror`型、`teamId`・`access: 'ACTIVE'|'REVOKED'`等を持つオブジェクト、値そのものが`teamId`文字列ではない点に注意）としてRTDBに既に存在する。本タスクは新規ミラーを作らず、既存の`lessonRunMembership`をチーム帰属の検証手段として再利用する。
 
 **Files:**
 - Modify: `src/lib/lessonRuns/liveTypes.ts`（Phase A。市場フィールドを追加）
 - Create: `src/lib/market/teamState.ts`, `.test.ts`
-- Modify: `database.rules.json`（`lessonRunTeamState`ノード追加、`teamMembership`ミラー追加）
+- Modify: `database.rules.json`（`lessonRunTeamState`ノード追加。`lessonRunMembership`はPhase B Task 2で既に存在するため追加不要）
 - Modify: `test/database.rules.test.ts`
 
 **Interfaces:**
@@ -3321,7 +3325,7 @@ export interface LessonRunTeamState {
 Run: `npx vitest run src/lib/lessonRuns/liveTypes.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: `lessonRunTeamState`と`teamMembership`ミラーのルールテストを書く（Phase A Task 10と同じ構造のカスケード安全性テストを踏襲する）**
+- [ ] **Step 5: `lessonRunTeamState`のルールテストを書く（`lessonRunMembership`ミラーは既存のものを参照する。Phase A Task 10と同じ構造のカスケード安全性テストを踏襲する）**
 
 `test/database.rules.test.ts`に追記する:
 
@@ -3330,7 +3334,7 @@ describe('lessonRunTeamState is a third, isolated visibility class', () => {
   it('lets a team member read their own team\'s state', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await context.database().ref('orgAccess/personal_teacher-a/teacher-a').set({ role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })
-      await context.database().ref('teamMembership/run-1/student-a').set('team-x')
+      await context.database().ref('lessonRunMembership/run-1/student-a').set({ orgId: 'personal_teacher-a', participantId: 'student-a', teamId: 'team-x', access: 'ACTIVE', participantStatus: 'ACTIVE' })
       await context.database().ref('lessonRunTeamState/run-1/team-x').set({ cash: 10000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1, orgId: 'personal_teacher-a' })
     })
     const student = environment.authenticatedContext('student-a', studentToken).database()
@@ -3339,7 +3343,7 @@ describe('lessonRunTeamState is a third, isolated visibility class', () => {
 
   it('never lets a DIFFERENT team read this team\'s state', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
-      await context.database().ref('teamMembership/run-1/student-b').set('team-y')
+      await context.database().ref('lessonRunMembership/run-1/student-b').set({ orgId: 'personal_teacher-a', participantId: 'student-b', teamId: 'team-y', access: 'ACTIVE', participantStatus: 'ACTIVE' })
       await context.database().ref('lessonRunTeamState/run-1/team-x').set({ cash: 10000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1, orgId: 'personal_teacher-a' })
     })
     const otherStudent = environment.authenticatedContext('student-b', studentToken).database()
@@ -3365,32 +3369,24 @@ describe('lessonRunTeamState is a third, isolated visibility class', () => {
 - [ ] **Step 6: 失敗を確認する**
 
 Run: `npm run test:rules`
-Expected: FAIL — `lessonRunTeamState`/`teamMembership`に既存ルールがなくルートの`.read: false`に落ちる
+Expected: FAIL — `lessonRunTeamState`に既存ルールがなくルートの`.read: false`に落ちる
 
 - [ ] **Step 7: `database.rules.json`へ追加する**
 
-`orgAccess`・`lessonRunPublic`・`lessonRunPrivate`と**同じ階層**（ルート直下の兄弟ノード）に追加する:
+`orgAccess`・`lessonRunPublic`・`lessonRunPrivate`・`lessonRunMembership`と**同じ階層**（ルート直下の兄弟ノード）に追加する。`lessonRunMembership`ノード自体はPhase B Task 2で既に定義済みなので、ここでは追加しない — 追加するのは`lessonRunTeamState`のみ:
 
 ```json
-"teamMembership": {
-  "$lessonRunId": {
-    "$uid": {
-      ".read": "auth != null && auth.uid === $uid",
-      ".write": false
-    }
-  }
-},
 "lessonRunTeamState": {
   "$lessonRunId": {
     "$teamId": {
-      ".read": "auth != null && (root.child('teamMembership').child($lessonRunId).child(auth.uid).val() === $teamId || (data.child('orgId').exists() && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active'))",
+      ".read": "auth != null && (root.child('lessonRunMembership').child($lessonRunId).child(auth.uid).child('teamId').val() === $teamId || (data.child('orgId').exists() && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active'))",
       ".write": false
     }
   }
 }
 ```
 
-`lessonRunTeamState`の読み取り条件は「自分のチームか」または「その組織のメンバー（教師）か」のOR——教師の全チーム閲覧（オーバーサイト）を許すが、生徒には自分のチームのみを許す非対称なルールになる。**この非対称性を`lessonRunPublic`（全参加者に一律許可）・`lessonRunPrivate`（教師の`owner`ロールのみ）と混同しないこと。**
+`lessonRunTeamState`の読み取り条件は「自分のチームか」または「その組織のメンバー（教師）か」のOR——教師の全チーム閲覧（オーバーサイト）を許すが、生徒には自分のチームのみを許す非対称なルールになる。**この非対称性を`lessonRunPublic`（全参加者に一律許可）・`lessonRunPrivate`（教師の`owner`ロールのみ）と混同しないこと。**`lessonRunMembership`は`{teamId, access, ...}`オブジェクトなので`.val()`ではなく`.child('teamId').val()`で比較する点に注意（Phase A Task 10の`teamMembership`という単純な文字列ミラーの想定とは形が異なる）。
 
 - [ ] **Step 8: ルールテストを通す**
 
@@ -3399,7 +3395,7 @@ Expected: PASS
 
 - [ ] **Step 9: `lessonRunPublic`の生徒読み取り許可を確認する（前提チェックリスト該当）**
 
-Phase A Task 10の`lessonRunPublic`ルールは組織メンバー（教師）のみを許可していた。本タスクで生徒（参加者）にも市場データを配信する必要があるため、実際のPhase Bコードを確認し、参加者向けの読み取り条件（例: `root.child('teamMembership').child($lessonRunId).child(auth.uid).exists()`を`||`で追加する）が既にあるか、なければここで追加する。追加する場合は`lessonRunTeamState`と同型のOR条件にする。
+前提チェックリストの通り、Phase B Task 2で`lessonRunPublic`は`lessonRunMembership/{lessonRunId}/{uid}.access == 'ACTIVE'`の生徒参加者を既に許可している。本タスクでは市場データ用のフィールドをそのペイロードに追加するだけでよく、読み取りルール自体の拡張は不要 — ただし実装着手時に実際のルール文字列を`database.rules.json`で再確認すること。
 
 - [ ] **Step 10: `npm run verify`**
 
@@ -4233,7 +4229,7 @@ Expected: `settleBatch`・`calculateNextPrice`はTask 3・9で既に決定的に
 3. Task 18の並行実行テスト（Firestore Emulator）がPASSする。
 4. 生徒向けに配信されるデータ（`lessonRunPublic`・`lessonRunTeamState`のRTDB書き込み内容、および`toPublicView`の出力）を目視確認し、`impactSensitivities`・`InformationImpact`・`randomSeed`・将来バッチの価格のいずれも含まれていないことを確認する（Task 1・13の型テストは構造を保証するが、実際のAdmin SDK書き込みコードが型を無視して余分なフィールドを書いていないかは目視確認が必要）。
 5. 本計画内でPROVISIONAL（試運転で調整する暫定値）と明記した定数——`PRICE_SENSITIVITY_PRESETS`（Task 3）、`DEFAULT_NOISE_MAGNITUDE_PERCENT`（Task 3）、`DEFAULT_SUDDEN_CHANGE_WARNING_THRESHOLD_PERCENT`（Task 3）、`SHORT_TERM_WINDOW_BATCHES`（Task 9 Step 7）、`FLAT_BAND_PERCENT`（Task 15）、`STALL_DETECTION_THRESHOLD_MILLIS`（Task 10）——を1箇所の一覧（教師向け「詳細設定」画面、または`functions/src/market/engine/tuningConstants.ts`のような単一ファイル）にまとめ、後続の試運転フェーズで参照できるようにする。この一覧化自体をタスクの完了条件に含める。
-6. Task 13 Step 9の前提チェックリスト（`lessonRunPublic`の生徒読み取り許可、`teamMembership`ミラーの実在確認）が解消されている。
+6. 冒頭の前提チェックリスト（`lessonRunPublic`の生徒読み取り許可、`lessonRunMembership`ミラーによるチーム帰属検証）はPhase Bで確定済み — Task 13 Step 9はこれをそのまま前提にしてよい。
 
 - [ ] **Step 6: `npm run verify`**
 
