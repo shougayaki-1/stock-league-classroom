@@ -153,6 +153,37 @@ describe('LessonControlRoom', () => {
     expect(screen.getByRole('button', { name: '授業を終了' })).toBeInTheDocument()
   })
 
+  it('clicking "授業を終了" invokes completeLessonCallable (the real end-of-lesson flow), not interruptLessonCallable', async () => {
+    const user = userEvent.setup()
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    const button = screen.getByRole('button', { name: '授業を終了' })
+    await user.click(button)
+
+    expect(httpsCallableMock).toHaveBeenCalledWith(functions, 'completeLessonCallable')
+    expect(httpsCallableMock).not.toHaveBeenCalledWith(functions, 'interruptLessonCallable')
+    expect(callableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ lessonRunId: 'run-1', reason: expect.any(String) }),
+    )
+  })
+
+  it('clicking "授業を安全停止" invokes interruptLessonCallable (distinct from the end-lesson flow)', async () => {
+    const user = userEvent.setup()
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    const button = screen.getByRole('button', { name: '授業を安全停止' })
+    await user.click(button)
+
+    expect(httpsCallableMock).toHaveBeenCalledWith(functions, 'interruptLessonCallable')
+    expect(httpsCallableMock).not.toHaveBeenCalledWith(functions, 'completeLessonCallable')
+  })
+
   it('shows a safe-stop banner with a recovery option when the lesson is INTERRUPTED, and PRIMARY can resume it', async () => {
     const user = userEvent.setup()
     render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)

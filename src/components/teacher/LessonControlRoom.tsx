@@ -8,7 +8,7 @@ import { canControlLesson, type LessonRunRole } from '../../lib/lessonRuns/autho
 import { subscribeDisplayRun, subscribePublicRun } from '../../lib/lessonRuns/liveRepository'
 import type { LessonRunDisplayState, LessonRunPublicState } from '../../lib/lessonRuns/liveTypes'
 import { subscribeLessonParticipants, type LessonParticipantView } from '../../lib/lessonRuns/participants'
-import { interruptLesson, resumeLesson } from '../../lib/lessonRuns/lifecycle'
+import { completeLesson, interruptLesson, resumeLesson } from '../../lib/lessonRuns/lifecycle'
 import { LessonStatusHeader } from './LessonStatusHeader'
 import { ParticipantMonitor } from './ParticipantMonitor'
 import { InterventionPanel, type InterventionApplyInput } from './InterventionPanel'
@@ -172,13 +172,14 @@ export function LessonControlRoom({
   }, [functions, lessonRunId])
 
   const handleEndLesson = useCallback(() => {
-    // completeLesson/abortLesson (Task 8) both require lesson-content-aware
-    // bookkeeping (final results / completed phase ids) that this generic
-    // screen component does not have; wiring a real "授業を終了" flow to one
-    // of those two callables is left to the caller via a future prop, same
-    // reasoning as onStartLesson/onAdvancePhase above. This button's job for
-    // Task 11 is the role/status-gated VISIBILITY, not the callable choice.
-    void interruptLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
+    // completeLessonCallable's client-facing input is just
+    // {lessonRunId, reason, idempotencyKey} (see lifecycle.ts's
+    // CompleteLessonInput / functions/src/lessonRuns/lifecycle/onCall.ts) —
+    // finalResults/checkpointId are derived server-side by
+    // completeLessonWithAdminSdk, not supplied by the caller. So this screen
+    // has everything it needs to invoke the real "授業を終了" flow (Task 8's
+    // 5-stage completeLesson sequence) instead of interruptLesson (中断).
+    void completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
   }, [functions, lessonRunId])
 
   const handleApplyIntervention = useCallback((input: InterventionApplyInput) => {
