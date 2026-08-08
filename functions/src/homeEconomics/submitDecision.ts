@@ -12,6 +12,15 @@ export interface HouseholdDecisionInput {
   shortfallResolutionAssetType?: string
   publicSupportApplicationIds: string[]
   idempotencyKey: string
+  /**
+   * Spec §13.14: the amount (yen) a RETIRED household voluntarily wants to
+   * draw down from its held assets this round, on top of normal cash flow
+   * — a discretionary choice to raise living standards, not a
+   * shortfall-driven forced sale (that remains `shortfallResolutionType:
+   * 'SELL_ASSETS'`). Optional/omitted for non-retired households, where
+   * `settleRound` ignores it entirely regardless of what a caller sends.
+   */
+  voluntaryDrawdownRequestedYen?: number
 }
 export interface SubmitHouseholdDecisionDeps {
   saveDecision: (input: HouseholdDecisionInput) => Promise<{ decisionId: string; created: boolean }>

@@ -57,6 +57,7 @@ interface SubmitHouseholdDecisionRequestData {
   shortfallResolutionAssetType?: string
   publicSupportApplicationIds: string[]
   idempotencyKey: string
+  voluntaryDrawdownRequestedYen?: number
 }
 
 const makeRequest = (
@@ -112,6 +113,13 @@ describe('submitHouseholdDecisionCallable', () => {
     ['insurancePurchaseIds with a non-string element', { insurancePurchaseIds: [123 as unknown as string] }],
     ['insuranceCancelIds with an empty-string element', { insuranceCancelIds: [''] }],
     ['publicSupportApplicationIds with a non-string element', { publicSupportApplicationIds: [null as unknown as string] }],
+    // Task 11/12 integration gap fix: voluntaryDrawdownRequestedYen must be
+    // a non-negative finite number when present — this money-conservation-
+    // critical field must never carry a negative/NaN/Infinity value into
+    // settleRound's drawdown math.
+    ['voluntaryDrawdownRequestedYen negative', { voluntaryDrawdownRequestedYen: -1 }],
+    ['voluntaryDrawdownRequestedYen non-finite', { voluntaryDrawdownRequestedYen: Infinity }],
+    ['voluntaryDrawdownRequestedYen NaN', { voluntaryDrawdownRequestedYen: NaN }],
   ])('rejects a request with an invalid %s', async (_field, override) => {
     await expect(submitHouseholdDecisionCallable.run(makeRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
     expect(getHouseholdStateWithAdminSdk).not.toHaveBeenCalled()
@@ -189,6 +197,19 @@ describe('submitHouseholdDecisionCallable', () => {
     await expect(submitHouseholdDecisionCallable.run(makeRequest({ roundIndex: household.roundIndex + 1 })))
       .rejects.toMatchObject({ code: 'failed-precondition' })
     expect(saveHouseholdDecision).not.toHaveBeenCalled()
+  })
+
+  it('forwards voluntaryDrawdownRequestedYen through to saveDecision when present (Task 11/12 integration gap fix)', async () => {
+    vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-1', created: true })
+    await submitHouseholdDecisionCallable.run(makeRequest({ voluntaryDrawdownRequestedYen: 300000 }))
+    expect(saveHouseholdDecision).toHaveBeenCalledWith(expect.objectContaining({ voluntaryDrawdownRequestedYen: 300000 }))
+  })
+
+  it('omits voluntaryDrawdownRequestedYen from saveDecision when not provided, rather than forwarding undefined', async () => {
+    vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-1', created: true })
+    await submitHouseholdDecisionCallable.run(makeRequest())
+    const call = vi.mocked(saveHouseholdDecision).mock.calls[0][0]
+    expect('voluntaryDrawdownRequestedYen' in call).toBe(false)
   })
 })
 

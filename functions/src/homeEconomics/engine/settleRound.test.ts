@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { settleRound } from './settleRound'
+import { PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT } from './retirement'
 
 const baseHousehold = {
   householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a',
@@ -343,5 +344,100 @@ describe('settleRound', () => {
     expect(result.newHouseholdState.cashYen).toBe(0)
     const totalAfter = result.newHouseholdState.cashYen + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
     expect(totalAfter).toBe(totalBefore) // no money fabricated
+  })
+
+  // ---------------------------------------------------------------------
+  // Task 11/12 integration gap (found in Task 17): a RETIRED household must
+  // receive pension income instead of `profile.householdIncomeYen`, and may
+  // optionally request a voluntary asset drawdown.
+  // ---------------------------------------------------------------------
+
+  it('a RETIRED household receives pension income derived from computeSimplifiedPensionBenefit, not profile.householdIncomeYen directly', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, lifeStage: 'RETIRED', cashYen: 0, assetHoldingsYen: {} },
+      profile: { ...baseProfile, lifeStage: 'RETIRED' as const, householdIncomeYen: 6000000, annualLivingExpensesYen: 0 },
+    }
+    const result = settleRound(input)
+    // preRetirementIncomeYen 6,000,000 * default replacement rate (50%) = 3,000,000 pension.
+    // Tax model v1 (20% flat) → net 2,400,000. This must NOT equal what a
+    // non-retired household with the same profile would get (net 4,800,000).
+    const pensionYen = 6000000 * (PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT / 100)
+    const expectedNetIncomeYen = pensionYen * 0.8
+    expect(result.incomeYen).toBe(expectedNetIncomeYen)
+    expect(result.incomeYen).not.toBe(6000000 * 0.8)
+  })
+
+  it('a RETIRED household with no voluntary drawdown request behaves like before: pension income flows through cash flow normally, no extra asset movement beyond returns', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, lifeStage: 'RETIRED', cashYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, lifeStage: 'RETIRED' as const, householdIncomeYen: 6000000, annualLivingExpensesYen: 1000000 },
+      decision: null,
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    const result = settleRound(input)
+    // Pension net income: 6,000,000 * 50% * 80% = 2,400,000. Expenses 1,000,000. netCashFlow = 1,400,000.
+    expect(result.newHouseholdState.cashYen).toBe(500000 + 1400000)
+    // No drawdown requested — asset holding untouched (0% return isolates this).
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(1000000)
+  })
+
+  it('a RETIRED household WITH a voluntary drawdown request has assets reduced and cash increased by exactly the withdrawn amount (conserves money)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, lifeStage: 'RETIRED', cashYen: 0, assetHoldingsYen: { DOMESTIC_STOCK: 1000000, FOREIGN_STOCK: 500000 } },
+      profile: { ...baseProfile, lifeStage: 'RETIRED' as const, householdIncomeYen: 0, annualLivingExpensesYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k8',
+        voluntaryDrawdownRequestedYen: 300000,
+      },
+      assetCatalog: [
+        { assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 },
+        { assetType: 'FOREIGN_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 },
+      ],
+    }
+    const totalBefore = 0 + 1000000 + 500000
+    const result = settleRound(input)
+    // No income, no expenses, no shortfall — the only money movement is the drawdown itself.
+    expect(result.shortfallYen).toBe(0)
+    expect(result.newHouseholdState.cashYen).toBe(300000)
+    // Proportional 2:1 split of the 300,000 withdrawal across DOMESTIC_STOCK/FOREIGN_STOCK.
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(800000)
+    expect(result.newHouseholdState.assetHoldingsYen.FOREIGN_STOCK).toBe(400000)
+    const totalAfter = result.newHouseholdState.cashYen
+      + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+      + result.newHouseholdState.assetHoldingsYen.FOREIGN_STOCK
+    expect(totalAfter).toBe(totalBefore) // exact conservation
+  })
+
+  it('a voluntary drawdown request is IGNORED for a non-RETIRED household (voluntary drawdown is retirement-only)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 0, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, householdIncomeYen: 0, annualLivingExpensesYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k9',
+        voluntaryDrawdownRequestedYen: 300000,
+      },
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    const result = settleRound(input)
+    expect(result.newHouseholdState.cashYen).toBe(0)
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(1000000)
+  })
+
+  it('a non-RETIRED household\'s income is completely unchanged from the pre-existing behavior (regression)', () => {
+    const result = settleRound(baseInput)
+    // Same assertion as the very first test in this file — grossIncome 6,000,000 → net 4,800,000.
+    expect(result.incomeYen).toBe(4800000)
   })
 })

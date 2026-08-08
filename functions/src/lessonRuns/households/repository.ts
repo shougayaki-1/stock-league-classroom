@@ -121,6 +121,8 @@ export interface HouseholdDecisionRecord {
   publicSupportApplicationIds: string[]
   idempotencyKey: string
   submittedAtServerMillis: number
+  /** Spec §13.14 — see `HouseholdDecisionInput`'s own doc comment (`submitDecision.ts`). */
+  voluntaryDrawdownRequestedYen?: number
 }
 
 export interface SaveHouseholdDecisionInput extends HouseholdFirestoreDeps {
@@ -135,6 +137,7 @@ export interface SaveHouseholdDecisionInput extends HouseholdFirestoreDeps {
   publicSupportApplicationIds: string[]
   idempotencyKey: string
   now: () => number
+  voluntaryDrawdownRequestedYen?: number
 }
 
 /**
@@ -162,6 +165,7 @@ export const saveHouseholdDecision = (
     shortfallResolutionType: input.shortfallResolutionType,
     shortfallResolutionAssetType: input.shortfallResolutionAssetType ?? null,
     publicSupportApplicationIds: input.publicSupportApplicationIds,
+    voluntaryDrawdownRequestedYen: input.voluntaryDrawdownRequestedYen ?? null,
   })
 
   // ---- ALL READS FIRST ----
@@ -187,6 +191,7 @@ export const saveHouseholdDecision = (
     publicSupportApplicationIds: input.publicSupportApplicationIds,
     idempotencyKey: input.idempotencyKey,
     submittedAtServerMillis: input.now(),
+    ...(input.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: input.voluntaryDrawdownRequestedYen } : {}),
   }
   tx.set(`lessonRuns/${input.lessonRunId}/households/${input.householdId}/decisions/${decisionId}`, decision as unknown as Record<string, unknown>)
   tx.set(idempotencyPath, { decisionId, requestDigest: digest })

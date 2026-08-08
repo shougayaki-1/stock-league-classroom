@@ -58,6 +58,8 @@ interface SubmitHouseholdDecisionRequest {
   shortfallResolutionAssetType?: string
   publicSupportApplicationIds: string[]
   idempotencyKey: string
+  /** Spec §13.14 — see `HouseholdDecisionInput`'s own doc comment (`submitDecision.ts`). Optional; omitted or 0 means "no drawdown requested". */
+  voluntaryDrawdownRequestedYen?: number
 }
 
 const VALID_SHORTFALL_TYPES = new Set(['REDUCE_EXPENSES', 'SELL_ASSETS', 'BORROW', 'PUBLIC_SUPPORT', 'DELAY_GOAL', null])
@@ -70,6 +72,10 @@ const isFiniteNumberMap = (value: unknown): value is Record<string, number> =>
   && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'number' && Number.isFinite(entry))
 
 const isNonEmptyStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isNonEmptyString)
+
+/** Optional non-negative finite number — `undefined` (field omitted) is valid; a present value must not be negative/NaN/Infinity (would otherwise flow into the money-conservation-critical drawdown math in `settleRound`). */
+const isValidOptionalNonNegativeNumber = (value: unknown): boolean =>
+  value === undefined || (typeof value === 'number' && Number.isFinite(value) && value >= 0)
 
 /**
  * `shortfallResolutionType` is validated here as the already-normalized
@@ -94,10 +100,11 @@ const validateRequest = (
     // one cross-field consistency check `submitHouseholdDecision` performs.
     || (shortfallResolutionType === 'SELL_ASSETS' && !isNonEmptyString(data.shortfallResolutionAssetType))
     || !data.idempotencyKey
+    || !isValidOptionalNonNegativeNumber(data.voluntaryDrawdownRequestedYen)
   ) {
     throw new HttpsError(
       'invalid-argument',
-      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。shortfallResolutionType が SELL_ASSETS の場合、shortfallResolutionAssetType も必須です。',
+      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。shortfallResolutionType が SELL_ASSETS の場合、shortfallResolutionAssetType も必須です。voluntaryDrawdownRequestedYen を指定する場合は0以上の有限数である必要があります。',
     )
   }
 }
@@ -171,6 +178,7 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
         publicSupportApplicationIds: input.publicSupportApplicationIds,
         idempotencyKey: input.idempotencyKey,
         now: Date.now,
+        ...(input.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: input.voluntaryDrawdownRequestedYen } : {}),
       }),
       lessonRunId: data.lessonRunId,
       householdId: data.householdId,
@@ -182,6 +190,7 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
       ...(data.shortfallResolutionAssetType !== undefined ? { shortfallResolutionAssetType: data.shortfallResolutionAssetType } : {}),
       publicSupportApplicationIds: data.publicSupportApplicationIds,
       idempotencyKey: data.idempotencyKey,
+      ...(data.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: data.voluntaryDrawdownRequestedYen } : {}),
     })
   } catch (error) {
     throw translateSubmitHouseholdDecisionError(error)

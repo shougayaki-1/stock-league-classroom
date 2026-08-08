@@ -9,6 +9,7 @@ import { applyMortgageRound } from './mortgage'
 import { computeAssetReturn } from './assetReturn'
 import { applyShortfallResolution, buildShortfallOptions, detectShortfall, type ShortfallOption } from './shortfallOptions'
 import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
+import { computeSimplifiedPensionBenefit, computeVoluntaryAssetDrawdown, PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT } from './retirement'
 
 export interface SettleRoundInput {
   household: HouseholdState
@@ -69,8 +70,42 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   })
   const eventEffects = applyEventEffects(input.lifeEvents, occurredEventIds)
 
-  // 2. Income + tax (spec §13.7/§13.8)
-  const grossIncomeYen = profile.householdIncomeYen + eventEffects.incomeEffectYen
+  // 2. Income + tax (spec §13.7/§13.8/§13.14)
+  //
+  // Task 11/12 integration gap (found in Task 17): Task 12's own `Consumes`
+  // line contracts that this round-settlement process calls the retirement
+  // engine "only when `lifeStage === 'RETIRED'`" — that call never
+  // existed until now. `household.lifeStage` (not `profile.lifeStage`) is
+  // the source of truth here: it's the per-household field that actually
+  // persists and carries forward round-to-round in `HouseholdState`
+  // (`profile.lifeStage` is a static snapshot from the template, never
+  // updated after lessonRun creation). Nothing in this engine transitions
+  // `lifeStage` today (age never advances either — see Task 17's
+  // completion-condition review), so the only way a household reaches
+  // RETIRED is a template/checkpoint that pre-seeds
+  // `startingLifeStage: 'RETIRED'`; this fix's scope is making settleRound
+  // correctly HANDLE that state, not building a new aging-transition
+  // subsystem (out of scope for the contracted gap — see this task's
+  // report for the full reasoning).
+  //
+  // A retired household is no longer earning `profile.householdIncomeYen`
+  // (its pre-retirement salary) — spec §13.14's "収入減少" (income
+  // reduction) — so `grossIncomeYen` is replaced with a pension benefit
+  // derived from that same pre-retirement figure via
+  // `computeSimplifiedPensionBenefit` (Task 12), using the single
+  // documented default replacement rate (no per-template override field
+  // exists on `HomeEconomicsContent`/`HouseholdProfile` today). Life-event
+  // income effects (§13.12) still apply on top, same as the non-retired
+  // path — a life event reducing income is just as meaningful against a
+  // pension as against a salary.
+  const isRetired = household.lifeStage === 'RETIRED'
+  const baseIncomeYen = isRetired
+    ? computeSimplifiedPensionBenefit({
+      preRetirementIncomeYen: profile.householdIncomeYen,
+      pensionReplacementRatePercent: PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT,
+    })
+    : profile.householdIncomeYen
+  const grossIncomeYen = baseIncomeYen + eventEffects.incomeEffectYen
   const taxResult = computeTaxAndSocialInsurance({ grossIncomeYen }, input.taxModelVersion)
 
   // 3. Mortgage payments (spec §13.9) — all active MORTGAGE liabilities, this round's roundYears advanced together.
@@ -238,6 +273,34 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
     newAssetHoldingsYen[soldAssetType] = Math.max(0, (newAssetHoldingsYen[soldAssetType] ?? 0) + resolutionAssetDeltaYen)
   }
 
+  // 7a-2. Voluntary asset drawdown (spec §13.14) — RETIRED households only.
+  // Deliberately distinct from the SELL_ASSETS shortfall resolution above:
+  // this is the household's DISCRETIONARY choice to raise its living
+  // standard by converting held assets to spendable cash, per Task 12's own
+  // framing ("強制売却ではなく、生活水準を上げるための自発的な取り崩し" —
+  // not a forced sale, a deliberate choice), so it is driven by a decision
+  // field (`voluntaryDrawdownRequestedYen`), never by shortfall detection,
+  // and applies proportionally across ALL held asset types (Task 12's
+  // `computeVoluntaryAssetDrawdown`) rather than one named type. Runs AFTER
+  // the shortfall sale (so it draws down from post-shortfall-sale holdings,
+  // never double-counting the same yen) and BEFORE the returns loop (so the
+  // withdrawn portion does not earn this round's return, same reasoning as
+  // 7a above). Guarded on `isRetired` at the engine level — even if a
+  // decision somehow carries this field for a non-retired household (the
+  // Callable does not gate on lifeStage since it has no household context
+  // at validation time), `settleRound` itself never applies it outside
+  // retirement, which is the actual authorization boundary spec §13.14
+  // describes.
+  let drawdownWithdrawnYen = 0
+  const requestedDrawdownYen = input.decision?.voluntaryDrawdownRequestedYen ?? 0
+  if (isRetired && requestedDrawdownYen > 0) {
+    const drawdownResult = computeVoluntaryAssetDrawdown({
+      requestedYen: requestedDrawdownYen, assetHoldingsYen: newAssetHoldingsYen,
+    })
+    drawdownWithdrawnYen = drawdownResult.withdrawnYen
+    Object.assign(newAssetHoldingsYen, drawdownResult.newAssetHoldingsYen)
+  }
+
   // 7b. Critical #2 fix: `assetAllocationChangesYen` is documented
   // (`submitDecision.ts`) as "funded from cash" — a positive delta moves
   // cash INTO an asset, a negative delta moves value OUT of an asset back
@@ -261,7 +324,7 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   // sequentially decrementing/crediting available cash as they go, so
   // multiple allocations in one submission compete for the same
   // available-cash pool in a deterministic (insertion-order) way.
-  const preAllocationCashYen = household.cashYen + netCashFlowYen + resolutionCashDeltaYen
+  const preAllocationCashYen = household.cashYen + netCashFlowYen + resolutionCashDeltaYen + drawdownWithdrawnYen
   let availableCashForAllocationYen = preAllocationCashYen
   for (const [assetType, requestedDeltaYen] of Object.entries(input.decision?.assetAllocationChangesYen ?? {})) {
     const currentHoldingYen = newAssetHoldingsYen[assetType] ?? 0

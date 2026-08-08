@@ -224,6 +224,7 @@ const readHouseholdDecisionWithAdminSdk: ProcessRoundDeps['readHouseholdDecision
     ...(record.shortfallResolutionAssetType !== undefined ? { shortfallResolutionAssetType: record.shortfallResolutionAssetType } : {}),
     publicSupportApplicationIds: record.publicSupportApplicationIds,
     idempotencyKey: record.idempotencyKey,
+    ...(record.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: record.voluntaryDrawdownRequestedYen } : {}),
   }
 }
 

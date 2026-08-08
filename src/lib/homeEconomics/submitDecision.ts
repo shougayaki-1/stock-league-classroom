@@ -13,6 +13,8 @@ export interface SubmitHouseholdDecisionInput {
   shortfallResolutionAssetType?: string
   publicSupportApplicationIds: string[]
   idempotencyKey: string
+  /** Spec §13.14: amount (yen) a RETIRED household voluntarily wants to draw down from its held assets this round, on top of normal cash flow. Optional; ignored server-side for non-retired households. */
+  voluntaryDrawdownRequestedYen?: number
 }
 
 export interface SubmitHouseholdDecisionResult {
