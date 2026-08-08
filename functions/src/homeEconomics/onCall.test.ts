@@ -1,19 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallableRequest } from 'firebase-functions/v2/https'
-import { processRoundCallable, submitHouseholdDecisionCallable } from './onCall'
-import { getHouseholdStateWithAdminSdk, saveHouseholdDecision } from '../lessonRuns/households/repository'
+import {
+  processRoundCallable,
+  restoreHouseholdCheckpointCallable,
+  submitHouseholdDecisionCallable,
+  writeHouseholdCheckpointCallable,
+} from './onCall'
+import {
+  getHouseholdStateWithAdminSdk,
+  householdRepositoryWithAdminSdk,
+  saveHouseholdDecision,
+} from '../lessonRuns/households/repository'
 import { requireActiveOrgMember } from '../organizations/authorization'
+import { restoreCheckpointWithAdminSdk, writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
 import { processRoundWithAdminSdk } from './processRound'
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
 const lessonRunGetMock = vi.fn()
+const checkpointGetMock = vi.fn()
 const teamDocPaths: string[] = []
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
     doc: (path: string) => {
       if (/^lessonRuns\/[^/]+$/.test(path)) return { get: lessonRunGetMock }
+      if (path.includes('/checkpoints/')) return { get: checkpointGetMock }
       if (!path.includes('/participantsByAuthUid/')) teamDocPaths.push(path)
       return { get: path.includes('/participantsByAuthUid/') ? participantGetMock : teamGetMock }
     },
@@ -24,6 +36,11 @@ vi.mock('../lessonRuns/households/repository', () => ({
   getHouseholdStateWithAdminSdk: vi.fn(),
   householdRepositoryWithAdminSdk: vi.fn(() => ({})),
   saveHouseholdDecision: vi.fn(),
+}))
+
+vi.mock('../lessonRuns/checkpoint', () => ({
+  writeCheckpointWithAdminSdk: vi.fn(),
+  restoreCheckpointWithAdminSdk: vi.fn(),
 }))
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
@@ -289,5 +306,187 @@ describe('processRoundCallable', () => {
     expect(processRoundWithAdminSdk).toHaveBeenCalledWith({
       lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: true,
     })
+  })
+})
+
+interface WriteHouseholdCheckpointRequestData {
+  lessonRunId: string
+  phaseId: string
+  sequence: number
+  householdIds: string[]
+  idempotencyKey: string
+}
+
+const makeWriteCheckpointRequest = (
+  data: Partial<WriteHouseholdCheckpointRequestData> = {}, uid = 'teacher-a',
+): CallableRequest<WriteHouseholdCheckpointRequestData> => ({
+  auth: { uid, token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+  data: {
+    lessonRunId: 'run-1', phaseId: 'phase-1', sequence: 3, householdIds: ['case-b'], idempotencyKey: 'key-1',
+    ...data,
+  },
+  rawRequest: {},
+} as unknown as CallableRequest<WriteHouseholdCheckpointRequestData>)
+
+describe('writeHouseholdCheckpointCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(household)
+  })
+
+  it('rejects unauthenticated callers without touching Firestore', async () => {
+    const request = { auth: undefined, data: {}, rawRequest: {} } as unknown as CallableRequest<WriteHouseholdCheckpointRequestData>
+    await expect(writeHouseholdCheckpointCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['lessonRunId', { lessonRunId: '' }],
+    ['phaseId', { phaseId: '' }],
+    ['sequence', { sequence: -1 }],
+    ['householdIds empty', { householdIds: [] }],
+    ['householdIds with a non-string element', { householdIds: [123 as unknown as string] }],
+    ['idempotencyKey', { idempotencyKey: '' }],
+  ])('rejects a request with an invalid %s', async (_field, override) => {
+    await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller with no teacher role on this run', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: {} }))
+    await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(writeCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a VIEWER-role teacher (never trusting a client-asserted role)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'VIEWER' } }))
+    await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(writeCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when a named household cannot be found', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
+    await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest())).rejects.toMatchObject({ code: 'not-found' })
+    expect(writeCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('happy path: an ASSISTANT-role teacher who is an active org member builds a snapshot from every named household and writes it via writeCheckpointWithAdminSdk', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(writeCheckpointWithAdminSdk).mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+    const result = await writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest())
+
+    expect(result).toEqual({ checkpointId: 'cp-1', deduplicated: false })
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-1', 'teacher-a')
+    expect(writeCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', phaseId: 'phase-1', sequence: 3,
+      snapshot: { schemaVersion: 1, households: [household] },
+      createdBy: 'TEACHER', idempotencyKey: 'key-1',
+    })
+  })
+
+  it('translates an idempotency key payload mismatch into failed-precondition', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(writeCheckpointWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+    await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest()))
+      .rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
+  })
+})
+
+interface RestoreHouseholdCheckpointRequestData {
+  lessonRunId: string
+  checkpointId: string
+  reason: string
+  idempotencyKey: string
+}
+
+const makeRestoreCheckpointRequest = (
+  data: Partial<RestoreHouseholdCheckpointRequestData> = {}, uid = 'teacher-a',
+): CallableRequest<RestoreHouseholdCheckpointRequestData> => ({
+  auth: { uid, token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+  data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'undo mistaken settlement', idempotencyKey: 'key-1', ...data },
+  rawRequest: {},
+} as unknown as CallableRequest<RestoreHouseholdCheckpointRequestData>)
+
+describe('restoreHouseholdCheckpointCallable', () => {
+  const snapshotSetCalls: Array<{ path: string; data: unknown }> = []
+  const runTransactionMock = vi.fn(async (fn: (tx: { set: (path: string, data: unknown) => void }) => Promise<void>) => {
+    await fn({ set: (path, data) => snapshotSetCalls.push({ path, data }) })
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    snapshotSetCalls.length = 0
+    vi.mocked(householdRepositoryWithAdminSdk).mockReturnValue({ runTransaction: runTransactionMock as never })
+  })
+
+  it('rejects unauthenticated callers without touching Firestore', async () => {
+    const request = { auth: undefined, data: {}, rawRequest: {} } as unknown as CallableRequest<RestoreHouseholdCheckpointRequestData>
+    await expect(restoreHouseholdCheckpointCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['lessonRunId', { lessonRunId: '' }],
+    ['checkpointId', { checkpointId: '' }],
+    ['reason', { reason: '  ' }],
+    ['idempotencyKey', { idempotencyKey: '' }],
+  ])('rejects a request with an invalid %s', async (_field, override) => {
+    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller with no teacher role on this run, never calling restoreCheckpointWithAdminSdk', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: {} }))
+    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a VIEWER-role teacher (never trusting a client-asserted role)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'VIEWER' } }))
+    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('happy path: an ASSISTANT-role teacher who is an active org member restores the checkpoint and writes every household back to Firestore', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockResolvedValue({ newRestoreGeneration: 2, eventId: 'evt-1', deduplicated: false })
+    checkpointGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'snapshot' ? { schemaVersion: 1, households: [household] } : undefined),
+    })
+
+    const result = await restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())
+
+    expect(result).toEqual({ newRestoreGeneration: 2, eventId: 'evt-1', deduplicated: false, restoredHouseholdIds: ['case-b'] })
+    expect(restoreCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'undo mistaken settlement', actorId: 'teacher-a', idempotencyKey: 'key-1',
+    })
+    // Proves restore genuinely persists the restored HouseholdState back to
+    // Firestore — not just returning it to the caller unpersisted.
+    expect(snapshotSetCalls).toEqual([{ path: 'lessonRuns/run-1/households/case-b', data: household }])
+  })
+
+  it('translates "Checkpoint not found" from restoreCheckpointWithAdminSdk into not-found, writing nothing back', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Checkpoint not found'))
+    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())).rejects.toMatchObject({ code: 'not-found' })
+    expect(snapshotSetCalls).toHaveLength(0)
+  })
+
+  it('translates an idempotency key payload mismatch into failed-precondition', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
+    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest()))
+      .rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
   })
 })

@@ -6,11 +6,15 @@ import {
   householdRepositoryWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
+import type { HouseholdState } from '../lessonRuns/households/repository'
 import { canControlLesson } from '../lessonRuns/authorization'
 import { requireActiveOrgMember } from '../organizations/authorization'
+import { restoreCheckpointWithAdminSdk, writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
 import { submitHouseholdDecision } from './submitDecision'
 import type { HouseholdDecisionInput } from './submitDecision'
 import { processRoundWithAdminSdk } from './processRound'
+import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from './checkpointRestore'
+import type { HouseholdCheckpointSnapshot } from './checkpointRestore'
 
 /**
  * Resolves the caller's `participantId` on this lessonRun from the verified
@@ -270,4 +274,189 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
   } catch (error) {
     throw translateProcessRoundError(error)
   }
+})
+
+/**
+ * Shared authorization for both checkpoint Callables below — deliberately
+ * the exact same shape as `restoreCheckpointCallable` (`lessonRuns/onCall.ts`):
+ * only a PRIMARY/ASSISTANT teacher on THIS run may write or restore a
+ * checkpoint (a VIEWER must be rejected even though teacher() Firestore
+ * rules let them read the run). `orgId` is always read from the run
+ * document itself, never taken from client input, so a caller cannot point
+ * `requireActiveOrgMember` at an org they belong to while acting on a run
+ * that belongs to a different org.
+ */
+const requireCheckpointAuthority = async (lessonRunId: string, authUid: string): Promise<void> => {
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, 'PRIMARY' | 'ASSISTANT' | 'VIEWER'> | undefined
+  const role = teacherRoles?.[authUid]
+  if (role !== 'PRIMARY' && role !== 'ASSISTANT') {
+    throw new HttpsError('permission-denied', 'PRIMARYまたはASSISTANTの教師のみ利用できます。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, authUid)
+}
+
+interface WriteHouseholdCheckpointRequest {
+  lessonRunId: string
+  phaseId: string
+  sequence: number
+  householdIds: string[]
+  idempotencyKey: string
+}
+
+/**
+ * Translates `writeCheckpoint`'s (Phase A, `lessonRuns/checkpoint.ts`) bare
+ * Error messages into HttpsError codes at the Callable boundary, same
+ * convention as `translateProcessRoundError` above.
+ */
+const translateWriteHouseholdCheckpointError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
+
+/**
+ * Teacher-facing checkpoint-write Callable — spec §13.18 (Task 13).
+ * Authorization mirrors `restoreCheckpointCallable` exactly (see
+ * `requireCheckpointAuthority` above). Reads every named household's
+ * CURRENT `HouseholdState` document (never trusting client-supplied state,
+ * same "read from Firestore, not from the request body" rule
+ * `submitHouseholdDecisionCallable` follows), builds the opaque snapshot
+ * payload with `buildHouseholdCheckpointSnapshot` (checkpointRestore.ts),
+ * and hands it to Phase A's generic `writeCheckpointWithAdminSdk` — no new
+ * Firestore schema, the `checkpoints` subcollection Phase A already owns is
+ * reused as-is.
+ */
+export const writeHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as WriteHouseholdCheckpointRequest
+  if (
+    !data.lessonRunId || !data.phaseId
+    || typeof data.sequence !== 'number' || !Number.isInteger(data.sequence) || data.sequence < 0
+    || !Array.isArray(data.householdIds) || data.householdIds.length === 0
+    || !data.householdIds.every((id) => typeof id === 'string' && id.length > 0)
+    || !data.idempotencyKey
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'lessonRunId、phaseId、sequence、householdIds（1件以上）、idempotencyKey は必須です。',
+    )
+  }
+
+  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+
+  const households: HouseholdState[] = []
+  for (const householdId of data.householdIds) {
+    const household = await getHouseholdStateWithAdminSdk(data.lessonRunId, householdId)
+    if (!household) throw new HttpsError('not-found', `対象の家庭の状態が見つかりません: ${householdId}`)
+    households.push(household)
+  }
+
+  try {
+    return await writeCheckpointWithAdminSdk({
+      lessonRunId: data.lessonRunId,
+      phaseId: data.phaseId,
+      sequence: data.sequence,
+      snapshot: buildHouseholdCheckpointSnapshot(households),
+      createdBy: 'TEACHER',
+      idempotencyKey: data.idempotencyKey,
+    })
+  } catch (error) {
+    throw translateWriteHouseholdCheckpointError(error)
+  }
+})
+
+interface RestoreHouseholdCheckpointRequest {
+  lessonRunId: string
+  checkpointId: string
+  reason: string
+  idempotencyKey: string
+}
+
+/**
+ * Translates `restoreCheckpoint`'s (Phase A) bare Error messages into
+ * HttpsError codes at the Callable boundary, same convention as
+ * `lessonRuns/onCall.ts`'s `translateRestoreCheckpointError`.
+ */
+const translateRestoreHouseholdCheckpointError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Checkpoint not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
+
+/**
+ * Writes every restored `HouseholdState` back to its own document at
+ * `lessonRuns/{lessonRunId}/households/{householdId}` — the same path and
+ * `tx.set` shape `getOrInitHouseholdState` (Task 10, households/repository.ts)
+ * writes to, via the same `householdRepositoryWithAdminSdk()` transaction
+ * wiring. This is the one place Task 13 departs from Phase A's own
+ * `restoreCheckpointCallable`, which does NOT write anything back (Phase
+ * A's LessonRun is event-sourced and append-only by design — see
+ * `checkpoint.ts`'s doc comment: "'Restore' is append, not rewind"). A
+ * `HouseholdState` document is not event-sourced, though — it IS the
+ * current, mutable state a household is in, read directly by
+ * `submitHouseholdDecisionCallable`/`processRoundCallable` on every call —
+ * so restoring a checkpoint here must overwrite those documents, or
+ * "restore" would silently do nothing for home economics. All households
+ * are written back inside a single transaction so a mid-restore failure
+ * cannot leave some households restored and others not.
+ */
+const writeRestoredHouseholdsToFirestore = (lessonRunId: string, households: HouseholdState[]): Promise<void> =>
+  householdRepositoryWithAdminSdk().runTransaction(async (tx) => {
+    for (const household of households) {
+      tx.set(`lessonRuns/${lessonRunId}/households/${household.householdId}`, household as unknown as Record<string, unknown>)
+    }
+  })
+
+/**
+ * Teacher-facing checkpoint-restore Callable — spec §13.18 (Task 13).
+ * Authorization mirrors `restoreCheckpointCallable` exactly (see
+ * `requireCheckpointAuthority` above). First delegates to Phase A's generic
+ * `restoreCheckpointWithAdminSdk` to authorize-then-record the restore
+ * (increments `LessonRun.restoreGeneration`, appends a
+ * `CHECKPOINT_RESTORED` LessonEvent) — same as
+ * `restoreCheckpointCallable`. Phase A's generic layer treats `snapshot` as
+ * `unknown` and never reads it, so after that call this Callable reads the
+ * checkpoint document's own `snapshot` field back out, decodes it with
+ * `restoreHouseholdsFromSnapshot` (checkpointRestore.ts), and writes the
+ * restored `HouseholdState`s back to Firestore — see
+ * `writeRestoredHouseholdsToFirestore`'s doc comment for why this Callable
+ * does that write and Phase A's own restore flow does not.
+ */
+export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as RestoreHouseholdCheckpointRequest
+  if (!data.lessonRunId || !data.checkpointId || !data.reason?.trim() || !data.idempotencyKey) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、checkpointId、reason、idempotencyKey は必須です。')
+  }
+
+  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+
+  let restoreResult
+  try {
+    restoreResult = await restoreCheckpointWithAdminSdk({
+      lessonRunId: data.lessonRunId, checkpointId: data.checkpointId,
+      reason: data.reason, actorId: request.auth.uid, idempotencyKey: data.idempotencyKey,
+    })
+  } catch (error) {
+    throw translateRestoreHouseholdCheckpointError(error)
+  }
+
+  const checkpointSnap = await getFirestore().doc(`lessonRuns/${data.lessonRunId}/checkpoints/${data.checkpointId}`).get()
+  if (!checkpointSnap.exists) throw new HttpsError('not-found', 'Checkpoint not found')
+  const snapshot = checkpointSnap.get('snapshot') as HouseholdCheckpointSnapshot
+  const restoredHouseholds = restoreHouseholdsFromSnapshot(snapshot)
+  await writeRestoredHouseholdsToFirestore(data.lessonRunId, restoredHouseholds)
+
+  return { ...restoreResult, restoredHouseholdIds: restoredHouseholds.map((household) => household.householdId) }
 })
