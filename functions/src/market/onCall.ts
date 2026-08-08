@@ -1,9 +1,13 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
+import { isCallerTeacher } from '../organizations/onCall'
+import { requireActiveOrgMember } from '../organizations/authorization'
 import { createPendingOrder, getOrder as getOrderFromRepository, ordersRepositoryWithAdminSdk, transitionOrderStatus } from '../lessonRuns/orders/repository'
 import { applySoftLockForNewOrder, getOrInitTeamAccount, releaseSoftLock, teamAccountsRepositoryWithAdminSdk } from '../lessonRuns/teamAccounts/repository'
+import { canControlLesson } from '../lessonRuns/authorization'
 import { cancelOrder } from './cancelOrder'
 import { submitOrder } from './submitOrder'
+import { pauseMarketWithAdminSdk } from './pauseMarket'
 
 /**
  * Placeholder starting cash until a per-lessonRun/market-content field for
@@ -201,4 +205,38 @@ export const cancelOrderCallable = onCall({ region: 'asia-northeast1' }, async (
   } catch (error) {
     throw translateCancelOrderError(error)
   }
+})
+
+interface PauseMarketRequest {
+  lessonRunId: string
+}
+
+/**
+ * Teacher-facing market-stop Callable — spec §12.25. Authorization mirrors
+ * Phase A Task 7 Step 6's `restoreCheckpointCallable` pattern
+ * (`lessonRuns/onCall.ts`): caller must be a teacher, an active member of
+ * the lessonRun's org, and hold a `teacherRoles` role authorized for the
+ * `STOP_MARKET` `LessonControlAction` — `canControlLesson` (Phase B,
+ * `lessonRuns/authorization.ts`) already restricts `STOP_MARKET` to
+ * `['PRIMARY']`, so this reuses that table rather than re-deriving the
+ * PRIMARY-only rule locally.
+ */
+export const pauseMarketCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as PauseMarketRequest
+  if (!data.lessonRunId) throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, 'PRIMARY' | 'ASSISTANT' | 'VIEWER'> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'STOP_MARKET')) {
+    throw new HttpsError('permission-denied', '主担当教師のみ市場を停止できます。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  await pauseMarketWithAdminSdk(data.lessonRunId)
 })
