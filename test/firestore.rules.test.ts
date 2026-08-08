@@ -261,6 +261,41 @@ describe('checkpoints are append-only and restoreGeneration only moves forward',
   })
 })
 
+// Task 5 (Phase C): orders are the system of record for buy/sell
+// submissions, but createPendingOrder/transitionOrderStatus are Admin
+// SDK-only (functions/src/lessonRuns/orders/repository.ts). Students read
+// their team's order state via the RTDB lessonRunTeamState projection
+// (Task 13), and teachers via a Callable — neither ever reads Firestore
+// orders directly, so unlike events/checkpoints/participants this
+// subcollection denies client reads too, not just writes.
+describe('lessonRuns orders subcollection is Functions-only', () => {
+  it('rejects a direct client write to an order, even by the primary teacher', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'RUNNING' })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-1', 'orders', 'order-x'), {
+      status: 'FILLED', executionPrice: 999999,
+    }))
+  })
+
+  it('rejects a direct client read of an order, even by the primary teacher', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'RUNNING' })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', 'orders', 'order-1'), { status: 'PENDING' })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(getDoc(doc(owner, 'lessonRuns', 'run-1', 'orders', 'order-1')))
+  })
+
+  it('denies all client read/write of the order idempotency store', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'orderIdempotency', 'some-key')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { orderId: 'order-1' }))
+  })
+})
+
 // Task 2: participants/teams/responses/results are Firestore's system of
 // record for lesson-run membership, but students never read Firestore
 // directly — they subscribe to the independent lessonRunMembership/

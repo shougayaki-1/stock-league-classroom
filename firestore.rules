@@ -96,6 +96,16 @@ service cloud.firestore {
       match /eventIdempotency/{key} { allow read, write: if false; }
       match /meta/{docId} { allow read, write: if false; }
 
+      // Market orders (Phase C, spec §12.12/§12.13). Students never read
+      // orders directly — they subscribe to the RTDB lessonRunTeamState
+      // projection instead (Task 13); teachers go through a Callable.
+      // createPendingOrder/transitionOrderStatus are Admin SDK only.
+      match /orders/{orderId} {
+        allow read: if false;
+        allow write: if false;
+      }
+      match /orderIdempotency/{key} { allow read, write: if false; }
+
       match /checkpoints/{checkpointId} {
         allow get, list: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
