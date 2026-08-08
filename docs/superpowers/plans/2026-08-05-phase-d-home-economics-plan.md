@@ -536,10 +536,11 @@ describe('HomeEconomicsContent defaults', () => {
         lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
         eventProbabilityOverrides: {}, internalRiskFactors: {},
       }],
-      assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+      assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [], publicSupportPrograms: [],
       roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
       taxAndSocialInsuranceModelVersion: 1,
       economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+      borrowingAllowed: false,
       goalPackage: 'EMERGENCY_FUND',
       evaluationWeights: {
         lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
@@ -594,6 +595,19 @@ export interface HomeEconomicsEvaluationWeights {
   reflection: number
 }
 
+/** Spec §13.10. Eligibility is a simplified income-threshold check — "制度の完全再現を目的にしない". */
+export interface PublicSupportProgram {
+  id: string
+  label: string
+  /** Student-facing plain description of the condition (e.g. "世帯収入が400万円未満"). */
+  conditionDescription: string
+  /** null = no income restriction (always eligible on this axis). */
+  maxHouseholdIncomeYen: number | null
+  /** §13.10: "自動適用か申請選択かを教材で設定". */
+  applicationMode: 'AUTOMATIC' | 'APPLICATION_REQUIRED'
+  benefitAmountYen: number
+}
+
 /**
  * All spec §28-equivalent default values for home economics live here as
  * field defaults, not scattered across engine code (spec §30-10) — same
@@ -605,6 +619,7 @@ export interface HomeEconomicsContent {
   insuranceProducts: InsuranceProduct[]
   lifeEvents: LifeEventDefinition[]
   liabilities: Liability[]
+  publicSupportPrograms: PublicSupportProgram[]
   /** §13.1. Default 5. */
   roundYears: RoundYears
   /** §13.3. */
@@ -612,6 +627,8 @@ export interface HomeEconomicsContent {
   /** §13.8: "数値・式の版を教材版へ固定する" — this integer is the version tag templateValidation/annualCashFlow pin their tax/social-insurance formula to. Default 1. */
   taxAndSocialInsuranceModelVersion: number
   economicFactors: EconomicFactors
+  /** §13.13: whether the template permits emergency borrowing at all — Task 8's `buildShortfallOptions` reads this. Default false. */
+  borrowingAllowed: boolean
   /** §13.16. */
   goalPackage: GoalPackage
   /** §13.33-equivalent (§13.17). Must sum to 1; validated by `validateHomeEconomicsContent`. */
@@ -659,10 +676,11 @@ const baseContent = (overrides: Partial<HomeEconomicsContent> = {}): HomeEconomi
     lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
     eventProbabilityOverrides: {}, internalRiskFactors: {},
   }],
-  assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+  assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [], publicSupportPrograms: [],
   roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
   taxAndSocialInsuranceModelVersion: 1,
   economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+  borrowingAllowed: false,
   goalPackage: 'EMERGENCY_FUND',
   evaluationWeights: {
     lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
@@ -1728,6 +1746,114 @@ Expected: PASS
 ```bash
 git add functions/src/homeEconomics/engine/shortfallOptions.ts functions/src/homeEconomics/engine/shortfallOptions.test.ts
 git commit -m "feat: add shortfall-detection and resolution-options engine, never auto-bankrupts"
+```
+
+---
+
+### Task 9: 公的支援モデル
+
+統合仕様書 §13.10を実装する。純粋関数。**制度の完全再現を目的にしない**（§13.10）——世帯収入のしきい値による単純な適格判定に留める。`applicationMode`（自動適用/申請選択）は教材設定（`PublicSupportProgram`、Task2で`HomeEconomicsContent.publicSupportPrograms`として追加済み）で切り替える。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/publicSupport.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `PublicSupportProgram`（Task2）
+- Produces: `determineEligiblePrograms(programs, householdIncomeYen): PublicSupportProgram[]`、`computePublicSupportAvailableYen(eligiblePrograms, appliedProgramIds): number`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/publicSupport.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { PublicSupportProgram } from '@stock-league/household-authoring-content'
+import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
+
+const childcareSupport: PublicSupportProgram = {
+  id: 'childcare', label: '子育て支援金', conditionDescription: '世帯収入が500万円未満',
+  maxHouseholdIncomeYen: 5000000, applicationMode: 'AUTOMATIC', benefitAmountYen: 200000,
+}
+const emergencyGrant: PublicSupportProgram = {
+  id: 'emergency', label: '緊急給付金', conditionDescription: '所得制限なし',
+  maxHouseholdIncomeYen: null, applicationMode: 'APPLICATION_REQUIRED', benefitAmountYen: 100000,
+}
+
+describe('determineEligiblePrograms', () => {
+  it('includes a program only when household income is under its threshold', () => {
+    expect(determineEligiblePrograms([childcareSupport], 4000000)).toEqual([childcareSupport])
+    expect(determineEligiblePrograms([childcareSupport], 6000000)).toEqual([])
+  })
+
+  it('a null maxHouseholdIncomeYen means no income restriction — always eligible on that axis', () => {
+    expect(determineEligiblePrograms([emergencyGrant], 100000000)).toEqual([emergencyGrant])
+  })
+})
+
+describe('computePublicSupportAvailableYen', () => {
+  it('sums AUTOMATIC eligible programs without needing to be in appliedProgramIds', () => {
+    expect(computePublicSupportAvailableYen([childcareSupport], [])).toBe(200000)
+  })
+
+  it('APPLICATION_REQUIRED programs only count when their id is in appliedProgramIds (spec §13.10: 申請選択)', () => {
+    expect(computePublicSupportAvailableYen([emergencyGrant], [])).toBe(0)
+    expect(computePublicSupportAvailableYen([emergencyGrant], ['emergency'])).toBe(100000)
+  })
+
+  it('combines both modes correctly', () => {
+    expect(computePublicSupportAvailableYen([childcareSupport, emergencyGrant], ['emergency'])).toBe(300000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/publicSupport.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/publicSupport.ts`:
+
+```ts
+import type { PublicSupportProgram } from '@stock-league/household-authoring-content'
+
+/** Spec §13.10: "条件・効果を簡略表示" — a single income-threshold check, not a full eligibility engine. */
+export const determineEligiblePrograms = (
+  programs: PublicSupportProgram[],
+  householdIncomeYen: number,
+): PublicSupportProgram[] =>
+  programs.filter((program) => program.maxHouseholdIncomeYen === null || householdIncomeYen < program.maxHouseholdIncomeYen)
+
+/**
+ * Spec §13.10: "自動適用か申請選択かを教材で設定" — AUTOMATIC programs
+ * always count once eligible; APPLICATION_REQUIRED ones only count when
+ * the student actually chose to apply for them this round (via Task 10's
+ * DECISION submission, surfaced as one of Task 8's shortfall options or a
+ * standalone application choice).
+ */
+export const computePublicSupportAvailableYen = (
+  eligiblePrograms: PublicSupportProgram[],
+  appliedProgramIds: string[],
+): number =>
+  eligiblePrograms.reduce((sum, program) => {
+    if (program.applicationMode === 'AUTOMATIC') return sum + program.benefitAmountYen
+    return appliedProgramIds.includes(program.id) ? sum + program.benefitAmountYen : sum
+  }, 0)
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/publicSupport.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/publicSupport.ts functions/src/homeEconomics/engine/publicSupport.test.ts
+git commit -m "feat: add simplified public-support eligibility and benefit engine"
 ```
 
 ---
