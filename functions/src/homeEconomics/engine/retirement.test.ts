@@ -28,4 +28,14 @@ describe('computeVoluntaryAssetDrawdown', () => {
     expect(result.newAssetHoldingsYen.DOMESTIC_STOCK).toBe(800000)
     expect(result.newAssetHoldingsYen.FOREIGN_STOCK).toBe(400000)
   })
+
+  it('conserves money exactly: sum(newAssetHoldingsYen) + withdrawnYen equals original totalHeldYen (no rounding errors)', () => {
+    const result = computeVoluntaryAssetDrawdown({
+      requestedYen: 1000000,
+      assetHoldingsYen: { A: 1000000, B: 700000, C: 333333 },
+    })
+    const originalTotal = 1000000 + 700000 + 333333
+    const newTotal = Object.values(result.newAssetHoldingsYen).reduce((sum, v) => sum + v, 0) + result.withdrawnYen
+    expect(newTotal).toBe(originalTotal)
+  })
 })

@@ -23,12 +23,20 @@ export interface VoluntaryDrawdownResult {
  * student built up (evaluated in Task 16, spec §13.17).
  */
 export const computeVoluntaryAssetDrawdown = (input: VoluntaryDrawdownInput): VoluntaryDrawdownResult => {
-  const totalHeldYen = Object.values(input.assetHoldingsYen).reduce((sum, v) => sum + v, 0)
+  const entries = Object.entries(input.assetHoldingsYen)
+  const totalHeldYen = entries.reduce((sum, [, v]) => sum + v, 0)
   const withdrawnYen = Math.min(input.requestedYen, totalHeldYen)
   const newAssetHoldingsYen: Record<string, number> = {}
-  for (const [assetType, heldYen] of Object.entries(input.assetHoldingsYen)) {
+  let withdrawnSoFar = 0
+  entries.forEach(([assetType, heldYen], i) => {
+    if (i === entries.length - 1) {
+      newAssetHoldingsYen[assetType] = heldYen - (withdrawnYen - withdrawnSoFar)
+      return
+    }
     const share = totalHeldYen === 0 ? 0 : heldYen / totalHeldYen
-    newAssetHoldingsYen[assetType] = Math.round(heldYen - withdrawnYen * share)
-  }
+    const withdrawnFromThis = Math.round(withdrawnYen * share)
+    newAssetHoldingsYen[assetType] = heldYen - withdrawnFromThis
+    withdrawnSoFar += withdrawnFromThis
+  })
   return { withdrawnYen, newAssetHoldingsYen }
 }
