@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 import { validateSocialStudiesMarketContent } from '../market/templateValidation'
+import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
 
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
@@ -59,6 +60,14 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     if (content.subject === 'SOCIAL_STUDIES' && content.socialStudiesMarket) {
       const result = validateSocialStudiesMarketContent(
         content.socialStudiesMarket as Parameters<typeof validateSocialStudiesMarketContent>[0],
+      )
+      if (!result.valid) throw new Error(result.errors[0])
+    }
+
+    const contentWithHomeEconomics = version.content as { subject: string; homeEconomics?: unknown }
+    if (contentWithHomeEconomics.subject === 'HOME_ECONOMICS' && contentWithHomeEconomics.homeEconomics) {
+      const result = validateHomeEconomicsContent(
+        contentWithHomeEconomics.homeEconomics as Parameters<typeof validateHomeEconomicsContent>[0],
       )
       if (!result.valid) throw new Error(result.errors[0])
     }

@@ -35,3 +35,10 @@ describe('SocialStudiesMarketContent defaults', () => {
     expect(content.socialStudiesMarket).toBeUndefined()
   })
 })
+
+describe('LessonContent.homeEconomics', () => {
+  it('is optional so SOCIAL_STUDIES content is unaffected', () => {
+    const content: LessonContent = { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }
+    expect(content.homeEconomics).toBeUndefined()
+  })
+})

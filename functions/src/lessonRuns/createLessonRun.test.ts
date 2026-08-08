@@ -90,4 +90,32 @@ describe('createLessonRun', () => {
       templateId: 'tpl-2', primaryTeacherUid: 'teacher-a',
     })).rejects.toThrow('企業は3社以上必要です。')
   })
+
+  it('rejects creating a HOME_ECONOMICS run whose templateSnapshot has zero households', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-3', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-3/versions/v1', {
+      templateId: 'tpl-3', orgId: 'personal_teacher-a',
+      content: {
+        schemaVersion: 1, title: 't', description: '', subject: 'HOME_ECONOMICS',
+        homeEconomics: {
+          households: [], assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [], publicSupportPrograms: [],
+          roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+          taxAndSocialInsuranceModelVersion: 1,
+          economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+          borrowingAllowed: false,
+          goalPackage: 'EMERGENCY_FUND',
+          evaluationWeights: {
+            lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
+            diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15,
+          },
+        },
+      },
+    })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-3', orgId: 'personal_teacher-a',
+      templateId: 'tpl-3', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('担当プロフィールが1件も設定されていません。')
+  })
 })

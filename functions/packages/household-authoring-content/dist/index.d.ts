@@ -79,3 +79,63 @@ export interface Liability {
     annualInterestRatePercent: number;
     remainingYears: number;
 }
+/** Spec §13.1: standard is 5 years/round, 1 year/round is optional (§13.1). */
+export type RoundYears = 1 | 5;
+/** Spec §13.3: lesson format — which mode students experience. */
+export type CourseFormat = 'COMMON_CONDITIONS' | 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM';
+export interface EconomicFactors {
+    /** Spec §13.11. Reflected into living expenses (annualCashFlow.ts, Task 3). */
+    inflationPercent: number;
+    /** Spec §13.11. Reflected into deposits/borrowing. */
+    interestRatePercent: number;
+    /** Spec §13.11. Baseline for assetReturn.ts (Task 4). */
+    marketReturnPercent: number;
+}
+/** Spec §13.16: which concepts are shown/hidden per teacher-selected goal focus. */
+export type GoalPackage = 'EMERGENCY_FUND' | 'HOME_PURCHASE' | 'EDUCATION_FUND' | 'RETIREMENT_PREP' | 'RISK_DIVERSIFICATION' | 'INSURANCE_AND_PREPAREDNESS' | 'OVERALL_BALANCE';
+export interface HomeEconomicsEvaluationWeights {
+    lifeGoalAchievement: number;
+    emergencyFundAdequacy: number;
+    stability: number;
+    diversification: number;
+    borrowingBurden: number;
+    reflection: number;
+}
+/** Spec §13.10. Eligibility is a simplified income-threshold check — "制度の完全再現を目的にしない". */
+export interface PublicSupportProgram {
+    id: string;
+    label: string;
+    /** Student-facing plain description of the condition (e.g. "世帯収入が400万円未満"). */
+    conditionDescription: string;
+    /** null = no income restriction (always eligible on this axis). */
+    maxHouseholdIncomeYen: number | null;
+    /** §13.10: "自動適用か申請選択かを教材で設定". */
+    applicationMode: 'AUTOMATIC' | 'APPLICATION_REQUIRED';
+    benefitAmountYen: number;
+}
+/**
+ * All spec §28-equivalent default values for home economics live here as
+ * field defaults, not scattered across engine code (spec §30-10) — same
+ * pattern as `SocialStudiesMarketContent` (Phase C Task2).
+ */
+export interface HomeEconomicsContent {
+    households: HouseholdProfile[];
+    assets: AssetPosition[];
+    insuranceProducts: InsuranceProduct[];
+    lifeEvents: LifeEventDefinition[];
+    liabilities: Liability[];
+    publicSupportPrograms: PublicSupportProgram[];
+    /** §13.1. Default 5. */
+    roundYears: RoundYears;
+    /** §13.3. */
+    courseFormat: CourseFormat;
+    /** §13.8: "数値・式の版を教材版へ固定する" — this integer is the version tag templateValidation/annualCashFlow pin their tax/social-insurance formula to. Default 1. */
+    taxAndSocialInsuranceModelVersion: number;
+    economicFactors: EconomicFactors;
+    /** §13.13: whether the template permits emergency borrowing at all — Task 8's `buildShortfallOptions` reads this. Default false. */
+    borrowingAllowed: boolean;
+    /** §13.16. */
+    goalPackage: GoalPackage;
+    /** §13.33-equivalent (§13.17). Must sum to 1; validated by `validateHomeEconomicsContent`. */
+    evaluationWeights: HomeEconomicsEvaluationWeights;
+}
