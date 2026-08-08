@@ -1,0 +1,497 @@
+# Phase D: 家庭科完成（生活設計シミュレーション）Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **作成中。Task 1〜4のみ詳細まで記述済み。Task 5〜17は §「タスク一覧」の1行タイトルのみで、ステップ・コード例・検証方法が書かれていない。** 続きを書く場合は、Task 1〜4と同じ密度（Files / Interfaces / Step ごとのテストコード / Run / Expected）で Task 5から埋めること。書き終わったタスクから随時ファイルへ保存し、一度に全部書こうとしないこと（Phase C計画で同じ問題が起き、前の試行が2回失敗した実績がある）。
+
+> **正本は統合仕様書。** `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`（§7、§13、§27.4、§28）と `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md`（矛盾解消G・H）が優先する。本計画と両文書が矛盾する場合は両文書を優先し、本計画側の誤りとして扱う。
+
+> **前提: Phase A・B・Cは完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`functions/packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`のRTDBパス分離、`functions/packages/*`共有パッケージパターン、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行・入力ウィジェット9種（`@stock-league/lesson-inputs`）・回答state machine・チェックポイント・復帰コードが揃っている。Phase Cの実装計画は`docs/superpowers/plans/2026-08-05-phase-c-market-plan.md`を、共有パッケージ配置・トランザクション規律・レビュー体制の実例として参照する。**Phase Dは市場エンジン（Phase C）に依存しない**（矛盾解消G、後述）——Phase Bのみに依存する。
+
+> **矛盾解消G（家庭科と`MARKET`フェーズの関係、必読）:** 家庭科は`MARKET`フェーズを使わない。資産配分や購入の判断は`DECISION`フェーズで行う。理由は時間の単位が異なるため——社会科の市場は3秒区間の実時間シミュレーションだが、家庭科は1ラウンド＝5年（既定）で資産の収益は年次収益率。`LessonPhase.type`（Phase B `functions/src/lessonRuns/phases/validation.ts`）は既に`'DECISION'`を含み、`HOME_ECONOMICS`教材が`MARKET`フェーズを含む場合は`validateLessonForStart`が`HOME_ECONOMICS_MARKET_FORBIDDEN`で拒否する実装が既にPhase B Task5で完了している——本計画はこのバリデーションの上に構築し、再実装しない。
+
+> **矛盾解消H（`REFLECTION`と市場停止の関係）:** 家庭科には市場という概念自体がないため直接は関係しないが、`REFLECTION`遷移が「授業実施状態を後戻りなしで進める」層であるという整理はPhase Dの各ラウンド終了処理にもそのまま適用される——ラウンド内の一時停止と`REFLECTION`遷移を混同しないこと。
+
+> **社会科（Phase C）との比較で読むと理解しやすい設計判断:**
+> - Phase Cの「3秒バッチ」に相当するのが、Phase Dの「ラウンド（既定5年）」。ただし駆動方式は全く異なる——Cは`Cloud Tasksの自己連鎖`だが、Dの各ラウンドは`DECISION`フェーズの提出完了（`SUBMISSION_BASED`）または教師操作（`TEACHER_CONTROLLED`）で進むため、Cloud Tasks・バッチスケジューラは不要。
+> - Phase Cの「価格計算エンジン」に相当するのが、Phase Dの「年次計算エンジン」（収入・支出・税・資産収益率・住宅ローン返済）。ただし乱数を使うのはイベント発生判定と資産収益率のノイズ項のみ——`functions/packages/deterministic-random`の`deriveSeed`/`mulberry32`をCと全く同じ規律で使う。
+> - Phase Cの「公開/非公開データ分離」の原則はDにも同一に適用される——保険の給付条件詳細や教材作成者用の内部係数（イベント発生確率の内部パラメータ等）を生徒に見せない設計。
+> - Phase Cが「チーム」を主語にしていたのに対し、Dは「チームが担当する人物（プロフィール）」が主語になる（§13.3「役割・人物別」「チーム内複数人物」モードがあるため、1チームが複数`HouseholdState`を持ちうる）。
+
+**Goal:** 家庭科・生活設計シミュレーション（統合仕様書§13）を、Phase A/Bの共通授業基盤の上に実装する。生徒はチーム（または人物）ごとに架空プロフィールを担当し、ラウンドごとに収入・支出・資産配分・保険・住宅・イベント対応を`DECISION`フェーズで判断し、年次計算エンジンがその結果を反映、最終的に5観点（生活目標達成・生活安定性・分散・借入負担・振り返り等）で評価される。
+
+**Architecture:** 全ての計算は純粋関数として`functions/src/homeEconomics/engine/`に実装し、Callable/onCallは薄いI/O層にする（Phase Cの`functions/src/market/engine/`と同じ分離方針）。`HouseholdState`を「生徒に見せてよい公開ビュー」と「教材作成者のみが読み書きする非公開authoring型（イベント発生確率、内部係数）」に型レベルで分離する（Phase C Task1の`market-public-content`/`market-authoring-content`パターンをそのまま踏襲）。ラウンド進行はPhase Bの`transitionPhase`（フェーズ遷移）とTask11（本計画）の「ラウンド確定」処理を組み合わせる——Cloud Tasksのような自己連鎖機構は持たず、常に教師操作またはチーム全員の提出完了がトリガーになる。
+
+**Tech Stack:** TypeScript, Firebase Firestore（`lessonRuns/{id}/households/{householdId}`サブコレクション、トランザクション）, Firebase Realtime Database（`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`の家庭科版フィールド拡張）, Cloud Functions for Firebase v2（`onCall`のみ、Cloud Tasksは使わない）, `functions/packages/deterministic-random`, `@stock-league/lesson-inputs`（既存9ウィジェットを`DECISION`フェーズの判断入力に再利用）, Vitest, `@firebase/rules-unit-testing`。
+
+## Global Constraints
+
+- 各タスクは完了時に `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*` の `verify`）を通すこと。
+- 乱数は`Math.random()`禁止。`functions/packages/deterministic-random`の`deriveSeed`/`mulberry32`のみを使う。シード導出式はPhase Cと同じ形式に揃え、`derive([randomSeed, restoreGeneration, householdId, roundIndex])`のように配列引数で呼ぶ（Phase C Task3で確定した`deriveSeed`の実際のシグネチャに合わせること——実装着手時に`functions/packages/deterministic-random/src/index.ts`を確認する）。
+- 生徒へ教材作成者専用の内部係数（イベント発生確率パラメータ、保険の内部リスク計算式、他チームのプロフィール）を送らない。型を`packages/household-public-content`相当（生徒向けDTO）と`packages/household-authoring-content`相当（教師/サーバー用）に分け、間引き変換関数はFunctions内の1箇所に固定する（Phase C Task1の設計をそのまま踏襲、詳細はTask1参照）。
+- **新規共有npmパッケージは`functions/packages/`配下に配置すること。リポジトリルート直下の`packages/`に置くと、Firebase Functionsのデプロイパッケージング（`functions/`ディレクトリのみが対象）を壊す。** これはPhase A Task1・Phase B Task1/7・Phase C Task1で繰り返し発生した実バグであり、本計画のタスクブリーフのコード例がルート直下`packages/`を指している箇所があれば、実装時に`functions/packages/`へ読み替えること。
+- **`functions/`から`src/`への相対パスimportを禁止する。** tscの`rootDir`境界を壊し、Cloud Functionsデプロイバンドルへ`src/`が混入するリスクを生む。Phase C Task2・15・16で繰り返し発見・修正された既知の誤りパターン——共有される型は必ず`functions/packages/*`workspaceパッケージに定義し、`src/`側はそこからre-exportする。
+- 冪等性: 判断提出・ラウンド確定・チェックポイント作成のすべてに`idempotencyKey`を要求し、`functions/src/lib/idempotency.ts`の`idempotencyDocumentId`/`requestDigest`パターン（Phase A/B/C全体で一貫）を踏襲する。
+- Firestoreトランザクションは全read→全writeの順序を厳守する。このリポジトリ最重要の既知バグパターンで、Phase A/B/Cを通じて複数回のCritical指摘の原因になっている。
+- エラー処理規約: 純粋関数/DI層は素の`Error`をthrow、Callable境界（`onCall.ts`）だけが`HttpsError`へ変換する。
+- 新規Callableを`onCall.ts`に実装したら、必ず`functions/src/index.ts`からexportすること。過去に4回以上、この export漏れによってCallableがデプロイされない実装済みバグが発生している。
+- `LessonInputRenderer`（`@stock-league/lesson-inputs`、Phase B Task6）の既存9ウィジェットを最大限再利用し、家庭科専用の新規入力ウィジェット型を安易に追加しない——資産配分は`RankingInput`/`QuantityInput`、保険選択は`SingleChoiceInput`/`ReasonChoiceInput`等、既存の型で表現できないか先に検討する。
+- 本名は本人+自チームのみ、他チームには表示しない（§23.6、Phase B全体で徹底）。担当プロフィールが架空である旨（§13.4「これは授業用の架空プロフィールです」）を生徒画面に必ず表示する。
+- 保険は資産と型レベルで分離する（§13.6「資産配分円グラフへ保険を混ぜない」）——`HouseholdState.assets`と`HouseholdState.insuranceContracts`を同一配列にしない。
+- 数値・式の版を教材版へ固定する（§13.8「税・社会保険」）——教材publish後に税率式を変更しても進行中の授業へ影響しない、というPhase A/Bのtemplate/version不変性パターンをそのまま踏襲する。
+
+---
+
+## File Structure
+
+| File | Change |
+| --- | --- |
+| `functions/packages/household-public-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 1。生徒公開DTO: `AssetPositionPublicView`、`InsuranceContractPublicView`、`HouseholdProfilePublicView`等） |
+| `functions/packages/household-authoring-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 1。非公開authoring型: `HouseholdProfile`、`AssetPosition`、`InsuranceProduct`、`LifeEventDefinition`、内部係数を含む） |
+| `functions/src/homeEconomics/toPublicView.ts`, `.test.ts` | Create（Task 1。private→public変換関数） |
+| `src/lib/lessonTemplates/types.ts` | Modify（Task 2。`LessonContent`に`homeEconomics?: HomeEconomicsContent`を追加） |
+| `functions/src/homeEconomics/templateValidation.ts`, `.test.ts` | Create（Task 2。プロフィール7項目必須、税・社会保険式の版固定等の教材バリデーション） |
+| `functions/src/homeEconomics/engine/annualCashFlow.ts`, `.test.ts` | Create（Task 3。年単位の収入・支出集計、固定費/変動費区別） |
+| `functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`, `.test.ts` | Create（Task 3。簡略税・社会保険式） |
+| `functions/src/homeEconomics/engine/assetReturn.ts`, `.test.ts` | Create（Task 4。年次収益率、経済要因（物価・金利・景気）反映、決定的PRNGによるノイズ項） |
+| `functions/src/homeEconomics/engine/mortgage.ts`, `.test.ts` | Create（Task 5。元利均等返済） |
+| `functions/src/homeEconomics/engine/insurance.ts`, `.test.ts` | Create（Task 6。保険料・給付条件の簡略計算） |
+| `functions/src/homeEconomics/engine/lifeEvents.ts`, `.test.ts` | Create（Task 7。イベント発生判定・公開方法・効果適用） |
+| `functions/src/homeEconomics/engine/shortfallOptions.ts`, `.test.ts` | Create（Task 8。資金不足時の選択肢提示） |
+| `functions/src/homeEconomics/engine/publicSupport.ts`, `.test.ts` | Create（Task 9。公的支援の条件判定・効果） |
+| `functions/src/lessonRuns/households/repository.ts`, `.test.ts` | Create（Task 10。`HouseholdState`Firestore正本、チーム/人物単位） |
+| `functions/src/homeEconomics/submitDecision.ts`, `.test.ts`, `onCall.ts` / `src/lib/homeEconomics/submitDecision.ts`, `.test.ts` | Create（Task 10。`DECISION`フェーズの判断提出Callable、Phase B `saveResponseDraft`/`submitProposal`パターンを再利用） |
+| `functions/src/homeEconomics/engine/settleRound.ts`, `.test.ts` | Create（Task 11。ラウンド確定の中核純粋関数、Task3〜9を統合するオーケストレーター） |
+| `functions/src/homeEconomics/processRound.ts`, `.test.ts`, `onCall.ts` | Create（Task 11。Admin SDKラッパー、教師操作またはチーム全員提出完了で発火） |
+| `functions/src/homeEconomics/engine/retirement.ts`, `.test.ts` | Create（Task 12。退職後の収入減少・簡略年金・資産取り崩し・長寿リスク） |
+| `functions/src/homeEconomics/checkpointRestore.ts`, `.test.ts` | Create（Task 13。人生段階の途中再開、欠席者補完、Phase A `LessonCheckpoint`の家庭科版拡張） |
+| `functions/src/homeEconomics/goalPackage.ts`, `.test.ts` | Create（Task 14。目的に関係しない概念の非表示、教材設定による表示絞り込み） |
+| `src/lib/lessonRuns/liveTypes.ts` | Modify（Task 15。`LessonRunPublicState`/`LessonRunPrivateState`/`LessonRunTeamState`へ家庭科フィールド追加） |
+| `database.rules.json` | Modify（Task 15。既存の3ノードへ家庭科フィールドを追加するのみ、新規ノード不要——Phase Cが確立した3分離パターンを流用） |
+| `src/components/homeEconomics/` 配下（教師・生徒画面） | Create（Task 15。Phase B `LessonInputRenderer`/`LessonControlRoom`パターンの家庭科版） |
+| `functions/src/homeEconomics/evaluation.ts`, `.test.ts` | Create（Task 16。§13.17の観点別評価、Phase C Task16の5観点評価と同じ自動/ルーブリック分離） |
+| `test/household-lifecycle.acceptance.test.ts` | Create（Task 17。§27.4受け入れテスト6項目） |
+
+---
+
+## タスク一覧
+
+1. 資産・保険・イベント・プロフィールの型（公開/非公開分離）
+2. `LessonContent`拡張と家庭科教材バリデーション
+3. 年次収支エンジン（収入・支出集計、簡略税・社会保険式）
+4. 資産の年次収益率計算（経済要因反映、決定的PRNGノイズ）
+5. 住宅ローン計算（元利均等返済）
+6. 保険モデル（保険料・給付条件）
+7. ライフイベントエンジン（発生判定・公開方法・効果適用）
+8. 資金不足時の選択肢提示
+9. 公的支援モデル
+10. `HouseholdState`リポジトリと判断提出Callable（`DECISION`フェーズ）
+11. ラウンド確定処理の中核（年次計算エンジンの統合オーケストレーター）
+12. 退職後モデル
+13. 保存・再開（人生段階途中再開、欠席者補完、チェックポイント）
+14. 目標パッケージ（表示の絞り込み）
+15. RTDBライブスキーマ拡張と教師・生徒画面
+16. 家庭科の評価（観点別、自動/ルーブリック分離）
+17. §27.4受け入れテストとPhase D完了条件の確定
+
+---
+
+## 実装順とレビューゲート
+
+1. Task 1〜2: Phase E（Guided Lesson Builder）も依存する型・教材バリデーション契約。ここを先にレビューし、後続で名前を変えない。
+2. Task 3〜9: 年次計算エンジン群。各エンジンは独立した純粋関数で、Task11のオーケストレーターが後から統合する（Phase Cの価格計算・需給集計・資金拘束と同じ分解方針）。安全性レビュー（決定的PRNG・公開非公開分離）を必須にする。
+3. Task 10〜11: `DECISION`フェーズの判断提出とラウンド確定。end-to-endの生活設計フローをここで初めて通す。
+4. Task 12〜14: 退職後・保存再開・目標パッケージ。ラウンドをまたぐ長期状態管理。
+5. Task 15: 画面。§23の横断要件（本名非表示・架空プロフィール明示等）を検証する。
+6. Task 16〜17: 評価・受け入れテスト・完了条件確定。
+
+---
+
+### Task 1: 資産・保険・イベント・プロフィールの型（公開/非公開分離）
+
+統合仕様書 §13.4（コアプロフィール）・§13.5（資産）・§13.6（保険）・§13.9（住宅・ローン）・§13.12（イベント）を実装する。**生徒に見せる情報と教材作成者用の非公開の内部係数（イベント発生確率、保険の内部リスク計算パラメータ）を型で分離する**——Phase C Task1が確立した`market-public-content`/`market-authoring-content`の2パッケージ分離パターンをそのまま踏襲する。
+
+- `packages/household-public-content`（`@stock-league/household-public-content`）: 生徒向けDTO。クライアント`src/`（生徒UI）とFunctions`functions/`（間引き変換の出力先）の両方が依存する。
+- `packages/household-authoring-content`（`@stock-league/household-authoring-content`）: 非公開authoring型。クライアント`src/`（教師の教材作成UI）とFunctions`functions/`（年次計算エンジンの入力）の両方が依存する。
+
+`toPublicView.ts`（間引き変換関数そのもの）は`functions/`にだけ置く——「生徒に何を見せるかを決めるロジック」をサーバー側に固定する設計判断（Phase C Task1と同じ理由）。
+
+**Files:**
+- Create: `functions/packages/household-public-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
+- Create: `functions/packages/household-authoring-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
+- Modify: ルート`package.json`（`workspaces`に両パッケージを追加）, `functions/package.json`・`package.json`（依存に追加）
+- Create: `functions/src/homeEconomics/toPublicView.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Phase A/Bの型のみ利用）
+- Produces: `HouseholdProfilePublicView`、`AssetPositionPublicView`、`InsuranceContractPublicView`、`HouseholdProfile`、`AssetPosition`、`InsuranceProduct`、`LifeEventDefinition`、`Liability`、`toHouseholdProfilePublicView(profile)`、`toAssetPositionsPublicView(assets)`、`toInsuranceContractsPublicView(contracts)`
+
+- [ ] **Step 1: 公開DTOの失敗するテストを書く**
+
+`functions/packages/household-public-content/src/index.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { AssetPositionPublicView, HouseholdProfilePublicView } from './index'
+
+describe('HouseholdProfilePublicView', () => {
+  it('carries only the 7 core profile fields (spec §13.4), never authoring-only internals', () => {
+    const view: HouseholdProfilePublicView = {
+      householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+      annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+      family: '配偶者・子2人', housing: '賃貸マンション',
+      lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+      isFictional: true,
+    }
+    expect(Object.keys(view)).not.toContain('eventProbabilityOverrides')
+    expect(Object.keys(view)).not.toContain('internalRiskFactors')
+  })
+})
+
+describe('AssetPositionPublicView', () => {
+  it('never carries the internal expected-return/volatility coefficients', () => {
+    const view: AssetPositionPublicView = {
+      assetType: 'DOMESTIC_STOCK', valueYen: 500000,
+    }
+    expect(Object.keys(view)).not.toContain('expectedReturnPercent')
+    expect(Object.keys(view)).not.toContain('volatilityPercent')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions/packages/household-public-content && npx vitest run src/index.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `package.json`・`tsconfig.json`を作成する（`@stock-league/market-public-content`と同じ共有パッケージ構成）**
+
+`functions/packages/household-public-content/package.json`（`functions/packages/market-public-content/package.json`を実際に読んで完全に同じ形式に揃えること——`name`/`main`/`types`/`scripts`の`build`/`test`/`verify`/`check:dist`が既存パッケージと一致していること）:
+
+```json
+{
+  "name": "@stock-league/household-public-content",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "check:dist": "test -f dist/index.js || (echo 'dist/ missing — run npm run build' && exit 1)",
+    "verify": "npm run test && npm run build && npm run check:dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
+```
+
+`tsconfig.json`は`functions/packages/market-public-content/tsconfig.json`をそのままコピーし、`rootDir`/`outDir`のみ確認する。
+
+- [ ] **Step 4: 公開DTOを実装する**
+
+`functions/packages/household-public-content/src/index.ts`:
+
+```ts
+export type LifeStage = 'STUDENT' | 'INDEPENDENT' | 'FAMILY_FORMATION' | 'CHILD_REARING' | 'PRE_RETIREMENT' | 'RETIRED'
+
+/**
+ * Student-facing profile view (spec §13.4's 7 core fields). `isFictional`
+ * must always be `true` and is rendered in the UI as "これは授業用の架空
+ * プロフィールです" (spec §13.4) — never a real student's own data.
+ */
+export interface HouseholdProfilePublicView {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: LifeStage
+  isFictional: true
+}
+
+export type AssetType = 'CASH' | 'SAVINGS_DEPOSIT' | 'BOND' | 'DOMESTIC_STOCK' | 'FOREIGN_STOCK' | 'INVESTMENT_TRUST'
+
+/** Never carries expected-return/volatility coefficients — those are authoring-only (spec §13.15 "教師には計算式より影響の強さを見せる"). */
+export interface AssetPositionPublicView {
+  assetType: AssetType
+  valueYen: number
+}
+
+/**
+ * Spec §13.6: insurance is deliberately NOT part of the asset-allocation
+ * pie chart — kept as a fully separate type from AssetPositionPublicView,
+ * never merged into the same array or UI component.
+ */
+export interface InsuranceContractPublicView {
+  id: string
+  productName: string
+  premiumYenPerYear: number
+  coveredRisk: string
+  benefitDescription: string
+  contractYearsRemaining: number
+}
+
+export interface LiabilityPublicView {
+  id: string
+  kind: 'MORTGAGE' | 'OTHER_LOAN'
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+```
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions/packages/household-public-content && npx vitest run src/index.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: 非公開authoring型の失敗するテストを書く**
+
+`functions/packages/household-authoring-content/src/index.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdProfile, LifeEventDefinition } from './index'
+
+describe('HouseholdProfile (authoring)', () => {
+  it('carries the internal fields the public view must never receive', () => {
+    const profile: HouseholdProfile = {
+      householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+      annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+      family: '配偶者・子2人', housing: '賃貸マンション',
+      lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+      eventProbabilityOverrides: { JOB_LOSS: 0.05 },
+      internalRiskFactors: { healthRisk: 0.1 },
+    }
+    expect(profile.eventProbabilityOverrides.JOB_LOSS).toBe(0.05)
+  })
+})
+
+describe('LifeEventDefinition', () => {
+  it('has a disclosure mode distinct from its actual trigger probability (spec §13.12)', () => {
+    const event: LifeEventDefinition = {
+      id: 'job-loss', label: '失業', disclosureMode: 'HIDDEN',
+      triggerProbability: 0.05, effectDescription: '収入が一時的に0になる',
+    }
+    expect(event.disclosureMode).toBe('HIDDEN')
+    expect(event.triggerProbability).toBe(0.05)
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `package.json`・`tsconfig.json`を作成する**
+
+Step3と同じ構成で`functions/packages/household-authoring-content/package.json`を作成する（`name`のみ`@stock-league/household-authoring-content`に変更）。`@stock-league/household-public-content`への依存を追加する（`AssetType`/`LifeStage`等の共有enum型を再利用するため。依存は一方向——`household-authoring-content`が`household-public-content`を参照してよいが逆は禁止。Phase C Task1の`market-authoring-content`→`market-public-content`依存と同じ方向）。
+
+- [ ] **Step 9: 非公開authoring型を実装する**
+
+`functions/packages/household-authoring-content/src/index.ts`:
+
+```ts
+import type { AssetType, LifeStage } from '@stock-league/household-public-content'
+
+/**
+ * Teacher-authoring / server-internal type. Imported by BOTH `src/`
+ * (teacher's own material-authoring UI legitimately edits
+ * eventProbabilityOverrides/internalRiskFactors — the teacher is the
+ * author of these values) and `functions/` (the engine's input). What
+ * must never happen is a STUDENT receiving this data — that is enforced
+ * by Firestore rules (teacher read-only) and by
+ * `functions/src/homeEconomics/toPublicView.ts` being the only producer
+ * of what lands in the student-readable RTDB path, not by import
+ * restrictions. See `functions/src/market/toPublicView.ts` (Phase C
+ * Task1) for the identical architecture note.
+ */
+export interface HouseholdProfile {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: LifeStage
+  /** Hidden. Never sent to students. Keyed by life-event id. */
+  eventProbabilityOverrides: Record<string, number>
+  /** Hidden. Never sent to students. */
+  internalRiskFactors: Record<string, number>
+}
+
+export interface AssetPosition {
+  assetType: AssetType
+  valueYen: number
+  /** Hidden. Drives assetReturn.ts (Task 4). Never sent to students — spec §13.15 "教師には計算式より影響の強さを見せる". */
+  expectedReturnPercent: number
+  /** Hidden. Drives the noise term in assetReturn.ts. Never sent to students. */
+  volatilityPercent: number
+}
+
+export interface InsuranceProduct {
+  id: string
+  productName: string
+  premiumYenPerYear: number
+  coveredRisk: string
+  benefitDescription: string
+  benefitAmountYen: number
+  contractYears: number
+  /** Hidden. Internal claim-probability model. Never sent to students. */
+  internalClaimProbability: number
+}
+
+export type LifeEventDisclosureMode = 'ANNOUNCED' | 'PARTIALLY_ANNOUNCED' | 'HIDDEN'
+
+/**
+ * Spec §13.12: `disclosureMode` controls what students see BEFORE the
+ * event fires (full announcement / partial hint / nothing). It is
+ * deliberately independent of whether the event is deterministic or
+ * probabilistic — `triggerProbability` (hidden, spec §13.15's "influence
+ * strength shown to teachers instead of raw coefficients") drives when it
+ * fires, `disclosureMode` drives what students are told about it in
+ * advance. These are never conflated into one field.
+ */
+export interface LifeEventDefinition {
+  id: string
+  label: string
+  disclosureMode: LifeEventDisclosureMode
+  /** Hidden. Never sent to students in this raw form. */
+  triggerProbability: number
+  effectDescription: string
+}
+
+export interface Liability {
+  id: string
+  kind: 'MORTGAGE' | 'OTHER_LOAN'
+  principalYen: number
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+```
+
+- [ ] **Step 10: テストを通す**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: PASS
+
+- [ ] **Step 11: `toPublicView`の失敗するテストを書く（禁止情報のregressionテスト）**
+
+`functions/src/homeEconomics/toPublicView.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { AssetPosition, HouseholdProfile, InsuranceProduct } from '@stock-league/household-authoring-content'
+import { toAssetPositionsPublicView, toHouseholdProfilePublicView, toInsuranceContractsPublicView } from './toPublicView'
+
+const profile: HouseholdProfile = {
+  householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+  annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+  family: '配偶者・子2人', housing: '賃貸マンション',
+  lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+  eventProbabilityOverrides: { JOB_LOSS: 0.42 },
+  internalRiskFactors: { healthRisk: 0.99 },
+}
+
+describe('toHouseholdProfilePublicView', () => {
+  it('never leaks eventProbabilityOverrides or internalRiskFactors', () => {
+    const view = toHouseholdProfilePublicView(profile)
+    expect(JSON.stringify(view)).not.toContain('0.42')
+    expect(JSON.stringify(view)).not.toContain('0.99')
+    expect(view.isFictional).toBe(true)
+  })
+})
+
+describe('toAssetPositionsPublicView', () => {
+  it('never leaks expectedReturnPercent or volatilityPercent', () => {
+    const assets: AssetPosition[] = [{ assetType: 'DOMESTIC_STOCK', valueYen: 500000, expectedReturnPercent: 5, volatilityPercent: 15 }]
+    const views = toAssetPositionsPublicView(assets)
+    expect(JSON.stringify(views)).not.toContain('expectedReturnPercent')
+    expect(JSON.stringify(views)).not.toContain('volatilityPercent')
+  })
+})
+
+describe('toInsuranceContractsPublicView', () => {
+  it('never leaks internalClaimProbability, and keeps insurance out of the asset shape', () => {
+    const contracts: InsuranceProduct[] = [{
+      id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000,
+      coveredRisk: '病気・入院', benefitDescription: '入院日額1万円',
+      benefitAmountYen: 10000, contractYears: 10, internalClaimProbability: 0.03,
+    }]
+    const views = toInsuranceContractsPublicView(contracts)
+    expect(JSON.stringify(views)).not.toContain('internalClaimProbability')
+    expect(Object.keys(views[0])).not.toContain('assetType')
+  })
+})
+```
+
+- [ ] **Step 12: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/toPublicView.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 13: `toPublicView.ts`を実装する（allow-list方式、spread禁止）**
+
+`functions/src/homeEconomics/toPublicView.ts`:
+
+```ts
+import type { AssetPositionPublicView, HouseholdProfilePublicView, InsuranceContractPublicView } from '@stock-league/household-public-content'
+import type { AssetPosition, HouseholdProfile, InsuranceProduct } from '@stock-league/household-authoring-content'
+
+/**
+ * The sole place that decides what students may see about their household
+ * profile, assets, and insurance. Fixed here (server-side, Functions)
+ * rather than as an import-boundary rule — see
+ * `functions/src/market/toPublicView.ts` (Phase C Task1) for the
+ * identical architecture note. Every field is listed explicitly
+ * (allow-list) — never `{...source}` — so a future field added to the
+ * authoring type is excluded by default.
+ */
+export const toHouseholdProfilePublicView = (profile: HouseholdProfile): HouseholdProfilePublicView => ({
+  householdId: profile.householdId, age: profile.age,
+  householdIncomeYen: profile.householdIncomeYen,
+  annualLivingExpensesYen: profile.annualLivingExpensesYen,
+  cashSavingsYen: profile.cashSavingsYen,
+  family: profile.family, housing: profile.housing,
+  lifeGoal: profile.lifeGoal, lifeStage: profile.lifeStage,
+  isFictional: true,
+})
+
+export const toAssetPositionsPublicView = (assets: AssetPosition[]): AssetPositionPublicView[] =>
+  assets.map((asset) => ({ assetType: asset.assetType, valueYen: asset.valueYen }))
+
+export const toInsuranceContractsPublicView = (contracts: InsuranceProduct[]): InsuranceContractPublicView[] =>
+  contracts.map((contract) => ({
+    id: contract.id, productName: contract.productName,
+    premiumYenPerYear: contract.premiumYenPerYear, coveredRisk: contract.coveredRisk,
+    benefitDescription: contract.benefitDescription, contractYearsRemaining: contract.contractYears,
+  }))
+```
+
+- [ ] **Step 14: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/toPublicView.test.ts`
+Expected: PASS
+
+- [ ] **Step 15: `npm run verify`**
+
+- [ ] **Step 16: Commit**
+
+```bash
+git add functions/packages/household-public-content functions/packages/household-authoring-content \
+  functions/src/homeEconomics/toPublicView.ts functions/src/homeEconomics/toPublicView.test.ts \
+  package.json functions/package.json
+git commit -m "feat: split household profile/asset/insurance/event types into public and authoring packages"
+```
+
+---
