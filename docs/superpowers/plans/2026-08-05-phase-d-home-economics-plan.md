@@ -346,7 +346,9 @@ export interface InsuranceProduct {
   benefitDescription: string
   benefitAmountYen: number
   contractYears: number
-  /** Hidden. Internal claim-probability model. Never sent to students. */
+  /** Which LifeEventDefinition ids this product pays out on — links Task 6's insurance.ts to Task 7's lifeEvents.ts without a text-matching heuristic against `coveredRisk` (a display string, not an identifier). */
+  coveredEventIds: string[]
+  /** Hidden. Internal claim-probability model — used only for teacher-facing "influence strength" display (spec §13.15), never to gate whether a benefit pays out (that is driven by whether a covered event actually fired). Never sent to students. */
   internalClaimProbability: number
 }
 
@@ -426,7 +428,8 @@ describe('toInsuranceContractsPublicView', () => {
     const contracts: InsuranceProduct[] = [{
       id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000,
       coveredRisk: '病気・入院', benefitDescription: '入院日額1万円',
-      benefitAmountYen: 10000, contractYears: 10, internalClaimProbability: 0.03,
+      benefitAmountYen: 10000, contractYears: 10, coveredEventIds: ['illness'],
+      internalClaimProbability: 0.03,
     }]
     const views = toInsuranceContractsPublicView(contracts)
     expect(JSON.stringify(views)).not.toContain('internalClaimProbability')
@@ -1236,6 +1239,121 @@ Expected: PASS
 ```bash
 git add functions/src/homeEconomics/engine/mortgage.ts functions/src/homeEconomics/engine/mortgage.test.ts
 git commit -m "feat: add equal-principal-and-interest mortgage amortization engine"
+```
+
+---
+
+### Task 6: 保険モデル（保険料・給付条件）
+
+統合仕様書 §13.6を実装する。純粋関数。**保険は資産と分離する**（§13.6「資産配分円グラフへ保険を混ぜない」——Task1で既に型を分離済み、本タスクはその計算ロジック）。給付は`coveredEventIds`（Task1で追加）に含まれるイベントIDがそのラウンドで実際に発生した場合にのみ支払われる——`internalClaimProbability`（内部係数）は給付の可否を左右せず、教師向けの「影響の強さ」表示のみに使う（§13.15）。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/insurance.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `InsuranceProduct`（Task1）、`occurredEventIds: string[]`（Task7が生成する、このラウンドで実際に発生したイベントのID一覧）
+- Produces: `computeAnnualPremiumTotal(contracts): number`、`computeInsuranceBenefits(contracts, occurredEventIds): InsuranceBenefitResult[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/insurance.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { InsuranceProduct } from '@stock-league/household-authoring-content'
+import { computeAnnualPremiumTotal, computeInsuranceBenefits } from './insurance'
+
+const healthInsurance: InsuranceProduct = {
+  id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000,
+  coveredRisk: '病気・入院', benefitDescription: '入院日額1万円',
+  benefitAmountYen: 500000, contractYears: 10, coveredEventIds: ['illness'],
+  internalClaimProbability: 0.03,
+}
+const lifeInsurance: InsuranceProduct = {
+  ...healthInsurance, id: 'ins-2', productName: '生命保険B',
+  coveredEventIds: ['death'], benefitAmountYen: 3000000,
+}
+
+describe('computeAnnualPremiumTotal', () => {
+  it('sums the annual premium across every contract', () => {
+    expect(computeAnnualPremiumTotal([healthInsurance, lifeInsurance])).toBe(120000)
+  })
+  it('returns 0 for no contracts', () => {
+    expect(computeAnnualPremiumTotal([])).toBe(0)
+  })
+})
+
+describe('computeInsuranceBenefits', () => {
+  it('pays the benefit only for a contract whose covered event actually occurred this round', () => {
+    const results = computeInsuranceBenefits([healthInsurance, lifeInsurance], ['illness'])
+    expect(results).toEqual([
+      { insuranceId: 'ins-1', paidYen: 500000 },
+      { insuranceId: 'ins-2', paidYen: 0 },
+    ])
+  })
+
+  it('does not pay when the occurred event is unrelated to any contract', () => {
+    const results = computeInsuranceBenefits([healthInsurance], ['job-loss'])
+    expect(results).toEqual([{ insuranceId: 'ins-1', paidYen: 0 }])
+  })
+
+  it('internalClaimProbability never influences whether a benefit pays out (spec §13.15 — gates display only)', () => {
+    const zeroProbability = { ...healthInsurance, internalClaimProbability: 0 }
+    const results = computeInsuranceBenefits([zeroProbability], ['illness'])
+    expect(results).toEqual([{ insuranceId: 'ins-1', paidYen: 500000 }])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/insurance.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/insurance.ts`:
+
+```ts
+import type { InsuranceProduct } from '@stock-league/household-authoring-content'
+
+export const computeAnnualPremiumTotal = (contracts: InsuranceProduct[]): number =>
+  contracts.reduce((sum, contract) => sum + contract.premiumYenPerYear, 0)
+
+export interface InsuranceBenefitResult {
+  insuranceId: string
+  paidYen: number
+}
+
+/**
+ * Spec §13.6/§13.15: whether a benefit pays out is determined ENTIRELY by
+ * whether one of `coveredEventIds` actually occurred this round
+ * (`occurredEventIds`, from Task 7's life-event engine) — never by
+ * `internalClaimProbability`, which is teacher-facing "influence
+ * strength" display only and must not gate real payouts.
+ */
+export const computeInsuranceBenefits = (
+  contracts: InsuranceProduct[],
+  occurredEventIds: string[],
+): InsuranceBenefitResult[] =>
+  contracts.map((contract) => {
+    const covered = contract.coveredEventIds.some((eventId) => occurredEventIds.includes(eventId))
+    return { insuranceId: contract.id, paidYen: covered ? contract.benefitAmountYen : 0 }
+  })
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/insurance.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/insurance.ts functions/src/homeEconomics/engine/insurance.test.ts
+git commit -m "feat: add insurance premium/benefit engine, event-linked payouts"
 ```
 
 ---
