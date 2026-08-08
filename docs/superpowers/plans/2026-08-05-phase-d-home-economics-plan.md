@@ -2526,3 +2526,95 @@ git commit -m "feat: add simplified pension and proportional voluntary asset-dra
 ```
 
 ---
+
+### Task 13: 保存・再開（人生段階途中再開、欠席者補完、チェックポイント）
+
+統合仕様書 §13.18を実装する。**「欠席者補完」は既にTask11で大部分カバーされていることに気づくのが本タスクの出発点**——`settleRound`は`decision: null`（未提出）を安全に処理し、資金不足を自動でREDUCE_EXPENSESへフォールバックする設計になっている（Task11）ため、欠席で判断を提出できなかったチーム・人物も、そのラウンドは既定の保守的な判断で自動進行し、次のラウンドから正常に復帰できる。本タスクが新規に実装するのは「複数授業にまたがる保存」「チェックポイント」——Phase A `functions/src/lessonRuns/checkpoint.ts`の`writeCheckpoint`/`restoreCheckpoint`（教科を問わない汎用の`snapshot: unknown`設計）をそのまま再利用し、家庭科向けのスナップショット構築・復元関数だけを追加する。
+
+**Files:**
+- Create: `functions/src/homeEconomics/checkpointRestore.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `writeCheckpoint`/`restoreCheckpoint`（Phase A、`functions/src/lessonRuns/checkpoint.ts`）、`HouseholdState`（Task10）
+- Produces: `buildHouseholdCheckpointSnapshot(households): HouseholdCheckpointSnapshot`、`restoreHouseholdsFromSnapshot(snapshot): HouseholdState[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/checkpointRestore.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from './checkpointRestore'
+
+const household: HouseholdState = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 1500000,
+  assetHoldingsYen: { DOMESTIC_STOCK: 800000 }, activeInsuranceContracts: { 'ins-1': 7 },
+  activeLiabilities: { 'loan-1': { remainingPrincipalYen: 18000000, remainingYears: 15, annualInterestRatePercent: 2 } },
+  lifeStage: 'CHILD_REARING', roundIndex: 4, goalDelayedRounds: 1, updatedAtServerMillis: 1234,
+}
+
+describe('buildHouseholdCheckpointSnapshot / restoreHouseholdsFromSnapshot', () => {
+  it('round-trips every household field exactly (spec §13.18: 版と乱数シード固定と同じ厳密性)', () => {
+    const snapshot = buildHouseholdCheckpointSnapshot([household])
+    const restored = restoreHouseholdsFromSnapshot(snapshot)
+    expect(restored).toEqual([household])
+  })
+
+  it('round-trips multiple households independently, never mixing state between them', () => {
+    const other: HouseholdState = { ...household, householdId: 'case-c', cashYen: 999999, roundIndex: 1 }
+    const snapshot = buildHouseholdCheckpointSnapshot([household, other])
+    const restored = restoreHouseholdsFromSnapshot(snapshot)
+    expect(restored).toHaveLength(2)
+    expect(restored.find((h) => h.householdId === 'case-b')?.cashYen).toBe(1500000)
+    expect(restored.find((h) => h.householdId === 'case-c')?.cashYen).toBe(999999)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/checkpointRestore.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/checkpointRestore.ts`:
+
+```ts
+import type { HouseholdState } from '../lessonRuns/households/repository'
+
+/** The `snapshot: unknown` payload Phase A's `writeCheckpoint` (checkpoint.ts) stores — home economics' own shape, opaque to the generic checkpoint machinery. */
+export interface HouseholdCheckpointSnapshot {
+  schemaVersion: 1
+  households: HouseholdState[]
+}
+
+export const buildHouseholdCheckpointSnapshot = (households: HouseholdState[]): HouseholdCheckpointSnapshot => ({
+  schemaVersion: 1,
+  households: households.map((household) => ({ ...household })),
+})
+
+export const restoreHouseholdsFromSnapshot = (snapshot: HouseholdCheckpointSnapshot): HouseholdState[] =>
+  snapshot.households.map((household) => ({ ...household }))
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/checkpointRestore.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: Callable結線を実装する**
+
+`functions/src/homeEconomics/onCall.ts`（Task10で作成済み）に、教師専用の`writeHouseholdCheckpointCallable`/`restoreHouseholdCheckpointCallable`を追加する。実装はPhase A `functions/src/lessonRuns/onCall.ts`の`restoreCheckpointCallable`と同一パターン（教師のみ、`teacherRoles`確認、`requireActiveOrgMember`）——`snapshot`引数に`buildHouseholdCheckpointSnapshot`の出力を渡し、`writeCheckpointWithAdminSdk`（Phase A）をそのまま呼ぶ。新規のFirestoreスキーマ・トランザクションは不要（Phase Aの`checkpoints`サブコレクションをそのまま再利用する）。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/homeEconomics/checkpointRestore.ts functions/src/homeEconomics/checkpointRestore.test.ts functions/src/homeEconomics/onCall.ts
+git commit -m "feat: add household checkpoint snapshot builder/restorer, reusing Phase A's generic checkpoint machinery"
+```
+
+---
