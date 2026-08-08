@@ -2618,3 +2618,92 @@ git commit -m "feat: add household checkpoint snapshot builder/restorer, reusing
 ```
 
 ---
+
+### Task 14: 目標パッケージ（表示の絞り込み）
+
+統合仕様書 §13.16を実装する。純粋関数。教師が選んだ`GoalPackage`（Task2）に応じて、生徒画面（Task15）が表示する概念カテゴリを絞り込む——**計算自体は絞り込まない**（保険や住宅の計算エンジンは常に動く。表示だけを絞る）点に注意。
+
+**Files:**
+- Create: `functions/src/homeEconomics/goalPackage.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `GoalPackage`（Task2）
+- Produces: `ConceptCategory`型、`resolveVisibleConcepts(goalPackage): ConceptCategory[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/goalPackage.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { resolveVisibleConcepts } from './goalPackage'
+
+describe('resolveVisibleConcepts', () => {
+  it('EMERGENCY_FUND focuses on emergency-fund and risk-management concepts (spec §13.16 example)', () => {
+    expect(resolveVisibleConcepts('EMERGENCY_FUND')).toEqual(['EMERGENCY_FUND', 'RISK_MANAGEMENT'])
+  })
+
+  it('OVERALL_BALANCE hides nothing — every concept category is visible', () => {
+    const visible = resolveVisibleConcepts('OVERALL_BALANCE')
+    expect(visible).toEqual(expect.arrayContaining(['INSURANCE', 'HOUSING', 'ASSET_DIVERSIFICATION', 'RETIREMENT_PLANNING', 'EMERGENCY_FUND', 'EDUCATION_FUND', 'RISK_MANAGEMENT']))
+  })
+
+  it('HOME_PURCHASE surfaces housing and emergency-fund concepts, not retirement planning', () => {
+    const visible = resolveVisibleConcepts('HOME_PURCHASE')
+    expect(visible).toContain('HOUSING')
+    expect(visible).not.toContain('RETIREMENT_PLANNING')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/goalPackage.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/goalPackage.ts`:
+
+```ts
+import type { GoalPackage } from '@stock-league/household-authoring-content'
+
+export type ConceptCategory = 'INSURANCE' | 'HOUSING' | 'ASSET_DIVERSIFICATION' | 'RETIREMENT_PLANNING' | 'EMERGENCY_FUND' | 'EDUCATION_FUND' | 'RISK_MANAGEMENT'
+
+const ALL_CONCEPTS: ConceptCategory[] = ['INSURANCE', 'HOUSING', 'ASSET_DIVERSIFICATION', 'RETIREMENT_PLANNING', 'EMERGENCY_FUND', 'EDUCATION_FUND', 'RISK_MANAGEMENT']
+
+/**
+ * Spec §13.16: "目的に関係しない概念を隠す" — this narrows what the UI
+ * (Task 15) shows, never what the engine computes. A household with a
+ * mortgage still has its mortgage serviced by settleRound (Task 11) even
+ * when goalPackage is EMERGENCY_FUND and HOUSING isn't in the visible set
+ * — only the display is filtered.
+ */
+export const resolveVisibleConcepts = (goalPackage: GoalPackage): ConceptCategory[] => {
+  switch (goalPackage) {
+    case 'EMERGENCY_FUND': return ['EMERGENCY_FUND', 'RISK_MANAGEMENT']
+    case 'HOME_PURCHASE': return ['HOUSING', 'EMERGENCY_FUND']
+    case 'EDUCATION_FUND': return ['EDUCATION_FUND', 'ASSET_DIVERSIFICATION']
+    case 'RETIREMENT_PREP': return ['RETIREMENT_PLANNING', 'ASSET_DIVERSIFICATION']
+    case 'RISK_DIVERSIFICATION': return ['ASSET_DIVERSIFICATION', 'RISK_MANAGEMENT']
+    case 'INSURANCE_AND_PREPAREDNESS': return ['INSURANCE', 'RISK_MANAGEMENT', 'EMERGENCY_FUND']
+    case 'OVERALL_BALANCE': return ALL_CONCEPTS
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/goalPackage.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/goalPackage.ts functions/src/homeEconomics/goalPackage.test.ts
+git commit -m "feat: add goal-package concept-visibility resolver"
+```
+
+---
