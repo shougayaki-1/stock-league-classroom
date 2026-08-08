@@ -54,19 +54,42 @@ interface SubmitHouseholdDecisionRequest {
 
 const VALID_SHORTFALL_TYPES = new Set(['REDUCE_EXPENSES', 'SELL_ASSETS', 'BORROW', 'PUBLIC_SUPPORT', 'DELAY_GOAL', null])
 
-const validateRequest = (data: SubmitHouseholdDecisionRequest): void => {
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+
+/** Plain finite-number-valued object, e.g. `{ DOMESTIC_STOCK: 100000 }` — not an array, not containing non-numeric/non-finite values. */
+const isFiniteNumberMap = (value: unknown): value is Record<string, number> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+  && Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+
+const isNonEmptyStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isNonEmptyString)
+
+/**
+ * `shortfallResolutionType` is validated here as the already-normalized
+ * (`?? null`) value — never the raw `data.shortfallResolutionType`, which
+ * may be `undefined` and would otherwise flow un-normalized into
+ * `requestDigest` (`lib/idempotency.ts`), whose `canonicalize` throws an
+ * untranslated `TypeError` on `undefined`.
+ */
+const validateRequest = (
+  data: SubmitHouseholdDecisionRequest,
+  shortfallResolutionType: HouseholdDecisionInput['shortfallResolutionType'],
+): void => {
   if (
     !data.lessonRunId || !data.householdId
     || typeof data.roundIndex !== 'number' || !Number.isInteger(data.roundIndex) || data.roundIndex < 0
-    || typeof data.assetAllocationChangesYen !== 'object' || data.assetAllocationChangesYen === null
-    || !Array.isArray(data.insurancePurchaseIds) || !Array.isArray(data.insuranceCancelIds)
-    || !Array.isArray(data.publicSupportApplicationIds)
-    || !VALID_SHORTFALL_TYPES.has(data.shortfallResolutionType ?? null)
+    || !isFiniteNumberMap(data.assetAllocationChangesYen)
+    || !isNonEmptyStringArray(data.insurancePurchaseIds)
+    || !isNonEmptyStringArray(data.insuranceCancelIds)
+    || !isNonEmptyStringArray(data.publicSupportApplicationIds)
+    || !VALID_SHORTFALL_TYPES.has(shortfallResolutionType)
+    // §13.13: SELL_ASSETS without naming the asset would silently bypass the
+    // one cross-field consistency check `submitHouseholdDecision` performs.
+    || (shortfallResolutionType === 'SELL_ASSETS' && !isNonEmptyString(data.shortfallResolutionAssetType))
     || !data.idempotencyKey
   ) {
     throw new HttpsError(
       'invalid-argument',
-      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。',
+      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。shortfallResolutionType が SELL_ASSETS の場合、shortfallResolutionAssetType も必須です。',
     )
   }
 }
@@ -104,7 +127,11 @@ const translateSubmitHouseholdDecisionError = (error: unknown): unknown => {
 export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   const data = request.data as SubmitHouseholdDecisionRequest
-  validateRequest(data)
+  // Normalized once here, forwarded everywhere downstream — never the raw
+  // `data.shortfallResolutionType`, which may be `undefined` (see
+  // `validateRequest`'s doc comment).
+  const shortfallResolutionType = data.shortfallResolutionType ?? null
+  validateRequest(data, shortfallResolutionType)
 
   const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
 
@@ -112,6 +139,14 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
   if (!household) throw new HttpsError('not-found', '対象の家庭の状態が見つかりません。')
 
   await requireTeamMembership(data.lessonRunId, household.teamId, actorParticipantId)
+
+  // The household doc is already in scope from authorization above — its
+  // own `roundIndex` is the source of truth for which round a student may
+  // submit a decision for, so this check is free and closes off submitting
+  // for a round far from where the household actually is.
+  if (data.roundIndex !== household.roundIndex) {
+    throw new HttpsError('failed-precondition', 'この家庭は現在別のラウンドです。roundIndex が一致しません。')
+  }
 
   try {
     return await submitHouseholdDecision({
@@ -135,7 +170,7 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
       assetAllocationChangesYen: data.assetAllocationChangesYen,
       insurancePurchaseIds: data.insurancePurchaseIds,
       insuranceCancelIds: data.insuranceCancelIds,
-      shortfallResolutionType: data.shortfallResolutionType,
+      shortfallResolutionType,
       ...(data.shortfallResolutionAssetType !== undefined ? { shortfallResolutionAssetType: data.shortfallResolutionAssetType } : {}),
       publicSupportApplicationIds: data.publicSupportApplicationIds,
       idempotencyKey: data.idempotencyKey,

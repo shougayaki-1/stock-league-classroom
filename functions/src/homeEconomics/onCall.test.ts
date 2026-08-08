@@ -5,12 +5,14 @@ import { getHouseholdStateWithAdminSdk, saveHouseholdDecision } from '../lessonR
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
+const teamDocPaths: string[] = []
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
-    doc: (path: string) => ({
-      get: path.includes('/participantsByAuthUid/') ? participantGetMock : teamGetMock,
-    }),
+    doc: (path: string) => {
+      if (!path.includes('/participantsByAuthUid/')) teamDocPaths.push(path)
+      return { get: path.includes('/participantsByAuthUid/') ? participantGetMock : teamGetMock }
+    },
   }),
 }))
 
@@ -55,6 +57,7 @@ const household = {
 describe('submitHouseholdDecisionCallable', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    teamDocPaths.length = 0
     participantGetMock.mockResolvedValue({ exists: true, data: () => ({ participantId: 'p-1' }) })
     teamGetMock.mockResolvedValue({ exists: true, data: () => ({ memberParticipantIds: ['p-1'] }) })
     vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(household)
@@ -72,6 +75,19 @@ describe('submitHouseholdDecisionCallable', () => {
     ['roundIndex', { roundIndex: -1 }],
     ['idempotencyKey', { idempotencyKey: '' }],
     ['shortfallResolutionType', { shortfallResolutionType: 'BOGUS' as never }],
+    // #1: SELL_ASSETS without naming which asset must not silently skip the
+    // §13.13 consistency check.
+    ['shortfallResolutionType SELL_ASSETS missing shortfallResolutionAssetType', { shortfallResolutionType: 'SELL_ASSETS' as const }],
+    // #3: assetAllocationChangesYen must be a plain finite-number map, not
+    // an array and not containing non-numeric values.
+    ['assetAllocationChangesYen as an array', { assetAllocationChangesYen: [100000] as unknown as Record<string, number> }],
+    ['assetAllocationChangesYen with a non-numeric value', { assetAllocationChangesYen: { DOMESTIC_STOCK: '100000' } as unknown as Record<string, number> }],
+    ['assetAllocationChangesYen with a non-finite value', { assetAllocationChangesYen: { DOMESTIC_STOCK: Infinity } }],
+    // #3: string-array fields must contain non-empty strings, not arbitrary
+    // elements.
+    ['insurancePurchaseIds with a non-string element', { insurancePurchaseIds: [123 as unknown as string] }],
+    ['insuranceCancelIds with an empty-string element', { insuranceCancelIds: [''] }],
+    ['publicSupportApplicationIds with a non-string element', { publicSupportApplicationIds: [null as unknown as string] }],
   ])('rejects a request with an invalid %s', async (_field, override) => {
     await expect(submitHouseholdDecisionCallable.run(makeRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
     expect(getHouseholdStateWithAdminSdk).not.toHaveBeenCalled()
@@ -92,8 +108,13 @@ describe('submitHouseholdDecisionCallable', () => {
   it('resolves team ownership from the household\'s own stored teamId, not from client input', async () => {
     vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-1', created: true })
     await submitHouseholdDecisionCallable.run(makeRequest())
-    // team-a is the household's OWN teamId (never sent by the client at all)
+    // team-a is the household's OWN teamId (never sent by the client at all —
+    // the request payload for this Callable has no `teamId` field). Asserting
+    // on the captured `doc(...)` path (not just that `get()` was called at
+    // all) proves the correct team document was read.
     expect(teamGetMock).toHaveBeenCalled()
+    expect(teamDocPaths).toHaveLength(1)
+    expect(teamDocPaths[0]).toMatch(/\/teams\/team-a$/)
   })
 
   it('is idempotent: a repeated idempotencyKey is forwarded through unchanged and the reported created flag reflects saveDecision\'s own dedup result', async () => {
@@ -130,5 +151,19 @@ describe('submitHouseholdDecisionCallable', () => {
     vi.mocked(saveHouseholdDecision).mockRejectedValue(new Error('Idempotency key payload mismatch'))
     await expect(submitHouseholdDecisionCallable.run(makeRequest()))
       .rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
+  })
+
+  it('accepts a request that omits shortfallResolutionType entirely, normalizing it to null rather than crashing (#2)', async () => {
+    vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-1', created: true })
+    const { shortfallResolutionType: _omit, ...dataWithoutShortfallType } = makeRequest().data
+    const request = { ...makeRequest(), data: dataWithoutShortfallType } as unknown as CallableRequest<SubmitHouseholdDecisionRequestData>
+    await expect(submitHouseholdDecisionCallable.run(request)).resolves.toEqual({ decisionId: 'dec-1', created: true })
+    expect(saveHouseholdDecision).toHaveBeenCalledWith(expect.objectContaining({ shortfallResolutionType: null }))
+  })
+
+  it('rejects a request whose roundIndex does not match the household\'s own stored roundIndex (#4)', async () => {
+    await expect(submitHouseholdDecisionCallable.run(makeRequest({ roundIndex: household.roundIndex + 1 })))
+      .rejects.toMatchObject({ code: 'failed-precondition' })
+    expect(saveHouseholdDecision).not.toHaveBeenCalled()
   })
 })
