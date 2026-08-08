@@ -35,8 +35,9 @@ export {
   issueDisplaySessionTokenCallable,
 } from './lessonRuns/projections/onCall'
 export { submitSurveyCallable } from './lessonRuns/surveys/onCall'
-export { cancelOrderCallable, pauseMarketCallable, submitOrderCallable } from './market/onCall'
+export { cancelOrderCallable, pauseMarketCallable, resumeMarketCallable, submitOrderCallable } from './market/onCall'
 export { batchTaskQueue } from './market/taskHandler'
+export { resumeTaskQueue } from './market/resumeMarket'
 export { chainWatchdogScheduled } from './market/chainWatchdog'
 export {
   exportPersonalDataCallable,

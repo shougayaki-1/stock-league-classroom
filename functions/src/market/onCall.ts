@@ -8,6 +8,7 @@ import { canControlLesson } from '../lessonRuns/authorization'
 import { cancelOrder } from './cancelOrder'
 import { submitOrder } from './submitOrder'
 import { pauseMarketWithAdminSdk } from './pauseMarket'
+import { DEFAULT_RESUME_CONFIRMATION_SECONDS, resumeMarketWithAdminSdk } from './resumeMarket'
 
 /**
  * Placeholder starting cash until a per-lessonRun/market-content field for
@@ -239,4 +240,48 @@ export const pauseMarketCallable = onCall({ region: 'asia-northeast1' }, async (
   await requireActiveOrgMember(db, orgId, request.auth.uid)
 
   await pauseMarketWithAdminSdk(data.lessonRunId)
+})
+
+interface ResumeMarketRequest {
+  lessonRunId: string
+  /** spec §12.26: teacher may set the re-confirmation window; omitted
+   * defaults to the standard 30 seconds. `0` is the explicit
+   * "確認なしの即時再開" escape hatch. */
+  confirmationSeconds?: number
+}
+
+/**
+ * Teacher-facing market-resume Callable — spec §12.26. Authorization
+ * mirrors `pauseMarketCallable` above: no dedicated `RESUME_MARKET`
+ * `LessonControlAction` exists in `lessonRuns/authorization.ts`'s table,
+ * so this reuses `STOP_MARKET` (PRIMARY-only) — resuming the market is
+ * the same class of single-decision-point control over the whole
+ * lessonRun's market as stopping it, and treating it as anything looser
+ * (e.g. ASSISTANT-permitted) would be the less safe reading absent an
+ * explicit spec carve-out.
+ */
+export const resumeMarketCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ResumeMarketRequest
+  if (!data.lessonRunId) throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+  if (data.confirmationSeconds !== undefined && (!Number.isFinite(data.confirmationSeconds) || data.confirmationSeconds < 0)) {
+    throw new HttpsError('invalid-argument', 'confirmationSeconds は0以上の数値である必要があります。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, 'PRIMARY' | 'ASSISTANT' | 'VIEWER'> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'STOP_MARKET')) {
+    throw new HttpsError('permission-denied', '主担当教師のみ市場を再開できます。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  await resumeMarketWithAdminSdk(
+    data.lessonRunId,
+    data.confirmationSeconds ?? DEFAULT_RESUME_CONFIRMATION_SECONDS,
+  )
 })
