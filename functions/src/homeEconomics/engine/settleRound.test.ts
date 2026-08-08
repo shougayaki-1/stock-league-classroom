@@ -232,4 +232,95 @@ describe('settleRound', () => {
     expect(result.newHouseholdState.activeInsuranceContracts).toEqual({ 'ins-new': 8 })
     expect(result.newHouseholdState.activeInsuranceContracts['ins-old']).toBeUndefined()
   })
+
+  // ---------------------------------------------------------------------
+  // Fix round 3 — regression tests for the multi-asset-type SELL_ASSETS
+  // money-fabrication review finding (Critical N1 + Important N2)
+  // ---------------------------------------------------------------------
+
+  it('SELL_ASSETS is capped by the NAMED asset holding, not the household-wide total across asset types (Critical N1)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        cashYen: 0,
+        // total liquid assets = 5,000,000, but only 1,000,000 of that is
+        // in the asset actually named by the decision (DOMESTIC_STOCK).
+        assetHoldingsYen: { DOMESTIC_STOCK: 1000000, FOREIGN_STOCK: 4000000 },
+      },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: 'SELL_ASSETS' as const,
+        shortfallResolutionAssetType: 'DOMESTIC_STOCK',
+        publicSupportApplicationIds: [], idempotencyKey: 'k6',
+      },
+      // no returns this round — isolate the resolution effect
+      assetCatalog: [
+        { assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 },
+        { assetType: 'FOREIGN_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 },
+      ],
+    }
+    // net income 0, expenses 3,000,000 → shortfall 3,000,000.
+    // DOMESTIC_STOCK only holds 1,000,000, so SELL_ASSETS can resolve at
+    // most 1,000,000 (not the 3,000,000 a household-wide-total sizing
+    // would wrongly allow). The residual 2,000,000 is closed via the
+    // existing REDUCE_EXPENSES residual machinery (Important #1, fix
+    // round 1) — a real expense cut, not fabricated cash.
+    const totalBefore = 0 + 1000000 + 4000000 // 5,000,000
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    // DOMESTIC_STOCK is fully sold off (capped at what it actually held) —
+    // never floored below 0 while leaving a cash/asset mismatch.
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(0)
+    // FOREIGN_STOCK is untouched — SELL_ASSETS named DOMESTIC_STOCK only.
+    expect(result.newHouseholdState.assetHoldingsYen.FOREIGN_STOCK).toBe(4000000)
+    expect(result.newHouseholdState.cashYen).toBe(0) // no windfall
+    // Conservation: the only real money movement was the 1,000,000
+    // actually raised by selling DOMESTIC_STOCK to fund 1,000,000 of the
+    // 3,000,000 shortfall; the other 2,000,000 was a genuine expense cut
+    // (REDUCE_EXPENSES residual), not a real outflow. Net worth must drop
+    // by exactly the 1,000,000 that was actually spent — no more, no less.
+    const totalAfter = result.newHouseholdState.cashYen
+      + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+      + result.newHouseholdState.assetHoldingsYen.FOREIGN_STOCK
+    expect(totalAfter).toBe(totalBefore - 1000000)
+    expect(totalAfter).toBe(4000000)
+  })
+
+  it('SELL_ASSETS with no (or an unheld) asset type falls back safely to REDUCE_EXPENSES instead of crediting cash with nothing debited (Important N2)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        cashYen: 0,
+        assetHoldingsYen: { DOMESTIC_STOCK: 5000000 },
+      },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: 'SELL_ASSETS' as const,
+        // no asset type named — this is unreachable through the Callable
+        // (which requires it for SELL_ASSETS) but `settleRound` is a pure
+        // engine that must still behave safely if called this way.
+        shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k7',
+      },
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    const totalBefore = 0 + 5000000
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    // Nothing was sold — the asset holding is untouched.
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(5000000)
+    // The shortfall was fully closed via the REDUCE_EXPENSES fallback
+    // (a real expense cut), not by crediting cash against nothing.
+    expect(result.newHouseholdState.cashYen).toBe(0)
+    const totalAfter = result.newHouseholdState.cashYen + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+    expect(totalAfter).toBe(totalBefore) // no money fabricated
+  })
 })

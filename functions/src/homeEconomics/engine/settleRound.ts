@@ -135,11 +135,46 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
     const eligiblePrograms = determineEligiblePrograms(input.publicSupportPrograms, grossIncomeYen)
     const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, input.decision?.publicSupportApplicationIds ?? [])
     const options = buildShortfallOptions({
+      // Total across ALL asset types — this only gates whether SELL_ASSETS
+      // appears as an option at all ("does the household hold *any*
+      // liquid assets") and is deliberately NOT what sizes how much
+      // SELL_ASSETS can actually resolve; see the N1 fix immediately
+      // below for that.
       shortfallYen, liquidAssetsYen: Object.values(household.assetHoldingsYen).reduce((sum, v) => sum + v, 0),
       publicSupportAvailableYen, borrowingAllowed: input.borrowingAllowed,
     })
     const chosenType = input.decision?.shortfallResolutionType ?? 'REDUCE_EXPENSES'
-    const chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
+    let chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
+
+    // Fix round 3 (Critical N1 + Important N2): `buildShortfallOptions`
+    // above sizes SELL_ASSETS's `resolvesYen` off the household's TOTAL
+    // liquid assets across every asset type, but the decision names only
+    // ONE specific asset type to actually sell from
+    // (`shortfallResolutionAssetType`) — a household with 1,000,000 in
+    // DOMESTIC_STOCK and 4,000,000 in FOREIGN_STOCK would have
+    // `resolvesYen` sized off the 5,000,000 total even though selling
+    // DOMESTIC_STOCK alone can only ever raise 1,000,000. That mismatch is
+    // exactly what let the later `Math.max(0, ...)` asset-debit floor
+    // (below, §7a) silently swallow the shortfall between what was
+    // actually debited from the named asset and what was credited to
+    // cash — fabricating money. The fix: once SELL_ASSETS is the chosen
+    // option, re-cap its `resolvesYen` to the NAMED asset's own holding
+    // (N1). If no valid asset type is named (or it doesn't correspond to
+    // a holding the household actually has — N2, defensive: unreachable
+    // through the Callable today, which requires
+    // `shortfallResolutionAssetType` for SELL_ASSETS, but `settleRound` is
+    // a pure engine callable independently), there is nothing to sell
+    // against at all, so SELL_ASSETS must not be applied — fall back to
+    // REDUCE_EXPENSES (always present in `options`, see
+    // `buildShortfallOptions`) rather than crediting cash with no
+    // offsetting asset debit.
+    if (chosenOption.type === 'SELL_ASSETS') {
+      const namedAssetType = input.decision?.shortfallResolutionAssetType
+      const namedAssetHoldingYen = namedAssetType ? (household.assetHoldingsYen[namedAssetType] ?? 0) : 0
+      chosenOption = namedAssetHoldingYen > 0
+        ? { ...chosenOption, resolvesYen: Math.min(chosenOption.resolvesYen, namedAssetHoldingYen) }
+        : (options.find((option) => option.type === 'REDUCE_EXPENSES') ?? options[0])
+    }
     const resolution = applyShortfallResolution(chosenOption, shortfallYen)
     resolutionCashDeltaYen = resolution.cashDeltaYen
     resolutionAssetDeltaYen = resolution.assetDeltaYen
@@ -173,14 +208,16 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   // sale proceeds while the sold asset's holding stayed untouched, so the
   // "sold" value kept earning this round's return on top of having already
   // been spent. Must happen BEFORE the returns loop below (the sold-off
-  // portion must not earn this round's return). `liquidAssetsYen` used to
-  // size the SELL_ASSETS option is the sum across ALL asset types, but the
-  // student names only ONE asset type to sell from
-  // (`shortfallResolutionAssetType`) — if that single holding is smaller
-  // than the amount resolved, floor at 0 rather than go negative. This is
-  // a pre-existing gap in how `buildShortfallOptions` sizes the option
-  // (out of scope for this fix), so the floor is a deliberately
-  // conservative defensive measure, not a full fix for that gap.
+  // portion must not earn this round's return).
+  //
+  // Fix round 3 (N1): `resolutionAssetDeltaYen` is now capped, at the
+  // point SELL_ASSETS is chosen (§6 above), by the NAMED asset's own
+  // holding — not the household's total liquid assets across every asset
+  // type. That means `(newAssetHoldingsYen[soldAssetType] ?? 0) +
+  // resolutionAssetDeltaYen` can no longer go negative here, so the
+  // `Math.max(0, ...)` floor below should be genuinely unreachable now.
+  // It's left in place as a defensive safety net (harmless once
+  // unreachable) rather than removed.
   if (resolutionAssetDeltaYen !== 0 && input.decision?.shortfallResolutionAssetType) {
     const soldAssetType = input.decision.shortfallResolutionAssetType
     newAssetHoldingsYen[soldAssetType] = Math.max(0, (newAssetHoldingsYen[soldAssetType] ?? 0) + resolutionAssetDeltaYen)
