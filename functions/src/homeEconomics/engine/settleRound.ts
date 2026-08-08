@@ -80,8 +80,36 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
     }
   }
 
-  // 4. Insurance premiums + benefits (spec §13.6)
-  const activeProducts = Object.keys(household.activeInsuranceContracts)
+  // 4. Insurance purchases/cancellations (from decision) + premiums + benefits (spec §13.6).
+  //
+  // Fix (Important #2): `insurancePurchaseIds`/`insuranceCancelIds` were
+  // previously read into `HouseholdDecisionInput` but never applied —
+  // `settleRound` only looked at `household.activeInsuranceContracts`
+  // (pre-existing contracts) and passed it through unchanged, so a student
+  // who bought insurance never actually got the contract or paid its
+  // premium. The mutated set below (`newActiveInsuranceContracts`) is now
+  // both (a) what feeds this round's premium/benefit computation and (b)
+  // what's written to `newHouseholdState`, so a newly-purchased policy's
+  // premium is charged — and its benefit payable — starting THIS round,
+  // and a cancelled policy stops costing/covering THIS round. This is a
+  // deliberate choice among two reasonable readings of the brief (charge
+  // starting this round vs. next round): life events for this round are
+  // already determined in Step 1 above from `randomSeed`/`roundIndex`
+  // alone, independent of the decision, so there is no way for a student
+  // to "buy insurance after seeing this round's event" — same-round
+  // application carries no fairness/gaming risk and gives the most
+  // immediate, legible feedback loop for the lesson. Cancel is applied
+  // before purchase so that if the same id somehow appears in both lists,
+  // the purchase (the more specific, final intent) wins.
+  const newActiveInsuranceContracts: HouseholdState['activeInsuranceContracts'] = { ...household.activeInsuranceContracts }
+  for (const cancelId of input.decision?.insuranceCancelIds ?? []) {
+    delete newActiveInsuranceContracts[cancelId]
+  }
+  for (const purchaseId of input.decision?.insurancePurchaseIds ?? []) {
+    const product = input.insuranceProducts.find((p) => p.id === purchaseId)
+    if (product) newActiveInsuranceContracts[purchaseId] = product.contractYears
+  }
+  const activeProducts = Object.keys(newActiveInsuranceContracts)
     .map((id) => input.insuranceProducts.find((product) => product.id === id))
     .filter((product): product is InsuranceProduct => product !== undefined)
   const insurancePremiumYen = computeAnnualPremiumTotal(activeProducts)
@@ -100,6 +128,7 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   // 6. Shortfall detection + resolution (spec §13.13) — never auto-bankrupts.
   const shortfallYen = detectShortfall({ cashSavingsYen: household.cashYen, netCashFlowYen })
   let resolutionCashDeltaYen = 0
+  let resolutionAssetDeltaYen = 0
   let newLiabilityFromShortfallYen = 0
   let goalDelayedRoundsDelta = 0
   if (shortfallYen > 0) {
@@ -113,15 +142,87 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
     const chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
     const resolution = applyShortfallResolution(chosenOption, shortfallYen)
     resolutionCashDeltaYen = resolution.cashDeltaYen
+    resolutionAssetDeltaYen = resolution.assetDeltaYen
     newLiabilityFromShortfallYen = resolution.newLiabilityYen
     goalDelayedRoundsDelta = resolution.goalDelayedRounds
+
+    // Important #1 fix: SELL_ASSETS/PUBLIC_SUPPORT are capped at
+    // `min(shortfallYen, available)`, and DELAY_GOAL adds 0 cash at all —
+    // so `resolutionCashDeltaYen` can land short of `shortfallYen`. The
+    // previous code fed that shortfall straight into `Math.max(0, ...)` on
+    // the final cash figure, which silently forgave the residual as free
+    // money instead of surfacing it. Per spec §13.13 ("never
+    // auto-bankrupts, but never silently profits either"), any residual
+    // not covered by the chosen resolution is closed the same way an
+    // unresolved shortfall is closed by default: REDUCE_EXPENSES, which
+    // always fully resolves. This guarantees
+    // `household.cashYen + netCashFlowYen + resolutionCashDeltaYen` is
+    // always exactly >= 0 by construction below, so the earlier
+    // `Math.max(0, ...)` clamp is no longer load-bearing and is removed.
+    const residualYen = shortfallYen - resolutionCashDeltaYen
+    if (residualYen > 0) resolutionCashDeltaYen += residualYen
   }
 
-  // 7. Asset allocation changes (from decision) + asset returns (spec §13.5/§13.15).
+  // 7. Shortfall-resolution asset sale, decision-driven reallocation, then asset returns (spec §13.5/§13.15).
   const newAssetHoldingsYen: Record<string, number> = { ...household.assetHoldingsYen }
-  for (const [assetType, deltaYen] of Object.entries(input.decision?.assetAllocationChangesYen ?? {})) {
-    newAssetHoldingsYen[assetType] = Math.max(0, (newAssetHoldingsYen[assetType] ?? 0) + deltaYen)
+
+  // 7a. Critical #1 fix: SELL_ASSETS resolves the shortfall by moving value
+  // OUT of a specific asset INTO cash (`shortfallOptions.ts`'s
+  // `applyShortfallResolution` already returns `assetDeltaYen` for this),
+  // but this was never applied to `newAssetHoldingsYen` — cash gained the
+  // sale proceeds while the sold asset's holding stayed untouched, so the
+  // "sold" value kept earning this round's return on top of having already
+  // been spent. Must happen BEFORE the returns loop below (the sold-off
+  // portion must not earn this round's return). `liquidAssetsYen` used to
+  // size the SELL_ASSETS option is the sum across ALL asset types, but the
+  // student names only ONE asset type to sell from
+  // (`shortfallResolutionAssetType`) — if that single holding is smaller
+  // than the amount resolved, floor at 0 rather than go negative. This is
+  // a pre-existing gap in how `buildShortfallOptions` sizes the option
+  // (out of scope for this fix), so the floor is a deliberately
+  // conservative defensive measure, not a full fix for that gap.
+  if (resolutionAssetDeltaYen !== 0 && input.decision?.shortfallResolutionAssetType) {
+    const soldAssetType = input.decision.shortfallResolutionAssetType
+    newAssetHoldingsYen[soldAssetType] = Math.max(0, (newAssetHoldingsYen[soldAssetType] ?? 0) + resolutionAssetDeltaYen)
   }
+
+  // 7b. Critical #2 fix: `assetAllocationChangesYen` is documented
+  // (`submitDecision.ts`) as "funded from cash" — a positive delta moves
+  // cash INTO an asset, a negative delta moves value OUT of an asset back
+  // INTO cash. The previous code only ever mutated `newAssetHoldingsYen`;
+  // neither `household.cashYen` nor `newCashYen` were ever debited/
+  // credited, so a positive allocation fabricated asset value from
+  // nothing (and a negative one destroyed it without returning cash).
+  //
+  // `preAllocationCashYen` is the household's cash position after this
+  // round's income/expenses and (now fully-resolved, see 6 above)
+  // shortfall resolution, but BEFORE any decision-driven reallocation —
+  // i.e. the cash actually available to fund a purchase into an asset.
+  // Since a pure engine function must never fail/throw (this codebase's
+  // "never auto-bankrupts" pattern for engines), an unaffordable positive
+  // allocation is CAPPED at what's actually available rather than
+  // rejected — money is neither created nor destroyed, the student's
+  // over-ambitious request is just partially honored. Symmetrically, a
+  // negative allocation (selling into cash) is capped at the asset's
+  // current holding — you cannot sell more of an asset than you own.
+  // Entries are applied in the decision object's own key order,
+  // sequentially decrementing/crediting available cash as they go, so
+  // multiple allocations in one submission compete for the same
+  // available-cash pool in a deterministic (insertion-order) way.
+  const preAllocationCashYen = household.cashYen + netCashFlowYen + resolutionCashDeltaYen
+  let availableCashForAllocationYen = preAllocationCashYen
+  for (const [assetType, requestedDeltaYen] of Object.entries(input.decision?.assetAllocationChangesYen ?? {})) {
+    const currentHoldingYen = newAssetHoldingsYen[assetType] ?? 0
+    let appliedDeltaYen = requestedDeltaYen
+    if (appliedDeltaYen > 0) {
+      appliedDeltaYen = Math.min(appliedDeltaYen, availableCashForAllocationYen)
+    } else if (appliedDeltaYen < 0) {
+      appliedDeltaYen = Math.max(appliedDeltaYen, -currentHoldingYen)
+    }
+    newAssetHoldingsYen[assetType] = currentHoldingYen + appliedDeltaYen
+    availableCashForAllocationYen -= appliedDeltaYen
+  }
+
   for (const assetType of Object.keys(newAssetHoldingsYen)) {
     // Step 4 fix: expectedReturnPercent/volatilityPercent per asset type
     // come from the template's authoring `assets` catalog (Task 1),
@@ -146,7 +247,14 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
     newAssetHoldingsYen[assetType] = returnResult.nextValueYen
   }
 
-  const newCashYen = Math.max(0, household.cashYen + netCashFlowYen + resolutionCashDeltaYen)
+  // `availableCashForAllocationYen` already IS the final cash figure: it
+  // started at `preAllocationCashYen` (guaranteed >= 0 by the Important #1
+  // fix above) and was only ever decremented by a capped-affordable
+  // positive allocation or credited by a capped-sane negative one, so it
+  // can never go negative. No `Math.max(0, ...)` floor needed here — see
+  // the Important #1 fix's comment for why that floor was removed instead
+  // of reapplied.
+  const newCashYen = availableCashForAllocationYen
   if (newLiabilityFromShortfallYen > 0) {
     newLiabilities[`shortfall-loan-round-${household.roundIndex}`] = {
       remainingPrincipalYen: newLiabilityFromShortfallYen, remainingYears: 5, annualInterestRatePercent: 3,
@@ -156,6 +264,7 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   return {
     newHouseholdState: {
       ...household, cashYen: newCashYen, assetHoldingsYen: newAssetHoldingsYen, activeLiabilities: newLiabilities,
+      activeInsuranceContracts: newActiveInsuranceContracts,
       roundIndex: household.roundIndex + 1, goalDelayedRounds: household.goalDelayedRounds + goalDelayedRoundsDelta,
       updatedAtServerMillis: household.updatedAtServerMillis,
     },

@@ -95,4 +95,141 @@ describe('settleRound', () => {
     // expectedReturnPercent 10, volatilityPercent 0, marketReturnPercent 0 → exact +10%, no noise
     expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(1100000)
   })
+
+  // ---------------------------------------------------------------------
+  // Fix round 1 — regression tests for the money-conservation review findings
+  // ---------------------------------------------------------------------
+
+  it('SELL_ASSETS reduces the sold asset holding, not just increases cash (Critical #1)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        cashYen: 0,
+        assetHoldingsYen: { DOMESTIC_STOCK: 5000000 },
+      },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: 'SELL_ASSETS' as const,
+        shortfallResolutionAssetType: 'DOMESTIC_STOCK',
+        publicSupportApplicationIds: [], idempotencyKey: 'k1',
+      },
+      // no returns this round — isolate the sale effect
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    // net income 0, expenses 3,000,000 → shortfall 3,000,000, all liquid assets = 5,000,000 → SELL_ASSETS resolves fully at 3,000,000
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(2000000)
+    expect(result.newHouseholdState.cashYen).toBe(0)
+  })
+
+  it('asset-allocation reallocation is cash-conservative: total cash+assets is unchanged by reallocation alone (Critical #2)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, householdIncomeYen: 0, annualLivingExpensesYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: { DOMESTIC_STOCK: 300000 },
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k2',
+      },
+      // no returns this round — isolate the reallocation effect
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    // net income 0, expenses 0 → netCashFlow 0, no shortfall. Cash 500,000 funds a +300,000 move into DOMESTIC_STOCK.
+    const result = settleRound(input)
+    const totalBefore = 500000 + 1000000
+    const totalAfter = result.newHouseholdState.cashYen + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+    expect(totalAfter).toBe(totalBefore)
+    expect(result.newHouseholdState.cashYen).toBe(200000)
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(1300000)
+  })
+
+  it('an unaffordable reallocation is capped at available cash, never creates money (Critical #2)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 100000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, householdIncomeYen: 0, annualLivingExpensesYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: { DOMESTIC_STOCK: 5000000 },
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k3',
+      },
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    // only 100,000 cash available; a request to move 5,000,000 in must be capped at 100,000, not honored in full.
+    const result = settleRound(input)
+    expect(result.newHouseholdState.cashYen).toBe(0)
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(1100000)
+    const totalBefore = 100000 + 1000000
+    const totalAfter = result.newHouseholdState.cashYen + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+    expect(totalAfter).toBe(totalBefore)
+  })
+
+  it('a partially-resolved shortfall (SELL_ASSETS capped below the full shortfall) is closed via REDUCE_EXPENSES residual, no free cash (Important #1)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        cashYen: 0,
+        assetHoldingsYen: { DOMESTIC_STOCK: 1000000 }, // only 1,000,000 liquid, shortfall will be 3,000,000
+      },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: 'SELL_ASSETS' as const,
+        shortfallResolutionAssetType: 'DOMESTIC_STOCK',
+        publicSupportApplicationIds: [], idempotencyKey: 'k4',
+      },
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    // net income 0, expenses 3,000,000 → shortfall 3,000,000. SELL_ASSETS only resolves min(3,000,000, 1,000,000) = 1,000,000.
+    // The residual 2,000,000 must be closed via REDUCE_EXPENSES, not forgiven as free cash.
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    expect(result.newHouseholdState.cashYen).toBe(0) // not a windfall — exactly closed, no residual left over
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(0) // fully sold off, capped at what it held
+  })
+
+  it('an insurance purchase actually appears in newHouseholdState.activeInsuranceContracts, and a cancellation removes it (Important #2)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        activeInsuranceContracts: { 'ins-old': 5 },
+      },
+      insuranceProducts: [
+        {
+          id: 'ins-new', productName: '医療保険B', premiumYenPerYear: 10000, coveredRisk: '病気',
+          benefitDescription: 'x', benefitAmountYen: 300000, contractYears: 8,
+          coveredEventIds: [], internalClaimProbability: 0.3,
+        },
+        {
+          id: 'ins-old', productName: '医療保険A', premiumYenPerYear: 20000, coveredRisk: '病気',
+          benefitDescription: 'x', benefitAmountYen: 300000, contractYears: 5,
+          coveredEventIds: [], internalClaimProbability: 0.3,
+        },
+      ],
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: ['ins-new'], insuranceCancelIds: ['ins-old'],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k5',
+      },
+    }
+    const result = settleRound(input)
+    expect(result.newHouseholdState.activeInsuranceContracts).toEqual({ 'ins-new': 8 })
+    expect(result.newHouseholdState.activeInsuranceContracts['ins-old']).toBeUndefined()
+  })
 })
