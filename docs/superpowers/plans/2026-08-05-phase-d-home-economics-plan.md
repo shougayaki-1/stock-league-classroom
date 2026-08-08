@@ -1887,8 +1887,8 @@ export interface HouseholdState {
   assetHoldingsYen: Record<string, number>
   /** insuranceProductId → contract years remaining. Absence = not contracted. */
   activeInsuranceContracts: Record<string, number>
-  /** liabilityId → remaining principal (yen). */
-  activeLiabilities: Record<string, number>
+  /** liabilityId → remaining principal/term. `annualInterestRatePercent` is fixed at origination (from Task 1's `Liability` catalog) and never re-read from the catalog after signing, so a teacher editing the draft mid-lesson cannot retroactively change an already-taken loan's rate. */
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number; annualInterestRatePercent: number }>
   lifeStage: string
   roundIndex: number
   goalDelayedRounds: number
@@ -2111,6 +2111,307 @@ git add functions/src/lessonRuns/households/repository.ts functions/src/lessonRu
   functions/src/homeEconomics/submitDecision.ts functions/src/homeEconomics/submitDecision.test.ts functions/src/homeEconomics/onCall.ts \
   src/lib/homeEconomics/submitDecision.ts src/lib/homeEconomics/submitDecision.test.ts
 git commit -m "feat: add HouseholdState repository and bundled round-decision Callable"
+```
+
+---
+
+### Task 11: ラウンド確定処理の中核（年次計算エンジンの統合オーケストレーター）
+
+統合仕様書 §13.7〜§13.13を1つの純粋関数`settleRound`に統合する。Task3〜9の純粋関数を組み合わせる「オーケストレーター」であり、Phase CのTask9（`settleBatch`）に相当する。この関数自体はI/Oを持たない——`processRound.ts`（Admin SDKラッパー）が実際のFirestore読み書きを行う薄いラッパーとして呼ぶ。
+
+**設計上の要点（実装前に理解すること）:**
+1. **「固定費」と「変動費」の対応付け**: Task1の`HouseholdProfile`は生活費を1つの`annualLivingExpensesYen`しか持たない。本タスクでは、住宅ローン返済額（Task5）と保険料（Task6）という「契約で確定した支払い」を`computeAnnualCashFlow`の`fixedExpensesYen`に、`annualLivingExpensesYen`（イベント効果反映後）を`variableExpensesYen`（物価上昇の影響を受ける、§13.7）に対応付ける。
+2. **資金不足の自動フォールバック**: 生徒が`shortfallResolutionType`を選ばずにラウンドを終えた場合（未提出、または不足が事後的に判明した場合）、自動で破綻させず`REDUCE_EXPENSES`（常に選択可能な選択肢、Task8）を既定の解決策として適用する。
+3. **順序**: 収入→税→（住宅ローン・保険料込みの）収支→イベント効果→不足判定→資産配分変更の適用→資産収益率計算、という順で進める。資産収益率は「配分変更後」の保有額に対して計算する（今年動かした資金は今年の収益から即座に恩恵/リスクを受ける、という単純化——複利計算を月割りにしない教育用モデルとして妥当）。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/settleRound.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/processRound.ts`, `.test.ts`, `onCall.ts`
+
+**Interfaces:**
+- Consumes: `computeAnnualCashFlow`/`computeTaxAndSocialInsurance`（Task3）、`computeAssetReturn`（Task4）、`applyMortgageRound`（Task5）、`computeAnnualPremiumTotal`/`computeInsuranceBenefits`（Task6）、`determineOccurredEvents`/`applyEventEffects`（Task7）、`detectShortfall`/`buildShortfallOptions`/`applyShortfallResolution`（Task8）、`determineEligiblePrograms`/`computePublicSupportAvailableYen`（Task9）、`HouseholdState`（Task10）
+- Produces: `settleRound(input): SettleRoundResult`
+
+- [ ] **Step 1: 失敗するテストを書く（イベント・住宅ローン・不足自動解決を1ラウンドで検証する）**
+
+`functions/src/homeEconomics/engine/settleRound.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { settleRound } from './settleRound'
+
+const baseHousehold = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a',
+  cashYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 },
+  activeInsuranceContracts: {}, activeLiabilities: {},
+  lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+}
+const baseProfile = {
+  householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+  annualLivingExpensesYen: 3000000, cashSavingsYen: 500000,
+  family: '配偶者・子2人', housing: '賃貸マンション', lifeGoal: '住宅購入と教育資金',
+  lifeStage: 'CHILD_REARING' as const, eventProbabilityOverrides: {}, internalRiskFactors: {},
+}
+const baseInput = {
+  household: baseHousehold, profile: baseProfile, decision: null,
+  lifeEvents: [], insuranceProducts: [], publicSupportPrograms: [], liabilityCatalog: [],
+  economicFactors: { inflationPercent: 0, interestRatePercent: 1, marketReturnPercent: 0 },
+  taxModelVersion: 1, roundYears: 5, borrowingAllowed: false,
+  randomSeed: 'seed-x', restoreGeneration: 0,
+}
+
+describe('settleRound', () => {
+  it('a household with no events/mortgage/insurance nets income-tax-expenses into cash, deterministically', () => {
+    const result = settleRound(baseInput)
+    // grossIncome 6,000,000 → tax model v1 (20% flat, Task 3 PROVISIONAL) → net 4,800,000
+    // fixedExpenses 0 (no mortgage/insurance), variableExpenses 3,000,000 (no inflation)
+    // netCashFlow = 4,800,000 - 3,000,000 = 1,800,000
+    expect(result.newHouseholdState.cashYen).toBe(baseHousehold.cashYen + 1800000)
+    expect(result.newHouseholdState.roundIndex).toBe(1)
+    expect(result.shortfallYen).toBe(0)
+  })
+
+  it('is deterministic — same inputs always produce the same asset returns', () => {
+    expect(settleRound(baseInput).newHouseholdState.assetHoldingsYen).toEqual(settleRound(baseInput).newHouseholdState.assetHoldingsYen)
+  })
+
+  it('auto-resolves an unexpected shortfall with REDUCE_EXPENSES when no decision was submitted (spec §13.13: never auto-bankrupts)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 0 },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+    }
+    // net income 0, expenses 3,000,000 → shortfall 3,000,000 with no decision submitted
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    expect(result.newHouseholdState.cashYen).toBeGreaterThanOrEqual(0)
+  })
+
+  it('mortgage payments count toward fixed expenses and reduce the outstanding liability (Task 5 integration)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        activeLiabilities: { 'loan-1': { remainingPrincipalYen: 20000000, remainingYears: 20, annualInterestRatePercent: 0 } },
+      },
+      liabilityCatalog: [{ id: 'loan-1', kind: 'MORTGAGE' as const, principalYen: 20000000, remainingPrincipalYen: 20000000, annualInterestRatePercent: 0, remainingYears: 20 }],
+    }
+    const result = settleRound(input)
+    // 0% interest, 20yr, roundYears=5: 5 * (20,000,000/20) = 5,000,000 paid over the round
+    expect(result.newHouseholdState.activeLiabilities['loan-1'].remainingPrincipalYen).toBe(15000000)
+    expect(result.newHouseholdState.activeLiabilities['loan-1'].remainingYears).toBe(15)
+  })
+
+  it('an insurance benefit only pays when its covered event actually fires this round (Task 6/7 integration)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, activeInsuranceContracts: { 'ins-1': 10 } },
+      insuranceProducts: [{
+        id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000, coveredRisk: '病気',
+        benefitDescription: 'x', benefitAmountYen: 500000, contractYears: 10,
+        coveredEventIds: ['illness'], internalClaimProbability: 0.5,
+      }],
+      lifeEvents: [{
+        id: 'illness', label: '病気', disclosureMode: 'HIDDEN' as const, triggerProbability: 1,
+        effectDescription: 'x', incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: 0,
+      }],
+    }
+    const result = settleRound(input)
+    expect(result.occurredEventIds).toEqual(['illness'])
+    expect(result.insuranceBenefitsYen).toBe(500000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/settleRound.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `settleRound`を実装する**
+
+`functions/src/homeEconomics/engine/settleRound.ts`:
+
+```ts
+import type { HouseholdProfile, InsuranceProduct, LifeEventDefinition, Liability, PublicSupportProgram } from '@stock-league/household-authoring-content'
+import type { HouseholdState } from '../../lessonRuns/households/repository'
+import type { HouseholdDecisionInput } from '../submitDecision'
+import { applyEventEffects, determineOccurredEvents } from './lifeEvents'
+import { computeAnnualCashFlow, computeTaxAndSocialInsurance } from './annualCashFlow'
+import { computeAnnualPremiumTotal, computeInsuranceBenefits } from './insurance'
+import { applyMortgageRound } from './mortgage'
+import { computeAssetReturn } from './assetReturn'
+import { applyShortfallResolution, buildShortfallOptions, detectShortfall } from './shortfallOptions'
+import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
+
+export interface SettleRoundInput {
+  household: HouseholdState
+  profile: HouseholdProfile
+  decision: HouseholdDecisionInput | null
+  lifeEvents: LifeEventDefinition[]
+  insuranceProducts: InsuranceProduct[]
+  publicSupportPrograms: PublicSupportProgram[]
+  liabilityCatalog: Liability[]
+  economicFactors: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
+  taxModelVersion: number
+  roundYears: number
+  borrowingAllowed: boolean
+  randomSeed: string
+  restoreGeneration: number
+}
+export interface SettleRoundResult {
+  newHouseholdState: HouseholdState
+  occurredEventIds: string[]
+  incomeYen: number
+  expensesYen: number
+  netCashFlowYen: number
+  shortfallYen: number
+  insuranceBenefitsYen: number
+}
+
+export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
+  const { household, profile } = input
+
+  // 1. Life events (spec §13.12)
+  const occurredEventIds = determineOccurredEvents({
+    events: input.lifeEvents, eventProbabilityOverrides: profile.eventProbabilityOverrides,
+    householdId: household.householdId, roundIndex: household.roundIndex,
+    randomSeed: input.randomSeed, restoreGeneration: input.restoreGeneration,
+  })
+  const eventEffects = applyEventEffects(input.lifeEvents, occurredEventIds)
+
+  // 2. Income + tax (spec §13.7/§13.8)
+  const grossIncomeYen = profile.householdIncomeYen + eventEffects.incomeEffectYen
+  const taxResult = computeTaxAndSocialInsurance({ grossIncomeYen }, input.taxModelVersion)
+
+  // 3. Mortgage payments (spec §13.9) — all active MORTGAGE liabilities, this round's roundYears advanced together.
+  const newLiabilities: HouseholdState['activeLiabilities'] = {}
+  let mortgagePaymentTotalYen = 0
+  for (const [liabilityId, state] of Object.entries(household.activeLiabilities)) {
+    const catalogEntry = input.liabilityCatalog.find((l) => l.id === liabilityId)
+    if (!catalogEntry || catalogEntry.kind !== 'MORTGAGE' || state.remainingPrincipalYen <= 0) {
+      newLiabilities[liabilityId] = state
+      continue
+    }
+    const roundResult = applyMortgageRound({
+      remainingPrincipalYen: state.remainingPrincipalYen, annualInterestRatePercent: state.annualInterestRatePercent,
+      remainingYears: state.remainingYears, roundYears: input.roundYears,
+    })
+    mortgagePaymentTotalYen += roundResult.totalPaymentYen
+    newLiabilities[liabilityId] = {
+      remainingPrincipalYen: roundResult.newRemainingPrincipalYen, remainingYears: roundResult.newRemainingYears,
+      annualInterestRatePercent: state.annualInterestRatePercent,
+    }
+  }
+
+  // 4. Insurance premiums + benefits (spec §13.6)
+  const activeProducts = Object.keys(household.activeInsuranceContracts)
+    .map((id) => input.insuranceProducts.find((product) => product.id === id))
+    .filter((product): product is InsuranceProduct => product !== undefined)
+  const insurancePremiumYen = computeAnnualPremiumTotal(activeProducts)
+  const insuranceBenefitsYen = computeInsuranceBenefits(activeProducts, occurredEventIds)
+    .reduce((sum, benefit) => sum + benefit.paidYen, 0)
+
+  // 5. Cash flow (spec §13.7): fixed = contractual obligations, variable = living costs (inflation-adjusted).
+  const cashFlowResult = computeAnnualCashFlow({
+    netIncomeYen: taxResult.netIncomeYen,
+    fixedExpensesYen: mortgagePaymentTotalYen + insurancePremiumYen,
+    variableExpensesYen: Math.max(0, profile.annualLivingExpensesYen + eventEffects.expenseEffectYen),
+    inflationPercent: input.economicFactors.inflationPercent,
+  })
+  const netCashFlowYen = cashFlowResult.netCashFlowYen + eventEffects.cashEffectYen + insuranceBenefitsYen
+
+  // 6. Shortfall detection + resolution (spec §13.13) — never auto-bankrupts.
+  const shortfallYen = detectShortfall({ cashSavingsYen: household.cashYen, netCashFlowYen })
+  let resolutionCashDeltaYen = 0
+  let newLiabilityFromShortfallYen = 0
+  let goalDelayedRoundsDelta = 0
+  if (shortfallYen > 0) {
+    const eligiblePrograms = determineEligiblePrograms(input.publicSupportPrograms, grossIncomeYen)
+    const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, input.decision?.publicSupportApplicationIds ?? [])
+    const options = buildShortfallOptions({
+      shortfallYen, liquidAssetsYen: Object.values(household.assetHoldingsYen).reduce((sum, v) => sum + v, 0),
+      publicSupportAvailableYen, borrowingAllowed: input.borrowingAllowed,
+    })
+    const chosenType = input.decision?.shortfallResolutionType ?? 'REDUCE_EXPENSES'
+    const chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
+    const resolution = applyShortfallResolution(chosenOption, shortfallYen)
+    resolutionCashDeltaYen = resolution.cashDeltaYen
+    newLiabilityFromShortfallYen = resolution.newLiabilityYen
+    goalDelayedRoundsDelta = resolution.goalDelayedRounds
+  }
+
+  // 7. Asset allocation changes (from decision) + asset returns (spec §13.5/§13.15).
+  const newAssetHoldingsYen: Record<string, number> = { ...household.assetHoldingsYen }
+  for (const [assetType, deltaYen] of Object.entries(input.decision?.assetAllocationChangesYen ?? {})) {
+    newAssetHoldingsYen[assetType] = Math.max(0, (newAssetHoldingsYen[assetType] ?? 0) + deltaYen)
+  }
+  for (const assetType of Object.keys(newAssetHoldingsYen)) {
+    // NOTE (PROVISIONAL — Task 17 to review): expectedReturnPercent/volatilityPercent
+    // per asset type come from the template's authoring `assets` catalog
+    // (Task 1), matched by `assetType`. This composition assumes at most
+    // one authoring entry per assetType per household; a template with
+    // multiple products of the same assetType needs a richer key than
+    // assetType alone — deferred, see Task 17's completion-condition review.
+    const returnResult = computeAssetReturn({
+      assetType: assetType as never, valueYen: newAssetHoldingsYen[assetType],
+      expectedReturnPercent: 0, volatilityPercent: 0, // resolved from the authoring catalog by processRound.ts — settleRound itself stays a pure function of whatever it's given
+      marketReturnPercent: input.economicFactors.marketReturnPercent,
+      householdId: household.householdId, roundIndex: household.roundIndex,
+      randomSeed: input.randomSeed, restoreGeneration: input.restoreGeneration,
+    })
+    newAssetHoldingsYen[assetType] = returnResult.nextValueYen
+  }
+
+  const newCashYen = Math.max(0, household.cashYen + netCashFlowYen + resolutionCashDeltaYen)
+  if (newLiabilityFromShortfallYen > 0) {
+    newLiabilities[`shortfall-loan-round-${household.roundIndex}`] = {
+      remainingPrincipalYen: newLiabilityFromShortfallYen, remainingYears: 5, annualInterestRatePercent: 3,
+    }
+  }
+
+  return {
+    newHouseholdState: {
+      ...household, cashYen: newCashYen, assetHoldingsYen: newAssetHoldingsYen, activeLiabilities: newLiabilities,
+      roundIndex: household.roundIndex + 1, goalDelayedRounds: household.goalDelayedRounds + goalDelayedRoundsDelta,
+      updatedAtServerMillis: household.updatedAtServerMillis,
+    },
+    occurredEventIds, incomeYen: taxResult.netIncomeYen, expensesYen: cashFlowResult.totalExpensesYen,
+    netCashFlowYen, shortfallYen, insuranceBenefitsYen,
+  }
+}
+```
+
+**既知の限界（Task17で見直す、コード内コメント参照）:** `computeAssetReturn`呼び出しで`expectedReturnPercent`/`volatilityPercent`を`0`固定にしている——これはTask1の`AssetPosition`（教材が定義する資産カタログ、`expectedReturnPercent`等を持つ）を`assetType`だけで1件に解決できるという前提に依存するが、`settleRound`自体は純粋関数なので教材カタログの解決は呼び出し側（`processRound.ts`）が担う設計にする。`processRound.ts`実装時に、`assetType`ごとの教材カタログエントリを`settleRound`呼び出し前に解決し、`computeAssetReturn`への引数として正しく渡すよう修正すること（Step5参照）。
+
+- [ ] **Step 4: `processRound.ts`が教材カタログを解決してから`settleRound`を呼ぶよう実装する**
+
+`functions/src/homeEconomics/processRound.ts`（Admin SDKラッパー、Phase Cの`processBatch.ts`と同じ構造）: `HomeEconomicsContent.assets`（Task2）を`assetType`でインデックス化し、Step3の`computeAssetReturn`呼び出しへ実際の`expectedReturnPercent`/`volatilityPercent`を渡す形へ`settleRound`を修正する（`SettleRoundInput`へ`assetCatalog: AssetPosition[]`を追加し、Step3のTODOコメント箇所を`input.assetCatalog.find((a) => a.assetType === assetType)`の解決結果で置き換える）。この修正を先に行ってからテストを通すこと。
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/settleRound.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: `processRound`のAdmin SDK実装とCallableを実装する**
+
+`functions/src/homeEconomics/processRound.ts`は以下の順でI/Oを行う（Phase Cの`processBatch.ts`と同じ「全read→全write」規律、教師操作またはチーム全員のDECISION提出完了で発火）:
+1. `lessonRuns/{id}`から`randomSeed`・`restoreGeneration`・`homeEconomics`設定を読む。
+2. 対象`householdId`の`HouseholdState`（Task10）と、その回の`HouseholdDecisionInput`（Task10、未提出ならnull）を読む。
+3. `settleRound`を呼ぶ。
+4. トランザクションで`HouseholdState`を更新し、`LessonEvent`として`ROUND_SETTLED`を`appendLessonEvent`（Phase A）で追記する。
+5. RTDB`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`を更新する（Task15で結線、Phase C Task9/10/13/20と同じ先送りパターンをここでも踏襲してよいが、**Phase Cで発生した「先送りしたまま最終レビューまで気づかれなかった」という反省を踏まえ、Task15を必ず実施すること**）。
+
+`processRoundCallable`は教師操作専用（進行を1つの意思決定点に保つ、Phase Bの`TRANSITION_PHASE`と同じ独自区分の考え方を踏襲）とし、チーム全員が`submitHouseholdDecision`済みであることを確認してから呼べるようにする。
+
+- [ ] **Step 7: `npm run verify`**
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/settleRound.ts functions/src/homeEconomics/engine/settleRound.test.ts \
+  functions/src/homeEconomics/processRound.ts functions/src/homeEconomics/processRound.test.ts functions/src/homeEconomics/onCall.ts
+git commit -m "feat: add settleRound — the pure round-settlement orchestrator, and processRound wiring"
 ```
 
 ---
