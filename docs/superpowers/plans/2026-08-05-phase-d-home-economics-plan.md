@@ -2707,3 +2707,211 @@ git commit -m "feat: add goal-package concept-visibility resolver"
 ```
 
 ---
+
+### Task 15: RTDBライブスキーマ拡張と生徒・教師画面
+
+統合仕様書 §26-1（公開/非公開/チーム別の3分離）・§23.6（本名非表示）・§13.4（架空プロフィール明示）を実装する。**Phase Cの前例に倣い、Rulesの新規ノードは不要**——`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`はPhase A/B/Cで既に3分離済みのトップレベルノードであり、家庭科は既存ノードへフィールドを追加するだけでよい（Phase C Task13と同じ判断）。**Phase Cで最終レビューまで気づかれなかった教訓（RTDBへの実配信コードがno-opのまま最後まで残った）を踏まえ、本タスクでは型定義・allow-list変換関数・実際のRTDB書き込み配線までを1つのタスクとして完結させ、「配線は後続タスクで」という先送りを作らない。**
+
+**Files:**
+- Modify: `src/lib/lessonRuns/liveTypes.ts`（`LessonRunPublicState`/`LessonRunPrivateState`/`LessonRunTeamState`へ家庭科フィールド追加、オプショナル——市場フィールドと共存しSOCIAL_STUDIES/HOME_ECONOMICSどちらか一方だけが埋まる）
+- Create: `functions/src/homeEconomics/realtimeProjection.ts`, `.test.ts`（allow-list変換、Phase C Task20の`realtimeProjection.ts`と同じ設計）
+- Modify: `functions/src/homeEconomics/processRound.ts`（Task11で作成、`publishRealtimeState`の実装をこのタスクで完成させる——Task11時点では先送りにする）
+- Create: `src/components/homeEconomics/HouseholdSummaryCard.tsx`, `.test.tsx`（生徒画面の中核部品、既存の`@stock-league/lesson-inputs`ウィジェットを組み合わせる薄いshell）
+
+**Interfaces:**
+- Consumes: `HouseholdState`（Task10）、`resolveVisibleConcepts`（Task14）、`buildEventDisclosureView`（Task7）、`buildShortfallOptions`（Task8）
+- Produces: `HouseholdStateTeamView`型、`toHouseholdStateTeamView(household, visibleConcepts, disclosures, shortfallOptions): HouseholdStateTeamView`
+
+- [ ] **Step 1: 禁止情報の失敗するテストを書く（allow-list変換）**
+
+`functions/src/homeEconomics/realtimeProjection.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import { toHouseholdStateTeamView } from './realtimeProjection'
+
+const household: HouseholdState = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 1500000,
+  assetHoldingsYen: { DOMESTIC_STOCK: 800000 }, activeInsuranceContracts: { 'ins-1': 7 },
+  activeLiabilities: { 'loan-1': { remainingPrincipalYen: 18000000, remainingYears: 15, annualInterestRatePercent: 2 } },
+  lifeStage: 'CHILD_REARING', roundIndex: 4, goalDelayedRounds: 1, updatedAtServerMillis: 1234,
+}
+
+describe('toHouseholdStateTeamView', () => {
+  it('never leaks the other team\'s data — this function only ever sees ONE household by construction', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(view.householdId).toBe('case-b')
+  })
+
+  it('never leaks internal risk factors or claim probabilities — allow-list only, matching liveTypes.ts field-for-field', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(JSON.stringify(view)).not.toContain('internalClaimProbability')
+    expect(JSON.stringify(view)).not.toContain('internalRiskFactors')
+    expect(JSON.stringify(view)).not.toContain('eventProbabilityOverrides')
+  })
+
+  it('is always fictional (spec §13.4 — this must render as "これは授業用の架空プロフィールです" client-side)', () => {
+    const view = toHouseholdStateTeamView(household, [], [], [])
+    expect(view.isFictional).toBe(true)
+  })
+
+  it('respects the goal-package concept visibility filter — hidden concepts are omitted, not merely flagged', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(view.visibleConcepts).toEqual(['EMERGENCY_FUND'])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/realtimeProjection.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/realtimeProjection.ts`:
+
+```ts
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import type { ConceptCategory } from './goalPackage'
+import type { EventDisclosureView } from './engine/lifeEvents'
+import type { ShortfallOption } from './engine/shortfallOptions'
+
+/**
+ * Server-side counterpart of src/lib/lessonRuns/liveTypes.ts's
+ * `HouseholdStateTeamView` — functions cannot import across the
+ * functions/src rootDir boundary (see functions/src/lessonRuns/
+ * projections/publicProjection.ts's established precedent). Keep both in
+ * sync by hand.
+ */
+export interface HouseholdStateTeamView {
+  householdId: string
+  isFictional: true
+  cashYen: number
+  assetHoldingsYen: Record<string, number>
+  /** insuranceProductId → years remaining — allow-list, never the product's internalClaimProbability. */
+  activeInsuranceContractYearsRemaining: Record<string, number>
+  /** liabilityId → remaining principal/years — never the origination principal or a resolved catalog entry. */
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  visibleConcepts: ConceptCategory[]
+  eventDisclosures: EventDisclosureView[]
+  shortfallOptions: ShortfallOption[]
+}
+
+/**
+ * Projects one household's `HouseholdState` (Task 10) plus this round's
+ * derived views (Task 7/8/14) down to the team-broadcast-safe shape for
+ * `lessonRunTeamState/{lessonRunId}/{teamId}`. Allow-list only — never
+ * `{...household}` — so a future field added to `HouseholdState` is
+ * excluded by default. Caller MUST pass exactly one household's own
+ * `HouseholdState`; this function has no team-membership check of its own
+ * (same discipline as Phase C's `toMyOrdersView`, Task 20).
+ */
+export const toHouseholdStateTeamView = (
+  household: HouseholdState,
+  visibleConcepts: ConceptCategory[],
+  eventDisclosures: EventDisclosureView[],
+  shortfallOptions: ShortfallOption[],
+): HouseholdStateTeamView => ({
+  householdId: household.householdId,
+  isFictional: true,
+  cashYen: household.cashYen,
+  assetHoldingsYen: { ...household.assetHoldingsYen },
+  activeInsuranceContractYearsRemaining: { ...household.activeInsuranceContracts },
+  activeLiabilities: Object.fromEntries(
+    Object.entries(household.activeLiabilities).map(([id, state]) => [id, { remainingPrincipalYen: state.remainingPrincipalYen, remainingYears: state.remainingYears }]),
+  ),
+  lifeStage: household.lifeStage,
+  roundIndex: household.roundIndex,
+  goalDelayedRounds: household.goalDelayedRounds,
+  visibleConcepts,
+  eventDisclosures,
+  shortfallOptions,
+})
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/realtimeProjection.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `src/lib/lessonRuns/liveTypes.ts`へ家庭科フィールドを追加する（Task13の市場フィールドと共存、オプショナル）**
+
+```ts
+export interface HouseholdStateTeamView {
+  householdId: string
+  isFictional: true
+  cashYen: number
+  assetHoldingsYen: Record<string, number>
+  activeInsuranceContractYearsRemaining: Record<string, number>
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  visibleConcepts: string[]
+  eventDisclosures: { eventId: string; label: string | null; effectDescription: string | null; revealed: boolean }[]
+  shortfallOptions: { type: string; description: string; resolvesYen: number }[]
+}
+
+export interface LessonRunTeamState {
+  cash: number
+  holdings: Record<string, number>
+  lockedBuyValue: number
+  lockedSellQuantity: Record<string, number>
+  myOrders: MyOrderView[]
+  updatedAtMillis: number
+  /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
+  household?: HouseholdStateTeamView
+}
+```
+
+- [ ] **Step 6: `processRound.ts`（Task11）の`publishRealtimeState`を完成させる（先送りにしない）**
+
+Task11の`processRound.ts`に`publishRealtimeState`のAdmin SDK実装を追加する。Phase C Task20の`publishRealtimeStateWithAdminSdk`（`functions/src/market/processBatch.ts`）と同じ設計原則を踏襲する:
+- `lessonRunTeamState/{lessonRunId}/{teamId}`を`.update()`で部分更新し、`household`フィールドだけを設定する（他のフィールドが存在すれば破壊しない）。
+- `orgId`を必ず含める（Rules上の読み取り必須条件——Phase C Task20で発見された「orgIdを付与し忘れると恒久的に読み取り不能になる」バグの再発を防ぐ、実装時に必ず確認すること）。
+- `lessonRunPublic/{lessonRunId}`には`economicFactors`（物価・金利・想定収益率、クラス全体で共有される前提条件）を`.update()`で追加する。
+- `lessonRunPrivate/{lessonRunId}`には教師向けの内部情報（`internalRiskFactors`・`internalClaimProbability`を含む完全な計算ログ）を`.update()`で追加する。
+
+- [ ] **Step 7: 生徒画面の失敗するテストを書く（既存ウィジェットの再利用を確認する）**
+
+`src/components/homeEconomics/HouseholdSummaryCard.test.tsx`:
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { HouseholdSummaryCard } from './HouseholdSummaryCard'
+
+describe('HouseholdSummaryCard', () => {
+  it('always renders the "これは授業用の架空プロフィールです" notice (spec §13.4)', () => {
+    render(<HouseholdSummaryCard householdId="case-b" cashYen={1500000} lifeStage="子育て期" roundIndex={4} visibleConcepts={['EMERGENCY_FUND']} />)
+    expect(screen.getByText('これは授業用の架空プロフィールです')).toBeInTheDocument()
+  })
+
+  it('never renders a concept category absent from visibleConcepts', () => {
+    render(<HouseholdSummaryCard householdId="case-b" cashYen={1500000} lifeStage="子育て期" roundIndex={4} visibleConcepts={['EMERGENCY_FUND']} />)
+    expect(screen.queryByText('住宅ローン')).not.toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 8: 失敗を確認し、`HouseholdSummaryCard`を実装する**
+
+Run: `npx vitest run src/components/homeEconomics/HouseholdSummaryCard.test.tsx`
+Expected: FAIL → 実装後PASS。実装は`src/components/homeEconomics/HouseholdSummaryCard.tsx`に、`visibleConcepts`（Task14）に応じてセクションを出し分ける薄いpresentationalコンポーネントとして作成する。資産配分入力は`@stock-league/lesson-inputs`の`RankingInput`/`QuantityInput`（Phase B Task6）を、資金不足時の選択肢は`SingleChoiceInput`をそのまま流用し、家庭科専用の新規ウィジェット型は追加しない（Global Constraints参照）。
+
+- [ ] **Step 9: `npm run verify`**
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/lib/lessonRuns/liveTypes.ts functions/src/homeEconomics/realtimeProjection.ts functions/src/homeEconomics/realtimeProjection.test.ts \
+  functions/src/homeEconomics/processRound.ts src/components/homeEconomics/HouseholdSummaryCard.tsx src/components/homeEconomics/HouseholdSummaryCard.test.tsx
+git commit -m "feat: add household RTDB projection, wire real-time broadcast, add student summary screen"
+```
+
+---
