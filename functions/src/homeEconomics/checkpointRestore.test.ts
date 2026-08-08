@@ -24,4 +24,16 @@ describe('buildHouseholdCheckpointSnapshot / restoreHouseholdsFromSnapshot', () 
     expect(restored.find((h) => h.householdId === 'case-b')?.cashYen).toBe(1500000)
     expect(restored.find((h) => h.householdId === 'case-c')?.cashYen).toBe(999999)
   })
+
+  it('throws a clear error if snapshot has an unknown schemaVersion (e.g. 2 or 99)', () => {
+    const snapshotWithVersion2 = { schemaVersion: 2, households: [household] }
+    expect(() => restoreHouseholdsFromSnapshot(snapshotWithVersion2)).toThrow(
+      'Unknown household checkpoint schema version: 2'
+    )
+
+    const snapshotWithVersion99 = { schemaVersion: 99, households: [household] }
+    expect(() => restoreHouseholdsFromSnapshot(snapshotWithVersion99)).toThrow(
+      'Unknown household checkpoint schema version: 99'
+    )
+  })
 })
