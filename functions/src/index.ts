@@ -35,6 +35,7 @@ export {
   issueDisplaySessionTokenCallable,
 } from './lessonRuns/projections/onCall'
 export { submitSurveyCallable } from './lessonRuns/surveys/onCall'
+export { submitOrderCallable } from './market/onCall'
 export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
