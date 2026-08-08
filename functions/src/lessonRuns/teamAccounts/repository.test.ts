@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySoftLockForNewOrder, getOrInitTeamAccount } from './repository'
+import { applySoftLockForNewOrder, getOrInitTeamAccount, releaseSoftLock } from './repository'
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -68,5 +68,35 @@ describe('applySoftLockForNewOrder', () => {
       side: 'SELL', stockId: 'acme', quantity: 7, referencePrice: 1000, now: () => 1,
     })
     expect(result).toEqual({ accepted: false, reason: '売却可能株数が不足しています。' })
+  })
+})
+
+describe('releaseSoftLock', () => {
+  it('reduces lockedBuyValue by exactly the cancelled order\'s reference-price value', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/teamAccounts/team-a', {
+      teamId: 'team-a', lessonRunId: 'run-1', cash: 20000, holdings: {},
+      lockedBuyValue: 11000, lockedSellQuantity: {}, updatedAtServerMillis: 0,
+    })
+    await releaseSoftLock({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a',
+      side: 'BUY', stockId: 'acme', quantity: 5, referencePrice: 1000, now: () => 2,
+    })
+    expect(fake.docs.get('lessonRuns/run-1/teamAccounts/team-a')).toMatchObject({ lockedBuyValue: 6000 })
+  })
+
+  it('reduces lockedSellQuantity for that stock only', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/teamAccounts/team-a', {
+      teamId: 'team-a', lessonRunId: 'run-1', cash: 0, holdings: { acme: 10 },
+      lockedBuyValue: 0, lockedSellQuantity: { acme: 4, globex: 2 }, updatedAtServerMillis: 0,
+    })
+    await releaseSoftLock({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a',
+      side: 'SELL', stockId: 'acme', quantity: 4, referencePrice: 1000, now: () => 2,
+    })
+    expect(fake.docs.get('lessonRuns/run-1/teamAccounts/team-a')).toMatchObject({
+      lockedSellQuantity: { acme: 0, globex: 2 },
+    })
   })
 })

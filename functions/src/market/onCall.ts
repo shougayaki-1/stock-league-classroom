@@ -1,7 +1,8 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
-import { createPendingOrder, ordersRepositoryWithAdminSdk } from '../lessonRuns/orders/repository'
-import { applySoftLockForNewOrder, getOrInitTeamAccount, teamAccountsRepositoryWithAdminSdk } from '../lessonRuns/teamAccounts/repository'
+import { createPendingOrder, getOrder as getOrderFromRepository, ordersRepositoryWithAdminSdk, transitionOrderStatus } from '../lessonRuns/orders/repository'
+import { applySoftLockForNewOrder, getOrInitTeamAccount, releaseSoftLock, teamAccountsRepositoryWithAdminSdk } from '../lessonRuns/teamAccounts/repository'
+import { cancelOrder } from './cancelOrder'
 import { submitOrder } from './submitOrder'
 
 /**
@@ -132,5 +133,72 @@ export const submitOrderCallable = onCall({ region: 'asia-northeast1' }, async (
     })
   } catch (error) {
     throw translateSubmitOrderError(error)
+  }
+})
+
+interface CancelOrderRequest {
+  lessonRunId: string
+  orderId: string
+}
+
+/**
+ * Translates cancelOrder's bare Error messages into HttpsError codes at the
+ * Callable boundary, matching submitOrderCallable's convention.
+ */
+const translateCancelOrderError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === '処理中の注文は取消できません。') return new HttpsError('failed-precondition', error.message)
+    if (error.message === '注文が見つかりません') return new HttpsError('failed-precondition', error.message)
+    if (error.message === '注文の状態が想定と異なります') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
+
+/**
+ * Student-facing order cancellation Callable — spec §12.17. Only a member
+ * of the team that placed the order may cancel it: unlike submitOrder,
+ * the client does not supply a teamId to authorize against — this
+ * Callable reads the order first (server-side) and checks membership
+ * against the order's own `teamId`, so a caller cannot forge team
+ * ownership by claiming a different team in the request.
+ */
+export const cancelOrderCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as CancelOrderRequest
+  if (!data.lessonRunId || !data.orderId) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、orderId は必須です。')
+  }
+
+  const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
+
+  const ordersRepository = ordersRepositoryWithAdminSdk()
+  const order = await getOrderFromRepository({
+    firestore: ordersRepository, lessonRunId: data.lessonRunId, orderId: data.orderId,
+  })
+  if (!order) throw new HttpsError('failed-precondition', '注文が見つかりません。')
+
+  await requireTeamMembership(data.lessonRunId, order.teamId, actorParticipantId)
+
+  try {
+    await cancelOrder({
+      getOrder: async ({ lessonRunId, orderId }) => {
+        const found = await getOrderFromRepository({ firestore: ordersRepository, lessonRunId, orderId })
+        if (!found) throw new HttpsError('failed-precondition', '注文が見つかりません。')
+        return found
+      },
+      releaseSoftLock: (input) => releaseSoftLock({
+        firestore: teamAccountsRepositoryWithAdminSdk(), lessonRunId: input.lessonRunId, teamId: input.teamId,
+        side: input.side, stockId: input.stockId, quantity: input.quantity, referencePrice: input.referencePrice,
+        now: Date.now,
+      }),
+      transition: (input) => transitionOrderStatus({
+        firestore: ordersRepositoryWithAdminSdk(), lessonRunId: input.lessonRunId, orderId: input.orderId,
+        from: input.from, to: input.to,
+      }),
+      lessonRunId: data.lessonRunId, orderId: data.orderId,
+    })
+  } catch (error) {
+    throw translateCancelOrderError(error)
   }
 })

@@ -67,6 +67,41 @@ export const applySoftLockForNewOrder = async (input: ApplySoftLockInput): Promi
   }) as Promise<ApplySoftLockResult>
 }
 
+export interface ReleaseSoftLockInput {
+  firestore: FirestoreLike
+  lessonRunId: string
+  teamId: string
+  side: 'BUY' | 'SELL'
+  stockId: string
+  quantity: number
+  referencePrice: number
+  now: () => number
+}
+
+/** Inverse of applySoftLockForNewOrder — used on cancel (Task 8) and after
+ * hard settlement replaces the soft lock with the real outcome (Task 9). */
+export const releaseSoftLock = async (input: ReleaseSoftLockInput): Promise<void> => {
+  await input.firestore.runTransaction(async (tx) => {
+    const path = accountPath(input.lessonRunId, input.teamId)
+    const snap = await tx.get(path)
+    const account = snap.data() as unknown as TeamAccount
+    if (input.side === 'BUY') {
+      tx.set(path, {
+        ...account,
+        lockedBuyValue: account.lockedBuyValue - input.quantity * input.referencePrice,
+        updatedAtServerMillis: input.now(),
+      } as unknown as Record<string, unknown>)
+      return
+    }
+    const currentLocked = account.lockedSellQuantity[input.stockId] ?? 0
+    tx.set(path, {
+      ...account,
+      lockedSellQuantity: { ...account.lockedSellQuantity, [input.stockId]: currentLocked - input.quantity },
+      updatedAtServerMillis: input.now(),
+    } as unknown as Record<string, unknown>)
+  })
+}
+
 /**
  * Server-internal only: no Callable wraps this directly. `submitOrder`'s
  * onCall.ts calls these after resolving/authorizing the caller's teamId,
