@@ -1,5 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore'
-import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import { getDatabase } from 'firebase-admin/database'
+import type { HomeEconomicsContent, HouseholdProfile } from '@stock-league/household-authoring-content'
 import { appendLessonEventInTransaction, type FirestoreTx } from '../lessonRuns/appendLessonEvent'
 import {
   getHouseholdDecisionForRoundWithAdminSdk,
@@ -7,6 +8,11 @@ import {
   type HouseholdState,
 } from '../lessonRuns/households/repository'
 import { settleRound, type SettleRoundInput, type SettleRoundResult } from './engine/settleRound'
+import { buildEventDisclosureView } from './engine/lifeEvents'
+import { buildShortfallOptions } from './engine/shortfallOptions'
+import { computePublicSupportAvailableYen, determineEligiblePrograms } from './engine/publicSupport'
+import { resolveVisibleConcepts } from './goalPackage'
+import { toHouseholdStateTeamView } from './realtimeProjection'
 import type { HouseholdDecisionInput } from './submitDecision'
 
 /**
@@ -16,17 +22,17 @@ import type { HouseholdDecisionInput } from './submitDecision'
  * household at a time (mirroring `settleRound`'s own single-household
  * scope).
  *
- * Per this task's scoping note: this file implements Firestore-side I/O
- * only (steps 1-4 below). RTDB `lessonRunPublic`/`lessonRunPrivate`/
- * `lessonRunTeamState` projections (the brief's step 5) are INTENTIONALLY
- * NOT wired here — deferred to Task 15, which has not run yet in this
- * session and whose schema fields this would need do not exist. This
- * mirrors Phase C's own documented RTDB deferral (`processBatch.ts`'s
- * step 8), except this time the deferral is written down explicitly here
- * and in task-11-report.md so it does not go unnoticed the way Phase C's
- * did ("先送りしたまま最終レビューまで気づかれなかった").
+ * This file implements Firestore-side I/O (steps 1-4 below) AND the RTDB
+ * `lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState` broadcast (step
+ * 5, Task 15). Task 11 deliberately deferred step 5 — see task-11-report.md
+ * — mirroring Phase C's own documented RTDB deferral
+ * (`market/processBatch.ts`'s step 8 at the time). That Phase C deferral
+ * was left as a no-op stub that went unnoticed until the final whole-branch
+ * review; Task 15's brief calls this out by name and requires the deferral
+ * to end here, not be pushed further. `publishRealtimeState` below is a
+ * real Admin SDK implementation, not a stub.
  *
- * The four steps below map onto `ProcessRoundDeps`'s methods, in the
+ * The five steps below map onto `ProcessRoundDeps`'s methods, in the
  * order `processRound` calls them:
  *
  * 1. readLessonRunConfig — read `lessonRuns/{id}`'s randomSeed/
@@ -54,6 +60,14 @@ import type { HouseholdDecisionInput } from './submitDecision'
  *    `lastProcessedBatchId` compare-and-set), append a `ROUND_SETTLED`
  *    `LessonEvent` via Phase A's `appendLessonEventInTransaction`, and
  *    write the updated `HouseholdState`.
+ * 5. publishRealtimeState — Task 15: broadcast this round's outcome to the
+ *    three RTDB projections `lessonRunPublic`/`lessonRunPrivate`/
+ *    `lessonRunTeamState` (database.rules.json). Called AFTER
+ *    `commitRoundSettlement`'s Firestore transaction has committed, so
+ *    every value broadcast reflects this round's final, committed state.
+ *    See `publishRealtimeStateWithAdminSdk`'s own doc comment below for
+ *    the field-ownership discipline (allow-list only, `orgId` on every
+ *    write, public/private/team-state separation).
  */
 export interface ProcessRoundDeps {
   readLessonRunConfig: (lessonRunId: string) => Promise<{
@@ -72,6 +86,25 @@ export interface ProcessRoundDeps {
     expectedPriorRoundIndex: number
     result: SettleRoundResult
     actorId: string
+  }) => Promise<void>
+  /**
+   * Task 15: broadcasts this round's settlement to RTDB. Receives every
+   * piece `processRound` already has assembled in scope — `orgId` and
+   * `homeEconomics` from step 1's config, `profile` (this household's
+   * template-snapshot profile, already resolved by `processRound` before
+   * calling `settleRoundFn`), the `decision` read in step 2 (or `null` on
+   * the `forceSettle` path), and the `result` from `settleRoundFn` — so the
+   * Admin SDK implementation never needs to re-read Firestore for data the
+   * caller already has, unlike `processBatch.ts`'s equivalent (which only
+   * receives `result`/`lessonRunId` and re-reads everything else).
+   */
+  publishRealtimeState: (input: {
+    lessonRunId: string
+    orgId: string
+    homeEconomics: HomeEconomicsContent
+    profile: HouseholdProfile
+    decision: HouseholdDecisionInput | null
+    result: SettleRoundResult
   }) => Promise<void>
 }
 
@@ -145,10 +178,14 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
     actorId: input.actorId,
   })
 
-  // TODO(Task 15): RTDB lessonRunPublic/lessonRunPrivate/lessonRunTeamState
-  // projections for this round settlement are NOT written here — see this
-  // file's doc comment. Task 15 must wire these before students can see a
-  // round's outcome via the realtime projections.
+  await deps.publishRealtimeState({
+    lessonRunId: input.lessonRunId,
+    orgId: config.orgId,
+    homeEconomics: config.homeEconomics,
+    profile,
+    decision,
+    result,
+  })
 
   return result
 }
@@ -259,12 +296,115 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
   })
 }
 
+/**
+ * Task 15 — broadcasts this household's round settlement to the three RTDB
+ * projections `lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`
+ * (database.rules.json). Called by `processRound` AFTER
+ * `commitRoundSettlement`'s Firestore transaction has committed (see this
+ * file's step-5 doc comment), so every value broadcast here reflects this
+ * round's final, committed state — `input.result.newHouseholdState` IS what
+ * `commitRoundSettlement` just wrote, not a stale pre-settlement snapshot.
+ *
+ * Field-ownership discipline (mirrors `market/processBatch.ts`'s
+ * `publishRealtimeStateWithAdminSdk`, this task's brief's named precedent —
+ * mandatory):
+ * - Every write below calls `.update()`, never `.set()`, on all three RTDB
+ *   nodes — a partial multi-field update that leaves sibling keys (written
+ *   by Phase B's `publishLessonProjectionWithAdminSdk` or, on a
+ *   SOCIAL_STUDIES lessonRun, `market/processBatch.ts`'s own writes to the
+ *   very same node paths) untouched. HOME_ECONOMICS and SOCIAL_STUDIES
+ *   lessonRuns are mutually exclusive per run (a run's `subject` never
+ *   changes), so in practice only one of the two ever writes non-`orgId`
+ *   fields onto a given lessonRunId's nodes — but `.update()` is still used
+ *   throughout for the same non-destructive discipline `processBatch.ts`
+ *   documents.
+ * - `orgId` is written on EVERY node below (`lessonRunPublic`,
+ *   `lessonRunPrivate`, `lessonRunTeamState`) — required by
+ *   `database.rules.json`'s read rules, which read `data.child('orgId')`
+ *   off each of these same nodes. Phase C Task 20's own postmortem: a write
+ *   missing `orgId` is permanently unreadable (the rule can never
+ *   authorize a read against data that was never tagged), so this is
+ *   verified explicitly, not left implicit.
+ * - `lessonRunPublic/{lessonRunId}` gets only `economicFactors` (inflation/
+ *   interest/market-return assumptions) — class-wide, teacher-authored,
+ *   safe for every participant. Never the per-household calculation log.
+ * - `lessonRunPrivate/{lessonRunId}` gets `householdComputationLog/{householdId}`
+ *   — this round's full income/expense/shortfall breakdown plus
+ *   `internalRiskFactors` (`HouseholdProfile`, Task 1) and
+ *   `internalClaimProbability` (each contracted insurance product's hidden
+ *   claim-probability model, Task 6's `InsuranceProduct` catalog) — teacher
+ *   only, never mirrored onto `lessonRunPublic` or `lessonRunTeamState`.
+ *   Keyed by householdId (not overwritten wholesale) so settling one
+ *   household's round never clobbers another household's already-published
+ *   log entry on the same shared node.
+ * - `lessonRunTeamState/{lessonRunId}/{teamId}` gets only the
+ *   `household` field, built via `toHouseholdStateTeamView` (Task 15 Step
+ *   3's allow-list — never `{...household}`) — this team's own household
+ *   view only, never another team's, and never the internal fields above.
+ */
+export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtimeState'] = async (input) => {
+  const rtdb = getDatabase()
+  const { homeEconomics, profile, decision, result } = input
+  const newHousehold = result.newHouseholdState
+
+  const visibleConcepts = resolveVisibleConcepts(homeEconomics.goalPackage)
+  const eventDisclosures = buildEventDisclosureView(homeEconomics.lifeEvents, result.occurredEventIds, newHousehold.roundIndex)
+
+  const liquidAssetsYen = Object.values(newHousehold.assetHoldingsYen).reduce((sum, v) => sum + v, 0)
+  const eligiblePrograms = determineEligiblePrograms(homeEconomics.publicSupportPrograms, profile.householdIncomeYen)
+  const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, decision?.publicSupportApplicationIds ?? [])
+  const shortfallOptions = buildShortfallOptions({
+    shortfallYen: result.shortfallYen,
+    liquidAssetsYen,
+    publicSupportAvailableYen,
+    borrowingAllowed: homeEconomics.borrowingAllowed,
+  })
+
+  const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
+
+  // ---- lessonRunPublic: class-wide economic assumptions only, via update() ----
+  await rtdb.ref(`lessonRunPublic/${input.lessonRunId}`).update({
+    orgId: input.orgId,
+    economicFactors: homeEconomics.economicFactors,
+  })
+
+  // ---- lessonRunPrivate: teacher-only internal calculation log, via update() ----
+  const activeInsuranceProducts = Object.keys(newHousehold.activeInsuranceContracts)
+    .map((id) => homeEconomics.insuranceProducts.find((product) => product.id === id))
+    .filter((product): product is NonNullable<typeof product> => product !== undefined)
+  await rtdb.ref(`lessonRunPrivate/${input.lessonRunId}`).update({
+    orgId: input.orgId,
+    updatedAtMillis: Date.now(),
+    [`householdComputationLog/${newHousehold.householdId}`]: {
+      roundIndex: newHousehold.roundIndex,
+      occurredEventIds: result.occurredEventIds,
+      incomeYen: result.incomeYen,
+      expensesYen: result.expensesYen,
+      netCashFlowYen: result.netCashFlowYen,
+      shortfallYen: result.shortfallYen,
+      insuranceBenefitsYen: result.insuranceBenefitsYen,
+      internalRiskFactors: profile.internalRiskFactors,
+      internalClaimProbability: Object.fromEntries(
+        activeInsuranceProducts.map((product) => [product.id, product.internalClaimProbability]),
+      ),
+    },
+  })
+
+  // ---- lessonRunTeamState: this team's own household view only, via update() ----
+  await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
+    orgId: input.orgId,
+    household: householdView,
+    updatedAtMillis: Date.now(),
+  })
+}
+
 export const processRoundDepsWithAdminSdk = (): ProcessRoundDeps => ({
   readLessonRunConfig: readLessonRunConfigWithAdminSdk,
   readHouseholdState: getHouseholdStateWithAdminSdk,
   readHouseholdDecision: readHouseholdDecisionWithAdminSdk,
   settleRoundFn: settleRound,
   commitRoundSettlement: commitRoundSettlementWithAdminSdk,
+  publishRealtimeState: publishRealtimeStateWithAdminSdk,
 })
 
 export const processRoundWithAdminSdk = (input: ProcessRoundInput): Promise<SettleRoundResult> =>

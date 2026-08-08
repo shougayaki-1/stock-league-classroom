@@ -162,6 +162,30 @@ export interface MyOrderView {
 }
 
 /**
+ * Home-economics counterpart of `LessonRunTeamState` below — one household's
+ * team-broadcast-safe view (spec §26-1/§13.4/§23.6). Hand-duplicated from
+ * `functions/src/homeEconomics/realtimeProjection.ts`'s server-side type of
+ * the same name — `functions/` code cannot import across the functions/src
+ * rootDir boundary into `src/` (see that file's own JSDoc, which cites
+ * `functions/src/lessonRuns/projections/publicProjection.ts` as the
+ * precedent for this hand-sync discipline). Keep both in sync by hand.
+ */
+export interface HouseholdStateTeamView {
+  householdId: string
+  isFictional: true
+  cashYen: number
+  assetHoldingsYen: Record<string, number>
+  activeInsuranceContractYearsRemaining: Record<string, number>
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  visibleConcepts: string[]
+  eventDisclosures: { eventId: string; label: string | null; effectDescription: string | null; revealed: boolean }[]
+  shortfallOptions: { type: string; description: string; resolvesYen: number }[]
+}
+
+/**
  * Third visibility class alongside LessonRunPublicState (every participant)
  * and LessonRunPrivateState (teachers only): a team's own cash, holdings,
  * locked funds/shares, and order state must reach that team's members in
@@ -178,4 +202,6 @@ export interface LessonRunTeamState {
   lockedSellQuantity: Record<string, number>
   myOrders: MyOrderView[]
   updatedAtMillis: number
+  /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
+  household?: HouseholdStateTeamView
 }

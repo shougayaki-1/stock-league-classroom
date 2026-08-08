@@ -54,6 +54,7 @@ describe('processRound', () => {
     readHouseholdDecision: vi.fn().mockResolvedValue(submittedDecision),
     settleRoundFn: vi.fn().mockReturnValue(settleResult),
     commitRoundSettlement: vi.fn().mockResolvedValue(undefined),
+    publishRealtimeState: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   })
 
@@ -104,6 +105,28 @@ describe('processRound', () => {
       lessonRunId: 'run-1', householdId: 'case-b', orgId: 'org-1',
       expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
     })
+  })
+
+  /**
+   * Task 15 — `publishRealtimeState` must actually be invoked (not left
+   * unwired the way Phase C's RTDB broadcast was until its final
+   * whole-branch review), with everything the Admin SDK implementation
+   * needs to build the three RTDB writes, and only AFTER
+   * `commitRoundSettlement` has committed (so the broadcast reflects the
+   * just-written state, not a stale pre-settlement one).
+   */
+  it('calls publishRealtimeState with orgId/homeEconomics/profile/decision/result, after commitRoundSettlement', async () => {
+    const deps = makeDeps()
+    const callOrder: string[] = []
+    ;(deps.commitRoundSettlement as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('commit') })
+    ;(deps.publishRealtimeState as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('publish') })
+
+    await processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' })
+
+    expect(deps.publishRealtimeState).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', orgId: 'org-1', homeEconomics, profile, decision: submittedDecision, result: settleResult,
+    })
+    expect(callOrder).toEqual(['commit', 'publish'])
   })
 
   /**
