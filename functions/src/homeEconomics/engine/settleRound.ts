@@ -7,7 +7,7 @@ import { computeTaxAndSocialInsurance } from './taxAndSocialInsurance'
 import { computeAnnualPremiumTotal, computeInsuranceBenefits } from './insurance'
 import { applyMortgageRound } from './mortgage'
 import { computeAssetReturn } from './assetReturn'
-import { applyShortfallResolution, buildShortfallOptions, detectShortfall } from './shortfallOptions'
+import { applyShortfallResolution, buildShortfallOptions, detectShortfall, type ShortfallOption } from './shortfallOptions'
 import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
 
 export interface SettleRoundInput {
@@ -43,6 +43,19 @@ export interface SettleRoundResult {
   netCashFlowYen: number
   shortfallYen: number
   insuranceBenefitsYen: number
+  /**
+   * Fix (Important I2, Task 15 review): the ACTUAL shortfall options this
+   * settlement considered — built from the SAME pre-settlement inputs
+   * `settleRound` itself used (pre-settlement `household.assetHoldingsYen`,
+   * post-life-event `grossIncomeYen` for public-support eligibility), not
+   * an approximation recomputed later from post-settlement state. Always
+   * `[]` when `shortfallYen === 0` — there is nothing to resolve, so
+   * nothing was considered. `processRound.ts`'s RTDB broadcast forwards
+   * this array as-is rather than recomputing it (which previously drifted:
+   * post-sale asset holdings and pre-life-event income gave a
+   * different-looking, sometimes wrong, set of options).
+   */
+  shortfallOptionsConsidered: ShortfallOption[]
 }
 
 export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
@@ -131,6 +144,7 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   let resolutionAssetDeltaYen = 0
   let newLiabilityFromShortfallYen = 0
   let goalDelayedRoundsDelta = 0
+  let shortfallOptionsConsidered: ShortfallOption[] = []
   if (shortfallYen > 0) {
     const eligiblePrograms = determineEligiblePrograms(input.publicSupportPrograms, grossIncomeYen)
     const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, input.decision?.publicSupportApplicationIds ?? [])
@@ -143,6 +157,7 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
       shortfallYen, liquidAssetsYen: Object.values(household.assetHoldingsYen).reduce((sum, v) => sum + v, 0),
       publicSupportAvailableYen, borrowingAllowed: input.borrowingAllowed,
     })
+    shortfallOptionsConsidered = options
     const chosenType = input.decision?.shortfallResolutionType ?? 'REDUCE_EXPENSES'
     let chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
 
@@ -306,6 +321,6 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
       updatedAtServerMillis: household.updatedAtServerMillis,
     },
     occurredEventIds, incomeYen: taxResult.netIncomeYen, expensesYen: cashFlowResult.totalExpensesYen,
-    netCashFlowYen, shortfallYen, insuranceBenefitsYen,
+    netCashFlowYen, shortfallYen, insuranceBenefitsYen, shortfallOptionsConsidered,
   }
 }

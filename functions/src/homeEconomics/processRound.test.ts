@@ -35,6 +35,7 @@ describe('processRound', () => {
     newHouseholdState: { ...household, roundIndex: 3, cashYen: 600000 },
     occurredEventIds: [], incomeYen: 4800000, expensesYen: 3000000,
     netCashFlowYen: 1800000, shortfallYen: 0, insuranceBenefitsYen: 0,
+    shortfallOptionsConsidered: [],
   }
   // A submitted decision — used as the default so these orchestration tests
   // exercise the normal path (household HAS submitted). The submission-gate

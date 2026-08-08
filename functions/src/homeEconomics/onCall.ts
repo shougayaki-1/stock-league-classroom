@@ -233,8 +233,12 @@ const translateProcessRoundError = (error: unknown): unknown => {
  * `lessonRuns/{id}` document itself, exactly like `transitionPhaseCallable`
  * — the caller's role is NEVER trusted from client input.
  *
- * RTDB projections are intentionally NOT updated here — see
- * `processRound.ts`'s doc comment for why (deferred to Task 15).
+ * RTDB projections (`lessonRunPublic`/`lessonRunPrivate`/
+ * `lessonRunTeamState`) ARE updated as part of this Callable's flow — see
+ * `processRound.ts`'s `publishRealtimeState` step (Task 15). This
+ * Callable itself does not touch RTDB directly; it just invokes
+ * `processRoundWithAdminSdk`, which calls `publishRealtimeStateWithAdminSdk`
+ * after the Firestore transaction commits.
  *
  * Submission gate (Task 11 review round 2, brief §Step 6): settling is
  * rejected unless this household has a submitted decision on record for

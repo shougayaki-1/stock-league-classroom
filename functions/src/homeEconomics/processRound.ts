@@ -9,8 +9,6 @@ import {
 } from '../lessonRuns/households/repository'
 import { settleRound, type SettleRoundInput, type SettleRoundResult } from './engine/settleRound'
 import { buildEventDisclosureView } from './engine/lifeEvents'
-import { buildShortfallOptions } from './engine/shortfallOptions'
-import { computePublicSupportAvailableYen, determineEligiblePrograms } from './engine/publicSupport'
 import { resolveVisibleConcepts } from './goalPackage'
 import { toHouseholdStateTeamView } from './realtimeProjection'
 import type { HouseholdDecisionInput } from './submitDecision'
@@ -344,21 +342,26 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
  */
 export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtimeState'] = async (input) => {
   const rtdb = getDatabase()
-  const { homeEconomics, profile, decision, result } = input
+  const { homeEconomics, profile, result } = input
   const newHousehold = result.newHouseholdState
 
   const visibleConcepts = resolveVisibleConcepts(homeEconomics.goalPackage)
   const eventDisclosures = buildEventDisclosureView(homeEconomics.lifeEvents, result.occurredEventIds, newHousehold.roundIndex)
 
-  const liquidAssetsYen = Object.values(newHousehold.assetHoldingsYen).reduce((sum, v) => sum + v, 0)
-  const eligiblePrograms = determineEligiblePrograms(homeEconomics.publicSupportPrograms, profile.householdIncomeYen)
-  const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, decision?.publicSupportApplicationIds ?? [])
-  const shortfallOptions = buildShortfallOptions({
-    shortfallYen: result.shortfallYen,
-    liquidAssetsYen,
-    publicSupportAvailableYen,
-    borrowingAllowed: homeEconomics.borrowingAllowed,
-  })
+  // Fix (Important I2, Task 15 review): broadcast the SAME shortfall
+  // options `settleRound` actually computed/considered during settlement
+  // (`result.shortfallOptionsConsidered`) rather than independently
+  // recomputing `buildShortfallOptions` here from post-settlement state.
+  // The previous recomputation diverged from settleRound's actual inputs
+  // in two ways: it sized `liquidAssetsYen` off POST-settlement
+  // `newHousehold.assetHoldingsYen` (settleRound used PRE-settlement
+  // `household.assetHoldingsYen`), and it sized `publicSupportAvailableYen`
+  // off static `profile.householdIncomeYen` (settleRound used
+  // `grossIncomeYen`, i.e. AFTER life-event income effects). Both are now
+  // eliminated by using settleRound's own considered options directly —
+  // already `[]` when `shortfallYen === 0` (Critical C1 fix: no shortfall
+  // prompt broadcast on a surplus round).
+  const shortfallOptions = result.shortfallOptionsConsidered
 
   const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
 

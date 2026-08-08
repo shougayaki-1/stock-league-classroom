@@ -68,6 +68,12 @@ const result: SettleRoundResult = {
   },
   occurredEventIds: [], incomeYen: 4800000, expensesYen: 3000000,
   netCashFlowYen: 1800000, shortfallYen: 0, insuranceBenefitsYen: 0,
+  // Surplus round — settleRound never considers any shortfall options when
+  // shortfallYen === 0 (see shortfallOptions.ts's `buildShortfallOptions`
+  // JSDoc: it always includes REDUCE_EXPENSES/DELAY_GOAL, so the array is
+  // NEVER empty when actually called — settleRound therefore only calls it
+  // when shortfallYen > 0, leaving this [] on a surplus round).
+  shortfallOptionsConsidered: [],
 }
 
 describe('publishRealtimeStateWithAdminSdk', () => {
@@ -125,9 +131,48 @@ describe('publishRealtimeStateWithAdminSdk', () => {
     expect(household.visibleConcepts).toEqual(['EMERGENCY_FUND', 'RISK_MANAGEMENT'])
   })
 
-  it('sizes shortfallOptions off decision.publicSupportApplicationIds when a shortfall exists', async () => {
+  /**
+   * Critical C1 (Task 15 review): `buildShortfallOptions` always includes
+   * REDUCE_EXPENSES/DELAY_GOAL regardless of the shortfall amount (by
+   * design — see Task 8), so the array it returns is NEVER empty when
+   * actually invoked. A surplus round (shortfallYen === 0) must therefore
+   * broadcast an empty `shortfallOptions` array — `settleRound` never even
+   * calls `buildShortfallOptions` in that case (see settleRound.ts's
+   * `if (shortfallYen > 0)` guard) — otherwise `HouseholdSummaryCard`'s
+   * "資金が不足しています" prompt would show up after every single round,
+   * even a surplus one.
+   */
+  it('broadcasts an empty shortfallOptions array on a surplus round (shortfallYen === 0) (Critical C1)', async () => {
     const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
-    const shortfallResult: SettleRoundResult = { ...result, shortfallYen: 50000 }
+    await publishRealtimeStateWithAdminSdk({ lessonRunId: 'run-1', orgId: 'org-1', homeEconomics, profile, decision: null, result })
+
+    const teamUpdate = rtdbUpdates.find((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+    const household = teamUpdate!.data.household as { shortfallOptions: Array<{ type: string }> }
+    expect(household.shortfallOptions).toEqual([])
+  })
+
+  /**
+   * Important I2 (Task 15 review): the broadcast must forward the SAME
+   * shortfall options `settleRound` actually computed/considered
+   * (`result.shortfallOptionsConsidered`) rather than independently
+   * recomputing `buildShortfallOptions` from post-settlement state (which
+   * previously diverged — see settleRound.ts's `SettleRoundResult.
+   * shortfallOptionsConsidered` JSDoc for the two concrete divergences this
+   * closes). This test constructs `shortfallOptionsConsidered` by hand to
+   * simulate what a real `settleRound` shortfall round would have produced,
+   * and asserts `publishRealtimeStateWithAdminSdk` forwards it unchanged.
+   */
+  it('forwards result.shortfallOptionsConsidered unchanged when a shortfall exists (Important I2)', async () => {
+    const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
+    const shortfallResult: SettleRoundResult = {
+      ...result,
+      shortfallYen: 50000,
+      shortfallOptionsConsidered: [
+        { type: 'REDUCE_EXPENSES', description: '生活費を切り詰める', resolvesYen: 50000 },
+        { type: 'DELAY_GOAL', description: '目標達成を先送りする', resolvesYen: 50000 },
+        { type: 'SELL_ASSETS', description: '資産を売却する', resolvesYen: 50000 },
+      ],
+    }
     await publishRealtimeStateWithAdminSdk({
       lessonRunId: 'run-1', orgId: 'org-1', homeEconomics, profile,
       decision: {
@@ -140,7 +185,9 @@ describe('publishRealtimeStateWithAdminSdk', () => {
 
     const teamUpdate = rtdbUpdates.find((u) => u.path === 'lessonRunTeamState/run-1/team-a')
     const household = teamUpdate!.data.household as { shortfallOptions: Array<{ type: string }> }
+    expect(household.shortfallOptions).toEqual(shortfallResult.shortfallOptionsConsidered)
     expect(household.shortfallOptions.some((o) => o.type === 'REDUCE_EXPENSES')).toBe(true)
     expect(household.shortfallOptions.some((o) => o.type === 'DELAY_GOAL')).toBe(true)
+    expect(household.shortfallOptions.some((o) => o.type === 'SELL_ASSETS')).toBe(true)
   })
 })

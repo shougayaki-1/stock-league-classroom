@@ -33,6 +33,27 @@ describe('settleRound', () => {
     expect(result.shortfallYen).toBe(0)
   })
 
+  it('shortfallOptionsConsidered is empty on a surplus round (Critical C1 / Important I2 — Task 15 review)', () => {
+    const result = settleRound(baseInput)
+    expect(result.shortfallYen).toBe(0)
+    expect(result.shortfallOptionsConsidered).toEqual([])
+  })
+
+  it('shortfallOptionsConsidered is populated (REDUCE_EXPENSES/DELAY_GOAL always present) on a shortfall round, using PRE-settlement liquid assets and post-life-event gross income (Important I2)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 0, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+    }
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBeGreaterThan(0)
+    const types = result.shortfallOptionsConsidered.map((o) => o.type)
+    expect(types).toContain('REDUCE_EXPENSES')
+    expect(types).toContain('DELAY_GOAL')
+    // liquidAssetsYen > 0 (pre-settlement DOMESTIC_STOCK holding) → SELL_ASSETS offered.
+    expect(types).toContain('SELL_ASSETS')
+  })
+
   it('is deterministic — same inputs always produce the same asset returns', () => {
     expect(settleRound(baseInput).newHouseholdState.assetHoldingsYen).toEqual(settleRound(baseInput).newHouseholdState.assetHoldingsYen)
   })

@@ -79,6 +79,17 @@ export interface LessonRunPublicState {
   /** Present only while a teacher-initiated resume is in its confirmation window (spec §12.26). */
   resumeScheduledAtMillis?: number
   stocks: Record<string, StockPublicState>
+  /**
+   * Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with
+   * the market fields above (a LessonRun's `subject` never changes after
+   * creation). Class-wide, teacher-authored economic assumptions
+   * (inflation/interest/market-return) written by
+   * `functions/src/homeEconomics/processRound.ts`'s
+   * `publishRealtimeStateWithAdminSdk` — safe for every participant,
+   * never the per-household calculation log (that lives on
+   * `LessonRunPrivateState.householdComputationLog` instead).
+   */
+  economicFactors?: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
 }
 
 /** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */
@@ -148,6 +159,31 @@ export interface LessonRunPrivateState {
    * see this type's own top-level JSDoc for why it cannot live under
    * `lessonRunPublic`. */
   computationLog: Record<string, { informationImpactPercent: number; demandImpactPercent: number; noisePercent: number; priceSensitivityPreset: string }>
+  /**
+   * Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with
+   * `computationLog` above (a LessonRun's `subject` never changes after
+   * creation). Teacher-only per-household round breakdown, written by
+   * `functions/src/homeEconomics/processRound.ts`'s
+   * `publishRealtimeStateWithAdminSdk`, keyed by householdId so settling
+   * one household's round never clobbers another's already-published
+   * entry. Includes `internalRiskFactors` (`HouseholdProfile`, Task 1) and
+   * `internalClaimProbability` (per contracted insurance product, keyed by
+   * insurance product id) — both must never be mirrored onto
+   * `LessonRunPublicState` or `HouseholdStateTeamView` (see this file's
+   * top-level JSDoc on why private data cannot live under a publicly
+   * readable node).
+   */
+  householdComputationLog?: Record<string, {
+    roundIndex: number
+    occurredEventIds: string[]
+    incomeYen: number
+    expensesYen: number
+    netCashFlowYen: number
+    shortfallYen: number
+    insuranceBenefitsYen: number
+    internalRiskFactors: Record<string, number>
+    internalClaimProbability: Record<string, number>
+  }>
 }
 
 /** A single order as visible to the team that placed it (never another team's orders). */
