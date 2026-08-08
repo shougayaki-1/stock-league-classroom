@@ -1,10 +1,12 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import { getDatabase } from 'firebase-admin/database'
 import type { MarketOrder } from './orderTypes'
 import { listPendingOrdersForBatch, ordersRepositoryWithAdminSdk } from '../lessonRuns/orders/repository'
 import { appendLessonEventWithAdminSdk } from '../lessonRuns/appendLessonEvent'
 import type { TeamAccount } from '../lessonRuns/teamAccounts/types'
 import { settleBatch, type SettleBatchInput, type SettleBatchResult, type StockBatchInput } from './engine/settleBatch'
 import type { PriceSensitivityPreset } from './engine/priceCalculation'
+import { toComputationLog, toMyOrdersView, toStockPublicStates } from './realtimeProjection'
 import {
   applyLifecycleDividendsWithAdminSdk,
   applyLifecycleStockSplitsWithAdminSdk,
@@ -360,12 +362,119 @@ const appendBatchSettledEventWithAdminSdk: ProcessBatchDeps['appendBatchSettledE
 }
 
 /**
- * TODO(Task 13): RTDB `lessonRunPublic`/`lessonRunPrivate`/
- * `lessonRunTeamState` projection writes land with Task 13, which owns
- * confirming the write schema. Intentionally a no-op placeholder per this
- * task's brief.
+ * Task 20 — broadcasts this batch's `SettleBatchResult` to the three RTDB
+ * projections `lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`
+ * own (database.rules.json). Called by `processBatch` AFTER
+ * `commitSettlement`'s Firestore transaction has committed (see this
+ * file's step-8 doc comment), so every Firestore read below observes this
+ * batch's final, committed state.
+ *
+ * Field-ownership discipline (this task's brief, mandatory):
+ * - `lessonRunPublic/{lessonRunId}` already carries non-market fields
+ *   written by Phase B's `publishLessonProjectionWithAdminSdk`
+ *   (status/currentPhaseId/publicTask/notifications, via `.set()`). This
+ *   function must never call `.set()` on that node — only `ref(...).update()`
+ *   with the market-owned fields (`marketPaused`/`nextBatchAtMillis`/
+ *   `resumeScheduledAtMillis`/`stocks`), a multi-path RTDB update that
+ *   leaves sibling keys untouched. `orgId` is also written here (not part
+ *   of `LessonRunPublicState`'s market fields, but required by
+ *   `database.rules.json`'s `lessonRunPublic` read rule, which reads
+ *   `data.child('orgId')` off this same node) so a lessonRun whose first
+ *   RTDB write is a batch settlement — before Phase B's projection ever
+ *   ran — is still readable.
+ * - `lessonRunPrivate/{lessonRunId}` has no other writer today (verified:
+ *   only `privacy/deletePersonalData.ts` nulls it on hard delete) but is
+ *   still written via `update()` for the same non-destructive discipline,
+ *   plus the same `orgId` requirement as above (the rule's teacher-read
+ *   branch reads `data.child('orgId')` off this node too).
+ * - `lessonRunTeamState/{lessonRunId}/{teamId}` is written only for teams
+ *   present in `result.teamAccountUpdates` (this batch's traders) — a team
+ *   untouched this batch keeps its previous state untouched, per this
+ *   task's brief ("このバッチで何らかの更新があったチームのみ書き込む最小
+ *   実装で構わない"). `cash`/`holdings` are the ABSOLUTE values from the
+ *   just-committed `TeamAccount` doc (re-read after `commitSettlement`),
+ *   never `result.teamAccountUpdates`' deltas directly — see this task's
+ *   brief for why the delta cannot be broadcast as-is. `myOrders` covers
+ *   only this batch's orders (re-read individually by orderId from
+ *   `result.orders`, since `OrderSettlementOutcome` itself carries no
+ *   teamId/stockId/side/quantity) — see task-20-report.md for why a
+ *   full-history query was judged unnecessary scope for this task.
  */
-const publishRealtimeStateWithAdminSdk: ProcessBatchDeps['publishRealtimeState'] = async () => {}
+export const publishRealtimeStateWithAdminSdk: ProcessBatchDeps['publishRealtimeState'] = async (result, lessonRunId) => {
+  const db = getFirestore()
+  const rtdb = getDatabase()
+
+  const lessonRunSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  const lessonRunData = (lessonRunSnap.data() ?? {}) as {
+    orgId?: string
+    priceSensitivityPreset?: PriceSensitivityPreset
+    marketPaused?: boolean
+    nextBatchAtMillis?: number | null
+    resumeScheduledAtMillis?: number
+    randomSeed?: string
+    restoreGeneration?: number
+    lastProcessedBatchId?: string
+  }
+  const orgId = lessonRunData.orgId ?? ''
+  const priceSensitivityPreset = lessonRunData.priceSensitivityPreset ?? 'BALANCED'
+
+  // ---- lessonRunPublic: market-owned fields only, via update() ----
+  await rtdb.ref(`lessonRunPublic/${lessonRunId}`).update({
+    orgId,
+    marketPaused: lessonRunData.marketPaused ?? false,
+    nextBatchAtMillis: lessonRunData.nextBatchAtMillis ?? null,
+    ...(lessonRunData.resumeScheduledAtMillis !== undefined
+      ? { resumeScheduledAtMillis: lessonRunData.resumeScheduledAtMillis }
+      : {}),
+    stocks: toStockPublicStates(result.stocks),
+  })
+
+  // ---- lessonRunPrivate: teacher-only, via update() ----
+  // `randomSeed`/`restoreGeneration`/`lastProcessedBatchId` are read back
+  // from the SAME `lessonRuns/{id}` doc `commitSettlement` (called before
+  // this function, per processBatch's step ordering) already wrote
+  // `lastProcessedBatchId` onto — this mirrors that Firestore-authoritative
+  // state onto RTDB rather than recomputing it.
+  await rtdb.ref(`lessonRunPrivate/${lessonRunId}`).update({
+    orgId,
+    randomSeed: lessonRunData.randomSeed ?? '',
+    restoreGeneration: lessonRunData.restoreGeneration ?? 0,
+    updatedAtMillis: Date.now(),
+    lastProcessedBatchId: lessonRunData.lastProcessedBatchId ?? null,
+    computationLog: toComputationLog(result.stocks, priceSensitivityPreset),
+  })
+
+  // ---- lessonRunTeamState: one write per team that traded this batch ----
+  const tradedTeamIds = [...new Set(result.teamAccountUpdates.map((u) => u.teamId))]
+  if (tradedTeamIds.length === 0) return
+
+  const [teamAccountSnaps, orderSnaps] = await Promise.all([
+    Promise.all(tradedTeamIds.map((teamId) => db.doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).get())),
+    Promise.all(result.orders.map((o) => db.doc(`lessonRuns/${lessonRunId}/orders/${o.orderId}`).get())),
+  ])
+
+  const ordersByTeam = new Map<string, MarketOrder[]>()
+  orderSnaps.forEach((snap) => {
+    if (!snap.exists) return
+    const order = snap.data() as MarketOrder
+    ordersByTeam.set(order.teamId, [...(ordersByTeam.get(order.teamId) ?? []), order])
+  })
+
+  await Promise.all(tradedTeamIds.map(async (teamId, i) => {
+    const snap = teamAccountSnaps[i]
+    if (!snap.exists) return
+    const account = snap.data() as TeamAccount
+    await rtdb.ref(`lessonRunTeamState/${lessonRunId}/${teamId}`).update({
+      orgId,
+      cash: account.cash,
+      holdings: account.holdings,
+      lockedBuyValue: account.lockedBuyValue,
+      lockedSellQuantity: account.lockedSellQuantity,
+      myOrders: toMyOrdersView(ordersByTeam.get(teamId) ?? []),
+      updatedAtMillis: Date.now(),
+    })
+  }))
+}
 
 /**
  * No-op — see this file's doc comment, item 9: `batchTaskHandler`
