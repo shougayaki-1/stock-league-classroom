@@ -6,16 +6,18 @@
   "engines": { "node": "20" },
   "main": "lib/index.js",
   "scripts": {
-    "build": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build && tsc",
+    "build": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build && npm --prefix packages/household-public-content run build && npm --prefix packages/household-authoring-content run build && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
-    "pretest": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build",
+    "pretest": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build && npm --prefix packages/household-public-content run build && npm --prefix packages/household-authoring-content run build",
     "test": "vitest run",
     "test:market-concurrency": "vitest run --config vitest.concurrent.config.mts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@stock-league/deterministic-random": "file:packages/deterministic-random",
+    "@stock-league/household-authoring-content": "file:packages/household-authoring-content",
+    "@stock-league/household-public-content": "file:packages/household-public-content",
     "@stock-league/lesson-inputs": "file:packages/lesson-inputs",
     "@stock-league/lesson-runtime-types": "file:packages/lesson-runtime-types",
     "@stock-league/market-authoring-content": "file:packages/market-authoring-content",

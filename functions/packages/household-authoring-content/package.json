@@ -1,0 +1,20 @@
+{
+  "name": "@stock-league/household-authoring-content",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "check:dist": "test -f dist/index.js || (echo 'dist/ missing — run npm run build' && exit 1)",
+    "verify": "npm run test && npm run build && npm run check:dist"
+  },
+  "dependencies": {
+    "@stock-league/household-public-content": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
