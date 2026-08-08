@@ -495,3 +495,304 @@ git commit -m "feat: split household profile/asset/insurance/event types into pu
 ```
 
 ---
+
+### Task 2: `LessonContent`拡張と家庭科教材バリデーション
+
+統合仕様書 §13.1〜§13.4、§13.7〜§13.10、§13.12、§13.17を集約する教材内容を`LessonContent`（Phase A/B、`src/lib/lessonTemplates/types.ts`）へ追加する。現在の`LessonContent`は`{ schemaVersion, title, description, subject, socialStudiesMarket? }`（Phase C Task2が拡張済み）——本タスクはこれに`homeEconomics?: HomeEconomicsContent`を並列で追加する。数値既定値をコードへ散在させない（§30-10）ため、既定値はこの型のフィールドのデフォルトとして1箇所に集約する。
+
+**Files:**
+- Modify: `src/lib/lessonTemplates/types.ts`（`LessonContent`に`homeEconomics?: HomeEconomicsContent`を追加）
+- Create: `functions/src/homeEconomics/templateValidation.ts`, `.test.ts`
+- Modify: `functions/src/lessonRuns/createLessonRun.ts`（`LessonRun`作成時に家庭科教材のバリデーションを実行）
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`・`AssetPosition`・`InsuranceProduct`・`LifeEventDefinition`・`Liability`（Task 1、`@stock-league/household-authoring-content`）、`LessonContent`（Phase A/B/C）、`createLessonRun`（Phase A Task 7、Phase C Task2で一度拡張済み）
+- Produces: `HomeEconomicsContent`型、`validateHomeEconomicsContent(content): { valid: true } | { valid: false; errors: string[] }`
+
+**重要（Phase C Task2の既知の設計上の注意点を踏襲）:** `HomeEconomicsContent`型自体は`src/lib/lessonTemplates/types.ts`に直接定義せず、Task1で作成した共有パッケージ`@stock-league/household-authoring-content`側に定義し、`src/lib/lessonTemplates/types.ts`はそこからre-exportする。理由はPhase C Task2で実際に発生した不具合と同じ——`functions/src/homeEconomics/templateValidation.ts`が`src/lib/lessonTemplates/types.ts`を直接importするとtscの`rootDir`境界を壊しCloud Functionsデプロイバンドルへ`src/`が混入する。
+
+- [ ] **Step 1: `HomeEconomicsContent`型を定義する失敗するテストを書く**
+
+`functions/packages/household-authoring-content/src/index.test.ts`に追記する:
+
+```ts
+describe('HomeEconomicsContent defaults', () => {
+  it('encodes every §28-equivalent default value as a field default, not scattered in code', () => {
+    const content: HomeEconomicsContent = {
+      households: [{
+        householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+        annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+        family: '配偶者・子2人', housing: '賃貸マンション',
+        lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+        eventProbabilityOverrides: {}, internalRiskFactors: {},
+      }],
+      assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+      roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+      taxAndSocialInsuranceModelVersion: 1,
+      economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+      goalPackage: 'EMERGENCY_FUND',
+      evaluationWeights: {
+        lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
+        diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15,
+      },
+    }
+    expect(content.roundYears).toBe(5)
+    expect(content.taxAndSocialInsuranceModelVersion).toBe(1)
+  })
+
+  it('LessonContent.homeEconomics is optional so SOCIAL_STUDIES content is unaffected', () => {
+    const content: LessonContent = { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }
+    expect(content.homeEconomics).toBeUndefined()
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: FAIL — `HomeEconomicsContent`が存在しない
+
+- [ ] **Step 3: `HomeEconomicsContent`を`household-authoring-content`パッケージへ追加する**
+
+`functions/packages/household-authoring-content/src/index.ts`へ追記:
+
+```ts
+/** Spec §13.1: standard is 5 years/round, 1 year/round is optional (§13.1). */
+export type RoundYears = 1 | 5
+
+/** Spec §13.3: lesson format — which mode students experience. */
+export type CourseFormat = 'COMMON_CONDITIONS' | 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+
+export interface EconomicFactors {
+  /** Spec §13.11. Reflected into living expenses (annualCashFlow.ts, Task 3). */
+  inflationPercent: number
+  /** Spec §13.11. Reflected into deposits/borrowing. */
+  interestRatePercent: number
+  /** Spec §13.11. Baseline for assetReturn.ts (Task 4). */
+  marketReturnPercent: number
+}
+
+/** Spec §13.16: which concepts are shown/hidden per teacher-selected goal focus. */
+export type GoalPackage = 'EMERGENCY_FUND' | 'HOME_PURCHASE' | 'EDUCATION_FUND' | 'RETIREMENT_PREP' | 'RISK_DIVERSIFICATION' | 'INSURANCE_AND_PREPAREDNESS' | 'OVERALL_BALANCE'
+
+export interface HomeEconomicsEvaluationWeights {
+  lifeGoalAchievement: number
+  emergencyFundAdequacy: number
+  stability: number
+  diversification: number
+  borrowingBurden: number
+  reflection: number
+}
+
+/**
+ * All spec §28-equivalent default values for home economics live here as
+ * field defaults, not scattered across engine code (spec §30-10) — same
+ * pattern as `SocialStudiesMarketContent` (Phase C Task2).
+ */
+export interface HomeEconomicsContent {
+  households: HouseholdProfile[]
+  assets: AssetPosition[]
+  insuranceProducts: InsuranceProduct[]
+  lifeEvents: LifeEventDefinition[]
+  liabilities: Liability[]
+  /** §13.1. Default 5. */
+  roundYears: RoundYears
+  /** §13.3. */
+  courseFormat: CourseFormat
+  /** §13.8: "数値・式の版を教材版へ固定する" — this integer is the version tag templateValidation/annualCashFlow pin their tax/social-insurance formula to. Default 1. */
+  taxAndSocialInsuranceModelVersion: number
+  economicFactors: EconomicFactors
+  /** §13.16. */
+  goalPackage: GoalPackage
+  /** §13.33-equivalent (§13.17). Must sum to 1; validated by `validateHomeEconomicsContent`. */
+  evaluationWeights: HomeEconomicsEvaluationWeights
+}
+```
+
+- [ ] **Step 4: `src/lib/lessonTemplates/types.ts`を拡張する**
+
+```ts
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export interface LessonContent {
+  schemaVersion: 1
+  title: string
+  description: string
+  subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  socialStudiesMarket?: SocialStudiesMarketContent
+  /** Only present when subject === 'HOME_ECONOMICS'. Optional so existing SOCIAL_STUDIES drafts keep compiling. */
+  homeEconomics?: HomeEconomicsContent
+}
+```
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts && cd ../../.. && npx vitest run src/lib/lessonTemplates/types.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: `validateHomeEconomicsContent`の失敗するテストを書く**
+
+`functions/src/homeEconomics/templateValidation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import { validateHomeEconomicsContent } from './templateValidation'
+
+const baseContent = (overrides: Partial<HomeEconomicsContent> = {}): HomeEconomicsContent => ({
+  households: [{
+    householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+    annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+    family: '配偶者・子2人', housing: '賃貸マンション',
+    lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+    eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }],
+  assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+  roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+  taxAndSocialInsuranceModelVersion: 1,
+  economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+  goalPackage: 'EMERGENCY_FUND',
+  evaluationWeights: {
+    lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
+    diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15,
+  },
+  ...overrides,
+})
+
+describe('validateHomeEconomicsContent', () => {
+  it('accepts a well-formed minimal content', () => {
+    expect(validateHomeEconomicsContent(baseContent())).toEqual({ valid: true })
+  })
+
+  it('rejects zero households (spec §13.2: at least one profile must exist)', () => {
+    const result = validateHomeEconomicsContent(baseContent({ households: [] }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('担当プロフィールが1件も設定されていません。')
+  })
+
+  it('rejects duplicate householdId values', () => {
+    const dup = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({ households: [dup, { ...dup }] }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain(`プロフィールIDが重複しています: ${dup.householdId}`)
+  })
+
+  it('rejects evaluation weights that do not sum to 1 (spec §13.17)', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      evaluationWeights: {
+        lifeGoalAchievement: 0.5, emergencyFundAdequacy: 0.5, stability: 0.5,
+        diversification: 0, borrowingBurden: 0, reflection: 0,
+      },
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('評価の重みの合計が1になっていません。')
+  })
+
+  it('rejects a life event referencing an unknown disclosure mode target (referential integrity, mirrors Task 2 in Phase C)', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      lifeEvents: [{ id: 'job-loss', label: '失業', disclosureMode: 'HIDDEN', triggerProbability: 1.5, effectDescription: 'x' }],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('イベント job-loss の発生確率は0〜1の範囲にしてください。')
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `validateHomeEconomicsContent`を実装する**
+
+`functions/src/homeEconomics/templateValidation.ts`:
+
+```ts
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export type ValidationResult = { valid: true } | { valid: false; errors: string[] }
+
+export const validateHomeEconomicsContent = (content: HomeEconomicsContent): ValidationResult => {
+  const errors: string[] = []
+
+  if (content.households.length === 0) errors.push('担当プロフィールが1件も設定されていません。')
+
+  const idCounts = new Map<string, number>()
+  for (const household of content.households) {
+    idCounts.set(household.householdId, (idCounts.get(household.householdId) ?? 0) + 1)
+  }
+  for (const [id, count] of idCounts) {
+    if (count > 1) errors.push(`プロフィールIDが重複しています: ${id}`)
+  }
+
+  const weights = content.evaluationWeights
+  const weightSum = weights.lifeGoalAchievement + weights.emergencyFundAdequacy + weights.stability
+    + weights.diversification + weights.borrowingBurden + weights.reflection
+  if (Math.abs(weightSum - 1) > 0.001) errors.push('評価の重みの合計が1になっていません。')
+
+  for (const event of content.lifeEvents) {
+    if (event.triggerProbability < 0 || event.triggerProbability > 1) {
+      errors.push(`イベント ${event.id} の発生確率は0〜1の範囲にしてください。`)
+    }
+  }
+
+  return errors.length === 0 ? { valid: true } : { valid: false, errors }
+}
+```
+
+- [ ] **Step 9: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: PASS
+
+- [ ] **Step 10: `createLessonRun`へバリデーションを結線する失敗するテストを書く**
+
+`functions/src/lessonRuns/createLessonRun.test.ts`に追記する（Phase C Task2の対応するテストと同じ形）:
+
+```ts
+it('rejects creating a HOME_ECONOMICS run whose templateSnapshot has zero households', async () => {
+  // ...既存のfakeFirestoreセットアップを再利用し、
+  // template.currentPublishedVersionId が指す version.content を
+  // { subject: 'HOME_ECONOMICS', homeEconomics: { households: [], ... } } にした上で
+  await expect(createLessonRun(deps)).rejects.toThrow('担当プロフィールが1件も設定されていません。')
+})
+```
+
+- [ ] **Step 11: `createLessonRun`を修正する**
+
+`functions/src/lessonRuns/createLessonRun.ts`のバリデーション分岐を拡張する（既存のSOCIAL_STUDIES分岐と並列に追加、read-after-write順序を変えないようトランザクションのREAD PHASE内に留める）:
+
+```ts
+import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
+
+// ...(既存のトランザクション内、SOCIAL_STUDIES検証のすぐ後に追加)
+const contentWithHomeEconomics = version.content as { subject: string; homeEconomics?: unknown }
+if (contentWithHomeEconomics.subject === 'HOME_ECONOMICS' && contentWithHomeEconomics.homeEconomics) {
+  const result = validateHomeEconomicsContent(
+    contentWithHomeEconomics.homeEconomics as Parameters<typeof validateHomeEconomicsContent>[0],
+  )
+  if (!result.valid) throw new Error(result.errors[0])
+}
+```
+
+**既知の限界（Phase C Task2で発見された同型の注意点をそのまま継承）:** このガードは`content.subject === 'HOME_ECONOMICS' && content.homeEconomics`という条件のため、`homeEconomics`が未設定のままpublishされたHOME_ECONOMICS教材はバリデーションを素通りし、市場設定を一切持たないLessonRunが作成されてしまう。教材publish時点（Phase A Task6 `publishLessonVersion`）で`subject`に応じた必須フィールドを強制する仕組みは依然として存在しない——本計画のTask17（受け入れテスト）で改めてこの既知の限界を確認し、埋めるかどうかを判断する。
+
+- [ ] **Step 12: テストを通す**
+
+Run: `cd functions && npx vitest run src/lessonRuns/createLessonRun.test.ts`
+Expected: PASS
+
+- [ ] **Step 13: `npm run verify`**
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add functions/packages/household-authoring-content/src/index.ts functions/packages/household-authoring-content/src/index.test.ts \
+  src/lib/lessonTemplates/types.ts functions/src/homeEconomics/templateValidation.ts functions/src/homeEconomics/templateValidation.test.ts \
+  functions/src/lessonRuns/createLessonRun.ts functions/src/lessonRuns/createLessonRun.test.ts
+git commit -m "feat: add HomeEconomicsContent and validate it at LessonRun creation"
+```
+
+---
