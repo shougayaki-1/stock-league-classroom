@@ -38,6 +38,18 @@ describe('computeAssetReturn', () => {
     expect(result.returnPercent).toBe(0)
   })
 
+  it('applies marketReturnPercent even to zero-volatility CASH positions — OPEN QUESTION (Task 4 review): is this intended, or should CASH be excluded from market-return exposure? Currently the implementation applies it uniformly; Task 11/17 should confirm.', () => {
+    // This test pins the current behavior: a CASH position with zero noise
+    // still grows by marketReturnPercent. The implementation treats market-return
+    // as a uniform adjustment regardless of volatility, but whether this is
+    // economically correct for a zero-volatility asset is not yet confirmed.
+    const result = computeAssetReturn({
+      ...baseInput, assetType: 'CASH', expectedReturnPercent: 0, volatilityPercent: 0, marketReturnPercent: 3,
+    })
+    expect(result.returnPercent).toBe(3)
+    expect(result.nextValueYen).toBe(Math.round(baseInput.valueYen * 1.03))
+  })
+
   it('never returns a negative value even with a large negative noise draw', () => {
     const result = computeAssetReturn({ ...baseInput, expectedReturnPercent: -50, volatilityPercent: 200 })
     expect(result.nextValueYen).toBeGreaterThanOrEqual(0)
