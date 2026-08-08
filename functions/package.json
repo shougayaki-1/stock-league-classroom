@@ -11,6 +11,7 @@
     "lint": "oxlint src",
     "pretest": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build",
     "test": "vitest run",
+    "test:market-concurrency": "vitest run --config vitest.concurrent.config.mts",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
