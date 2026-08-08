@@ -796,3 +796,175 @@ git commit -m "feat: add HomeEconomicsContent and validate it at LessonRun creat
 ```
 
 ---
+
+### Task 3: 年次収支エンジン（収入・支出集計、簡略税・社会保険式）
+
+統合仕様書 §13.7（収入・支出）・§13.8（税・社会保険）を実装する。純粋関数とし、Task11のラウンド確定処理から呼ばれる。**固定費と変動費を区別可能にする**（§13.7）ことと、**税・社会保険は教材版へ固定した簡略式を使う**（§13.8「数値・式の版を教材版へ固定する」）ことがこのタスクの中核。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/annualCashFlow.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`（Task1）、`EconomicFactors`（Task2、`HomeEconomicsContent.economicFactors`）
+- Produces: `computeAnnualCashFlow(input): AnnualCashFlowResult`、`computeTaxAndSocialInsurance(input, modelVersion): TaxResult`
+
+- [ ] **Step 1: 税・社会保険簡略式（バージョン固定）の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/taxAndSocialInsurance.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeTaxAndSocialInsurance } from './taxAndSocialInsurance'
+
+describe('computeTaxAndSocialInsurance', () => {
+  it('applies model version 1\'s simplified flat-rate formula (spec §13.8 — pinned to template version, not live tax law)', () => {
+    const result = computeTaxAndSocialInsurance({ grossIncomeYen: 6000000 }, 1)
+    // Model v1: 20% combined tax+social-insurance rate — PROVISIONAL, see
+    // TAX_MODEL_V1_RATE_PERCENT below. Exact value is not from live tax law.
+    expect(result.netIncomeYen).toBe(4800000)
+    expect(result.taxAndInsuranceYen).toBe(1200000)
+  })
+
+  it('throws for an unknown model version rather than silently falling back (spec §13.8: pinned, never live-recomputed)', () => {
+    expect(() => computeTaxAndSocialInsurance({ grossIncomeYen: 6000000 }, 99)).toThrow('Unknown tax and social insurance model version: 99')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/taxAndSocialInsurance.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `computeTaxAndSocialInsurance`を実装する**
+
+`functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`:
+
+```ts
+/**
+ * PROVISIONAL — spec §13.8 requires an educational simplified formula
+ * "実際の税率へ依存し過ぎない", not real tax law, and requires the exact
+ * rate to be pinned per template version rather than recomputed live.
+ * This flat 20% combined rate for model version 1 is a starting value to
+ * be adjusted during pilot runs — see Task 17's PROVISIONAL constants
+ * roundup.
+ */
+const TAX_MODEL_V1_RATE_PERCENT = 20
+
+export interface TaxAndSocialInsuranceInput {
+  grossIncomeYen: number
+}
+export interface TaxResult {
+  netIncomeYen: number
+  taxAndInsuranceYen: number
+}
+
+/**
+ * Spec §13.8: "数値・式の版を教材版へ固定する" — the model version comes
+ * from `HomeEconomicsContent.taxAndSocialInsuranceModelVersion` (Task 2),
+ * captured in the LessonRun's immutable `templateSnapshot` at creation
+ * time (Phase A's template/version pattern). A lesson already running
+ * must never have its tax formula change underneath it because a teacher
+ * edited the draft — callers always pass the SNAPSHOT's model version,
+ * never a live lookup.
+ */
+export const computeTaxAndSocialInsurance = (input: TaxAndSocialInsuranceInput, modelVersion: number): TaxResult => {
+  if (modelVersion !== 1) throw new Error(`Unknown tax and social insurance model version: ${modelVersion}`)
+  const taxAndInsuranceYen = Math.round(input.grossIncomeYen * (TAX_MODEL_V1_RATE_PERCENT / 100))
+  return { netIncomeYen: input.grossIncomeYen - taxAndInsuranceYen, taxAndInsuranceYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/taxAndSocialInsurance.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: 年次収支集計の失敗するテストを書く（固定費/変動費区別、物価反映）**
+
+`functions/src/homeEconomics/engine/annualCashFlow.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeAnnualCashFlow } from './annualCashFlow'
+
+describe('computeAnnualCashFlow', () => {
+  it('nets income (after tax) against fixed + variable expenses, separately reported (spec §13.7)', () => {
+    const result = computeAnnualCashFlow({
+      netIncomeYen: 4800000,
+      fixedExpensesYen: 2000000,
+      variableExpensesYen: 800000,
+      inflationPercent: 0,
+    })
+    expect(result.totalExpensesYen).toBe(2800000)
+    expect(result.netCashFlowYen).toBe(2000000)
+    expect(result.fixedExpensesYen).toBe(2000000)
+    expect(result.variableExpensesYen).toBe(800000)
+  })
+
+  it('applies inflation to variable expenses but the caller decides fixed-expense treatment (spec §13.11: 物価は生活費へ反映)', () => {
+    const result = computeAnnualCashFlow({
+      netIncomeYen: 4800000, fixedExpensesYen: 2000000, variableExpensesYen: 800000, inflationPercent: 10,
+    })
+    // Inflation compounds onto variable (living) expenses only — fixed
+    // costs (e.g. a fixed-rate mortgage payment) are NOT inflation-adjusted
+    // here; that distinction is what "固定費と変動費を区別可能" (§13.7) is for.
+    expect(result.variableExpensesYen).toBe(880000)
+    expect(result.fixedExpensesYen).toBe(2000000)
+  })
+})
+```
+
+- [ ] **Step 6: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/annualCashFlow.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 7: `computeAnnualCashFlow`を実装する**
+
+`functions/src/homeEconomics/engine/annualCashFlow.ts`:
+
+```ts
+export interface AnnualCashFlowInput {
+  netIncomeYen: number
+  fixedExpensesYen: number
+  variableExpensesYen: number
+  /** Spec §13.11: applied to variable (living-cost) expenses only. */
+  inflationPercent: number
+}
+export interface AnnualCashFlowResult {
+  fixedExpensesYen: number
+  variableExpensesYen: number
+  totalExpensesYen: number
+  netCashFlowYen: number
+}
+
+export const computeAnnualCashFlow = (input: AnnualCashFlowInput): AnnualCashFlowResult => {
+  const variableExpensesYen = Math.round(input.variableExpensesYen * (1 + input.inflationPercent / 100))
+  const totalExpensesYen = input.fixedExpensesYen + variableExpensesYen
+  return {
+    fixedExpensesYen: input.fixedExpensesYen,
+    variableExpensesYen,
+    totalExpensesYen,
+    netCashFlowYen: input.netIncomeYen - totalExpensesYen,
+  }
+}
+```
+
+- [ ] **Step 8: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/annualCashFlow.test.ts`
+Expected: PASS
+
+- [ ] **Step 9: `npm run verify`**
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/annualCashFlow.ts functions/src/homeEconomics/engine/annualCashFlow.test.ts \
+  functions/src/homeEconomics/engine/taxAndSocialInsurance.ts functions/src/homeEconomics/engine/taxAndSocialInsurance.test.ts
+git commit -m "feat: add annual cash-flow and tax/social-insurance simplified engines"
+```
+
+---
