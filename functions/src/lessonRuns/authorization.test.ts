@@ -50,6 +50,12 @@ describe('canControlLesson', () => {
     expect(canControlLesson('VIEWER', 'TRANSITION_PHASE')).toBe(false)
   })
 
+  it('PROCESS_ROUND is PRIMARY-only (independent judgment call, see comment in authorization.ts)', () => {
+    expect(canControlLesson('PRIMARY', 'PROCESS_ROUND')).toBe(true)
+    expect(canControlLesson('ASSISTANT', 'PROCESS_ROUND')).toBe(false)
+    expect(canControlLesson('VIEWER', 'PROCESS_ROUND')).toBe(false)
+  })
+
   it('exhaustively covers every LessonControlAction with no gaps against the §6.5 table', () => {
     const allRoles: LessonRunRole[] = ['PRIMARY', 'ASSISTANT', 'VIEWER']
     for (const action of lessonControlActions) {

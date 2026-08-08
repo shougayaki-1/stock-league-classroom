@@ -1,12 +1,16 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
+import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
 import {
   getHouseholdStateWithAdminSdk,
   householdRepositoryWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
+import { canControlLesson } from '../lessonRuns/authorization'
+import { requireActiveOrgMember } from '../organizations/authorization'
 import { submitHouseholdDecision } from './submitDecision'
 import type { HouseholdDecisionInput } from './submitDecision'
+import { processRoundWithAdminSdk } from './processRound'
 
 /**
  * Resolves the caller's `participantId` on this lessonRun from the verified
@@ -177,5 +181,68 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
     })
   } catch (error) {
     throw translateSubmitHouseholdDecisionError(error)
+  }
+})
+
+interface ProcessRoundRequest {
+  lessonRunId: string
+  householdId: string
+}
+
+/**
+ * Translates `processRound`'s bare Error messages into HttpsError codes at
+ * the Callable boundary, matching every other task's pure/DI-layer
+ * convention (`transitionPhaseCallable`'s `translateTransitionPhaseError`,
+ * this file's own `translateSubmitHouseholdDecisionError`).
+ */
+const translateProcessRoundError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'HouseholdState not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdProfile not found in template snapshot') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'LessonRun has no homeEconomics content') return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
+
+/**
+ * Teacher-facing round-settlement Callable — spec §13.7〜§13.13 (Task 11).
+ * Classified PROCESS_ROUND, PRIMARY-only in `lessonRuns/authorization.ts`
+ * (same "keep the lesson's overall progression at a single decision
+ * point" reasoning `transitionPhaseCallable` uses for TRANSITION_PHASE —
+ * see that file's doc comment). Authorization reads `teacherRoles` off the
+ * `lessonRuns/{id}` document itself, exactly like `transitionPhaseCallable`
+ * — the caller's role is NEVER trusted from client input.
+ *
+ * RTDB projections are intentionally NOT updated here — see
+ * `processRound.ts`'s doc comment for why (deferred to Task 15).
+ */
+export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as ProcessRoundRequest
+  if (!data.lessonRunId || !data.householdId) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、householdId は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'PROCESS_ROUND')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  try {
+    return await processRoundWithAdminSdk({
+      lessonRunId: data.lessonRunId,
+      householdId: data.householdId,
+      actorId: request.auth.uid,
+    })
+  } catch (error) {
+    throw translateProcessRoundError(error)
   }
 })

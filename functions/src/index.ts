@@ -43,7 +43,7 @@ export {
   submitPredictionCallable,
   triggerBankruptcyCallable,
 } from './market/onCall'
-export { submitHouseholdDecisionCallable } from './homeEconomics/onCall'
+export { processRoundCallable, submitHouseholdDecisionCallable } from './homeEconomics/onCall'
 export { batchTaskQueue } from './market/taskHandler'
 export { resumeTaskQueue } from './market/resumeMarket'
 export { chainWatchdogScheduled } from './market/chainWatchdog'

@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallableRequest } from 'firebase-functions/v2/https'
-import { submitHouseholdDecisionCallable } from './onCall'
+import { processRoundCallable, submitHouseholdDecisionCallable } from './onCall'
 import { getHouseholdStateWithAdminSdk, saveHouseholdDecision } from '../lessonRuns/households/repository'
+import { requireActiveOrgMember } from '../organizations/authorization'
+import { processRoundWithAdminSdk } from './processRound'
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
+const lessonRunGetMock = vi.fn()
 const teamDocPaths: string[] = []
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
     doc: (path: string) => {
+      if (/^lessonRuns\/[^/]+$/.test(path)) return { get: lessonRunGetMock }
       if (!path.includes('/participantsByAuthUid/')) teamDocPaths.push(path)
       return { get: path.includes('/participantsByAuthUid/') ? participantGetMock : teamGetMock }
     },
@@ -21,6 +25,9 @@ vi.mock('../lessonRuns/households/repository', () => ({
   householdRepositoryWithAdminSdk: vi.fn(() => ({})),
   saveHouseholdDecision: vi.fn(),
 }))
+
+vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
+vi.mock('./processRound', () => ({ processRoundWithAdminSdk: vi.fn() }))
 
 interface SubmitHouseholdDecisionRequestData {
   lessonRunId: string
@@ -165,5 +172,92 @@ describe('submitHouseholdDecisionCallable', () => {
     await expect(submitHouseholdDecisionCallable.run(makeRequest({ roundIndex: household.roundIndex + 1 })))
       .rejects.toMatchObject({ code: 'failed-precondition' })
     expect(saveHouseholdDecision).not.toHaveBeenCalled()
+  })
+})
+
+interface ProcessRoundRequestData {
+  lessonRunId: string
+  householdId: string
+}
+
+const makeProcessRoundRequest = (
+  data: Partial<ProcessRoundRequestData> = {}, uid = 'teacher-a',
+): CallableRequest<ProcessRoundRequestData> => ({
+  auth: { uid, token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+  data: { lessonRunId: 'run-1', householdId: 'case-b', ...data },
+  rawRequest: {},
+} as unknown as CallableRequest<ProcessRoundRequestData>)
+
+const makeLessonRunSnap = (exists: boolean, fields: Record<string, unknown> = {}) => ({
+  exists,
+  get: (field: string) => fields[field],
+})
+
+describe('processRoundCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('rejects unauthenticated callers without touching Firestore', async () => {
+    const request = { auth: undefined, data: {}, rawRequest: {} } as unknown as CallableRequest<ProcessRoundRequestData>
+    await expect(processRoundCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['lessonRunId', { lessonRunId: '' }],
+    ['householdId', { householdId: '' }],
+  ])('rejects a request with an invalid %s', async (_field, override) => {
+    await expect(processRoundCallable.run(makeProcessRoundRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the LessonRun does not exist', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(false))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'not-found' })
+    expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller with no teacher role on this run', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: {} }))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects an ASSISTANT-role teacher (PROCESS_ROUND is PRIMARY-only, never trusting a client-asserted role)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a VIEWER-role teacher (PROCESS_ROUND is PRIMARY-only)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'VIEWER' } }))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('proceeds for a PRIMARY-role teacher who is an active org member (happy path)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    const result = {
+      newHouseholdState: { householdId: 'case-b' }, occurredEventIds: [], incomeYen: 0, expensesYen: 0,
+      netCashFlowYen: 0, shortfallYen: 0, insuranceBenefitsYen: 0,
+    }
+    vi.mocked(processRoundWithAdminSdk).mockResolvedValue(result as never)
+
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).resolves.toEqual(result)
+
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-1', 'teacher-a')
+    expect(processRoundWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a',
+    })
+  })
+
+  it('translates "HouseholdState not found" into not-found', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(processRoundWithAdminSdk).mockRejectedValue(new Error('HouseholdState not found'))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'not-found' })
   })
 })

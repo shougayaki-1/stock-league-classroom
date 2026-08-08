@@ -82,6 +82,32 @@ export const getHouseholdStateWithAdminSdk = async (
   return snap.data() as unknown as HouseholdState
 }
 
+/**
+ * Read-only lookup used by `processRound`'s Admin SDK wrapper (Task 11) to
+ * find the round's submitted decision, if any — `decisionId` is a hashed
+ * idempotency id (see `saveHouseholdDecision`), so it cannot be derived
+ * from `(lessonRunId, householdId, roundIndex)` alone; this queries the
+ * `decisions` subcollection by `roundIndex` instead. Returns `null` when
+ * the household hasn't submitted for this round — `settleRound`'s
+ * §13.13 fallback (`REDUCE_EXPENSES`) handles that case, this repository
+ * function does not synthesize a default. If more than one decision
+ * record exists for the same round (a student resubmitting with a
+ * different idempotencyKey — not idempotent across different keys), the
+ * most recently submitted one wins.
+ */
+export const getHouseholdDecisionForRoundWithAdminSdk = async (
+  lessonRunId: string, householdId: string, roundIndex: number,
+): Promise<HouseholdDecisionRecord | null> => {
+  const snap = await getFirestore()
+    .collection(`lessonRuns/${lessonRunId}/households/${householdId}/decisions`)
+    .where('roundIndex', '==', roundIndex)
+    .get()
+  if (snap.empty) return null
+  const records = snap.docs.map((doc) => doc.data() as unknown as HouseholdDecisionRecord)
+  records.sort((a, b) => b.submittedAtServerMillis - a.submittedAtServerMillis)
+  return records[0]
+}
+
 export interface HouseholdDecisionRecord {
   decisionId: string
   lessonRunId: string

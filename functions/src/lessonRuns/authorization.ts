@@ -11,6 +11,11 @@ import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
  * 開始・終了・市場停止と同じく「授業全体の進行を単一の意思決定点に保つ」操作
  * であり、複数教師が同時に遷移を発行すると進行状態が競合しうるため、主担当
  * 専属（PRIMARY のみ）として扱う。これは統合仕様書に明記のない独自判断。
+ *
+ * PROCESS_ROUND（家庭科ラウンド確定、Task 11）も同じ理由で独自区分・主担当
+ * 専属とする: ラウンド確定は住宅ローン・保険・資産配分・不足解消をまとめて
+ * 1つの`HouseholdState`更新へ確定させる操作であり、TRANSITION_PHASEと同様
+ * 「進行を単一の意思決定点に保つ」性質を持つ。
  */
 export type LessonControlAction =
   | 'START_LESSON'
@@ -19,6 +24,7 @@ export type LessonControlAction =
   | 'CHANGE_SETTINGS'
   | 'TRANSFER_PRIMARY'
   | 'TRANSITION_PHASE'
+  | 'PROCESS_ROUND'
   | 'PUBLISH_NOTICE'
   | 'EXTEND_TIME'
   | 'SUPPORT_STUDENT'
@@ -33,6 +39,7 @@ export const lessonControlActions: LessonControlAction[] = [
   'CHANGE_SETTINGS',
   'TRANSFER_PRIMARY',
   'TRANSITION_PHASE',
+  'PROCESS_ROUND',
   'PUBLISH_NOTICE',
   'EXTEND_TIME',
   'SUPPORT_STUDENT',
@@ -50,6 +57,7 @@ export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole
   TRANSFER_PRIMARY: ['PRIMARY'],
   // 独自判断（コメント参照）: 主担当専属として扱う
   TRANSITION_PHASE: ['PRIMARY'],
+  PROCESS_ROUND: ['PRIMARY'],
   // 主担当・補助担当ともに可
   PUBLISH_NOTICE: ['PRIMARY', 'ASSISTANT'],
   EXTEND_TIME: ['PRIMARY', 'ASSISTANT'],
