@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **作成中。Task 1〜4のみ詳細まで記述済み。Task 5〜17は §「タスク一覧」の1行タイトルのみで、ステップ・コード例・検証方法が書かれていない。** 続きを書く場合は、Task 1〜4と同じ密度（Files / Interfaces / Step ごとのテストコード / Run / Expected）で Task 5から埋めること。書き終わったタスクから随時ファイルへ保存し、一度に全部書こうとしないこと（Phase C計画で同じ問題が起き、前の試行が2回失敗した実績がある）。
+> **完成済み。Task 1〜17全てFiles / Interfaces / Stepごとのテストコード / Run / Expectedを含む詳細まで記述済み。** 着手前に「実装順とレビューゲート」と各Taskの設計上の要点（特にTask1・7・11の複数タスクにまたがる型設計判断）を確認すること。実装中に本計画の型定義（`HomeEconomicsContent`・`HouseholdProfile`・`InsuranceProduct`・`LifeEventDefinition`等）を変更する場合は、後続タスクのテストコードが参照している同じ型・フィールド名と整合しているか都度確認すること——本計画自体、執筆途中でTask1・2の型に複数回の遡及的な補完（`coveredEventIds`・構造化イベント効果・`PublicSupportProgram`・`borrowingAllowed`等）を行っている。
 
 > **正本は統合仕様書。** `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`（§7、§13、§27.4、§28）と `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md`（矛盾解消G・H）が優先する。本計画と両文書が矛盾する場合は両文書を優先し、本計画側の誤りとして扱う。
 
@@ -3105,3 +3105,91 @@ git commit -m "feat: add home-economics 5-criteria evaluation with auto/rubric s
 ```
 
 ---
+
+### Task 17: §27.4受け入れテストとPhase D完了条件の確定
+
+統合仕様書 §27.4の家庭科受け入れテスト6項目を、Task 1〜16で書いたテストへ1つずつ対応付ける。**1項目（同一条件モードで全チームの初期条件が一致）は既存タスクのテストだけではカバーできていないため、本タスクで新しいテストと検証を追加して埋める**（Phase C Task19が同じ構造で2項目のギャップを発見・充填した前例を踏襲）。
+
+**Files:**
+- Modify: `functions/src/homeEconomics/templateValidation.ts`, `.test.ts`（項目4）
+- Create: `test/household-lifecycle.acceptance.test.ts`
+
+**§27.4の6項目と対応するテストの対応表:**
+
+| # | 受け入れ項目 | 対応するテスト |
+| --- | --- | --- |
+| 1 | 資産、保険、負債、キャッシュフローが分離 | Task1（`AssetPosition`/`InsuranceProduct`/`Liability`が独立した型、`HouseholdState`でも別々のフィールド）＋Task6「資産配分円グラフへ保険を混ぜない」設計 |
+| 2 | 物価・金利が指定項目へ反映 | Task3「applies inflation to variable expenses」＋Task4「経済要因反映」＋Task5（住宅ローンの金利） |
+| 3 | 資金不足時に選択肢が出る | Task8「always includes REDUCE_EXPENSES and DELAY_GOAL」＋Task11「auto-resolves an unexpected shortfall...never auto-bankrupts」 |
+| 4 | 同一条件モードで全チームの初期条件が一致 | **未カバー。Step1で追加する。** |
+| 5 | 人生段階をまたいで保存・再開 | Task13「round-trips every household field exactly」 |
+| 6 | 価格・税率等の教材版が固定 | Task3「throws for an unknown model version rather than silently falling back」＋`templateSnapshot`不変性（Phase A既存パターン、Task2がその上に構築） |
+
+- [ ] **Step 1: 項目4（同一条件モードで全チームの初期条件が一致）の失敗するテストを書く**
+
+`functions/src/homeEconomics/templateValidation.test.ts`に追記する:
+
+```ts
+describe('COMMON_CONDITIONS course format requires exactly one shared household profile (spec §27.4 item 4)', () => {
+  it('rejects COMMON_CONDITIONS with more than one household profile — teams must share identical initial conditions', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'COMMON_CONDITIONS', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+  })
+
+  it('accepts ROLE_VARIANT with multiple household profiles', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'ROLE_VARIANT', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: FAIL — バリデーションがcourseFormatを見ていない
+
+- [ ] **Step 3: `validateHomeEconomicsContent`へチェックを追加する**
+
+`functions/src/homeEconomics/templateValidation.ts`の`errors`配列構築部分へ追記する:
+
+```ts
+if (content.courseFormat === 'COMMON_CONDITIONS' && content.households.length > 1) {
+  errors.push('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+}
+```
+
+（`COMMON_CONDITIONS`モードでは、`getOrInitHouseholdState`（Task10）が全チームに対し同一の`households[0]`プロフィールから状態を初期化する——プロフィールが1件しかなければ「全チーム同じ初期条件」がデータモデル上自動的に保証される、という設計。複数プロフィールを許す他の`courseFormat`と区別するための最小限のバリデーション。）
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: Phase D全体の完了条件を確認する**
+
+以下すべてを満たすことをPhase D完了の条件とする:
+
+1. `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*`の`verify`）が全ワークスペースでPASSする。
+2. 上表の§27.4 6項目すべてに対応するテストが存在し、PASSする。
+3. 生徒向けに配信されるデータ（`lessonRunPublic`・`lessonRunTeamState`のRTDB書き込み内容、Task15の`toHouseholdStateTeamView`の実際の出力）を目視確認し、`internalRiskFactors`・`internalClaimProbability`・`eventProbabilityOverrides`・他チームのプロフィールのいずれも含まれていないことを確認する。**Phase C最終レビューの教訓（RTDB配信コードがno-opのまま最終レビューまで気づかれなかった）を踏まえ、Task15で配線を完結させたことを`processRound.ts`の`publishRealtimeState`実装を直接読んで再確認すること——「型は安全だが配信コードが未実装」という状態を完了条件としない。**
+4. 本計画内でPROVISIONAL（試運転で調整する暫定値）と明記した定数——`TAX_MODEL_V1_RATE_PERCENT`（Task3）、`EMERGENCY_FUND_TARGET_MONTHS`（Task16）、`pensionReplacementRatePercent`の既定値（Task12、教材設定側で暫定値を1箇所に置くこと）——を1箇所の一覧（`functions/src/homeEconomics/engine/tuningConstants.ts`のような単一ファイル、Phase C Task19と同じ形）にまとめ、後続の試運転フェーズで参照できるようにする。
+5. 冒頭の前提チェックリスト（`HOME_ECONOMICS_MARKET_FORBIDDEN`バリデーション、`DECISION`フェーズ型の存在）はPhase Bで確定済み——本計画のTask2 Step10・Step11はこれをそのまま前提にしてよい。
+6. Task11で記録した既知の限界（`computeAssetReturn`呼び出しの資産カタログ解決が`assetType`単位、同一`assetType`の複数商品を想定しない設計）を再確認し、教材バリデーション（Task2）で「同一`assetType`の資産は1商品まで」という制約を明示的に強制するか、対応が必要かを判断する。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/homeEconomics/templateValidation.ts functions/src/homeEconomics/templateValidation.test.ts \
+  functions/src/homeEconomics/engine/tuningConstants.ts test/household-lifecycle.acceptance.test.ts
+git commit -m "test: close the §27.4 acceptance-test gap (common-conditions single-profile invariant) and confirm Phase D completion conditions"
+```
+
