@@ -70,3 +70,57 @@ export interface EconomicIndicatorAuthoring {
     /** Hidden. Per-company multiplier — spec §12.8 "企業特性と結び付ける". */
     companyImpactMultipliers: Record<string, number>;
 }
+export type PredictionEvaluationTarget = {
+    type: 'AFTER_BATCHES';
+    count: number;
+} | {
+    type: 'NEXT_INFORMATION';
+} | {
+    type: 'MARKET_CLOSE';
+};
+export interface SocialStudiesEvaluationWeights {
+    operationResult: number;
+    predictionAccuracy: number;
+    informationUsage: number;
+    riskManagement: number;
+    reflection: number;
+}
+/**
+ * All §28 default-value-table entries relevant to the market live here as
+ * field defaults, not scattered across engine code (spec §30-10). Values
+ * ARE the authoring type's field values for a given LessonTemplate — there
+ * is no separate "defaults config" file to keep in sync.
+ *
+ * Lives in this package (not `src/lib/lessonTemplates/types.ts`, where
+ * `LessonContent.socialStudiesMarket` references it) so that both the
+ * client-side authoring UI (`src/`) and server-side validation
+ * (`functions/src/market/templateValidation.ts`) import the same
+ * definition from a workspace package — `functions/` cannot import across
+ * the repo root into `src/` (breaks `tsc`'s `rootDir` and the Cloud
+ * Functions deploy bundle, which only includes `functions/`).
+ */
+export interface SocialStudiesMarketContent {
+    companies: SimulatedCompany[];
+    informationItems: InformationItem[];
+    economicIndicators: EconomicIndicatorAuthoring[];
+    /** §12.9. Default 3, teacher range 1-10. */
+    batchIntervalSeconds: number;
+    /** §12.20 abstract control shown to teachers instead of raw coefficients. */
+    priceSensitivityPreset: 'INFO_FOCUSED' | 'BALANCED' | 'DEMAND_FOCUSED';
+    /** §12.22. Default true (small noise). BASIC tier may disable. */
+    marketNoiseEnabled: boolean;
+    /** §12.26. Default 30. */
+    resumeConfirmationSeconds: number;
+    companyDifficultyTier: 'BASIC' | 'STANDARD' | 'ADVANCED';
+    indicatorDifficultyTier: 'BASIC' | 'STANDARD' | 'ADVANCED';
+    /** §12.28. Default 0. */
+    tradingFeeYen: number;
+    /** §12.28/§12.29. All default false — see Task 17. */
+    dividendEnabled: boolean;
+    stockSplitEnabled: boolean;
+    bankruptcyEnabled: boolean;
+    /** §12.32/矛盾解消F. Default { type: 'AFTER_BATCHES', count: 20 } — see Task 15. */
+    predictionEvaluationTarget: PredictionEvaluationTarget;
+    /** §12.33. Must sum to 1; validated by `validateSocialStudiesMarketContent`. */
+    evaluationWeights: SocialStudiesEvaluationWeights;
+}

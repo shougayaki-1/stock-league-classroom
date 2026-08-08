@@ -65,4 +65,28 @@ describe('createLessonRun', () => {
       lessonRunIdempotencyKey: 'idem-foreign', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
     })).rejects.toThrow('Published version pointer mismatch')
   })
+
+  it('rejects creating a SOCIAL_STUDIES run whose templateSnapshot has fewer than 3 companies', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-2', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-2/versions/v1', {
+      templateId: 'tpl-2', orgId: 'personal_teacher-a',
+      content: {
+        schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES',
+        socialStudiesMarket: {
+          companies: [], informationItems: [], economicIndicators: [],
+          batchIntervalSeconds: 3, priceSensitivityPreset: 'BALANCED', marketNoiseEnabled: true,
+          resumeConfirmationSeconds: 30, companyDifficultyTier: 'STANDARD', indicatorDifficultyTier: 'STANDARD',
+          tradingFeeYen: 0, dividendEnabled: false, stockSplitEnabled: false, bankruptcyEnabled: false,
+          predictionEvaluationTarget: { type: 'AFTER_BATCHES', count: 20 },
+          evaluationWeights: { operationResult: 0.1, predictionAccuracy: 0.3, informationUsage: 0.4, riskManagement: 0.1, reflection: 0.1 },
+        },
+      },
+    })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-2', orgId: 'personal_teacher-a',
+      templateId: 'tpl-2', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('企業は3社以上必要です。')
+  })
 })

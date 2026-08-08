@@ -1,4 +1,14 @@
 import type { Timestamp } from 'firebase/firestore'
+import type { SocialStudiesMarketContent } from '@stock-league/market-authoring-content'
+
+export type {
+  EconomicIndicatorAuthoring,
+  InformationItem,
+  PredictionEvaluationTarget,
+  SimulatedCompany,
+  SocialStudiesEvaluationWeights,
+  SocialStudiesMarketContent,
+} from '@stock-league/market-authoring-content'
 
 /**
  * Minimum content envelope for Phase A. The full authoring content (rounds, market
@@ -10,6 +20,9 @@ export interface LessonContent {
   title: string
   description: string
   subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  /** Only present when subject === 'SOCIAL_STUDIES'. Optional so existing
+   * HOME_ECONOMICS drafts and Phase A's minimal placeholder keep compiling. */
+  socialStudiesMarket?: SocialStudiesMarketContent
 }
 
 export interface LessonTemplate {

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
+import { validateSocialStudiesMarketContent } from '../market/templateValidation'
 
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
@@ -52,6 +53,14 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     const version = versionSnap.data() as { templateId: string; orgId: string; content: unknown }
     if (version.templateId !== deps.templateId || version.orgId !== deps.orgId) {
       throw new Error('Published version pointer mismatch')
+    }
+
+    const content = version.content as { subject: string; socialStudiesMarket?: unknown }
+    if (content.subject === 'SOCIAL_STUDIES' && content.socialStudiesMarket) {
+      const result = validateSocialStudiesMarketContent(
+        content.socialStudiesMarket as Parameters<typeof validateSocialStudiesMarketContent>[0],
+      )
+      if (!result.valid) throw new Error(result.errors[0])
     }
 
     const lessonRunId = deps.generateLessonRunId()
