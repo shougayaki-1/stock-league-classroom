@@ -34,6 +34,32 @@ export interface LessonRunPublicNotification {
  * spreading an internal/private source object — see that file's JSDoc for
  * why deny-list stripping is rejected as a design here.
  */
+/**
+ * The market's public breakdown of a single price move (spec §12.31 —
+ * "その他要因" display). Deliberately mirrors LessonRunPrivateState's
+ * per-stock `computationLog` shape but strips every internal coefficient
+ * (price-sensitivity preset, raw noise term): only the three
+ * participant-facing percentages plus their total survive here.
+ */
+export interface PriceBreakdownPublicView {
+  informationPercent: number
+  demandPercent: number
+  /** Internal coefficients are never included — this is the "その他要因" figure itself. */
+  otherPercent: number
+  total: number
+}
+
+/** A single stock's participant-facing market state, broadcast on `lessonRunPublic/{lessonRunId}`. */
+export interface StockPublicState {
+  currentPrice: number
+  previousPrice: number
+  guardApplied: boolean
+  suddenChangeWarning: boolean
+  breakdown: PriceBreakdownPublicView
+  /** Contradiction-resolution C: gross volume before netting, not the net demand value. */
+  displayedVolumeShares: number
+}
+
 export interface LessonRunPublicState {
   status: string
   currentPhaseId: string | null
@@ -46,6 +72,13 @@ export interface LessonRunPublicState {
   publicTask: string | null
   /** Broadcast-safe notifications only — see LessonRunPublicNotification's JSDoc. */
   notifications: LessonRunPublicNotification[]
+  marketPaused: boolean
+  /** Server-written value. Clients render only a countdown to this timestamp and never advance
+   * their own timer (contradiction-resolution A, mandatory item 1) — never recompute batch cadence client-side. */
+  nextBatchAtMillis: number | null
+  /** Present only while a teacher-initiated resume is in its confirmation window (spec §12.26). */
+  resumeScheduledAtMillis?: number
+  stocks: Record<string, StockPublicState>
 }
 
 /** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */
@@ -105,5 +138,44 @@ export interface LessonRunDisplayState {
 export interface LessonRunPrivateState {
   randomSeed: string
   restoreGeneration: number
+  updatedAtMillis: number
+  /** Used to reconcile Task 10's idempotency key against what has actually been published. Internal state, never surfaced on a teacher screen. */
+  lastProcessedBatchId: string | null
+  /** Spec §12.31 — "教師・教材作成者は詳細設定と計算ログを確認できる". Same
+   * shape as the public breakdown but with the internal coefficients
+   * (raw noise term, the active price-sensitivity preset) included. This
+   * is the full computation log; it must never be sent to students —
+   * see this type's own top-level JSDoc for why it cannot live under
+   * `lessonRunPublic`. */
+  computationLog: Record<string, { informationImpactPercent: number; demandImpactPercent: number; noisePercent: number; priceSensitivityPreset: string }>
+}
+
+/** A single order as visible to the team that placed it (never another team's orders). */
+export interface MyOrderView {
+  orderId: string
+  stockId: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  status: 'PENDING' | 'CANCELLED' | 'PROCESSING' | 'FILLED' | 'REJECTED'
+  referencePrice: number
+  executionPrice?: number
+}
+
+/**
+ * Third visibility class alongside LessonRunPublicState (every participant)
+ * and LessonRunPrivateState (teachers only): a team's own cash, holdings,
+ * locked funds/shares, and order state must reach that team's members in
+ * real time, but must never reach other teams. Lives at the separate
+ * top-level `lessonRunTeamState/{lessonRunId}/{teamId}` RTDB path — see
+ * database.rules.json's asymmetric read rule (own team OR org-member
+ * teacher oversight) and this file's LessonRunPrivateState JSDoc for why
+ * a nested path would defeat the isolation RTDB's read cascade requires.
+ */
+export interface LessonRunTeamState {
+  cash: number
+  holdings: Record<string, number>
+  lockedBuyValue: number
+  lockedSellQuantity: Record<string, number>
+  myOrders: MyOrderView[]
   updatedAtMillis: number
 }
