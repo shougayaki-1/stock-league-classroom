@@ -32,7 +32,7 @@ export type PredictionResolution =
  * direction. PROVISIONAL — no spec default exists for this band; chosen
  * to roughly match §12.22's noise magnitude so pure noise never scores a
  * FLAT prediction as wrong. */
-const FLAT_BAND_PERCENT = 0.5
+export const FLAT_BAND_PERCENT = 0.5
 
 const classify = (direction: PredictionDirection, referencePrice: number, resolvedPrice: number): 'CORRECT' | 'INCORRECT' => {
   const changePercent = ((resolvedPrice - referencePrice) / referencePrice) * 100

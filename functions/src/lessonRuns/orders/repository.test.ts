@@ -132,6 +132,21 @@ describe('transitionOrderStatus', () => {
   })
 })
 
+describe('order history retains both reference price and execution price (spec §12.11/§27.2 item 6)', () => {
+  it('keeps referencePrice unchanged and adds executionPrice when transitioning to FILLED', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/orders/order-1', {
+      orderId: 'order-1', status: 'PROCESSING', referencePrice: 1000,
+    })
+    await transitionOrderStatus({
+      firestore: fake as never, lessonRunId: 'run-1', orderId: 'order-1',
+      from: 'PROCESSING', to: 'FILLED', patch: { executionPrice: 1030 },
+    })
+    const stored = fake.docs.get('lessonRuns/run-1/orders/order-1')
+    expect(stored).toMatchObject({ referencePrice: 1000, executionPrice: 1030, status: 'FILLED' })
+  })
+})
+
 describe('listPendingOrdersForBatch', () => {
   it('returns only PENDING orders for the given batchId, ignoring other batches and statuses', async () => {
     const fake = makeFakeFirestore()
