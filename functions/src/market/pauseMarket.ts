@@ -9,15 +9,30 @@ export interface PauseMarketDeps {
 }
 
 /**
- * Order matters: drain THEN pause. If these were reversed, submitOrder's
- * isMarketAcceptingOrders check (Task 7) would still see marketPaused=false
- * for a brief window, letting a new order slip into a batch nobody will
- * ever process (no task is scheduled after this call).
+ * Order matters: PAUSE THEN drain. `processBatch` runs a Firestore
+ * transaction and can take a nontrivial amount of time; `marketPaused`
+ * must already be true before it starts, not after. If pause happened
+ * AFTER drain (the original, incorrect order here), submitOrder's
+ * isMarketAcceptingOrders check (Task 7) would keep accepting new orders
+ * for the *current* batchId throughout the entire drain call — orders
+ * that land after `readCurrentBatch` captured this batchId but before
+ * `setMarketPaused` flips the flag. Those orders get created against a
+ * batchId that `commitSettlement` has already marked as
+ * `lastProcessedBatchId` (or is in the middle of processing) and for
+ * which no further batch task is ever scheduled (pausing stops the
+ * chain) — they are stuck PENDING forever, with their cash/shares
+ * soft-locked forever along with them.
+ *
+ * Pausing first closes that window: the instant `setMarketPaused` commits,
+ * submitOrder starts rejecting new orders for this lessonRun. `processBatch`
+ * then safely drains whatever was already PENDING for the current batch at
+ * that moment — orders accepted before the pause still fill normally, which
+ * is the original requirement this ordering must (and does) preserve.
  */
 export const pauseMarket = async (deps: PauseMarketDeps): Promise<void> => {
   const current = await deps.readCurrentBatch(deps.lessonRunId)
-  await deps.processBatch({ lessonRunId: deps.lessonRunId, batchId: current.batchId, batchIndex: current.batchIndex })
   await deps.setMarketPaused({ lessonRunId: deps.lessonRunId, paused: true })
+  await deps.processBatch({ lessonRunId: deps.lessonRunId, batchId: current.batchId, batchIndex: current.batchIndex })
 }
 
 // ---------------------------------------------------------------------

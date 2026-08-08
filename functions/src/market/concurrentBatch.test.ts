@@ -3,6 +3,8 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { applySoftLockForNewOrder, getOrInitTeamAccount, teamAccountsRepositoryWithAdminSdk } from '../lessonRuns/teamAccounts/repository'
 import { createPendingOrder, listPendingOrdersForBatch, ordersRepositoryWithAdminSdk } from '../lessonRuns/orders/repository'
+import { processBatchDepsWithAdminSdk } from './processBatch'
+import type { SettleBatchResult } from './engine/settleBatch'
 
 // Firestore Emulator only (spec §30-4): these tests send REAL concurrent
 // requests against a running `firebase emulators:exec --only firestore`
@@ -80,5 +82,91 @@ describe('multiple teams settling in the same batch (spec §27.2 "同一区間�
     // the single stock.currentPrice, already proven by Task 9's unit tests;
     // this test's job is only to prove concurrent writes didn't corrupt or
     // drop any of the 5 orders before settlement reads them.
+  })
+})
+
+// Task 21 (Phase C final cross-review, findings 1 & 2): both bugs live in
+// `commitSettlementWithAdminSdk`'s Firestore transaction, so a plain
+// mocked-deps unit test (processBatch.test.ts) cannot exercise them —
+// they require real transaction reads/writes against the emulator.
+describe('commitSettlement — per-team TeamAccountUpdate aggregation (Task 21 finding 1 & 2)', () => {
+  const seedLessonRun = async (lessonRunId: string) => {
+    await getFirestore().doc(`lessonRuns/${lessonRunId}`).set({ status: 'RUNNING' })
+  }
+  const seedTeamAccount = async (lessonRunId: string, teamId: string, cash: number) => {
+    await getFirestore().doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).set({
+      teamId, lessonRunId, cash, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, updatedAtServerMillis: Date.now(),
+    })
+  }
+  const seedOrder = async (lessonRunId: string, orderId: string, fields: {
+    teamId: string; stockId: string; side: 'BUY' | 'SELL'; quantity: number; referencePrice: number; status: string
+  }) => {
+    await getFirestore().doc(`lessonRuns/${lessonRunId}/orders/${orderId}`).set({
+      orderId, idempotencyKey: `idem-${orderId}`, lessonRunId, batchId: 'batch-1',
+      submittedAtServerMillis: Date.now(), ...fields,
+    })
+  }
+
+  it("applies EVERY (team, stock) group's delta when the same team fills two different stocks in one batch — not just the last one", async () => {
+    const lessonRunId = 'run-agg-1'
+    const teamId = 'team-agg'
+    await seedLessonRun(lessonRunId)
+    await seedTeamAccount(lessonRunId, teamId, 100000)
+    await seedOrder(lessonRunId, 'order-acme', { teamId, stockId: 'acme', side: 'BUY', quantity: 3, referencePrice: 100, status: 'PENDING' })
+    await seedOrder(lessonRunId, 'order-globex', { teamId, stockId: 'globex', side: 'BUY', quantity: 5, referencePrice: 50, status: 'PENDING' })
+
+    const result: SettleBatchResult = {
+      orders: [
+        { orderId: 'order-acme', status: 'FILLED', executionPrice: 100 },
+        { orderId: 'order-globex', status: 'FILLED', executionPrice: 50 },
+      ],
+      stocks: [],
+      teamAccountUpdates: [
+        { teamId, cashDelta: -300, holdingsDelta: { acme: 3 } },
+        { teamId, cashDelta: -250, holdingsDelta: { globex: 5 } },
+      ],
+    }
+
+    await processBatchDepsWithAdminSdk().commitSettlement(result, lessonRunId, 'batch-1')
+
+    const finalAccount = (await getFirestore().doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).get()).data() as {
+      cash: number; holdings: Record<string, number>
+    }
+    // Pre-fix: settledDeltaByTeam was a Map keyed by teamId, so the second
+    // push (globex) silently overwrote the first (acme) — cash would land
+    // at 99750 and holdings at { globex: 5 } only, losing the acme fill
+    // entirely despite its order being recorded as FILLED.
+    expect(finalAccount.cash).toBe(100000 - 300 - 250)
+    expect(finalAccount.holdings).toEqual({ acme: 3, globex: 5 })
+  })
+
+  it('does not apply a TeamAccountUpdate whose order was already CANCELLED by a racing cancelOrder before this transaction', async () => {
+    const lessonRunId = 'run-agg-2'
+    const teamId = 'team-cancel-race'
+    await seedLessonRun(lessonRunId)
+    await seedTeamAccount(lessonRunId, teamId, 100000)
+    // Simulates cancelOrder having already flipped this order to CANCELLED
+    // between listPendingOrders (outside the tx) and commitSettlement's tx.
+    await seedOrder(lessonRunId, 'order-cancelled', { teamId, stockId: 'acme', side: 'BUY', quantity: 3, referencePrice: 100, status: 'CANCELLED' })
+
+    const result: SettleBatchResult = {
+      orders: [{ orderId: 'order-cancelled', status: 'FILLED', executionPrice: 100 }],
+      stocks: [],
+      teamAccountUpdates: [{ teamId, cashDelta: -300, holdingsDelta: { acme: 3 } }],
+    }
+
+    await processBatchDepsWithAdminSdk().commitSettlement(result, lessonRunId, 'batch-1')
+
+    const finalAccount = (await getFirestore().doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).get()).data() as {
+      cash: number; holdings: Record<string, number>
+    }
+    const finalOrder = (await getFirestore().doc(`lessonRuns/${lessonRunId}/orders/order-cancelled`).get()).data() as { status: string }
+    // Pre-fix: the order-status write is correctly skipped (order stays
+    // CANCELLED), but the cashDelta/holdingsDelta was applied unconditionally
+    // — cash would wrongly drop to 99700 and holdings gain 3 acme shares
+    // for an order that was never actually filled.
+    expect(finalOrder.status).toBe('CANCELLED')
+    expect(finalAccount.cash).toBe(100000)
+    expect(finalAccount.holdings).toEqual({})
   })
 })

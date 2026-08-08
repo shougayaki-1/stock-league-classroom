@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { pauseMarket } from './pauseMarket'
 
 describe('pauseMarket', () => {
-  it('drains the currently in-flight batch before flipping marketPaused, so pre-stop orders still fill', async () => {
+  it('flips marketPaused BEFORE draining the currently in-flight batch, so no order can slip into a batchId that will never be processed again', async () => {
     const processBatch = vi.fn().mockResolvedValue(undefined)
     const setMarketPaused = vi.fn()
     const calls: string[] = []
@@ -15,7 +15,7 @@ describe('pauseMarket', () => {
       lessonRunId: 'run-1',
     })
 
-    expect(calls).toEqual(['processBatch', 'setMarketPaused'])
+    expect(calls).toEqual(['setMarketPaused', 'processBatch'])
     expect(processBatch).toHaveBeenCalledWith(expect.objectContaining({ batchId: 'run-1_batch_9' }))
   })
 

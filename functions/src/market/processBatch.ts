@@ -307,7 +307,44 @@ const commitSettlementWithAdminSdk: ProcessBatchDeps['commitSettlement'] = async
       })
     })
 
-    const settledDeltaByTeam = new Map(result.teamAccountUpdates.map((u) => [u.teamId, u]))
+    // ---- Only apply TeamAccountUpdates for (team, stock) groups whose
+    // order this transaction actually observed as still PENDING (i.e.
+    // actually transitioned it to FILLED/REJECTED above). settleBatch
+    // computed teamAccountUpdates from the pre-transaction snapshot of
+    // orders (`listPendingOrders`, read outside this transaction); if a
+    // concurrent cancelOrder flipped an order to CANCELLED before this
+    // transaction's reads, the order-status write above is correctly
+    // skipped (order.status !== 'PENDING'), and the matching settlement
+    // delta below must be skipped too — otherwise cash/shares move for an
+    // order that never actually filled.
+    const settledGroupKeys = new Set<string>()
+    orderSnaps.forEach((snap) => {
+      if (!snap.exists) return
+      const order = snap.data() as MarketOrder
+      if (order.status !== 'PENDING') return
+      settledGroupKeys.add(`${order.teamId}::${order.stockId}`)
+    })
+
+    // ---- Aggregate ALL TeamAccountUpdates per team. settleBatch emits one
+    // entry per (team, stock) group (Task 9's design — see settleBatch.ts),
+    // so a team that fills multiple stocks in the same batch gets multiple
+    // entries here that must ALL be applied — not just the last one keyed
+    // by teamId (that was Task 21 finding 1's bug: a Map keyed by teamId
+    // silently dropped every entry but the last for the same team).
+    const settledDeltaByTeam = new Map<string, { cashDelta: number; holdingsDelta: Record<string, number> }>()
+    result.teamAccountUpdates.forEach((u) => {
+      // Every entry settleBatch produces carries exactly one stockId in
+      // holdingsDelta (one entry per (team, stock) group) — so this is
+      // either fully relevant (its group settled in this tx) or not.
+      const relevant = Object.keys(u.holdingsDelta).every((stockId) => settledGroupKeys.has(`${u.teamId}::${stockId}`))
+      if (!relevant) return
+      const entry = settledDeltaByTeam.get(u.teamId) ?? { cashDelta: 0, holdingsDelta: {} }
+      entry.cashDelta += u.cashDelta
+      for (const [stockId, delta] of Object.entries(u.holdingsDelta)) {
+        entry.holdingsDelta[stockId] = (entry.holdingsDelta[stockId] ?? 0) + delta
+      }
+      settledDeltaByTeam.set(u.teamId, entry)
+    })
     teamIdList.forEach((teamId, i) => {
       const snap = teamSnaps[i]
       if (!snap.exists) return
