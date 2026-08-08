@@ -178,6 +178,7 @@ describe('submitHouseholdDecisionCallable', () => {
 interface ProcessRoundRequestData {
   lessonRunId: string
   householdId: string
+  forceSettle?: boolean
 }
 
 const makeProcessRoundRequest = (
@@ -250,7 +251,7 @@ describe('processRoundCallable', () => {
 
     expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-1', 'teacher-a')
     expect(processRoundWithAdminSdk).toHaveBeenCalledWith({
-      lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a',
+      lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: false,
     })
   })
 
@@ -259,5 +260,34 @@ describe('processRoundCallable', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(processRoundWithAdminSdk).mockRejectedValue(new Error('HouseholdState not found'))
     await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  // Task 11 review round 2 — brief §Step 6 submission gate.
+  it('rejects a non-boolean forceSettle', async () => {
+    await expect(processRoundCallable.run(makeProcessRoundRequest({ forceSettle: 'yes' as unknown as boolean })))
+      .rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+  })
+
+  it('translates "HouseholdDecision not submitted for this round" into failed-precondition', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(processRoundWithAdminSdk).mockRejectedValue(new Error('HouseholdDecision not submitted for this round'))
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('forwards forceSettle: true through to processRoundWithAdminSdk when the teacher explicitly opts in', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    const result = {
+      newHouseholdState: { householdId: 'case-b' }, occurredEventIds: [], incomeYen: 0, expensesYen: 0,
+      netCashFlowYen: 0, shortfallYen: 0, insuranceBenefitsYen: 0,
+    }
+    vi.mocked(processRoundWithAdminSdk).mockResolvedValue(result as never)
+
+    await expect(processRoundCallable.run(makeProcessRoundRequest({ forceSettle: true }))).resolves.toEqual(result)
+    expect(processRoundWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: true,
+    })
   })
 })

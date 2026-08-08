@@ -80,6 +80,27 @@ export interface ProcessRoundInput {
   householdId: string
   /** The teacher uid that triggered this settlement — recorded on the `ROUND_SETTLED` LessonEvent. */
   actorId: string
+  /**
+   * Phase D Task 11 brief §Step 6: `processRoundCallable` is teacher-only
+   * and "must only be callable once the whole team has submitted
+   * `submitHouseholdDecision`". Since this Callable settles one household
+   * at a time, that requirement is enforced per-household here: settling
+   * is rejected unless this household has an actual submitted decision on
+   * record for the round being settled — UNLESS the teacher explicitly
+   * passes `forceSettle: true` (an escape hatch for a household that is
+   * unreachable/absent and will never submit).
+   *
+   * This is intentionally a SEPARATE, earlier safeguard from
+   * `settleRound`'s own `decision === null` → `REDUCE_EXPENSES` auto-fallback
+   * (§13.13 "never auto-bankrupts"). That fallback exists for a shortfall
+   * only discovered *during* settlement despite a decision having been
+   * submitted (or for the explicit-force case here) — it was never meant
+   * to let a teacher skip the decision phase entirely for a household that
+   * simply hasn't had the chance to submit ANY decision yet (asset
+   * allocation, insurance changes, etc., not just shortfall resolution).
+   * Defaults to `false`/unset — the safe default is to require a decision.
+   */
+  forceSettle?: boolean
 }
 
 export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundInput): Promise<SettleRoundResult> => {
@@ -93,6 +114,10 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
   if (!profile) throw new Error('HouseholdProfile not found in template snapshot')
 
   const decision = await deps.readHouseholdDecision(input.lessonRunId, input.householdId, household.roundIndex)
+
+  if (!decision && !input.forceSettle) {
+    throw new Error('HouseholdDecision not submitted for this round')
+  }
 
   const result = deps.settleRoundFn({
     household,

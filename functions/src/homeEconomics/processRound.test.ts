@@ -36,13 +36,22 @@ describe('processRound', () => {
     occurredEventIds: [], incomeYen: 4800000, expensesYen: 3000000,
     netCashFlowYen: 1800000, shortfallYen: 0, insuranceBenefitsYen: 0,
   }
+  // A submitted decision — used as the default so these orchestration tests
+  // exercise the normal path (household HAS submitted). The submission-gate
+  // itself (decision === null, forceSettle unset/true) is covered by the
+  // dedicated tests below.
+  const submittedDecision = {
+    lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 2,
+    assetAllocationChangesYen: {}, insurancePurchaseIds: [], insuranceCancelIds: [],
+    shortfallResolutionType: null, publicSupportApplicationIds: [], idempotencyKey: 'key-1',
+  }
 
   const makeDeps = (overrides: Partial<ProcessRoundDeps> = {}): ProcessRoundDeps => ({
     readLessonRunConfig: vi.fn().mockResolvedValue({
       orgId: 'org-1', randomSeed: 'seed-x', restoreGeneration: 0, homeEconomics,
     }),
     readHouseholdState: vi.fn().mockResolvedValue(household),
-    readHouseholdDecision: vi.fn().mockResolvedValue(null),
+    readHouseholdDecision: vi.fn().mockResolvedValue(submittedDecision),
     settleRoundFn: vi.fn().mockReturnValue(settleResult),
     commitRoundSettlement: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -88,12 +97,41 @@ describe('processRound', () => {
     const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' })
     expect(result).toBe(settleResult)
     expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({
-      household, profile, decision: null, randomSeed: 'seed-x', restoreGeneration: 0,
+      household, profile, decision: submittedDecision, randomSeed: 'seed-x', restoreGeneration: 0,
       taxModelVersion: 1, roundYears: 5, borrowingAllowed: false,
     }))
     expect(deps.commitRoundSettlement).toHaveBeenCalledWith({
       lessonRunId: 'run-1', householdId: 'case-b', orgId: 'org-1',
       expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
+    })
+  })
+
+  /**
+   * Task 11 review round 2 — brief §Step 6: `processRoundCallable` must not
+   * let a teacher settle a household that hasn't submitted a decision for
+   * the round yet, distinct from `settleRound`'s own `decision === null` →
+   * `REDUCE_EXPENSES` auto-fallback (§13.13), which is for a shortfall only
+   * discovered mid-settlement despite a decision existing (or an explicit
+   * force). See `processRound.ts`'s `ProcessRoundInput.forceSettle` doc
+   * comment for the full reasoning.
+   */
+  describe('submission gate (Task 11 review round 2)', () => {
+    it('rejects settlement when no decision has been submitted for this round and forceSettle is not set', async () => {
+      const deps = makeDeps({ readHouseholdDecision: vi.fn().mockResolvedValue(null) })
+      await expect(processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' }))
+        .rejects.toThrow('HouseholdDecision not submitted for this round')
+      expect(deps.settleRoundFn).not.toHaveBeenCalled()
+      expect(deps.commitRoundSettlement).not.toHaveBeenCalled()
+    })
+
+    it('allows settlement with no submitted decision when forceSettle is true', async () => {
+      const deps = makeDeps({ readHouseholdDecision: vi.fn().mockResolvedValue(null) })
+      const result = await processRound(deps, {
+        lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: true,
+      })
+      expect(result).toBe(settleResult)
+      expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ decision: null }))
+      expect(deps.commitRoundSettlement).toHaveBeenCalled()
     })
   })
 })

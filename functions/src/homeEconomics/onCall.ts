@@ -187,6 +187,14 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
 interface ProcessRoundRequest {
   lessonRunId: string
   householdId: string
+  /**
+   * Teacher-facing escape hatch (Task 11 review round 2) — allows settling
+   * a household that has NOT submitted a decision this round (e.g. an
+   * unreachable/absent student), bypassing the submission gate below.
+   * Defaults to `false`/unset: without it, settling a household with no
+   * submitted decision is rejected.
+   */
+  forceSettle?: boolean
 }
 
 /**
@@ -202,6 +210,12 @@ const translateProcessRoundError = (error: unknown): unknown => {
     if (error.message === 'HouseholdProfile not found in template snapshot') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
     if (error.message === 'LessonRun has no homeEconomics content') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdDecision not submitted for this round') {
+      return new HttpsError(
+        'failed-precondition',
+        'この家庭はまだラウンドの意思決定を提出していません。強制的に決算する場合は forceSettle を true にしてください。',
+      )
+    }
   }
   return error
 }
@@ -217,12 +231,22 @@ const translateProcessRoundError = (error: unknown): unknown => {
  *
  * RTDB projections are intentionally NOT updated here — see
  * `processRound.ts`'s doc comment for why (deferred to Task 15).
+ *
+ * Submission gate (Task 11 review round 2, brief §Step 6): settling is
+ * rejected unless this household has a submitted decision on record for
+ * the round being settled, unless the teacher passes `forceSettle: true`.
+ * See `processRound.ts`'s `ProcessRoundInput.forceSettle` doc comment for
+ * the full reasoning and how this differs from `settleRound`'s own
+ * `decision === null` auto-fallback.
  */
 export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   const data = request.data as ProcessRoundRequest
   if (!data.lessonRunId || !data.householdId) {
     throw new HttpsError('invalid-argument', 'lessonRunId、householdId は必須です。')
+  }
+  if (data.forceSettle !== undefined && typeof data.forceSettle !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'forceSettle は boolean である必要があります。')
   }
 
   const db = getFirestore()
@@ -241,6 +265,7 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
       lessonRunId: data.lessonRunId,
       householdId: data.householdId,
       actorId: request.auth.uid,
+      forceSettle: data.forceSettle ?? false,
     })
   } catch (error) {
     throw translateProcessRoundError(error)
