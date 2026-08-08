@@ -9,6 +9,9 @@ import { cancelOrder } from './cancelOrder'
 import { submitOrder } from './submitOrder'
 import { pauseMarketWithAdminSdk } from './pauseMarket'
 import { DEFAULT_RESUME_CONFIRMATION_SECONDS, resumeMarketWithAdminSdk } from './resumeMarket'
+import { createPredictionCheckpointWithAdminSdk, submitPrediction } from './predictionCheckpoint'
+import type { PredictionDirection } from './predictionCheckpoint'
+import type { PredictionEvaluationTarget } from '@stock-league/market-authoring-content'
 
 /**
  * Placeholder starting cash until a per-lessonRun/market-content field for
@@ -284,4 +287,81 @@ export const resumeMarketCallable = onCall({ region: 'asia-northeast1' }, async 
     data.lessonRunId,
     data.confirmationSeconds ?? DEFAULT_RESUME_CONFIRMATION_SECONDS,
   )
+})
+
+interface SubmitPredictionRequest {
+  lessonRunId: string
+  teamId: string
+  direction: PredictionDirection
+  submittedAtBatchIndex: number
+  submittedPriceReference: number
+  evaluationTarget: PredictionEvaluationTarget
+  triggeredByInformationId?: string
+  rationale?: string
+  confidence?: number
+  idempotencyKey: string
+}
+
+const isValidEvaluationTarget = (value: unknown): value is PredictionEvaluationTarget => {
+  if (typeof value !== 'object' || value === null) return false
+  const target = value as { type?: unknown; count?: unknown }
+  if (target.type === 'AFTER_BATCHES') return typeof target.count === 'number' && Number.isFinite(target.count) && target.count > 0
+  return target.type === 'NEXT_INFORMATION' || target.type === 'MARKET_CLOSE'
+}
+
+/**
+ * Translates `createPredictionCheckpointWithAdminSdk`'s bare Error messages
+ * into HttpsError codes at the Callable boundary, matching
+ * `translateSubmitOrderError`'s convention.
+ */
+const translateSubmitPredictionError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error && error.message === 'Idempotency key payload mismatch') {
+    return new HttpsError('failed-precondition', error.message)
+  }
+  return error
+}
+
+/**
+ * Student-facing prediction-checkpoint submission Callable — spec §12.32 /
+ * resolution F. Same authorization shape as `submitOrderCallable` (Task 7
+ * Step 10): caller must be an authenticated participant on this lessonRun,
+ * and a member of the teamId they claim to submit on behalf of — the
+ * client-supplied teamId is never trusted without that membership check.
+ */
+export const submitPredictionCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as SubmitPredictionRequest
+  if (
+    !data.lessonRunId || !data.teamId
+    || (data.direction !== 'UP' && data.direction !== 'FLAT' && data.direction !== 'DOWN')
+    || typeof data.submittedAtBatchIndex !== 'number' || data.submittedAtBatchIndex < 0
+    || typeof data.submittedPriceReference !== 'number' || data.submittedPriceReference <= 0
+    || !isValidEvaluationTarget(data.evaluationTarget)
+    || !data.idempotencyKey
+  ) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、teamId、direction、submittedAtBatchIndex、submittedPriceReference、evaluationTarget、idempotencyKey は必須です。')
+  }
+
+  const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
+  await requireTeamMembership(data.lessonRunId, data.teamId, actorParticipantId)
+
+  try {
+    return await submitPrediction({
+      createPrediction: createPredictionCheckpointWithAdminSdk,
+      lessonRunId: data.lessonRunId,
+      teamId: data.teamId,
+      participantId: actorParticipantId,
+      direction: data.direction,
+      submittedAtBatchIndex: data.submittedAtBatchIndex,
+      submittedPriceReference: data.submittedPriceReference,
+      evaluationTarget: data.evaluationTarget,
+      ...(data.triggeredByInformationId !== undefined ? { triggeredByInformationId: data.triggeredByInformationId } : {}),
+      ...(data.rationale !== undefined ? { rationale: data.rationale } : {}),
+      ...(data.confidence !== undefined ? { confidence: data.confidence } : {}),
+      idempotencyKey: data.idempotencyKey,
+    })
+  } catch (error) {
+    throw translateSubmitPredictionError(error)
+  }
 })
