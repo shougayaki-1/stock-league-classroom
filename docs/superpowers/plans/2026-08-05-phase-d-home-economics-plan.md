@@ -2915,3 +2915,193 @@ git commit -m "feat: add household RTDB projection, wire real-time broadcast, ad
 ```
 
 ---
+
+### Task 16: 家庭科の評価（自動/ルーブリック分離、観点別ランキング）
+
+統合仕様書 §13.17を実装する。Phase C Task16（社会科の評価）と同じ設計原則——**「生活目標達成」「緊急予備資金」「生活安定性」「分散」「借入負担」は自動計算、「振り返り」は教師のルーブリック評価**（§13.17「根拠の妥当性を自動採点しない」という旧phase1b計画の原則を継承、Phase C Task16のJSDocコメント参照）。**総合点より観点別表示を優先する**（§13.17）——`computeWeightedTotalScore`はあくまで参考値として提供し、`rankByCriterion`による観点別ランキングを主とする。
+
+**Files:**
+- Create: `functions/src/homeEconomics/evaluation.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HomeEconomicsEvaluationWeights`（Task2）、`HouseholdState`（Task10）
+- Produces: `computeLifeGoalAchievementScore`、`computeEmergencyFundAdequacyScore`、`computeStabilityScore`、`computeDiversificationScore`、`computeBorrowingBurdenScore`、`computeWeightedTotalScore`、`rankByCriterion`
+
+- [ ] **Step 1: 自動計算スコアの失敗するテストを書く**
+
+`functions/src/homeEconomics/evaluation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import {
+  computeBorrowingBurdenScore, computeDiversificationScore, computeEmergencyFundAdequacyScore,
+  computeLifeGoalAchievementScore, computeStabilityScore, computeWeightedTotalScore, rankByCriterion,
+} from './evaluation'
+
+describe('computeEmergencyFundAdequacyScore', () => {
+  it('scores 100 when cash covers 6+ months of living expenses (PROVISIONAL threshold, see Task 17)', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 1500000, annualLivingExpensesYen: 3000000 })).toBe(100)
+  })
+  it('scores proportionally below the 6-month threshold', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 750000, annualLivingExpensesYen: 3000000 })).toBeCloseTo(50, 0)
+  })
+  it('never exceeds 100 even with very large savings', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 100000000, annualLivingExpensesYen: 3000000 })).toBe(100)
+  })
+})
+
+describe('computeDiversificationScore', () => {
+  it('scores higher for holdings spread across more asset types than concentrated in one', () => {
+    const concentrated = computeDiversificationScore({ DOMESTIC_STOCK: 1000000 })
+    const diversified = computeDiversificationScore({ DOMESTIC_STOCK: 250000, FOREIGN_STOCK: 250000, BOND: 250000, CASH: 250000 })
+    expect(diversified).toBeGreaterThan(concentrated)
+  })
+  it('scores 0 for no holdings at all, not NaN or undefined', () => {
+    expect(computeDiversificationScore({})).toBe(0)
+  })
+})
+
+describe('computeBorrowingBurdenScore', () => {
+  it('scores 100 for zero debt service', () => {
+    expect(computeBorrowingBurdenScore({ annualDebtServiceYen: 0, netIncomeYen: 4800000 })).toBe(100)
+  })
+  it('scores lower as debt service consumes a larger share of income', () => {
+    const light = computeBorrowingBurdenScore({ annualDebtServiceYen: 480000, netIncomeYen: 4800000 })
+    const heavy = computeBorrowingBurdenScore({ annualDebtServiceYen: 2400000, netIncomeYen: 4800000 })
+    expect(light).toBeGreaterThan(heavy)
+  })
+})
+
+describe('computeStabilityScore', () => {
+  it('scores the fraction of rounds without a shortfall, as a 0-100 score', () => {
+    expect(computeStabilityScore({ shortfallRoundCount: 1, totalRounds: 4 })).toBe(75)
+  })
+  it('scores 100 when there were never any rounds (avoid division by zero)', () => {
+    expect(computeStabilityScore({ shortfallRoundCount: 0, totalRounds: 0 })).toBe(100)
+  })
+})
+
+describe('computeLifeGoalAchievementScore', () => {
+  it('scores 100 when the goal was never delayed', () => {
+    expect(computeLifeGoalAchievementScore({ goalDelayedRounds: 0, totalRounds: 4 })).toBe(100)
+  })
+  it('scores lower as more rounds were spent delayed, relative to total rounds', () => {
+    expect(computeLifeGoalAchievementScore({ goalDelayedRounds: 2, totalRounds: 4 })).toBe(50)
+  })
+})
+
+describe('computeWeightedTotalScore', () => {
+  const weights = { lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2, diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15 }
+
+  it('renormalizes remaining weights when reflection (rubric-graded) has not been entered yet — same null-handling as Phase C Task 16', () => {
+    const total = computeWeightedTotalScore(
+      { lifeGoalAchievement: 100, emergencyFundAdequacy: 80, stability: 90, diversification: 70, borrowingBurden: 60, reflection: null },
+      weights,
+    )
+    const remainingWeightSum = 0.2 + 0.15 + 0.2 + 0.15 + 0.15
+    const expected = (100 * 0.2 + 80 * 0.15 + 90 * 0.2 + 70 * 0.15 + 60 * 0.15) / remainingWeightSum
+    expect(total).toBeCloseTo(expected, 9)
+  })
+})
+
+describe('rankByCriterion', () => {
+  it('sorts households descending by the given criterion, excluding null scores', () => {
+    const households = [{ householdId: 'a', stability: 80 }, { householdId: 'b', stability: null }, { householdId: 'c', stability: 95 }]
+    expect(rankByCriterion(households, 'stability').map((h) => h.householdId)).toEqual(['c', 'a'])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/evaluation.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/evaluation.ts`:
+
+```ts
+import type { HomeEconomicsEvaluationWeights } from '@stock-league/household-authoring-content'
+
+/** PROVISIONAL — spec §13.17 requires "緊急予備資金" as a criterion without specifying the months-of-expenses threshold; 6 months is a common financial-literacy rule of thumb, to be tuned during pilot runs (Task 17). */
+const EMERGENCY_FUND_TARGET_MONTHS = 6
+
+export const computeEmergencyFundAdequacyScore = (input: { cashYen: number; annualLivingExpensesYen: number }): number => {
+  if (input.annualLivingExpensesYen === 0) return 100
+  const monthsCovered = (input.cashYen / input.annualLivingExpensesYen) * 12
+  return Math.min(100, Math.round((monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100))
+}
+
+/**
+ * PROVISIONAL — a simple normalized count of distinct held asset types
+ * (0 types = 0, 1 type = low, 4+ types = 100), not a variance-weighted
+ * Herfindahl index. Chosen for classroom legibility over statistical
+ * precision; revisit during pilot runs (Task 17).
+ */
+export const computeDiversificationScore = (assetHoldingsYen: Record<string, number>): number => {
+  const heldTypeCount = Object.values(assetHoldingsYen).filter((v) => v > 0).length
+  return Math.min(100, Math.round((heldTypeCount / 4) * 100))
+}
+
+export const computeBorrowingBurdenScore = (input: { annualDebtServiceYen: number; netIncomeYen: number }): number => {
+  if (input.netIncomeYen === 0) return input.annualDebtServiceYen === 0 ? 100 : 0
+  const burdenRatio = input.annualDebtServiceYen / input.netIncomeYen
+  return Math.max(0, Math.round(100 - burdenRatio * 200))
+}
+
+export const computeStabilityScore = (input: { shortfallRoundCount: number; totalRounds: number }): number => {
+  if (input.totalRounds === 0) return 100
+  return Math.round(((input.totalRounds - input.shortfallRoundCount) / input.totalRounds) * 100)
+}
+
+export const computeLifeGoalAchievementScore = (input: { goalDelayedRounds: number; totalRounds: number }): number => {
+  if (input.totalRounds === 0) return 100
+  return Math.max(0, Math.round(100 - (input.goalDelayedRounds / input.totalRounds) * 100))
+}
+
+export interface HomeEconomicsCriterionScores {
+  lifeGoalAchievement: number | null
+  emergencyFundAdequacy: number | null
+  stability: number | null
+  diversification: number | null
+  borrowingBurden: number | null
+  /** Rubric-graded by the teacher (spec §13.17: "根拠の妥当性を自動採点しない") — null until entered. */
+  reflection: number | null
+}
+
+/** Same null-renormalization discipline as Phase C Task 16's `computeWeightedTotalScore`. */
+export const computeWeightedTotalScore = (
+  scores: HomeEconomicsCriterionScores,
+  weights: HomeEconomicsEvaluationWeights,
+): number | null => {
+  const entries = (Object.keys(scores) as (keyof HomeEconomicsCriterionScores)[])
+    .map((key) => ({ score: scores[key], weight: weights[key] }))
+    .filter((e): e is { score: number; weight: number } => e.score !== null)
+  if (entries.length === 0) return null
+  const weightSum = entries.reduce((sum, e) => sum + e.weight, 0)
+  const weightedSum = entries.reduce((sum, e) => sum + e.score * e.weight, 0)
+  return weightedSum / weightSum
+}
+
+export const rankByCriterion = <T extends { householdId: string }>(households: T[], criterion: keyof T): T[] =>
+  households
+    .filter((h) => h[criterion] !== null && h[criterion] !== undefined)
+    .sort((a, b) => (b[criterion] as unknown as number) - (a[criterion] as unknown as number))
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/evaluation.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/evaluation.ts functions/src/homeEconomics/evaluation.test.ts
+git commit -m "feat: add home-economics 5-criteria evaluation with auto/rubric split and per-criterion ranking"
+```
+
+---
