@@ -1,17 +1,20 @@
-import { TemplateRoutes } from './components/TemplateRoutes'
-import { WorkspacePicker } from './components/teacher/WorkspacePicker'
-import { StudentMarketJoin } from './components/student/StudentMarketJoin'
-import { ControlRoom } from './components/teacher/ControlRoom'
-import { StudentMarketPage } from './components/student/StudentMarketPage'
-import { SignagePage } from './components/signage/SignagePage'
-import { AboutPage, ContactPage, GuidePage, PrivacyPage, TermsPage } from './components/PublicDocs'
-import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router'
-import { Box, Button, CssBaseline, Link, Stack, ThemeProvider, Typography } from '@mui/material'
+import { useEffect, useMemo, useState } from 'react'
+import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Box, Button, CircularProgress, CssBaseline, Link, Stack, ThemeProvider, Typography } from '@mui/material'
+import { onAuthStateChanged } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
+import { onValue, ref } from 'firebase/database'
 import { appTheme } from './theme/theme'
+import { AboutPage, ContactPage, GuidePage, PrivacyPage, TermsPage } from './components/PublicDocs'
 import { NotFoundPage } from './components/ui/NotFoundPage'
-import { MarketStocksPage } from './components/teacher/MarketStocksPage'
+import { bootstrapFirebase, type FirebaseServices } from './lib/firebase/bootstrap'
+import { isLessonPlatformV2Enabled as isLessonPlatformV2EnabledDefault } from './lib/features/lessonPlatformV2'
+import { getOrCreateStudentUid } from './lib/auth/studentAuth'
+import type { LessonRunRole } from './lib/lessonRuns/authorization'
+import { LessonJoinPage } from './components/student/LessonJoinPage'
+import { LessonControlRoom } from './components/teacher/LessonControlRoom'
+import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
 
-/** Static public documents, keyed by path. */
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
   '/guide': GuidePage,
@@ -26,82 +29,254 @@ const landingCtaSx = {
   '&:hover': { backgroundColor: 'var(--landing-cta-hover)' },
 }
 
+/**
+ * The lesson product is not wired up during Phase A. Every CTA stays within
+ * the public surface until the new lesson routes arrive in later phases.
+ */
 const LandingPage = () => <main className="landing-page">
   <Box component="header" className="landing-nav">
     <Link component={RouterLink} className="brand" to="/" underline="none" color="inherit" aria-label="Stock League Classroom ホーム" sx={{ minHeight: 48, display: 'inline-flex', alignItems: 'center' }}>Stock League <span>Classroom</span></Link>
     <Stack component="nav" direction="row" aria-label="主要ナビゲーション" sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
-      <Link href="#how-it-works" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>使い方</Link>
-      <Link href="#features" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>特徴</Link>
-      <Button component={RouterLink} className="nav-cta" to="/teacher/markets" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>先生はこちら</Button>
+      <Link component={RouterLink} to="/guide" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>使い方</Link>
+      <Link component={RouterLink} to="/about" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>特徴</Link>
+      <Button component={RouterLink} className="nav-cta" to="/about" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>詳しく見る</Button>
     </Stack>
   </Box>
-
-  <section className="landing-hero" aria-labelledby="hero-title">
-    <div className="hero-copy">
-      <p className="eyebrow">金融教育を、教室でリアルタイムに。</p>
-      <h1 id="hero-title">株式市場を、<br /><em>自分たちの教室に。</em></h1>
-      <p className="hero-lede">Stock League Classroom は、チームで考え、ニュースに反応し、投資の仕組みを体験できる授業用シミュレーターです。</p>
-      <Stack className="hero-actions" direction={{ xs: 'column', sm: 'row' }} sx={{ alignItems: { xs: 'stretch', sm: 'center' }, gap: 1.5 }}><Button component={RouterLink} to="/teacher/markets" variant="contained" size="large" sx={landingCtaSx}>授業をはじめる <span aria-hidden="true">→</span></Button><Button component={RouterLink} to="/join" variant="outlined" size="large" sx={{ borderColor: 'var(--landing-border)', color: 'var(--landing-text)' }}>生徒として参加</Button></Stack>
-      <p className="hero-note">アカウント不要で、生徒は参加コードからすぐに参加できます。</p>
-    </div>
-    <div className="market-card" aria-label="市場のライブ表示イメージ">
-      <div className="market-card-head"><span className="live-dot" />LIVE MARKET <span className="round">ROUND 2</span></div>
-      <div className="market-value"><span>教室総資産</span><strong>¥ 1,284,500</strong><b>+ 8.4%</b></div>
-      <div className="market-chart" aria-hidden="true"><svg viewBox="0 0 360 130" preserveAspectRatio="none"><path d="M0,100 C25,106 40,74 62,86 S90,48 116,67 S145,78 164,48 S203,59 226,30 S251,52 274,34 S311,40 360,6" /><path className="area" d="M0,100 C25,106 40,74 62,86 S90,48 116,67 S145,78 164,48 S203,59 226,30 S251,52 274,34 S311,40 360,6 V130 H0Z" /></svg></div>
-      <div className="market-row"><span>東都テクノロジー</span><strong>1,240</strong><b>+4.2%</b></div>
-      <div className="market-row"><span>みらい食品</span><strong>860</strong><b>+1.8%</b></div>
-      <div className="news-pill">速報　新製品の発表で期待が高まる</div>
-    </div>
-  </section>
-
-  <section className="steps" id="how-it-works" aria-labelledby="steps-title">
-    <div><p className="section-kicker">HOW IT WORKS</p><h2 id="steps-title">考える。選ぶ。<br />振り返る。</h2></div>
-    <ol><li><span>01</span><h3>先生が市場をつくる</h3><p>テンプレートを選び、授業に合わせた市場と参加コードを発行します。</p></li><li><span>02</span><h3>生徒がチームで参加</h3><p>参加コードを入力して、個人またはチームで投資戦略を考えます。</p></li><li><span>03</span><h3>ニュースと価格が動く</h3><p>教室のスクリーンを見ながら、変化の理由を読み解きます。</p></li></ol>
-  </section>
-
-  <section className="feature-section" id="features" aria-labelledby="features-title"><div className="feature-intro"><p className="section-kicker">BUILT FOR THE CLASSROOM</p><h2 id="features-title">知識だけで終わらない、<br />判断する金融教育へ。</h2></div><div className="feature-grid"><article><span>◎</span><h3>リアルタイムの市場体験</h3><p>価格、ニュース、ランキングが同時に動き、意思決定の結果がすぐに見えます。</p></article><article><span>◫</span><h3>授業に合わせた設計</h3><p>学年やテーマに合うテンプレートから、市場シナリオを組み立てられます。</p></article><article><span>↗</span><h3>振り返りまで一つに</h3><p>終了後も結果と取引履歴を確認し、なぜそう判断したかを言語化できます。</p></article></div></section>
-
-  <section className="landing-closing"><p>今日のニュースが、明日の判断を変える。</p><h2>さあ、教室に市場をひらこう。</h2><Button component={RouterLink} to="/teacher/markets" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>先生として市場を作成 <span aria-hidden="true">→</span></Button></section>
-  <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ'], ['/join', '生徒の参加はこちら']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
+  <section className="landing-closing"><p>準備を進めています。</p><h2>まもなく教室に市場をひらけます。</h2><Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button></section>
+  <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
 </main>
 
-const TemplateShareRoute = () => <TemplateRoutes shareId={useParams().shareId ?? ''} />
-const StudentPlayRoute = () => <StudentMarketPage marketId={useParams().marketId ?? ''} />
-const SignageRoute = () => <SignagePage marketId={useParams().marketId ?? ''} />
-const RoomRoute = () => <ControlRoom marketId={useParams().marketId ?? ''} />
-const StocksRoute = () => <MarketStocksPage marketId={useParams().marketId ?? ''} />
-/** Keeps old links (bookmarks, printed handouts) working after the host console was renamed to the control room. */
-const HostRouteRedirect = () => {
-  const marketId = useParams().marketId ?? ''
-  const { search, hash } = useLocation()
-  return <Navigate replace to={`/teacher/markets/${marketId}/room${search}${hash}`} />
-}
-
-/** Keeps shared links canonical, including links copied with a trailing slash. */
 const TrailingSlashRedirect = () => {
   const { pathname, search, hash } = useLocation()
   if (pathname === '/' || !pathname.endsWith('/')) return null
   return <Navigate replace to={`${pathname.replace(/\/+$/, '')}${search}${hash}`} />
 }
 
-const AppRoutes = () => <><TrailingSlashRedirect /><Routes>
+// ---------------------------------------------------------------------------
+// Phase B lesson platform routes (Task 17)
+//
+// This is the first task to introduce authenticated teacher/student routes,
+// so the guard + Feature Flag machinery below is designed from scratch here
+// — kept intentionally small (route/guard/flag only), per this task's brief.
+//
+// Client-side guards below are a UX convenience only ("don't show a
+// spinning-forever UI to someone with no access"), never the actual
+// authorization boundary. The real enforcement is server-side: Firestore's
+// `lessonRuns/{lessonRunId}` `get` rule (teacher() && activeMember(orgId))
+// and RTDB's `lessonRunMembership/{lessonRunId}/{uid}` `.read` rule (own uid
+// only). A guard bug here can at worst show a broken loading state to an
+// unauthorized user — it can never grant access to data the Rules would
+// otherwise deny, because every read a guard or a guarded screen performs
+// still goes through those same Rules.
+// ---------------------------------------------------------------------------
+
+type AccessStatus = 'LOADING' | 'DENIED' | 'GRANTED'
+interface TeacherAccess { status: AccessStatus; role?: LessonRunRole }
+interface StudentAccess { status: AccessStatus; teamId?: string }
+
+/**
+ * Resolves whether the signed-in user is a teacher assigned a role on this
+ * specific lessonRun. Reads `lessonRuns/{runId}` directly — Firestore's own
+ * rule (`teacher() && activeMember(resource.data.orgId)`) already enforces
+ * org membership, so this guard does not duplicate that check; it only adds
+ * the run-specific `teacherRoles` lookup that the rule does not express
+ * (LessonControlRoom's `role` prop needs a role, not just "is an org
+ * member" — see LessonControlRoom.tsx's own prop JSDoc for why no client
+ * wrapper for this existed before this task).
+ */
+function useTeacherLessonAccess(runId: string, services: FirebaseServices): TeacherAccess {
+  const [access, setAccess] = useState<TeacherAccess>({ status: 'LOADING' })
+  useEffect(() => {
+    let cancelled = false
+    setAccess({ status: 'LOADING' })
+    const unsubscribeAuth = onAuthStateChanged(services.auth, (user) => {
+      if (!user) {
+        if (!cancelled) setAccess({ status: 'DENIED' })
+        return
+      }
+      getDoc(doc(services.firestore, 'lessonRuns', runId))
+        .then((snapshot) => {
+          if (cancelled) return
+          if (!snapshot.exists()) {
+            setAccess({ status: 'DENIED' })
+            return
+          }
+          const data = snapshot.data() as { teacherRoles?: Record<string, LessonRunRole> }
+          const role = data.teacherRoles?.[user.uid]
+          setAccess(role ? { status: 'GRANTED', role } : { status: 'DENIED' })
+        })
+        // A permission-denied error (not an active org member) or a
+        // not-found error is treated identically: no access.
+        .catch(() => { if (!cancelled) setAccess({ status: 'DENIED' }) })
+    })
+    return () => { cancelled = true; unsubscribeAuth() }
+  }, [runId, services])
+  return access
+}
+
+/**
+ * Resolves whether the (possibly newly anonymous-signed-in) current user is
+ * an ACTIVE participant of this lessonRun, via the
+ * `lessonRunMembership/{runId}/{uid}` RTDB mirror (Task 2) — the same node
+ * `database.rules.json` already scopes to "own uid only", so a student can
+ * never use this to probe another participant's membership.
+ */
+function useStudentLessonAccess(runId: string, services: FirebaseServices): StudentAccess {
+  const [access, setAccess] = useState<StudentAccess>({ status: 'LOADING' })
+  useEffect(() => {
+    let cancelled = false
+    let detach: (() => void) | undefined
+    setAccess({ status: 'LOADING' })
+    getOrCreateStudentUid(services.auth)
+      .then((uid) => {
+        if (cancelled) return
+        const membershipRef = ref(services.database, `lessonRunMembership/${runId}/${uid}`)
+        detach = onValue(
+          membershipRef,
+          (snapshot: { val: () => unknown }) => {
+            if (cancelled) return
+            const value = snapshot.val() as { access?: string; teamId?: string } | null
+            setAccess(value?.access === 'ACTIVE' ? { status: 'GRANTED', teamId: value.teamId } : { status: 'DENIED' })
+          },
+          () => { if (!cancelled) setAccess({ status: 'DENIED' }) },
+        )
+      })
+      .catch(() => { if (!cancelled) setAccess({ status: 'DENIED' }) })
+    return () => { cancelled = true; detach?.() }
+  }, [runId, services])
+  return access
+}
+
+const GuardLoading = () => (
+  <Stack sx={{ width: '100%', p: 4, alignItems: 'center', justifyContent: 'center' }}>
+    <CircularProgress aria-label="読み込み中" />
+  </Stack>
+)
+
+/**
+ * Placeholder for routes whose guard is real but whose data wiring is not:
+ * `LessonAnalyticsPage`(Task15)/`LessonWaitingPage`/`LessonPlayPage`/
+ * `LessonResultsPage`(Task12/14) all require fully-resolved data (an
+ * analytics aggregate, a lesson title, a participant's own display name...)
+ * that no client wrapper in this repo currently produces — confirmed absent
+ * for analytics (task-15-report.md: "Callable は追加していない") and for
+ * the student screens (`LessonRunPublicState` carries no title/displayName
+ * field; task-12-report.md notes no結線コンテナ exists yet). Rendering
+ * those components with fabricated placeholder data would be more
+ * misleading than this notice, so this task stops at "route exists, guard
+ * enforced" and defers the data wiring to a future task, per this task's
+ * brief allowing exactly that scope cut.
+ */
+const DeferredDataNotice = ({ heading }: { heading: string }) => (
+  <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }} spacing={1}>
+    <Typography variant="h6" component="h1">{heading}</Typography>
+    <Typography variant="body2">アクセス権限を確認しました。この画面のデータ表示は別タスクで実装予定です。</Typography>
+  </Stack>
+)
+
+function TeacherControlRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const access = useTeacherLessonAccess(runId ?? '', services)
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/about" />
+  return <LessonControlRoom
+    lessonRunId={runId ?? ''}
+    role={access.role ?? 'VIEWER'}
+    functions={services.functions}
+    firestore={services.firestore}
+    database={services.database}
+  />
+}
+
+function TeacherAnalyticsRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const access = useTeacherLessonAccess(runId ?? '', services)
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/about" />
+  return <DeferredDataNotice heading="授業分析" />
+}
+
+function StudentLessonRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
+  const { runId } = useParams<{ runId: string }>()
+  const access = useStudentLessonAccess(runId ?? '', services)
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/join" />
+  return <DeferredDataNotice heading={heading} />
+}
+
+function JoinRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
+  const [ready, setReady] = useState(false)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    getOrCreateStudentUid(services.auth)
+      .then(() => { if (!cancelled) setReady(true) })
+      .catch(() => { if (!cancelled) setFailed(true) })
+    return () => { cancelled = true }
+  }, [services])
+  if (failed) return <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }}><Typography role="alert">ログインを確認できませんでした。もう一度お試しください。</Typography></Stack>
+  if (!ready) return <GuardLoading />
+  return <LessonJoinPage
+    functions={services.functions}
+    onJoined={(result) => navigate(`/lessons/${result.lessonRunId}/waiting`)}
+  />
+}
+
+/**
+ * `ClassroomDisplayPage`(Task13) is already self-contained: it takes the
+ * plaintext `token` and does the token-exchange + sign-in + RTDB
+ * subscription itself. This route's only job is extracting `runId` (path)
+ * and `token` (query string) from the URL — `token` is a query param rather
+ * than part of the path because it is a one-time secret, not a resource
+ * identifier, and keeping it out of the path keeps it out of any path-based
+ * access logging.
+ */
+function DisplayRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const [searchParams] = useSearchParams()
+  return <ClassroomDisplayPage
+    auth={services.auth}
+    functions={services.functions}
+    database={services.database}
+    lessonRunId={runId ?? ''}
+    token={searchParams.get('token') ?? ''}
+  />
+}
+
+interface AppRoutesProps { enabled: boolean; services?: FirebaseServices }
+
+const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRedirect /><Routes>
   <Route path="/" element={<LandingPage />} />
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
-  <Route path="/templates" element={<TemplateRoutes />} />
-  <Route path="/templates/share/:shareId" element={<TemplateShareRoute />} />
-  <Route path="/teacher/markets" element={<WorkspacePicker />} />
-  <Route path="/teacher/markets/:marketId/room" element={<RoomRoute />} />
-  <Route path="/teacher/markets/:marketId/stocks" element={<StocksRoute />} />
-  <Route path="/teacher/markets/:marketId/host" element={<HostRouteRedirect />} />
-  <Route path="/join" element={<StudentMarketJoin />} />
-  <Route path="/markets/:marketId/play" element={<StudentPlayRoute />} />
-  <Route path="/markets/:marketId/signage" element={<SignageRoute />} />
+  <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentLessonRoute services={services} heading="開始をお待ちください" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentLessonRoute services={services} heading="授業中" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
+  <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
 </Routes></>
 
-export default function App() {
+export interface AppProps {
+  /** Test-only override; production always reads `isLessonPlatformV2Enabled()`. */
+  isLessonPlatformV2Enabled?: boolean
+  /**
+   * Test-only override for the Firebase services powering the guarded
+   * lesson routes. Production leaves this as `bootstrapFirebase` (already
+   * idempotent — see bootstrap.ts), called lazily only when the flag is on,
+   * so public-doc routes never touch Firebase (see App.test.tsx's "without
+   * Firebase" tests, unaffected by this task).
+   */
+  getServices?: () => FirebaseServices
+}
+
+export default function App({ isLessonPlatformV2Enabled: enabledOverride, getServices = bootstrapFirebase }: AppProps = {}) {
+  const enabled = enabledOverride ?? isLessonPlatformV2EnabledDefault()
+  const services = useMemo(() => (enabled ? getServices() : undefined), [enabled, getServices])
   return <ThemeProvider theme={appTheme}>
     <CssBaseline />
-    <BrowserRouter><AppRoutes /></BrowserRouter>
+    <BrowserRouter><AppRoutes enabled={enabled} services={services} /></BrowserRouter>
   </ThemeProvider>
 }

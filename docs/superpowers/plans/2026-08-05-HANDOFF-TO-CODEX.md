@@ -62,7 +62,7 @@ Phase C計画（2026-08-05-phase-c-market-plan.md）の冒頭にある
 ## この作業で確立した設計上の約束（Phase B 以降も守ること）
 
 - **RTDBルールカスケード対策**: 祖先ノードの `.read` 許可は子孫の `.read: false` で取り消せない。生徒に読ませないデータは、教師へ全読み取りを許可する `liveMarkets` 相当のツリーの配下ではなく、独立したトップレベルパスに置く（Phase C 計画の `lessonRunPublic` / `lessonRunPrivate` / `lessonRunTeamState` を参照）。
-- **乱数は `packages/deterministic-random` のみ**。`Math.random()` は一切使わない。旧 `pricingCore.ts` の `createPhaseRuntime` が `seed = Math.random() * 1000` を既定引数に持っていたことがこの制約の直接の理由（Phase A で該当ファイルごと削除済み）。
+- **乱数は `functions/packages/deterministic-random` のみ**。`Math.random()` は一切使わない。旧 `pricingCore.ts` の `createPhaseRuntime` が `seed = Math.random() * 1000` を既定引数に持っていたことがこの制約の直接の理由（Phase A で該当ファイルごと削除済み）。
 - **公開/非公開の型分離はJSのimportグラフではなくFirestore/RTDBのセキュリティルールで強制する**。教師UIは非公開データを正当に読み書きするため、importパスの制約だけでは境界にならない。実際に効くのは (1) 生データを含むドキュメントが組織メンバーにしか読めないこと、(2) 生徒が読む唯一の経路にはサーバーが機械的に間引いた後のデータしか書かれないこと、の2点。
 - **冪等性**: 注文・約定・権限変更などの重要操作はすべて `idempotencyKey` または同等のキーを要求する。
 - **需給計算は相殺後、出来高表示は相殺前**（矛盾解消 C）。取り違えを防ぐため、価格計算関数は2つを別フィールドで返す型にする。

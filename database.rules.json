@@ -7,95 +7,54 @@
       ".write": "auth != null && auth.token.operator === true",
       ".validate": "newData.hasChild('acceptingNewMarkets') && newData.child('acceptingNewMarkets').isBoolean()"
     },
-    "liveMarkets": {
-      "$marketId": {
-        ".read": "auth != null && (data.child('meta/ownerUid').val() === auth.uid || (!data.exists() && auth.token.email_verified === true && auth.token.firebase.sign_in_provider === 'google.com'))",
-        ".write": "auth != null && auth.token.email_verified === true && auth.token.firebase.sign_in_provider === 'google.com' && ((!data.exists() && root.child('serviceStatus/acceptingNewMarkets').val() !== false && newData.child('meta/ownerUid').val() === auth.uid) || (data.exists() && data.child('meta/ownerUid').val() === auth.uid))",
-        "meta": {
-          ".read": "auth != null && (data.child('ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())",
-          ".validate": "newData.hasChildren(['ownerUid','capacity','startingCash','visibility','status','createdAtMillis','joinCode'])",
-          "ownerUid": { ".validate": "(!data.exists() && newData.val() === auth.uid) || newData.val() === data.val()" },
-          "capacity": { ".validate": "(!data.exists() && newData.val() === 80) || newData.val() === data.val()" },
-          "startingCash": { ".validate": "(!data.exists() && newData.isNumber() && newData.val() >= 1) || newData.val() === data.val()" },
-          "joinCode": { ".validate": "(!data.exists() && newData.isString() && newData.val().length === 6) || newData.val() === data.val()" },
-          "visibility": { ".validate": "(!data.exists() && (newData.val() === 'private' || newData.val() === 'ranking_only' || newData.val() === 'public')) || newData.val() === data.val()" },
-          "status": { ".validate": "newData.val() === 'SETUP' || newData.val() === 'OPEN' || newData.val() === 'PAUSED' || newData.val() === 'ENDING' || newData.val() === 'ENDED'" },
-          "openedAtMillis": { ".validate": "!newData.exists() || (newData.isNumber() && (!data.exists() || newData.val() === data.val() || (data.parent().child('status').val() === 'PAUSED' && newData.val() >= data.val()) || (newData.parent().child('status').val() === 'OPEN' && (data.parent().child('status').val() === 'ENDING' || data.parent().child('status').val() === 'ENDED'))))" },
-          "pausedAtMillis": { ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)" }
-        },
-        "teams": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
-        },
-        "companies": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
-        },
-        "members": {
-          "$uid": {
-            ".read": "auth != null && (auth.uid === $uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
-            ".validate": "newData.hasChildren(['teamId']) && newData.child('teamId').isString() && root.child('liveMarkets').child($marketId).child('teams').child(newData.child('teamId').val()).exists()"
-          }
-        },
-        "participants": {
-          "$participantId": {
-            ".read": "auth != null && (data.child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
-            ".write": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === data.child('uid').val() && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('teamId').val() === data.child('teamId').val()))",
-            ".validate": "root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (newData.hasChildren(['uid','sessionId','displayName','teamId','connected','lastSeenAtMillis']) && newData.child('uid').isString() && newData.child('sessionId').isString() && newData.child('displayName').isString() && newData.child('displayName').val().length >= 1 && newData.child('displayName').val().length <= 20 && newData.child('teamId').isString() && newData.child('connected').isBoolean() && newData.child('lastSeenAtMillis').isNumber() && $participantId === newData.child('uid').val() + '_' + newData.child('sessionId').val())",
-            "connected": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()" },
-            "lastSeenAtMillis": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isNumber()" }
-          }
-        },
-        "joinRequests": {
-          "$requestId": {
-            ".read": "auth != null && (data.child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
-            ".write": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (!data.exists() && (root.child('liveMarkets').child($marketId).child('meta/status').val() === 'SETUP' || root.child('liveMarkets').child($marketId).child('meta/status').val() === 'OPEN') && newData.child('uid').val() === auth.uid && newData.child('connected').val() === true) || (data.exists() && data.child('uid').val() === auth.uid && newData.child('uid').val() === data.child('uid').val() && newData.child('sessionId').val() === data.child('sessionId').val() && newData.child('displayName').val() === data.child('displayName').val() && newData.child('requestedTeamId').val() === data.child('requestedTeamId').val() && newData.child('requestedAtMillis').val() === data.child('requestedAtMillis').val() && newData.child('approvedAtMillis').val() === data.child('approvedAtMillis').val() && newData.child('recoveryCode').val() === data.child('recoveryCode').val()))",
-            ".validate": "root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || (newData.hasChild('uid') && newData.hasChild('sessionId') && newData.hasChild('displayName') && newData.hasChild('connected') && newData.hasChild('requestedAtMillis') && newData.child('uid').isString() && newData.child('sessionId').isString() && newData.child('displayName').isString() && newData.child('displayName').val().length >= 1 && newData.child('displayName').val().length <= 20 && (newData.child('requestedTeamId').val() === null || newData.child('requestedTeamId').isString()) && newData.child('connected').isBoolean() && newData.child('requestedAtMillis').isNumber() && $requestId === newData.child('uid').val() + '_' + newData.child('sessionId').val())",
-            "connected": { ".write": "auth != null && data.parent().child('uid').val() === auth.uid && newData.isBoolean()" },
-            "recoveryCode": { ".validate": "!newData.exists() || (newData.isString() && newData.val().length === 4)" }
-          }
-        },
-        "hostLease": {
-          ".read": "auth != null && data.child('ownerUid').val() === auth.uid",
-          ".validate": "newData.hasChildren(['ownerUid','leaseId','expiresAtMillis','paused']) && newData.child('ownerUid').val() === root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() && newData.child('leaseId').isString() && newData.child('expiresAtMillis').isNumber() && newData.child('paused').isBoolean()"
-        },
-        "hostDisconnects": {
-          "$leaseId": {
-            ".read": "auth != null && root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid",
-            ".validate": "newData.hasChildren(['ownerUid','disconnectedAtMillis']) && newData.child('ownerUid').val() === root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() && newData.child('disconnectedAtMillis').isNumber()"
-          }
-        },
-        "prices": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
-        },
-        "news": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
-        },
-        "orders": {
-          "$participantId": {
-            ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)",
-            "pending": {
-              ".write": "auth != null && root.child('liveMarkets').child($marketId).child('meta/status').val() === 'OPEN' && !data.exists() && root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['orderId','stockId','side','quantity','submittedAtMillis']) && newData.child('orderId').isString() && newData.child('stockId').isString() && root.child('liveMarkets').child($marketId).child('companies').child(newData.child('stockId').val()).exists() && (newData.child('side').val() === 'BUY' || newData.child('side').val() === 'SELL') && newData.child('quantity').isNumber() && newData.child('quantity').val() % 1 === 0 && newData.child('quantity').val() >= 1 && newData.child('quantity').val() <= 100000 && newData.child('submittedAtMillis').isNumber()"
-            }
-          }
-        },
-        "teamPortfolios": {
-          "$teamId": {
-            ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).child('teamId').val() === $teamId)"
-          }
-        },
-        "teamLeaderboard": {
-          ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('members').child(auth.uid).exists())"
-        },
-        "transactions": {
-          "$participantId": {
-            ".read": "auth != null && (root.child('liveMarkets').child($marketId).child('participants').child($participantId).child('uid').val() === auth.uid || root.child('liveMarkets').child($marketId).child('meta/ownerUid').val() === auth.uid)"
-          }
-        },
-        "signage": {
-            // The projection contains only the sanitized signage payload. It is safe
-            // for an authenticated classroom display even when the market itself is private.
-            ".read": "auth != null"
+    "orgAccess": {
+      "$orgId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
         }
+      }
+    },
+    "orgAccessMeta": {
+      "$orgId": {
+        "$uid": {
+          ".read": false,
+          ".write": false
+        }
+      }
+    },
+    "lessonRunMembership": {
+      "$lessonRunId": {
+        "$uid": {
+          ".read": "auth != null && $uid === auth.uid",
+          ".write": false
+        }
+      }
+    },
+    "lessonRunPublic": {
+      "$lessonRunId": {
+        ".read": "auth != null && ((root.child('lessonRunMembership').child($lessonRunId).child(auth.uid).child('access').val() === 'ACTIVE') || (data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()))",
+        ".write": false
+      }
+    },
+    "lessonRunTeamState": {
+      "$lessonRunId": {
+        "$teamId": {
+          ".read": "auth != null && ((root.child('lessonRunMembership').child($lessonRunId).child(auth.uid).child('access').val() === 'ACTIVE' && root.child('lessonRunMembership').child($lessonRunId).child(auth.uid).child('teamId').val() === $teamId) || (data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()))",
+          ".write": false
+        }
+      }
+    },
+    "lessonRunPrivate": {
+      "$lessonRunId": {
+        ".read": "auth != null && data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('role').val() === 'owner' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()",
+        ".write": false
+      }
+    },
+    "lessonRunDisplay": {
+      "$lessonRunId": {
+        ".read": "auth != null && ((auth.token.displayRunId === $lessonRunId) || (data.child('orgId').exists() && root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('syncState').val() === 'SYNCED' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('status').val() === 'active' && root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() === root.child('orgAccessMeta').child(data.child('orgId').val()).child(auth.uid).child('membershipVersion').val() && auth.token.auth_time >= root.child('orgAccess').child(data.child('orgId').val()).child(auth.uid).child('revokedAtSeconds').val()))",
+        ".write": false
       }
     }
   }

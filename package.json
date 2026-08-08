@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": ["functions", "functions/packages/deterministic-random", "functions/packages/lesson-runtime-types", "functions/packages/lesson-inputs", "functions/packages/market-public-content", "functions/packages/market-authoring-content"],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:rules": "firebase emulators:exec --project demo-stock-league-classroom --only firestore,database \"vitest --config vite.rules.config.ts run\"",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run test:rules && npm run build"
+    "test:market-concurrency": "firebase emulators:exec --project demo-concurrent-test --only firestore \"npm run test:market-concurrency --workspace=functions\"",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run test:rules && npm run test:market-concurrency && npm run build && npm run verify --workspace=functions && npm run verify --workspace=@stock-league/deterministic-random && npm run verify --workspace=@stock-league/lesson-runtime-types && npm run verify --workspace=@stock-league/lesson-inputs && npm run verify --workspace=@stock-league/market-public-content && npm run verify --workspace=@stock-league/market-authoring-content"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

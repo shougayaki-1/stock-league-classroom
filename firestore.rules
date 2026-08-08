@@ -8,104 +8,178 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
     function operator() { return teacher() && request.auth.token.operator == true; }
-    // Emergency stop. An absent document means "open", so publishing these rules
-    // before the document is seeded cannot take the service down.
+    // Retained until the new lesson-run emergency control is introduced.
     function serviceOpen() {
       return !exists(/databases/$(database)/documents/serviceStatus/global)
         || get(/databases/$(database)/documents/serviceStatus/global).data.acceptingNewMarkets != false;
     }
 
     match /serviceStatus/{documentId} {
-      // Readable by anyone so a maintenance notice can be shown before sign-in.
-      // It holds no personal data.
+      // It contains no personal data, so the maintenance notice is readable
+      // before sign-in. Only operators may change it.
       allow get: if true;
       allow list: if false;
       allow write: if operator();
     }
 
-    match /templates/{templateId} {
-      // A personal template can never be fetched or enumerated by another user.
-      allow get: if teacher() && resource.data.ownerUid == request.auth.uid;
-      // Firestore evaluates this against every possible returned document, so
-      // callers must constrain their query to their own ownerUid.
-      allow list: if teacher() && resource.data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.visibility == 'private';
-      allow update: if teacher()
-        && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.visibility == 'private';
-      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
+    // Firestore is the source of truth for organization membership. Future
+    // resource rules require this active status; membership-status reads stay
+    // separate so suspended users can still see their own status.
+    function activeMember(orgId) {
+      return exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
     }
 
-    match /officialTemplates/{templateId} {
-      allow get, list: if teacher() || operator();
-      allow create, update, delete: if operator();
-    }
-
-    match /templateShares/{shareId} {
-      // Capability links are deliberately unlistable; their snapshot is write-once.
-      allow get: if teacher();
+    match /users/{uid} {
+      // Set only by server-side organization provisioning.
+      allow get: if teacher() && uid == request.auth.uid;
       allow list: if false;
+      allow write: if false;
+    }
+
+    match /organizations/{orgId} {
+      // Membership-based from the outset, including future school orgs with
+      // more than one active member.
+      allow get: if teacher() && activeMember(orgId);
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /organizations/{orgId}/members/{uid} {
+      // Resource rules, rather than this status document, deny suspended
+      // members. They may always inspect their own membership status.
+      allow get: if teacher() && uid == request.auth.uid;
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /lessonTemplates/{templateId} {
+      allow get: if teacher() && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
       allow create: if teacher()
         && request.resource.data.createdByUid == request.auth.uid
-        // A share is a self-contained, non-claimable capability. In particular,
-        // it must not retain a private template ID that could name another user.
-        && request.resource.data.keys().hasOnly(['snapshot', 'createdByUid', 'createdAt']);
-      allow update, delete: if false;
-    }
-
-    match /markets/{marketId} {
-      allow get, list: if teacher() && resource.data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && serviceOpen()
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.capacity == 80
-        && request.resource.data.joinCode is string
-        && request.resource.data.joinCode.size() == 6
-        && request.resource.data.creationStatus == 'CREATING';
-      allow update: if teacher() && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.capacity == resource.data.capacity
-        && request.resource.data.joinCode == resource.data.joinCode
-        && request.resource.data.templateSnapshot == resource.data.templateSnapshot
-        && request.resource.data.visibility == resource.data.visibility
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['creationStatus', 'initializedAt']);
-      allow delete: if teacher() && resource.data.ownerUid == request.auth.uid;
-    }
-
-    match /marketJoinCodes/{code} {
-      // A code is a capability: authenticated anonymous students may direct-get
-      // it, but nobody can enumerate all active classrooms.
-      allow get: if signedIn();
-      allow list: if false;
-      allow create: if teacher()
-        && request.resource.data.ownerUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.ownerUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/markets/$(request.resource.data.marketId)).data.joinCode == code;
-      allow update, delete: if teacher()
-        && resource.data.ownerUid == request.auth.uid;
-    }
-
-    match /marketResults/{marketId}/participants/{participantId} {
-      // The host writes deterministic finalization checkpoints. Students may
-      // only read their own participant result; market ownership is immutable.
-      allow get: if signedIn() && (resource.data.ownerUid == request.auth.uid || resource.data.participantUid == request.auth.uid);
-      allow list: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
-      allow create: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == request.auth.uid;
+        && request.resource.data.currentPublishedVersionId == null
+        && request.resource.data.status == 'DRAFT'
+        && request.resource.data.visibility == 'PRIVATE'
+        && activeMember(request.resource.data.orgId);
       allow update: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == resource.data.ownerUid;
-      allow delete: if teacher() && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
-    }
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['draft', 'updatedAt'])
+        && resource.data.get('pendingDeletion', null) == null
+        && activeMember(resource.data.orgId);
+      // All deletion goes through Task 12 so recovery/audit semantics cannot
+      // be bypassed by a direct client delete.
+      allow delete: if false;
 
-    match /marketResults/{marketId}/teams/{teamId} {
-      allow get, list, create, update, delete: if teacher()
-        && get(/databases/$(database)/documents/markets/$(marketId)).data.ownerUid == request.auth.uid;
+      match /versions/{versionId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId);
+        // Publish is a server transaction so version creation and pointer
+        // update cannot split or duplicate. Clients never write versions.
+        allow create, update, delete: if false;
+      }
     }
+    match /lessonVersionPublishIdempotency/{key} { allow read, write: if false; }
+
+    match /lessonRuns/{lessonRunId} {
+      allow get: if teacher()
+        && activeMember(resource.data.orgId);
+      allow list: if teacher() && activeMember(resource.data.orgId);
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /eventIdempotency/{key} { allow read, write: if false; }
+      match /meta/{docId} { allow read, write: if false; }
+
+      // Market orders (Phase C, spec §12.12/§12.13). Students never read
+      // orders directly — they subscribe to the RTDB lessonRunTeamState
+      // projection instead (Task 13); teachers go through a Callable.
+      // createPendingOrder/transitionOrderStatus are Admin SDK only.
+      match /orders/{orderId} {
+        allow read: if false;
+        allow write: if false;
+      }
+      match /orderIdempotency/{key} { allow read, write: if false; }
+
+      match /checkpoints/{checkpointId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /checkpointRestoreIdempotency/{key} {
+        allow read, write: if false;
+      }
+
+      // Firestore is the system of record for participants/teams/responses/
+      // results, but students never read it directly — they subscribe to
+      // the independent lessonRunMembership/lessonRunPublic/
+      // lessonRunTeamState RTDB projections instead (database.rules.json).
+      // These follow the same teacher-read/server-write-only shape as
+      // events/checkpoints above.
+      match /participants/{participantId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      // Server-internal join-time indexes (same-authUid lookup,
+      // externalIdentifier soft-collision check). No client, teacher or
+      // student, ever needs to read these directly.
+      match /participantsByAuthUid/{authUid} { allow read, write: if false; }
+      match /participantsByExternalIdentifier/{key} { allow read, write: if false; }
+      match /teams/{teamId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+      }
+      match /responses/{responseId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+
+        // Server-internal idempotency records for saveResponseDraft/
+        // submitProposal/decideProposal/confirmResponse — same
+        // deny-by-default shape as eventIdempotency/checkpointRestoreIdempotency
+        // above. No client, teacher or student, ever needs to read or
+        // write these directly.
+        match /saveDraftIdempotency/{key} { allow read, write: if false; }
+        match /submitProposalIdempotency/{key} { allow read, write: if false; }
+        match /decideProposalIdempotency/{key} { allow read, write: if false; }
+        match /confirmIdempotency/{key} { allow read, write: if false; }
+      }
+      match /results/{resultId} {
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+        allow write: if false;
+
+        // Survey responses (Task 14): same server-write-only shape as
+        // responses/ above. Students never read/write these directly —
+        // they go through submitSurveyCallable (surveys/onCall.ts), which
+        // authorizes each call against the Firestore participant record
+        // (including ABSENT students, per submitSurvey.ts's
+        // `resolveParticipant` JSDoc) rather than through a Firestore or
+        // RTDB rule grant.
+        match /surveyResponses/{surveyResponseId} {
+          allow get, list: if teacher()
+            && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
+          allow write: if false;
+
+          match /submitSurveyIdempotency/{key} { allow read, write: if false; }
+        }
+      }
+    }
+    match /lessonRunIdempotency/{key} { allow read, write: if false; }
+
+    // Join codes and join-request idempotency are server-internal (issued
+    // and consumed only by joinLessonRunCallable/issueJoinCode via the
+    // Admin SDK, which bypasses these rules entirely) — no client reads or
+    // writes them directly.
+    match /lessonJoinCodes/{code} { allow read, write: if false; }
+    match /lessonJoinIdempotency/{key} { allow read, write: if false; }
 
     match /{document=**} { allow read, write: if false; }
   }

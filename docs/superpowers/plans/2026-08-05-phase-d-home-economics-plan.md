@@ -1,0 +1,3195 @@
+# Phase D: 家庭科完成（生活設計シミュレーション）Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **完成済み。Task 1〜17全てFiles / Interfaces / Stepごとのテストコード / Run / Expectedを含む詳細まで記述済み。** 着手前に「実装順とレビューゲート」と各Taskの設計上の要点（特にTask1・7・11の複数タスクにまたがる型設計判断）を確認すること。実装中に本計画の型定義（`HomeEconomicsContent`・`HouseholdProfile`・`InsuranceProduct`・`LifeEventDefinition`等）を変更する場合は、後続タスクのテストコードが参照している同じ型・フィールド名と整合しているか都度確認すること——本計画自体、執筆途中でTask1・2の型に複数回の遡及的な補完（`coveredEventIds`・構造化イベント効果・`PublicSupportProgram`・`borrowingAllowed`等）を行っている。
+
+> **正本は統合仕様書。** `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`（§7、§13、§27.4、§28）と `docs/superpowers/specs/2026-08-05-integrated-spec-resolutions.md`（矛盾解消G・H）が優先する。本計画と両文書が矛盾する場合は両文書を優先し、本計画側の誤りとして扱う。
+
+> **前提: Phase A・B・Cは完了済み。** `orgId`所有、権限3層、`LessonRun`/`LessonEvent`/`LessonCheckpoint`、`restoreGeneration`、決定的PRNG（`functions/packages/deterministic-random`）、`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`のRTDBパス分離、`functions/packages/*`共有パッケージパターン、教師画面・生徒画面・教室表示・参加・チーム・フェーズ進行・入力ウィジェット9種（`@stock-league/lesson-inputs`）・回答state machine・チェックポイント・復帰コードが揃っている。Phase Cの実装計画は`docs/superpowers/plans/2026-08-05-phase-c-market-plan.md`を、共有パッケージ配置・トランザクション規律・レビュー体制の実例として参照する。**Phase Dは市場エンジン（Phase C）に依存しない**（矛盾解消G、後述）——Phase Bのみに依存する。
+
+> **矛盾解消G（家庭科と`MARKET`フェーズの関係、必読）:** 家庭科は`MARKET`フェーズを使わない。資産配分や購入の判断は`DECISION`フェーズで行う。理由は時間の単位が異なるため——社会科の市場は3秒区間の実時間シミュレーションだが、家庭科は1ラウンド＝5年（既定）で資産の収益は年次収益率。`LessonPhase.type`（Phase B `functions/src/lessonRuns/phases/validation.ts`）は既に`'DECISION'`を含み、`HOME_ECONOMICS`教材が`MARKET`フェーズを含む場合は`validateLessonForStart`が`HOME_ECONOMICS_MARKET_FORBIDDEN`で拒否する実装が既にPhase B Task5で完了している——本計画はこのバリデーションの上に構築し、再実装しない。
+
+> **矛盾解消H（`REFLECTION`と市場停止の関係）:** 家庭科には市場という概念自体がないため直接は関係しないが、`REFLECTION`遷移が「授業実施状態を後戻りなしで進める」層であるという整理はPhase Dの各ラウンド終了処理にもそのまま適用される——ラウンド内の一時停止と`REFLECTION`遷移を混同しないこと。
+
+> **社会科（Phase C）との比較で読むと理解しやすい設計判断:**
+> - Phase Cの「3秒バッチ」に相当するのが、Phase Dの「ラウンド（既定5年）」。ただし駆動方式は全く異なる——Cは`Cloud Tasksの自己連鎖`だが、Dの各ラウンドは`DECISION`フェーズの提出完了（`SUBMISSION_BASED`）または教師操作（`TEACHER_CONTROLLED`）で進むため、Cloud Tasks・バッチスケジューラは不要。
+> - Phase Cの「価格計算エンジン」に相当するのが、Phase Dの「年次計算エンジン」（収入・支出・税・資産収益率・住宅ローン返済）。ただし乱数を使うのはイベント発生判定と資産収益率のノイズ項のみ——`functions/packages/deterministic-random`の`deriveSeed`/`mulberry32`をCと全く同じ規律で使う。
+> - Phase Cの「公開/非公開データ分離」の原則はDにも同一に適用される——保険の給付条件詳細や教材作成者用の内部係数（イベント発生確率の内部パラメータ等）を生徒に見せない設計。
+> - Phase Cが「チーム」を主語にしていたのに対し、Dは「チームが担当する人物（プロフィール）」が主語になる（§13.3「役割・人物別」「チーム内複数人物」モードがあるため、1チームが複数`HouseholdState`を持ちうる）。
+
+**Goal:** 家庭科・生活設計シミュレーション（統合仕様書§13）を、Phase A/Bの共通授業基盤の上に実装する。生徒はチーム（または人物）ごとに架空プロフィールを担当し、ラウンドごとに収入・支出・資産配分・保険・住宅・イベント対応を`DECISION`フェーズで判断し、年次計算エンジンがその結果を反映、最終的に5観点（生活目標達成・生活安定性・分散・借入負担・振り返り等）で評価される。
+
+**Architecture:** 全ての計算は純粋関数として`functions/src/homeEconomics/engine/`に実装し、Callable/onCallは薄いI/O層にする（Phase Cの`functions/src/market/engine/`と同じ分離方針）。`HouseholdState`を「生徒に見せてよい公開ビュー」と「教材作成者のみが読み書きする非公開authoring型（イベント発生確率、内部係数）」に型レベルで分離する（Phase C Task1の`market-public-content`/`market-authoring-content`パターンをそのまま踏襲）。ラウンド進行はPhase Bの`transitionPhase`（フェーズ遷移）とTask11（本計画）の「ラウンド確定」処理を組み合わせる——Cloud Tasksのような自己連鎖機構は持たず、常に教師操作またはチーム全員の提出完了がトリガーになる。
+
+**Tech Stack:** TypeScript, Firebase Firestore（`lessonRuns/{id}/households/{householdId}`サブコレクション、トランザクション）, Firebase Realtime Database（`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`の家庭科版フィールド拡張）, Cloud Functions for Firebase v2（`onCall`のみ、Cloud Tasksは使わない）, `functions/packages/deterministic-random`, `@stock-league/lesson-inputs`（既存9ウィジェットを`DECISION`フェーズの判断入力に再利用）, Vitest, `@firebase/rules-unit-testing`。
+
+## Global Constraints
+
+- 各タスクは完了時に `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*` の `verify`）を通すこと。
+- 乱数は`Math.random()`禁止。`functions/packages/deterministic-random`の`deriveSeed`/`mulberry32`のみを使う。シード導出式はPhase Cと同じ形式に揃え、`derive([randomSeed, restoreGeneration, householdId, roundIndex])`のように配列引数で呼ぶ（Phase C Task3で確定した`deriveSeed`の実際のシグネチャに合わせること——実装着手時に`functions/packages/deterministic-random/src/index.ts`を確認する）。
+- 生徒へ教材作成者専用の内部係数（イベント発生確率パラメータ、保険の内部リスク計算式、他チームのプロフィール）を送らない。型を`packages/household-public-content`相当（生徒向けDTO）と`packages/household-authoring-content`相当（教師/サーバー用）に分け、間引き変換関数はFunctions内の1箇所に固定する（Phase C Task1の設計をそのまま踏襲、詳細はTask1参照）。
+- **新規共有npmパッケージは`functions/packages/`配下に配置すること。リポジトリルート直下の`packages/`に置くと、Firebase Functionsのデプロイパッケージング（`functions/`ディレクトリのみが対象）を壊す。** これはPhase A Task1・Phase B Task1/7・Phase C Task1で繰り返し発生した実バグであり、本計画のタスクブリーフのコード例がルート直下`packages/`を指している箇所があれば、実装時に`functions/packages/`へ読み替えること。
+- **`functions/`から`src/`への相対パスimportを禁止する。** tscの`rootDir`境界を壊し、Cloud Functionsデプロイバンドルへ`src/`が混入するリスクを生む。Phase C Task2・15・16で繰り返し発見・修正された既知の誤りパターン——共有される型は必ず`functions/packages/*`workspaceパッケージに定義し、`src/`側はそこからre-exportする。
+- 冪等性: 判断提出・ラウンド確定・チェックポイント作成のすべてに`idempotencyKey`を要求し、`functions/src/lib/idempotency.ts`の`idempotencyDocumentId`/`requestDigest`パターン（Phase A/B/C全体で一貫）を踏襲する。
+- Firestoreトランザクションは全read→全writeの順序を厳守する。このリポジトリ最重要の既知バグパターンで、Phase A/B/Cを通じて複数回のCritical指摘の原因になっている。
+- エラー処理規約: 純粋関数/DI層は素の`Error`をthrow、Callable境界（`onCall.ts`）だけが`HttpsError`へ変換する。
+- 新規Callableを`onCall.ts`に実装したら、必ず`functions/src/index.ts`からexportすること。過去に4回以上、この export漏れによってCallableがデプロイされない実装済みバグが発生している。
+- `LessonInputRenderer`（`@stock-league/lesson-inputs`、Phase B Task6）の既存9ウィジェットを最大限再利用し、家庭科専用の新規入力ウィジェット型を安易に追加しない——資産配分は`RankingInput`/`QuantityInput`、保険選択は`SingleChoiceInput`/`ReasonChoiceInput`等、既存の型で表現できないか先に検討する。
+- 本名は本人+自チームのみ、他チームには表示しない（§23.6、Phase B全体で徹底）。担当プロフィールが架空である旨（§13.4「これは授業用の架空プロフィールです」）を生徒画面に必ず表示する。
+- 保険は資産と型レベルで分離する（§13.6「資産配分円グラフへ保険を混ぜない」）——`HouseholdState.assets`と`HouseholdState.insuranceContracts`を同一配列にしない。
+- 数値・式の版を教材版へ固定する（§13.8「税・社会保険」）——教材publish後に税率式を変更しても進行中の授業へ影響しない、というPhase A/Bのtemplate/version不変性パターンをそのまま踏襲する。
+
+---
+
+## File Structure
+
+| File | Change |
+| --- | --- |
+| `functions/packages/household-public-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 1。生徒公開DTO: `AssetPositionPublicView`、`InsuranceContractPublicView`、`HouseholdProfilePublicView`等） |
+| `functions/packages/household-authoring-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts` | Create（Task 1。非公開authoring型: `HouseholdProfile`、`AssetPosition`、`InsuranceProduct`、`LifeEventDefinition`、内部係数を含む） |
+| `functions/src/homeEconomics/toPublicView.ts`, `.test.ts` | Create（Task 1。private→public変換関数） |
+| `src/lib/lessonTemplates/types.ts` | Modify（Task 2。`LessonContent`に`homeEconomics?: HomeEconomicsContent`を追加） |
+| `functions/src/homeEconomics/templateValidation.ts`, `.test.ts` | Create（Task 2。プロフィール7項目必須、税・社会保険式の版固定等の教材バリデーション） |
+| `functions/src/homeEconomics/engine/annualCashFlow.ts`, `.test.ts` | Create（Task 3。年単位の収入・支出集計、固定費/変動費区別） |
+| `functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`, `.test.ts` | Create（Task 3。簡略税・社会保険式） |
+| `functions/src/homeEconomics/engine/assetReturn.ts`, `.test.ts` | Create（Task 4。年次収益率、経済要因（物価・金利・景気）反映、決定的PRNGによるノイズ項） |
+| `functions/src/homeEconomics/engine/mortgage.ts`, `.test.ts` | Create（Task 5。元利均等返済） |
+| `functions/src/homeEconomics/engine/insurance.ts`, `.test.ts` | Create（Task 6。保険料・給付条件の簡略計算） |
+| `functions/src/homeEconomics/engine/lifeEvents.ts`, `.test.ts` | Create（Task 7。イベント発生判定・公開方法・効果適用） |
+| `functions/src/homeEconomics/engine/shortfallOptions.ts`, `.test.ts` | Create（Task 8。資金不足時の選択肢提示） |
+| `functions/src/homeEconomics/engine/publicSupport.ts`, `.test.ts` | Create（Task 9。公的支援の条件判定・効果） |
+| `functions/src/lessonRuns/households/repository.ts`, `.test.ts` | Create（Task 10。`HouseholdState`Firestore正本、チーム/人物単位） |
+| `functions/src/homeEconomics/submitDecision.ts`, `.test.ts`, `onCall.ts` / `src/lib/homeEconomics/submitDecision.ts`, `.test.ts` | Create（Task 10。`DECISION`フェーズの判断提出Callable、Phase B `saveResponseDraft`/`submitProposal`パターンを再利用） |
+| `functions/src/homeEconomics/engine/settleRound.ts`, `.test.ts` | Create（Task 11。ラウンド確定の中核純粋関数、Task3〜9を統合するオーケストレーター） |
+| `functions/src/homeEconomics/processRound.ts`, `.test.ts`, `onCall.ts` | Create（Task 11。Admin SDKラッパー、教師操作またはチーム全員提出完了で発火） |
+| `functions/src/homeEconomics/engine/retirement.ts`, `.test.ts` | Create（Task 12。退職後の収入減少・簡略年金・資産取り崩し・長寿リスク） |
+| `functions/src/homeEconomics/checkpointRestore.ts`, `.test.ts` | Create（Task 13。人生段階の途中再開、欠席者補完、Phase A `LessonCheckpoint`の家庭科版拡張） |
+| `functions/src/homeEconomics/goalPackage.ts`, `.test.ts` | Create（Task 14。目的に関係しない概念の非表示、教材設定による表示絞り込み） |
+| `src/lib/lessonRuns/liveTypes.ts` | Modify（Task 15。`LessonRunPublicState`/`LessonRunPrivateState`/`LessonRunTeamState`へ家庭科フィールド追加） |
+| `database.rules.json` | Modify（Task 15。既存の3ノードへ家庭科フィールドを追加するのみ、新規ノード不要——Phase Cが確立した3分離パターンを流用） |
+| `src/components/homeEconomics/` 配下（教師・生徒画面） | Create（Task 15。Phase B `LessonInputRenderer`/`LessonControlRoom`パターンの家庭科版） |
+| `functions/src/homeEconomics/evaluation.ts`, `.test.ts` | Create（Task 16。§13.17の観点別評価、Phase C Task16の5観点評価と同じ自動/ルーブリック分離） |
+| `test/household-lifecycle.acceptance.test.ts` | Create（Task 17。§27.4受け入れテスト6項目） |
+
+---
+
+## タスク一覧
+
+1. 資産・保険・イベント・プロフィールの型（公開/非公開分離）
+2. `LessonContent`拡張と家庭科教材バリデーション
+3. 年次収支エンジン（収入・支出集計、簡略税・社会保険式）
+4. 資産の年次収益率計算（経済要因反映、決定的PRNGノイズ）
+5. 住宅ローン計算（元利均等返済）
+6. 保険モデル（保険料・給付条件）
+7. ライフイベントエンジン（発生判定・公開方法・効果適用）
+8. 資金不足時の選択肢提示
+9. 公的支援モデル
+10. `HouseholdState`リポジトリと判断提出Callable（`DECISION`フェーズ）
+11. ラウンド確定処理の中核（年次計算エンジンの統合オーケストレーター）
+12. 退職後モデル
+13. 保存・再開（人生段階途中再開、欠席者補完、チェックポイント）
+14. 目標パッケージ（表示の絞り込み）
+15. RTDBライブスキーマ拡張と教師・生徒画面
+16. 家庭科の評価（観点別、自動/ルーブリック分離）
+17. §27.4受け入れテストとPhase D完了条件の確定
+
+---
+
+## 実装順とレビューゲート
+
+1. Task 1〜2: Phase E（Guided Lesson Builder）も依存する型・教材バリデーション契約。ここを先にレビューし、後続で名前を変えない。
+2. Task 3〜9: 年次計算エンジン群。各エンジンは独立した純粋関数で、Task11のオーケストレーターが後から統合する（Phase Cの価格計算・需給集計・資金拘束と同じ分解方針）。安全性レビュー（決定的PRNG・公開非公開分離）を必須にする。
+3. Task 10〜11: `DECISION`フェーズの判断提出とラウンド確定。end-to-endの生活設計フローをここで初めて通す。
+4. Task 12〜14: 退職後・保存再開・目標パッケージ。ラウンドをまたぐ長期状態管理。
+5. Task 15: 画面。§23の横断要件（本名非表示・架空プロフィール明示等）を検証する。
+6. Task 16〜17: 評価・受け入れテスト・完了条件確定。
+
+---
+
+### Task 1: 資産・保険・イベント・プロフィールの型（公開/非公開分離）
+
+統合仕様書 §13.4（コアプロフィール）・§13.5（資産）・§13.6（保険）・§13.9（住宅・ローン）・§13.12（イベント）を実装する。**生徒に見せる情報と教材作成者用の非公開の内部係数（イベント発生確率、保険の内部リスク計算パラメータ）を型で分離する**——Phase C Task1が確立した`market-public-content`/`market-authoring-content`の2パッケージ分離パターンをそのまま踏襲する。
+
+- `packages/household-public-content`（`@stock-league/household-public-content`）: 生徒向けDTO。クライアント`src/`（生徒UI）とFunctions`functions/`（間引き変換の出力先）の両方が依存する。
+- `packages/household-authoring-content`（`@stock-league/household-authoring-content`）: 非公開authoring型。クライアント`src/`（教師の教材作成UI）とFunctions`functions/`（年次計算エンジンの入力）の両方が依存する。
+
+`toPublicView.ts`（間引き変換関数そのもの）は`functions/`にだけ置く——「生徒に何を見せるかを決めるロジック」をサーバー側に固定する設計判断（Phase C Task1と同じ理由）。
+
+**Files:**
+- Create: `functions/packages/household-public-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
+- Create: `functions/packages/household-authoring-content/package.json`, `tsconfig.json`, `src/index.ts`, `src/index.test.ts`
+- Modify: ルート`package.json`（`workspaces`に両パッケージを追加）, `functions/package.json`・`package.json`（依存に追加）
+- Create: `functions/src/homeEconomics/toPublicView.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Phase A/Bの型のみ利用）
+- Produces: `HouseholdProfilePublicView`、`AssetPositionPublicView`、`InsuranceContractPublicView`、`HouseholdProfile`、`AssetPosition`、`InsuranceProduct`、`LifeEventDefinition`、`Liability`、`toHouseholdProfilePublicView(profile)`、`toAssetPositionsPublicView(assets)`、`toInsuranceContractsPublicView(contracts)`
+
+- [ ] **Step 1: 公開DTOの失敗するテストを書く**
+
+`functions/packages/household-public-content/src/index.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { AssetPositionPublicView, HouseholdProfilePublicView } from './index'
+
+describe('HouseholdProfilePublicView', () => {
+  it('carries only the 7 core profile fields (spec §13.4), never authoring-only internals', () => {
+    const view: HouseholdProfilePublicView = {
+      householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+      annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+      family: '配偶者・子2人', housing: '賃貸マンション',
+      lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+      isFictional: true,
+    }
+    expect(Object.keys(view)).not.toContain('eventProbabilityOverrides')
+    expect(Object.keys(view)).not.toContain('internalRiskFactors')
+  })
+})
+
+describe('AssetPositionPublicView', () => {
+  it('never carries the internal expected-return/volatility coefficients', () => {
+    const view: AssetPositionPublicView = {
+      assetType: 'DOMESTIC_STOCK', valueYen: 500000,
+    }
+    expect(Object.keys(view)).not.toContain('expectedReturnPercent')
+    expect(Object.keys(view)).not.toContain('volatilityPercent')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions/packages/household-public-content && npx vitest run src/index.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `package.json`・`tsconfig.json`を作成する（`@stock-league/market-public-content`と同じ共有パッケージ構成）**
+
+`functions/packages/household-public-content/package.json`（`functions/packages/market-public-content/package.json`を実際に読んで完全に同じ形式に揃えること——`name`/`main`/`types`/`scripts`の`build`/`test`/`verify`/`check:dist`が既存パッケージと一致していること）:
+
+```json
+{
+  "name": "@stock-league/household-public-content",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "check:dist": "test -f dist/index.js || (echo 'dist/ missing — run npm run build' && exit 1)",
+    "verify": "npm run test && npm run build && npm run check:dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
+```
+
+`tsconfig.json`は`functions/packages/market-public-content/tsconfig.json`をそのままコピーし、`rootDir`/`outDir`のみ確認する。
+
+- [ ] **Step 4: 公開DTOを実装する**
+
+`functions/packages/household-public-content/src/index.ts`:
+
+```ts
+export type LifeStage = 'STUDENT' | 'INDEPENDENT' | 'FAMILY_FORMATION' | 'CHILD_REARING' | 'PRE_RETIREMENT' | 'RETIRED'
+
+/**
+ * Student-facing profile view (spec §13.4's 7 core fields). `isFictional`
+ * must always be `true` and is rendered in the UI as "これは授業用の架空
+ * プロフィールです" (spec §13.4) — never a real student's own data.
+ */
+export interface HouseholdProfilePublicView {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: LifeStage
+  isFictional: true
+}
+
+export type AssetType = 'CASH' | 'SAVINGS_DEPOSIT' | 'BOND' | 'DOMESTIC_STOCK' | 'FOREIGN_STOCK' | 'INVESTMENT_TRUST'
+
+/** Never carries expected-return/volatility coefficients — those are authoring-only (spec §13.15 "教師には計算式より影響の強さを見せる"). */
+export interface AssetPositionPublicView {
+  assetType: AssetType
+  valueYen: number
+}
+
+/**
+ * Spec §13.6: insurance is deliberately NOT part of the asset-allocation
+ * pie chart — kept as a fully separate type from AssetPositionPublicView,
+ * never merged into the same array or UI component.
+ */
+export interface InsuranceContractPublicView {
+  id: string
+  productName: string
+  premiumYenPerYear: number
+  coveredRisk: string
+  benefitDescription: string
+  contractYearsRemaining: number
+}
+
+export interface LiabilityPublicView {
+  id: string
+  kind: 'MORTGAGE' | 'OTHER_LOAN'
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+```
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions/packages/household-public-content && npx vitest run src/index.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: 非公開authoring型の失敗するテストを書く**
+
+`functions/packages/household-authoring-content/src/index.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdProfile, LifeEventDefinition } from './index'
+
+describe('HouseholdProfile (authoring)', () => {
+  it('carries the internal fields the public view must never receive', () => {
+    const profile: HouseholdProfile = {
+      householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+      annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+      family: '配偶者・子2人', housing: '賃貸マンション',
+      lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+      eventProbabilityOverrides: { JOB_LOSS: 0.05 },
+      internalRiskFactors: { healthRisk: 0.1 },
+    }
+    expect(profile.eventProbabilityOverrides.JOB_LOSS).toBe(0.05)
+  })
+})
+
+describe('LifeEventDefinition', () => {
+  it('has a disclosure mode distinct from its actual trigger probability (spec §13.12)', () => {
+    const event: LifeEventDefinition = {
+      id: 'job-loss', label: '失業', disclosureMode: 'HIDDEN',
+      triggerProbability: 0.05, effectDescription: '収入が一時的に0になる',
+      incomeEffectYen: -3000000, expenseEffectYen: 0, cashEffectYen: 0,
+    }
+    expect(event.disclosureMode).toBe('HIDDEN')
+    expect(event.triggerProbability).toBe(0.05)
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `package.json`・`tsconfig.json`を作成する**
+
+Step3と同じ構成で`functions/packages/household-authoring-content/package.json`を作成する（`name`のみ`@stock-league/household-authoring-content`に変更）。`@stock-league/household-public-content`への依存を追加する（`AssetType`/`LifeStage`等の共有enum型を再利用するため。依存は一方向——`household-authoring-content`が`household-public-content`を参照してよいが逆は禁止。Phase C Task1の`market-authoring-content`→`market-public-content`依存と同じ方向）。
+
+- [ ] **Step 9: 非公開authoring型を実装する**
+
+`functions/packages/household-authoring-content/src/index.ts`:
+
+```ts
+import type { AssetType, LifeStage } from '@stock-league/household-public-content'
+
+/**
+ * Teacher-authoring / server-internal type. Imported by BOTH `src/`
+ * (teacher's own material-authoring UI legitimately edits
+ * eventProbabilityOverrides/internalRiskFactors — the teacher is the
+ * author of these values) and `functions/` (the engine's input). What
+ * must never happen is a STUDENT receiving this data — that is enforced
+ * by Firestore rules (teacher read-only) and by
+ * `functions/src/homeEconomics/toPublicView.ts` being the only producer
+ * of what lands in the student-readable RTDB path, not by import
+ * restrictions. See `functions/src/market/toPublicView.ts` (Phase C
+ * Task1) for the identical architecture note.
+ */
+export interface HouseholdProfile {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: LifeStage
+  /** Hidden. Never sent to students. Keyed by life-event id. */
+  eventProbabilityOverrides: Record<string, number>
+  /** Hidden. Never sent to students. */
+  internalRiskFactors: Record<string, number>
+}
+
+export interface AssetPosition {
+  assetType: AssetType
+  valueYen: number
+  /** Hidden. Drives assetReturn.ts (Task 4). Never sent to students — spec §13.15 "教師には計算式より影響の強さを見せる". */
+  expectedReturnPercent: number
+  /** Hidden. Drives the noise term in assetReturn.ts. Never sent to students. */
+  volatilityPercent: number
+}
+
+export interface InsuranceProduct {
+  id: string
+  productName: string
+  premiumYenPerYear: number
+  coveredRisk: string
+  benefitDescription: string
+  benefitAmountYen: number
+  contractYears: number
+  /** Which LifeEventDefinition ids this product pays out on — links Task 6's insurance.ts to Task 7's lifeEvents.ts without a text-matching heuristic against `coveredRisk` (a display string, not an identifier). */
+  coveredEventIds: string[]
+  /** Hidden. Internal claim-probability model — used only for teacher-facing "influence strength" display (spec §13.15), never to gate whether a benefit pays out (that is driven by whether a covered event actually fired). Never sent to students. */
+  internalClaimProbability: number
+}
+
+export type LifeEventDisclosureMode = 'ANNOUNCED' | 'PARTIALLY_ANNOUNCED' | 'HIDDEN'
+
+/**
+ * Spec §13.12: `disclosureMode` controls what students see BEFORE the
+ * event fires (full announcement / partial hint / nothing). It is
+ * deliberately independent of whether the event is deterministic or
+ * probabilistic — `triggerProbability` (hidden, spec §13.15's "influence
+ * strength shown to teachers instead of raw coefficients") drives when it
+ * fires, `disclosureMode` drives what students are told about it in
+ * advance. These are never conflated into one field.
+ */
+export interface LifeEventDefinition {
+  id: string
+  label: string
+  disclosureMode: LifeEventDisclosureMode
+  /** Hidden. Never sent to students in this raw form. */
+  triggerProbability: number
+  effectDescription: string
+  /** One-time yen delta applied to the round's income when this event fires (e.g. 就職・昇進 positive, 失業 negative). 0 when the event has no direct income effect. */
+  incomeEffectYen: number
+  /** One-time yen delta applied to the round's expenses when this event fires (e.g. 出産・災害 positive, a windfall discount negative). 0 when none. */
+  expenseEffectYen: number
+  /** One-time yen delta applied directly to cash savings when this event fires (e.g. a lump-sum cost or gift, distinct from the recurring income/expense effects above). 0 when none. */
+  cashEffectYen: number
+}
+
+export interface Liability {
+  id: string
+  kind: 'MORTGAGE' | 'OTHER_LOAN'
+  principalYen: number
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+```
+
+- [ ] **Step 10: テストを通す**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: PASS
+
+- [ ] **Step 11: `toPublicView`の失敗するテストを書く（禁止情報のregressionテスト）**
+
+`functions/src/homeEconomics/toPublicView.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { AssetPosition, HouseholdProfile, InsuranceProduct } from '@stock-league/household-authoring-content'
+import { toAssetPositionsPublicView, toHouseholdProfilePublicView, toInsuranceContractsPublicView } from './toPublicView'
+
+const profile: HouseholdProfile = {
+  householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+  annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+  family: '配偶者・子2人', housing: '賃貸マンション',
+  lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+  eventProbabilityOverrides: { JOB_LOSS: 0.42 },
+  internalRiskFactors: { healthRisk: 0.99 },
+}
+
+describe('toHouseholdProfilePublicView', () => {
+  it('never leaks eventProbabilityOverrides or internalRiskFactors', () => {
+    const view = toHouseholdProfilePublicView(profile)
+    expect(JSON.stringify(view)).not.toContain('0.42')
+    expect(JSON.stringify(view)).not.toContain('0.99')
+    expect(view.isFictional).toBe(true)
+  })
+})
+
+describe('toAssetPositionsPublicView', () => {
+  it('never leaks expectedReturnPercent or volatilityPercent', () => {
+    const assets: AssetPosition[] = [{ assetType: 'DOMESTIC_STOCK', valueYen: 500000, expectedReturnPercent: 5, volatilityPercent: 15 }]
+    const views = toAssetPositionsPublicView(assets)
+    expect(JSON.stringify(views)).not.toContain('expectedReturnPercent')
+    expect(JSON.stringify(views)).not.toContain('volatilityPercent')
+  })
+})
+
+describe('toInsuranceContractsPublicView', () => {
+  it('never leaks internalClaimProbability, and keeps insurance out of the asset shape', () => {
+    const contracts: InsuranceProduct[] = [{
+      id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000,
+      coveredRisk: '病気・入院', benefitDescription: '入院日額1万円',
+      benefitAmountYen: 10000, contractYears: 10, coveredEventIds: ['illness'],
+      internalClaimProbability: 0.03,
+    }]
+    const views = toInsuranceContractsPublicView(contracts)
+    expect(JSON.stringify(views)).not.toContain('internalClaimProbability')
+    expect(Object.keys(views[0])).not.toContain('assetType')
+  })
+})
+```
+
+- [ ] **Step 12: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/toPublicView.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 13: `toPublicView.ts`を実装する（allow-list方式、spread禁止）**
+
+`functions/src/homeEconomics/toPublicView.ts`:
+
+```ts
+import type { AssetPositionPublicView, HouseholdProfilePublicView, InsuranceContractPublicView } from '@stock-league/household-public-content'
+import type { AssetPosition, HouseholdProfile, InsuranceProduct } from '@stock-league/household-authoring-content'
+
+/**
+ * The sole place that decides what students may see about their household
+ * profile, assets, and insurance. Fixed here (server-side, Functions)
+ * rather than as an import-boundary rule — see
+ * `functions/src/market/toPublicView.ts` (Phase C Task1) for the
+ * identical architecture note. Every field is listed explicitly
+ * (allow-list) — never `{...source}` — so a future field added to the
+ * authoring type is excluded by default.
+ */
+export const toHouseholdProfilePublicView = (profile: HouseholdProfile): HouseholdProfilePublicView => ({
+  householdId: profile.householdId, age: profile.age,
+  householdIncomeYen: profile.householdIncomeYen,
+  annualLivingExpensesYen: profile.annualLivingExpensesYen,
+  cashSavingsYen: profile.cashSavingsYen,
+  family: profile.family, housing: profile.housing,
+  lifeGoal: profile.lifeGoal, lifeStage: profile.lifeStage,
+  isFictional: true,
+})
+
+export const toAssetPositionsPublicView = (assets: AssetPosition[]): AssetPositionPublicView[] =>
+  assets.map((asset) => ({ assetType: asset.assetType, valueYen: asset.valueYen }))
+
+export const toInsuranceContractsPublicView = (contracts: InsuranceProduct[]): InsuranceContractPublicView[] =>
+  contracts.map((contract) => ({
+    id: contract.id, productName: contract.productName,
+    premiumYenPerYear: contract.premiumYenPerYear, coveredRisk: contract.coveredRisk,
+    benefitDescription: contract.benefitDescription, contractYearsRemaining: contract.contractYears,
+  }))
+```
+
+- [ ] **Step 14: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/toPublicView.test.ts`
+Expected: PASS
+
+- [ ] **Step 15: `npm run verify`**
+
+- [ ] **Step 16: Commit**
+
+```bash
+git add functions/packages/household-public-content functions/packages/household-authoring-content \
+  functions/src/homeEconomics/toPublicView.ts functions/src/homeEconomics/toPublicView.test.ts \
+  package.json functions/package.json
+git commit -m "feat: split household profile/asset/insurance/event types into public and authoring packages"
+```
+
+---
+
+### Task 2: `LessonContent`拡張と家庭科教材バリデーション
+
+統合仕様書 §13.1〜§13.4、§13.7〜§13.10、§13.12、§13.17を集約する教材内容を`LessonContent`（Phase A/B、`src/lib/lessonTemplates/types.ts`）へ追加する。現在の`LessonContent`は`{ schemaVersion, title, description, subject, socialStudiesMarket? }`（Phase C Task2が拡張済み）——本タスクはこれに`homeEconomics?: HomeEconomicsContent`を並列で追加する。数値既定値をコードへ散在させない（§30-10）ため、既定値はこの型のフィールドのデフォルトとして1箇所に集約する。
+
+**Files:**
+- Modify: `src/lib/lessonTemplates/types.ts`（`LessonContent`に`homeEconomics?: HomeEconomicsContent`を追加）
+- Create: `functions/src/homeEconomics/templateValidation.ts`, `.test.ts`
+- Modify: `functions/src/lessonRuns/createLessonRun.ts`（`LessonRun`作成時に家庭科教材のバリデーションを実行）
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`・`AssetPosition`・`InsuranceProduct`・`LifeEventDefinition`・`Liability`（Task 1、`@stock-league/household-authoring-content`）、`LessonContent`（Phase A/B/C）、`createLessonRun`（Phase A Task 7、Phase C Task2で一度拡張済み）
+- Produces: `HomeEconomicsContent`型、`validateHomeEconomicsContent(content): { valid: true } | { valid: false; errors: string[] }`
+
+**重要（Phase C Task2の既知の設計上の注意点を踏襲）:** `HomeEconomicsContent`型自体は`src/lib/lessonTemplates/types.ts`に直接定義せず、Task1で作成した共有パッケージ`@stock-league/household-authoring-content`側に定義し、`src/lib/lessonTemplates/types.ts`はそこからre-exportする。理由はPhase C Task2で実際に発生した不具合と同じ——`functions/src/homeEconomics/templateValidation.ts`が`src/lib/lessonTemplates/types.ts`を直接importするとtscの`rootDir`境界を壊しCloud Functionsデプロイバンドルへ`src/`が混入する。
+
+- [ ] **Step 1: `HomeEconomicsContent`型を定義する失敗するテストを書く**
+
+`functions/packages/household-authoring-content/src/index.test.ts`に追記する:
+
+```ts
+describe('HomeEconomicsContent defaults', () => {
+  it('encodes every §28-equivalent default value as a field default, not scattered in code', () => {
+    const content: HomeEconomicsContent = {
+      households: [{
+        householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+        annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+        family: '配偶者・子2人', housing: '賃貸マンション',
+        lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+        eventProbabilityOverrides: {}, internalRiskFactors: {},
+      }],
+      assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [], publicSupportPrograms: [],
+      roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+      taxAndSocialInsuranceModelVersion: 1,
+      economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+      borrowingAllowed: false,
+      goalPackage: 'EMERGENCY_FUND',
+      evaluationWeights: {
+        lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
+        diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15,
+      },
+    }
+    expect(content.roundYears).toBe(5)
+    expect(content.taxAndSocialInsuranceModelVersion).toBe(1)
+  })
+
+  it('LessonContent.homeEconomics is optional so SOCIAL_STUDIES content is unaffected', () => {
+    const content: LessonContent = { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }
+    expect(content.homeEconomics).toBeUndefined()
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts`
+Expected: FAIL — `HomeEconomicsContent`が存在しない
+
+- [ ] **Step 3: `HomeEconomicsContent`を`household-authoring-content`パッケージへ追加する**
+
+`functions/packages/household-authoring-content/src/index.ts`へ追記:
+
+```ts
+/** Spec §13.1: standard is 5 years/round, 1 year/round is optional (§13.1). */
+export type RoundYears = 1 | 5
+
+/** Spec §13.3: lesson format — which mode students experience. */
+export type CourseFormat = 'COMMON_CONDITIONS' | 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+
+export interface EconomicFactors {
+  /** Spec §13.11. Reflected into living expenses (annualCashFlow.ts, Task 3). */
+  inflationPercent: number
+  /** Spec §13.11. Reflected into deposits/borrowing. */
+  interestRatePercent: number
+  /** Spec §13.11. Baseline for assetReturn.ts (Task 4). */
+  marketReturnPercent: number
+}
+
+/** Spec §13.16: which concepts are shown/hidden per teacher-selected goal focus. */
+export type GoalPackage = 'EMERGENCY_FUND' | 'HOME_PURCHASE' | 'EDUCATION_FUND' | 'RETIREMENT_PREP' | 'RISK_DIVERSIFICATION' | 'INSURANCE_AND_PREPAREDNESS' | 'OVERALL_BALANCE'
+
+export interface HomeEconomicsEvaluationWeights {
+  lifeGoalAchievement: number
+  emergencyFundAdequacy: number
+  stability: number
+  diversification: number
+  borrowingBurden: number
+  reflection: number
+}
+
+/** Spec §13.10. Eligibility is a simplified income-threshold check — "制度の完全再現を目的にしない". */
+export interface PublicSupportProgram {
+  id: string
+  label: string
+  /** Student-facing plain description of the condition (e.g. "世帯収入が400万円未満"). */
+  conditionDescription: string
+  /** null = no income restriction (always eligible on this axis). */
+  maxHouseholdIncomeYen: number | null
+  /** §13.10: "自動適用か申請選択かを教材で設定". */
+  applicationMode: 'AUTOMATIC' | 'APPLICATION_REQUIRED'
+  benefitAmountYen: number
+}
+
+/**
+ * All spec §28-equivalent default values for home economics live here as
+ * field defaults, not scattered across engine code (spec §30-10) — same
+ * pattern as `SocialStudiesMarketContent` (Phase C Task2).
+ */
+export interface HomeEconomicsContent {
+  households: HouseholdProfile[]
+  assets: AssetPosition[]
+  insuranceProducts: InsuranceProduct[]
+  lifeEvents: LifeEventDefinition[]
+  liabilities: Liability[]
+  publicSupportPrograms: PublicSupportProgram[]
+  /** §13.1. Default 5. */
+  roundYears: RoundYears
+  /** §13.3. */
+  courseFormat: CourseFormat
+  /** §13.8: "数値・式の版を教材版へ固定する" — this integer is the version tag templateValidation/annualCashFlow pin their tax/social-insurance formula to. Default 1. */
+  taxAndSocialInsuranceModelVersion: number
+  economicFactors: EconomicFactors
+  /** §13.13: whether the template permits emergency borrowing at all — Task 8's `buildShortfallOptions` reads this. Default false. */
+  borrowingAllowed: boolean
+  /** §13.16. */
+  goalPackage: GoalPackage
+  /** §13.33-equivalent (§13.17). Must sum to 1; validated by `validateHomeEconomicsContent`. */
+  evaluationWeights: HomeEconomicsEvaluationWeights
+}
+```
+
+- [ ] **Step 4: `src/lib/lessonTemplates/types.ts`を拡張する**
+
+```ts
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export interface LessonContent {
+  schemaVersion: 1
+  title: string
+  description: string
+  subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  socialStudiesMarket?: SocialStudiesMarketContent
+  /** Only present when subject === 'HOME_ECONOMICS'. Optional so existing SOCIAL_STUDIES drafts keep compiling. */
+  homeEconomics?: HomeEconomicsContent
+}
+```
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions/packages/household-authoring-content && npx vitest run src/index.test.ts && cd ../../.. && npx vitest run src/lib/lessonTemplates/types.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: `validateHomeEconomicsContent`の失敗するテストを書く**
+
+`functions/src/homeEconomics/templateValidation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import { validateHomeEconomicsContent } from './templateValidation'
+
+const baseContent = (overrides: Partial<HomeEconomicsContent> = {}): HomeEconomicsContent => ({
+  households: [{
+    householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+    annualLivingExpensesYen: 3000000, cashSavingsYen: 2000000,
+    family: '配偶者・子2人', housing: '賃貸マンション',
+    lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+    eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }],
+  assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [], publicSupportPrograms: [],
+  roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+  taxAndSocialInsuranceModelVersion: 1,
+  economicFactors: { inflationPercent: 1, interestRatePercent: 1, marketReturnPercent: 3 },
+  borrowingAllowed: false,
+  goalPackage: 'EMERGENCY_FUND',
+  evaluationWeights: {
+    lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2,
+    diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15,
+  },
+  ...overrides,
+})
+
+describe('validateHomeEconomicsContent', () => {
+  it('accepts a well-formed minimal content', () => {
+    expect(validateHomeEconomicsContent(baseContent())).toEqual({ valid: true })
+  })
+
+  it('rejects zero households (spec §13.2: at least one profile must exist)', () => {
+    const result = validateHomeEconomicsContent(baseContent({ households: [] }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('担当プロフィールが1件も設定されていません。')
+  })
+
+  it('rejects duplicate householdId values', () => {
+    const dup = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({ households: [dup, { ...dup }] }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain(`プロフィールIDが重複しています: ${dup.householdId}`)
+  })
+
+  it('rejects evaluation weights that do not sum to 1 (spec §13.17)', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      evaluationWeights: {
+        lifeGoalAchievement: 0.5, emergencyFundAdequacy: 0.5, stability: 0.5,
+        diversification: 0, borrowingBurden: 0, reflection: 0,
+      },
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('評価の重みの合計が1になっていません。')
+  })
+
+  it('rejects a life event referencing an unknown disclosure mode target (referential integrity, mirrors Task 2 in Phase C)', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      lifeEvents: [{ id: 'job-loss', label: '失業', disclosureMode: 'HIDDEN', triggerProbability: 1.5, effectDescription: 'x', incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: 0 }],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('イベント job-loss の発生確率は0〜1の範囲にしてください。')
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `validateHomeEconomicsContent`を実装する**
+
+`functions/src/homeEconomics/templateValidation.ts`:
+
+```ts
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+
+export type ValidationResult = { valid: true } | { valid: false; errors: string[] }
+
+export const validateHomeEconomicsContent = (content: HomeEconomicsContent): ValidationResult => {
+  const errors: string[] = []
+
+  if (content.households.length === 0) errors.push('担当プロフィールが1件も設定されていません。')
+
+  const idCounts = new Map<string, number>()
+  for (const household of content.households) {
+    idCounts.set(household.householdId, (idCounts.get(household.householdId) ?? 0) + 1)
+  }
+  for (const [id, count] of idCounts) {
+    if (count > 1) errors.push(`プロフィールIDが重複しています: ${id}`)
+  }
+
+  const weights = content.evaluationWeights
+  const weightSum = weights.lifeGoalAchievement + weights.emergencyFundAdequacy + weights.stability
+    + weights.diversification + weights.borrowingBurden + weights.reflection
+  if (Math.abs(weightSum - 1) > 0.001) errors.push('評価の重みの合計が1になっていません。')
+
+  for (const event of content.lifeEvents) {
+    if (event.triggerProbability < 0 || event.triggerProbability > 1) {
+      errors.push(`イベント ${event.id} の発生確率は0〜1の範囲にしてください。`)
+    }
+  }
+
+  return errors.length === 0 ? { valid: true } : { valid: false, errors }
+}
+```
+
+- [ ] **Step 9: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: PASS
+
+- [ ] **Step 10: `createLessonRun`へバリデーションを結線する失敗するテストを書く**
+
+`functions/src/lessonRuns/createLessonRun.test.ts`に追記する（Phase C Task2の対応するテストと同じ形）:
+
+```ts
+it('rejects creating a HOME_ECONOMICS run whose templateSnapshot has zero households', async () => {
+  // ...既存のfakeFirestoreセットアップを再利用し、
+  // template.currentPublishedVersionId が指す version.content を
+  // { subject: 'HOME_ECONOMICS', homeEconomics: { households: [], ... } } にした上で
+  await expect(createLessonRun(deps)).rejects.toThrow('担当プロフィールが1件も設定されていません。')
+})
+```
+
+- [ ] **Step 11: `createLessonRun`を修正する**
+
+`functions/src/lessonRuns/createLessonRun.ts`のバリデーション分岐を拡張する（既存のSOCIAL_STUDIES分岐と並列に追加、read-after-write順序を変えないようトランザクションのREAD PHASE内に留める）:
+
+```ts
+import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
+
+// ...(既存のトランザクション内、SOCIAL_STUDIES検証のすぐ後に追加)
+const contentWithHomeEconomics = version.content as { subject: string; homeEconomics?: unknown }
+if (contentWithHomeEconomics.subject === 'HOME_ECONOMICS' && contentWithHomeEconomics.homeEconomics) {
+  const result = validateHomeEconomicsContent(
+    contentWithHomeEconomics.homeEconomics as Parameters<typeof validateHomeEconomicsContent>[0],
+  )
+  if (!result.valid) throw new Error(result.errors[0])
+}
+```
+
+**既知の限界（Phase C Task2で発見された同型の注意点をそのまま継承）:** このガードは`content.subject === 'HOME_ECONOMICS' && content.homeEconomics`という条件のため、`homeEconomics`が未設定のままpublishされたHOME_ECONOMICS教材はバリデーションを素通りし、市場設定を一切持たないLessonRunが作成されてしまう。教材publish時点（Phase A Task6 `publishLessonVersion`）で`subject`に応じた必須フィールドを強制する仕組みは依然として存在しない——本計画のTask17（受け入れテスト）で改めてこの既知の限界を確認し、埋めるかどうかを判断する。
+
+- [ ] **Step 12: テストを通す**
+
+Run: `cd functions && npx vitest run src/lessonRuns/createLessonRun.test.ts`
+Expected: PASS
+
+- [ ] **Step 13: `npm run verify`**
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add functions/packages/household-authoring-content/src/index.ts functions/packages/household-authoring-content/src/index.test.ts \
+  src/lib/lessonTemplates/types.ts functions/src/homeEconomics/templateValidation.ts functions/src/homeEconomics/templateValidation.test.ts \
+  functions/src/lessonRuns/createLessonRun.ts functions/src/lessonRuns/createLessonRun.test.ts
+git commit -m "feat: add HomeEconomicsContent and validate it at LessonRun creation"
+```
+
+---
+
+### Task 3: 年次収支エンジン（収入・支出集計、簡略税・社会保険式）
+
+統合仕様書 §13.7（収入・支出）・§13.8（税・社会保険）を実装する。純粋関数とし、Task11のラウンド確定処理から呼ばれる。**固定費と変動費を区別可能にする**（§13.7）ことと、**税・社会保険は教材版へ固定した簡略式を使う**（§13.8「数値・式の版を教材版へ固定する」）ことがこのタスクの中核。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/annualCashFlow.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`（Task1）、`EconomicFactors`（Task2、`HomeEconomicsContent.economicFactors`）
+- Produces: `computeAnnualCashFlow(input): AnnualCashFlowResult`、`computeTaxAndSocialInsurance(input, modelVersion): TaxResult`
+
+- [ ] **Step 1: 税・社会保険簡略式（バージョン固定）の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/taxAndSocialInsurance.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeTaxAndSocialInsurance } from './taxAndSocialInsurance'
+
+describe('computeTaxAndSocialInsurance', () => {
+  it('applies model version 1\'s simplified flat-rate formula (spec §13.8 — pinned to template version, not live tax law)', () => {
+    const result = computeTaxAndSocialInsurance({ grossIncomeYen: 6000000 }, 1)
+    // Model v1: 20% combined tax+social-insurance rate — PROVISIONAL, see
+    // TAX_MODEL_V1_RATE_PERCENT below. Exact value is not from live tax law.
+    expect(result.netIncomeYen).toBe(4800000)
+    expect(result.taxAndInsuranceYen).toBe(1200000)
+  })
+
+  it('throws for an unknown model version rather than silently falling back (spec §13.8: pinned, never live-recomputed)', () => {
+    expect(() => computeTaxAndSocialInsurance({ grossIncomeYen: 6000000 }, 99)).toThrow('Unknown tax and social insurance model version: 99')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/taxAndSocialInsurance.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `computeTaxAndSocialInsurance`を実装する**
+
+`functions/src/homeEconomics/engine/taxAndSocialInsurance.ts`:
+
+```ts
+/**
+ * PROVISIONAL — spec §13.8 requires an educational simplified formula
+ * "実際の税率へ依存し過ぎない", not real tax law, and requires the exact
+ * rate to be pinned per template version rather than recomputed live.
+ * This flat 20% combined rate for model version 1 is a starting value to
+ * be adjusted during pilot runs — see Task 17's PROVISIONAL constants
+ * roundup.
+ */
+const TAX_MODEL_V1_RATE_PERCENT = 20
+
+export interface TaxAndSocialInsuranceInput {
+  grossIncomeYen: number
+}
+export interface TaxResult {
+  netIncomeYen: number
+  taxAndInsuranceYen: number
+}
+
+/**
+ * Spec §13.8: "数値・式の版を教材版へ固定する" — the model version comes
+ * from `HomeEconomicsContent.taxAndSocialInsuranceModelVersion` (Task 2),
+ * captured in the LessonRun's immutable `templateSnapshot` at creation
+ * time (Phase A's template/version pattern). A lesson already running
+ * must never have its tax formula change underneath it because a teacher
+ * edited the draft — callers always pass the SNAPSHOT's model version,
+ * never a live lookup.
+ */
+export const computeTaxAndSocialInsurance = (input: TaxAndSocialInsuranceInput, modelVersion: number): TaxResult => {
+  if (modelVersion !== 1) throw new Error(`Unknown tax and social insurance model version: ${modelVersion}`)
+  const taxAndInsuranceYen = Math.round(input.grossIncomeYen * (TAX_MODEL_V1_RATE_PERCENT / 100))
+  return { netIncomeYen: input.grossIncomeYen - taxAndInsuranceYen, taxAndInsuranceYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/taxAndSocialInsurance.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: 年次収支集計の失敗するテストを書く（固定費/変動費区別、物価反映）**
+
+`functions/src/homeEconomics/engine/annualCashFlow.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeAnnualCashFlow } from './annualCashFlow'
+
+describe('computeAnnualCashFlow', () => {
+  it('nets income (after tax) against fixed + variable expenses, separately reported (spec §13.7)', () => {
+    const result = computeAnnualCashFlow({
+      netIncomeYen: 4800000,
+      fixedExpensesYen: 2000000,
+      variableExpensesYen: 800000,
+      inflationPercent: 0,
+    })
+    expect(result.totalExpensesYen).toBe(2800000)
+    expect(result.netCashFlowYen).toBe(2000000)
+    expect(result.fixedExpensesYen).toBe(2000000)
+    expect(result.variableExpensesYen).toBe(800000)
+  })
+
+  it('applies inflation to variable expenses but the caller decides fixed-expense treatment (spec §13.11: 物価は生活費へ反映)', () => {
+    const result = computeAnnualCashFlow({
+      netIncomeYen: 4800000, fixedExpensesYen: 2000000, variableExpensesYen: 800000, inflationPercent: 10,
+    })
+    // Inflation compounds onto variable (living) expenses only — fixed
+    // costs (e.g. a fixed-rate mortgage payment) are NOT inflation-adjusted
+    // here; that distinction is what "固定費と変動費を区別可能" (§13.7) is for.
+    expect(result.variableExpensesYen).toBe(880000)
+    expect(result.fixedExpensesYen).toBe(2000000)
+  })
+})
+```
+
+- [ ] **Step 6: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/annualCashFlow.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 7: `computeAnnualCashFlow`を実装する**
+
+`functions/src/homeEconomics/engine/annualCashFlow.ts`:
+
+```ts
+export interface AnnualCashFlowInput {
+  netIncomeYen: number
+  fixedExpensesYen: number
+  variableExpensesYen: number
+  /** Spec §13.11: applied to variable (living-cost) expenses only. */
+  inflationPercent: number
+}
+export interface AnnualCashFlowResult {
+  fixedExpensesYen: number
+  variableExpensesYen: number
+  totalExpensesYen: number
+  netCashFlowYen: number
+}
+
+export const computeAnnualCashFlow = (input: AnnualCashFlowInput): AnnualCashFlowResult => {
+  const variableExpensesYen = Math.round(input.variableExpensesYen * (1 + input.inflationPercent / 100))
+  const totalExpensesYen = input.fixedExpensesYen + variableExpensesYen
+  return {
+    fixedExpensesYen: input.fixedExpensesYen,
+    variableExpensesYen,
+    totalExpensesYen,
+    netCashFlowYen: input.netIncomeYen - totalExpensesYen,
+  }
+}
+```
+
+- [ ] **Step 8: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/annualCashFlow.test.ts`
+Expected: PASS
+
+- [ ] **Step 9: `npm run verify`**
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/annualCashFlow.ts functions/src/homeEconomics/engine/annualCashFlow.test.ts \
+  functions/src/homeEconomics/engine/taxAndSocialInsurance.ts functions/src/homeEconomics/engine/taxAndSocialInsurance.test.ts
+git commit -m "feat: add annual cash-flow and tax/social-insurance simplified engines"
+```
+
+---
+
+### Task 4: 資産の年次収益率計算（経済要因反映、決定的PRNGノイズ）
+
+統合仕様書 §13.5（資産）・§13.11（経済要因）・§13.15（年次収益率）を実装する。純粋関数とし、`Task11`のラウンド確定処理から呼ばれる。**乱数は`functions/packages/deterministic-random`のみを使う。**
+
+`AssetPosition.expectedReturnPercent`（Task1、教材作成者が設定する非公開の期待収益率）を`EconomicFactors.marketReturnPercent`（Task2、教材の市場想定）で補正し、決定的PRNGによるノイズ項を加える。Phase C Task3の`calculateNextPrice`と同じ構造（決定論的な基礎値＋ノイズ）だが、時間の単位が3秒バッチではなくラウンド（年）である点が異なる。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/assetReturn.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `AssetPosition`（Task1）、`EconomicFactors`（Task2）、`deriveSeed`/`mulberry32`（Phase A、`@stock-league/deterministic-random`）
+- Produces: `computeAssetReturn(input): AssetReturnResult`
+
+- [ ] **Step 1: 決定的収益率計算の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/assetReturn.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeAssetReturn } from './assetReturn'
+
+const baseInput = {
+  assetType: 'DOMESTIC_STOCK' as const, valueYen: 1000000,
+  expectedReturnPercent: 5, volatilityPercent: 15,
+  marketReturnPercent: 3, householdId: 'case-b', roundIndex: 2,
+  randomSeed: 'seed-abc', restoreGeneration: 0,
+}
+
+describe('computeAssetReturn', () => {
+  it('is deterministic — same inputs always produce the same nextValueYen', () => {
+    expect(computeAssetReturn(baseInput)).toEqual(computeAssetReturn(baseInput))
+  })
+
+  it('a different roundIndex produces a different result — the noise term is not constant across rounds', () => {
+    const round2 = computeAssetReturn(baseInput)
+    const round3 = computeAssetReturn({ ...baseInput, roundIndex: 3 })
+    expect(round2.nextValueYen).not.toBe(round3.nextValueYen)
+  })
+
+  it('CASH never carries a noise term — zero volatility is exact, not approximate (spec §13.5)', () => {
+    const result = computeAssetReturn({ ...baseInput, assetType: 'CASH', expectedReturnPercent: 0, volatilityPercent: 0 })
+    expect(result.nextValueYen).toBe(baseInput.valueYen)
+    expect(result.returnPercent).toBe(0)
+  })
+
+  it('never returns a negative value even with a large negative noise draw', () => {
+    const result = computeAssetReturn({ ...baseInput, expectedReturnPercent: -50, volatilityPercent: 200 })
+    expect(result.nextValueYen).toBeGreaterThanOrEqual(0)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/assetReturn.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `computeAssetReturn`を実装する**
+
+`functions/src/homeEconomics/engine/assetReturn.ts`:
+
+```ts
+import { deriveSeed, mulberry32 } from '@stock-league/deterministic-random'
+import type { AssetType } from '@stock-league/household-public-content'
+
+export interface AssetReturnInput {
+  assetType: AssetType
+  valueYen: number
+  /** Hidden from students (Task 1) — the teacher-authored base expectation. */
+  expectedReturnPercent: number
+  /** Hidden from students (Task 1) — drives the noise term's magnitude. */
+  volatilityPercent: number
+  /** Spec §13.11 — HomeEconomicsContent.economicFactors.marketReturnPercent (Task 2), added to expectedReturnPercent as the economic-environment adjustment. */
+  marketReturnPercent: number
+  householdId: string
+  roundIndex: number
+  randomSeed: string
+  restoreGeneration: number
+}
+export interface AssetReturnResult {
+  returnPercent: number
+  nextValueYen: number
+}
+
+/**
+ * Spec §13.5/§13.15: each asset's next value = current value × (1 +
+ * expectedReturn + marketReturn + noise). Noise is deterministic PRNG,
+ * scaled by volatilityPercent — an asset with 0 volatility (e.g. CASH)
+ * gets exactly 0 noise, never an approximately-zero draw. Never goes
+ * negative — a household's asset value floors at 0 (assets don't go
+ * short in this simulation).
+ */
+export const computeAssetReturn = (input: AssetReturnInput): AssetReturnResult => {
+  let noisePercent = 0
+  if (input.volatilityPercent !== 0) {
+    const seed = deriveSeed([input.randomSeed, input.restoreGeneration, input.householdId, input.assetType, input.roundIndex])
+    const rand = mulberry32(seed)()
+    noisePercent = (rand * 2 - 1) * input.volatilityPercent
+  }
+  const returnPercent = input.expectedReturnPercent + input.marketReturnPercent + noisePercent
+  const nextValueYen = Math.max(0, Math.round(input.valueYen * (1 + returnPercent / 100)))
+  return { returnPercent, nextValueYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/assetReturn.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/assetReturn.ts functions/src/homeEconomics/engine/assetReturn.test.ts
+git commit -m "feat: add deterministic annual asset-return engine"
+```
+
+---
+
+### Task 5: 住宅ローン計算（元利均等返済）
+
+統合仕様書 §13.9を実装する。純粋関数。**元利均等返済（毎年の返済額が一定、内訳の元金/利息の比率だけが年ごとに変わる）を基本とする**（§13.9「元利均等返済を基本とする」）。1ラウンドが5年（既定）の場合、そのラウンド内で5年分の返済が同時に進行するため、`roundYears`年分をまとめて計算する。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/mortgage.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `Liability`（Task1、`kind: 'MORTGAGE'`のもの）
+- Produces: `computeAnnualMortgagePayment(input): number`、`applyMortgageRound(input): MortgageRoundResult`
+
+- [ ] **Step 1: 単年の元利均等返済額計算の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/mortgage.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { applyMortgageRound, computeAnnualMortgagePayment } from './mortgage'
+
+describe('computeAnnualMortgagePayment', () => {
+  it('computes the level annual payment for an equal-principal-and-interest mortgage (spec §13.9)', () => {
+    // 30,000,000円、年利2%、返済期間20年 — 教育用の簡略年次複利モデル。
+    // r=0.02, n=20 の資本回収係数(A/P)はおよそ0.0612なので、支払額は
+    // 30,000,000 * 0.0612 ≒ 1,836,000円前後になるはず——手計算での複利誤差を
+    // 考慮し、厳密な一致ではなく妥当な範囲で検証する。総返済額(20年分)が
+    // 元本を上回る(利息が発生している)ことも合わせて確認する。
+    const payment = computeAnnualMortgagePayment({ principalYen: 30000000, annualInterestRatePercent: 2, remainingYears: 20 })
+    expect(payment).toBeGreaterThan(1800000)
+    expect(payment).toBeLessThan(1900000)
+    expect(payment * 20).toBeGreaterThan(30000000)
+  })
+
+  it('a zero-interest loan divides principal evenly across the remaining years', () => {
+    const payment = computeAnnualMortgagePayment({ principalYen: 20000000, annualInterestRatePercent: 0, remainingYears: 20 })
+    expect(payment).toBe(1000000)
+  })
+})
+
+describe('applyMortgageRound', () => {
+  it('advances 5 years of level payments, splitting each year\'s payment into principal/interest, and reduces remainingYears', () => {
+    const result = applyMortgageRound({
+      remainingPrincipalYen: 30000000, annualInterestRatePercent: 2, remainingYears: 20, roundYears: 5,
+    })
+    expect(result.newRemainingYears).toBe(15)
+    expect(result.newRemainingPrincipalYen).toBeLessThan(30000000)
+    expect(result.totalPaymentYen).toBeGreaterThan(1800000 * 5)
+    expect(result.totalPaymentYen).toBeLessThan(1900000 * 5)
+    expect(result.principalPaidYen + result.interestPaidYen).toBeCloseTo(result.totalPaymentYen, 0)
+  })
+
+  it('pays off the loan early and stops — a round longer than the remaining term never goes negative', () => {
+    const result = applyMortgageRound({
+      remainingPrincipalYen: 1000000, annualInterestRatePercent: 2, remainingYears: 2, roundYears: 5,
+    })
+    expect(result.newRemainingYears).toBe(0)
+    expect(result.newRemainingPrincipalYen).toBe(0)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/mortgage.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/mortgage.ts`:
+
+```ts
+export interface AnnualMortgagePaymentInput {
+  principalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+
+/** Spec §13.9: level annual payment, equal-principal-and-interest ("元利均等返済"). */
+export const computeAnnualMortgagePayment = (input: AnnualMortgagePaymentInput): number => {
+  const r = input.annualInterestRatePercent / 100
+  if (r === 0) return Math.round(input.principalYen / input.remainingYears)
+  const factor = (1 + r) ** input.remainingYears
+  return Math.round((input.principalYen * r * factor) / (factor - 1))
+}
+
+export interface MortgageRoundInput {
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+  roundYears: number
+}
+export interface MortgageRoundResult {
+  totalPaymentYen: number
+  principalPaidYen: number
+  interestPaidYen: number
+  newRemainingPrincipalYen: number
+  newRemainingYears: number
+}
+
+/**
+ * Advances `roundYears` years of level payments in one call — a round
+ * (5 years by default, spec §13.1) covers multiple payment years at once.
+ * Stops early (never goes negative) if the loan pays off before
+ * `roundYears` elapses.
+ */
+export const applyMortgageRound = (input: MortgageRoundInput): MortgageRoundResult => {
+  let remainingPrincipalYen = input.remainingPrincipalYen
+  let remainingYears = input.remainingYears
+  let totalPaymentYen = 0
+  let interestPaidYen = 0
+
+  const yearsToRun = Math.min(input.roundYears, input.remainingYears)
+  for (let year = 0; year < yearsToRun; year += 1) {
+    if (remainingPrincipalYen <= 0) break
+    const payment = computeAnnualMortgagePayment({
+      principalYen: remainingPrincipalYen, annualInterestRatePercent: input.annualInterestRatePercent, remainingYears,
+    })
+    const interestThisYear = Math.round(remainingPrincipalYen * (input.annualInterestRatePercent / 100))
+    const principalThisYear = Math.min(remainingPrincipalYen, payment - interestThisYear)
+    remainingPrincipalYen -= principalThisYear
+    remainingYears -= 1
+    totalPaymentYen += interestThisYear + principalThisYear
+    interestPaidYen += interestThisYear
+  }
+
+  return {
+    totalPaymentYen,
+    principalPaidYen: totalPaymentYen - interestPaidYen,
+    interestPaidYen,
+    newRemainingPrincipalYen: Math.max(0, remainingPrincipalYen),
+    newRemainingYears: Math.max(0, remainingYears),
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/mortgage.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/mortgage.ts functions/src/homeEconomics/engine/mortgage.test.ts
+git commit -m "feat: add equal-principal-and-interest mortgage amortization engine"
+```
+
+---
+
+### Task 6: 保険モデル（保険料・給付条件）
+
+統合仕様書 §13.6を実装する。純粋関数。**保険は資産と分離する**（§13.6「資産配分円グラフへ保険を混ぜない」——Task1で既に型を分離済み、本タスクはその計算ロジック）。給付は`coveredEventIds`（Task1で追加）に含まれるイベントIDがそのラウンドで実際に発生した場合にのみ支払われる——`internalClaimProbability`（内部係数）は給付の可否を左右せず、教師向けの「影響の強さ」表示のみに使う（§13.15）。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/insurance.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `InsuranceProduct`（Task1）、`occurredEventIds: string[]`（Task7が生成する、このラウンドで実際に発生したイベントのID一覧）
+- Produces: `computeAnnualPremiumTotal(contracts): number`、`computeInsuranceBenefits(contracts, occurredEventIds): InsuranceBenefitResult[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/insurance.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { InsuranceProduct } from '@stock-league/household-authoring-content'
+import { computeAnnualPremiumTotal, computeInsuranceBenefits } from './insurance'
+
+const healthInsurance: InsuranceProduct = {
+  id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000,
+  coveredRisk: '病気・入院', benefitDescription: '入院日額1万円',
+  benefitAmountYen: 500000, contractYears: 10, coveredEventIds: ['illness'],
+  internalClaimProbability: 0.03,
+}
+const lifeInsurance: InsuranceProduct = {
+  ...healthInsurance, id: 'ins-2', productName: '生命保険B',
+  coveredEventIds: ['death'], benefitAmountYen: 3000000,
+}
+
+describe('computeAnnualPremiumTotal', () => {
+  it('sums the annual premium across every contract', () => {
+    expect(computeAnnualPremiumTotal([healthInsurance, lifeInsurance])).toBe(120000)
+  })
+  it('returns 0 for no contracts', () => {
+    expect(computeAnnualPremiumTotal([])).toBe(0)
+  })
+})
+
+describe('computeInsuranceBenefits', () => {
+  it('pays the benefit only for a contract whose covered event actually occurred this round', () => {
+    const results = computeInsuranceBenefits([healthInsurance, lifeInsurance], ['illness'])
+    expect(results).toEqual([
+      { insuranceId: 'ins-1', paidYen: 500000 },
+      { insuranceId: 'ins-2', paidYen: 0 },
+    ])
+  })
+
+  it('does not pay when the occurred event is unrelated to any contract', () => {
+    const results = computeInsuranceBenefits([healthInsurance], ['job-loss'])
+    expect(results).toEqual([{ insuranceId: 'ins-1', paidYen: 0 }])
+  })
+
+  it('internalClaimProbability never influences whether a benefit pays out (spec §13.15 — gates display only)', () => {
+    const zeroProbability = { ...healthInsurance, internalClaimProbability: 0 }
+    const results = computeInsuranceBenefits([zeroProbability], ['illness'])
+    expect(results).toEqual([{ insuranceId: 'ins-1', paidYen: 500000 }])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/insurance.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/insurance.ts`:
+
+```ts
+import type { InsuranceProduct } from '@stock-league/household-authoring-content'
+
+export const computeAnnualPremiumTotal = (contracts: InsuranceProduct[]): number =>
+  contracts.reduce((sum, contract) => sum + contract.premiumYenPerYear, 0)
+
+export interface InsuranceBenefitResult {
+  insuranceId: string
+  paidYen: number
+}
+
+/**
+ * Spec §13.6/§13.15: whether a benefit pays out is determined ENTIRELY by
+ * whether one of `coveredEventIds` actually occurred this round
+ * (`occurredEventIds`, from Task 7's life-event engine) — never by
+ * `internalClaimProbability`, which is teacher-facing "influence
+ * strength" display only and must not gate real payouts.
+ */
+export const computeInsuranceBenefits = (
+  contracts: InsuranceProduct[],
+  occurredEventIds: string[],
+): InsuranceBenefitResult[] =>
+  contracts.map((contract) => {
+    const covered = contract.coveredEventIds.some((eventId) => occurredEventIds.includes(eventId))
+    return { insuranceId: contract.id, paidYen: covered ? contract.benefitAmountYen : 0 }
+  })
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/insurance.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/insurance.ts functions/src/homeEconomics/engine/insurance.test.ts
+git commit -m "feat: add insurance premium/benefit engine, event-linked payouts"
+```
+
+---
+
+### Task 7: ライフイベントエンジン（発生判定・公開方法・効果適用）
+
+統合仕様書 §13.12を実装する。純粋関数、決定的PRNGを使用。**発生判定（`triggerProbability`）と公開方法（`disclosureMode`）は独立した軸**（Task1のJSDocで既に明記）——このタスクはこの2軸をそれぞれ正しく扱う。`HouseholdProfile.eventProbabilityOverrides`（Task1）でプロフィールごとに発生確率を上書きできる。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/lifeEvents.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `LifeEventDefinition`、`HouseholdProfile`（Task1）、`deriveSeed`/`mulberry32`（Phase A）
+- Produces: `determineOccurredEvents(input): string[]`、`buildEventDisclosureView(events, occurredEventIds, upcomingRoundIndex): EventDisclosureView[]`、`applyEventEffects(events, occurredEventIds): EventEffectTotals`
+
+- [ ] **Step 1: 発生判定の失敗するテストを書く（決定性、上書き確率）**
+
+`functions/src/homeEconomics/engine/lifeEvents.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { LifeEventDefinition } from '@stock-league/household-authoring-content'
+import { applyEventEffects, buildEventDisclosureView, determineOccurredEvents } from './lifeEvents'
+
+const jobLoss: LifeEventDefinition = {
+  id: 'job-loss', label: '失業', disclosureMode: 'HIDDEN', triggerProbability: 0.5,
+  effectDescription: '収入が一時的に0になる', incomeEffectYen: -3000000, expenseEffectYen: 0, cashEffectYen: 0,
+}
+const marriage: LifeEventDefinition = {
+  id: 'marriage', label: '結婚', disclosureMode: 'ANNOUNCED', triggerProbability: 0,
+  effectDescription: '一時的な費用が発生する', incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: -1000000,
+}
+
+describe('determineOccurredEvents', () => {
+  it('is deterministic — same inputs always produce the same occurred-event set', () => {
+    const input = { events: [jobLoss], eventProbabilityOverrides: {}, householdId: 'case-b', roundIndex: 3, randomSeed: 'seed-x', restoreGeneration: 0 }
+    expect(determineOccurredEvents(input)).toEqual(determineOccurredEvents(input))
+  })
+
+  it('triggerProbability 0 never fires, triggerProbability 1 always fires — boundary cases are exact, not probabilistic', () => {
+    const never: LifeEventDefinition = { ...jobLoss, triggerProbability: 0 }
+    const always: LifeEventDefinition = { ...jobLoss, triggerProbability: 1 }
+    expect(determineOccurredEvents({ events: [never], eventProbabilityOverrides: {}, householdId: 'h', roundIndex: 1, randomSeed: 's', restoreGeneration: 0 })).toEqual([])
+    expect(determineOccurredEvents({ events: [always], eventProbabilityOverrides: {}, householdId: 'h', roundIndex: 1, randomSeed: 's', restoreGeneration: 0 })).toEqual(['job-loss'])
+  })
+
+  it('a per-household eventProbabilityOverrides entry replaces the event definition\'s own triggerProbability', () => {
+    const result = determineOccurredEvents({
+      events: [jobLoss], eventProbabilityOverrides: { 'job-loss': 1 },
+      householdId: 'h', roundIndex: 1, randomSeed: 's', restoreGeneration: 0,
+    })
+    expect(result).toEqual(['job-loss'])
+  })
+})
+
+describe('buildEventDisclosureView', () => {
+  it('ANNOUNCED events show label and effectDescription in advance, before they occur', () => {
+    const views = buildEventDisclosureView([marriage], [], 5)
+    expect(views).toEqual([{ eventId: 'marriage', label: '結婚', effectDescription: '一時的な費用が発生する', revealed: true }])
+  })
+
+  it('HIDDEN events show nothing until they actually occur this round', () => {
+    const notYet = buildEventDisclosureView([jobLoss], [], 5)
+    expect(notYet).toEqual([{ eventId: 'job-loss', label: null, effectDescription: null, revealed: false }])
+    const occurred = buildEventDisclosureView([jobLoss], ['job-loss'], 5)
+    expect(occurred).toEqual([{ eventId: 'job-loss', label: '失業', effectDescription: '収入が一時的に0になる', revealed: true }])
+  })
+})
+
+describe('applyEventEffects', () => {
+  it('sums income/expense/cash effects across every event that actually occurred', () => {
+    const totals = applyEventEffects([jobLoss, marriage], ['job-loss', 'marriage'])
+    expect(totals).toEqual({ incomeEffectYen: -3000000, expenseEffectYen: 0, cashEffectYen: -1000000 })
+  })
+
+  it('an event NOT in occurredEventIds contributes nothing', () => {
+    const totals = applyEventEffects([jobLoss], [])
+    expect(totals).toEqual({ incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: 0 })
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/lifeEvents.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/lifeEvents.ts`:
+
+```ts
+import { deriveSeed, mulberry32 } from '@stock-league/deterministic-random'
+import type { LifeEventDefinition } from '@stock-league/household-authoring-content'
+
+export interface DetermineOccurredEventsInput {
+  events: LifeEventDefinition[]
+  /** Task 1's HouseholdProfile.eventProbabilityOverrides — keyed by event id, overrides the definition's own triggerProbability for this household only. */
+  eventProbabilityOverrides: Record<string, number>
+  householdId: string
+  roundIndex: number
+  randomSeed: string
+  restoreGeneration: number
+}
+
+/**
+ * Spec §13.12. Boundary probabilities (0, 1) are exact, not approximate —
+ * a rand draw in [0,1) is always < 1 and never < 0, so this holds without
+ * special-casing.
+ */
+export const determineOccurredEvents = (input: DetermineOccurredEventsInput): string[] => {
+  const occurred: string[] = []
+  for (const event of input.events) {
+    const probability = input.eventProbabilityOverrides[event.id] ?? event.triggerProbability
+    if (probability <= 0) continue
+    if (probability >= 1) { occurred.push(event.id); continue }
+    const seed = deriveSeed([input.randomSeed, input.restoreGeneration, input.householdId, event.id, input.roundIndex])
+    const rand = mulberry32(seed)()
+    if (rand < probability) occurred.push(event.id)
+  }
+  return occurred
+}
+
+export interface EventDisclosureView {
+  eventId: string
+  label: string | null
+  effectDescription: string | null
+  revealed: boolean
+}
+
+/**
+ * Spec §13.12: ANNOUNCED events reveal their label/effect ahead of time
+ * (before `occurredEventIds` even contains them — this is the "advance
+ * notice" the disclosure mode promises). HIDDEN events reveal nothing
+ * until `occurredEventIds` actually contains them. PARTIALLY_ANNOUNCED
+ * is intentionally out of this task's scope for the exact partial-hint
+ * text — Task 15 (screens) decides how a partial hint renders; this
+ * function treats PARTIALLY_ANNOUNCED the same as HIDDEN for whether the
+ * full label/effect is revealed (a future task may split this further).
+ */
+export const buildEventDisclosureView = (
+  events: LifeEventDefinition[],
+  occurredEventIds: string[],
+  _upcomingRoundIndex: number,
+): EventDisclosureView[] =>
+  events.map((event) => {
+    const occurred = occurredEventIds.includes(event.id)
+    const revealed = event.disclosureMode === 'ANNOUNCED' || occurred
+    return {
+      eventId: event.id,
+      label: revealed ? event.label : null,
+      effectDescription: revealed ? event.effectDescription : null,
+      revealed,
+    }
+  })
+
+export interface EventEffectTotals {
+  incomeEffectYen: number
+  expenseEffectYen: number
+  cashEffectYen: number
+}
+
+export const applyEventEffects = (events: LifeEventDefinition[], occurredEventIds: string[]): EventEffectTotals => {
+  const occurred = events.filter((event) => occurredEventIds.includes(event.id))
+  return {
+    incomeEffectYen: occurred.reduce((sum, e) => sum + e.incomeEffectYen, 0),
+    expenseEffectYen: occurred.reduce((sum, e) => sum + e.expenseEffectYen, 0),
+    cashEffectYen: occurred.reduce((sum, e) => sum + e.cashEffectYen, 0),
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/lifeEvents.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/lifeEvents.ts functions/src/homeEconomics/engine/lifeEvents.test.ts
+git commit -m "feat: add life-event trigger/disclosure/effect engine"
+```
+
+---
+
+### Task 8: 資金不足時の選択肢提示
+
+統合仕様書 §13.13を実装する。純粋関数。**資金不足時は自動で破綻させず、判断機会として選択肢を提示する**（§13.13）——このタスクは「不足を検知する」「実行可能な選択肢を列挙する」「選んだ選択肢を適用する」の3段階に分ける。「実行可能」の判定（資産があるか、借入が教材で許可されているか等）はこのタスクが受け取る入力から機械的に決まり、公的支援が実際に条件を満たすかどうかの判定自体はTask9の責務——本タスクは`publicSupportAvailableYen`（Task9の出力）を受け取るだけで、公的支援の適格性ロジックを重複実装しない。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/shortfallOptions.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Task11のラウンド確定処理が、Task3の`netCashFlowYen`とTask9の`publicSupportAvailableYen`を渡して呼ぶ）
+- Produces: `detectShortfall(input): number`、`buildShortfallOptions(input): ShortfallOption[]`、`applyShortfallResolution(option, shortfallYen): ShortfallResolutionResult`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/shortfallOptions.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { applyShortfallResolution, buildShortfallOptions, detectShortfall } from './shortfallOptions'
+
+describe('detectShortfall', () => {
+  it('returns 0 when savings cover a negative cash flow', () => {
+    expect(detectShortfall({ cashSavingsYen: 1000000, netCashFlowYen: -500000 })).toBe(0)
+  })
+  it('returns the exact shortfall amount when savings run out', () => {
+    expect(detectShortfall({ cashSavingsYen: 300000, netCashFlowYen: -500000 })).toBe(200000)
+  })
+  it('returns 0 for a positive cash flow regardless of savings', () => {
+    expect(detectShortfall({ cashSavingsYen: 0, netCashFlowYen: 100000 })).toBe(0)
+  })
+})
+
+describe('buildShortfallOptions', () => {
+  it('always includes REDUCE_EXPENSES and DELAY_GOAL — always available regardless of assets/permissions (spec §13.13)', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 0, publicSupportAvailableYen: 0, borrowingAllowed: false })
+    const types = options.map((o) => o.type)
+    expect(types).toContain('REDUCE_EXPENSES')
+    expect(types).toContain('DELAY_GOAL')
+    expect(types).not.toContain('SELL_ASSETS')
+    expect(types).not.toContain('BORROW')
+    expect(types).not.toContain('PUBLIC_SUPPORT')
+  })
+
+  it('includes SELL_ASSETS only when liquid assets exist, BORROW only when the template allows it, PUBLIC_SUPPORT only when available', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 500000, publicSupportAvailableYen: 100000, borrowingAllowed: true })
+    const types = options.map((o) => o.type)
+    expect(types).toEqual(expect.arrayContaining(['REDUCE_EXPENSES', 'SELL_ASSETS', 'BORROW', 'PUBLIC_SUPPORT', 'DELAY_GOAL']))
+  })
+
+  it('caps SELL_ASSETS\'s resolvesYen at whichever is smaller — the shortfall or the available liquid assets', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 50000, publicSupportAvailableYen: 0, borrowingAllowed: false })
+    const sellAssets = options.find((o) => o.type === 'SELL_ASSETS')
+    expect(sellAssets?.resolvesYen).toBe(50000)
+  })
+})
+
+describe('applyShortfallResolution', () => {
+  it('SELL_ASSETS converts assetDelta negative and cashDelta positive by the same amount', () => {
+    const result = applyShortfallResolution({ type: 'SELL_ASSETS', description: 'x', resolvesYen: 150000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 150000, assetDeltaYen: -150000, newLiabilityYen: 0, goalDelayedRounds: 0 })
+  })
+
+  it('BORROW creates a new liability for the full shortfall, not just the option\'s resolvesYen cap', () => {
+    const result = applyShortfallResolution({ type: 'BORROW', description: 'x', resolvesYen: 999999999 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 200000, assetDeltaYen: 0, newLiabilityYen: 200000, goalDelayedRounds: 0 })
+  })
+
+  it('DELAY_GOAL resolves the shortfall with no cash movement, only a delay', () => {
+    const result = applyShortfallResolution({ type: 'DELAY_GOAL', description: 'x', resolvesYen: 200000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 0, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 1 })
+  })
+
+  it('REDUCE_EXPENSES covers the shortfall by cutting this round\'s spending — a real cash resolution, not a no-op', () => {
+    const result = applyShortfallResolution({ type: 'REDUCE_EXPENSES', description: 'x', resolvesYen: 200000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 200000, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 })
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/shortfallOptions.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/shortfallOptions.ts`:
+
+```ts
+export interface DetectShortfallInput {
+  cashSavingsYen: number
+  netCashFlowYen: number
+}
+
+/** Spec §13.13: a shortfall exists only when this round's cash flow would drive savings below 0. Returns the exact positive shortfall, or 0 when covered. */
+export const detectShortfall = (input: DetectShortfallInput): number => {
+  const projectedCashYen = input.cashSavingsYen + input.netCashFlowYen
+  return projectedCashYen < 0 ? -projectedCashYen : 0
+}
+
+export type ShortfallOptionType = 'REDUCE_EXPENSES' | 'SELL_ASSETS' | 'BORROW' | 'PUBLIC_SUPPORT' | 'DELAY_GOAL'
+export interface ShortfallOption {
+  type: ShortfallOptionType
+  description: string
+  resolvesYen: number
+}
+
+export interface BuildShortfallOptionsInput {
+  shortfallYen: number
+  liquidAssetsYen: number
+  /** Task 9's output — 0 when the household doesn't qualify this round. */
+  publicSupportAvailableYen: number
+  /** From `HomeEconomicsContent` (Task 2) — whether the template permits emergency borrowing at all. */
+  borrowingAllowed: boolean
+}
+
+/**
+ * Spec §13.13: never auto-bankrupts — REDUCE_EXPENSES and DELAY_GOAL are
+ * always offered regardless of assets/permissions (a student can always
+ * choose to cut spending or push the goal back). The other three only
+ * appear when actually possible, so the UI never offers a resolution path
+ * that would fail.
+ */
+export const buildShortfallOptions = (input: BuildShortfallOptionsInput): ShortfallOption[] => {
+  const options: ShortfallOption[] = [
+    { type: 'REDUCE_EXPENSES', description: '生活費を切り詰める', resolvesYen: input.shortfallYen },
+    { type: 'DELAY_GOAL', description: '目標達成を先送りする', resolvesYen: input.shortfallYen },
+  ]
+  if (input.liquidAssetsYen > 0) {
+    options.push({ type: 'SELL_ASSETS', description: '資産を売却する', resolvesYen: Math.min(input.shortfallYen, input.liquidAssetsYen) })
+  }
+  if (input.borrowingAllowed) {
+    options.push({ type: 'BORROW', description: '借入をする', resolvesYen: input.shortfallYen })
+  }
+  if (input.publicSupportAvailableYen > 0) {
+    options.push({ type: 'PUBLIC_SUPPORT', description: '公的支援を申請する', resolvesYen: Math.min(input.shortfallYen, input.publicSupportAvailableYen) })
+  }
+  return options
+}
+
+export interface ShortfallResolutionResult {
+  cashDeltaYen: number
+  assetDeltaYen: number
+  newLiabilityYen: number
+  goalDelayedRounds: number
+}
+
+/**
+ * BORROW always covers the FULL shortfall (a loan sized to need, not
+ * capped by the option's own `resolvesYen`) — unlike SELL_ASSETS/
+ * PUBLIC_SUPPORT, which are capped by what's actually available.
+ */
+export const applyShortfallResolution = (option: ShortfallOption, shortfallYen: number): ShortfallResolutionResult => {
+  switch (option.type) {
+    case 'SELL_ASSETS':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: -option.resolvesYen, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'PUBLIC_SUPPORT':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'BORROW':
+      return { cashDeltaYen: shortfallYen, assetDeltaYen: 0, newLiabilityYen: shortfallYen, goalDelayedRounds: 0 }
+    case 'REDUCE_EXPENSES':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'DELAY_GOAL':
+      return { cashDeltaYen: 0, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 1 }
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/shortfallOptions.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/shortfallOptions.ts functions/src/homeEconomics/engine/shortfallOptions.test.ts
+git commit -m "feat: add shortfall-detection and resolution-options engine, never auto-bankrupts"
+```
+
+---
+
+### Task 9: 公的支援モデル
+
+統合仕様書 §13.10を実装する。純粋関数。**制度の完全再現を目的にしない**（§13.10）——世帯収入のしきい値による単純な適格判定に留める。`applicationMode`（自動適用/申請選択）は教材設定（`PublicSupportProgram`、Task2で`HomeEconomicsContent.publicSupportPrograms`として追加済み）で切り替える。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/publicSupport.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `PublicSupportProgram`（Task2）
+- Produces: `determineEligiblePrograms(programs, householdIncomeYen): PublicSupportProgram[]`、`computePublicSupportAvailableYen(eligiblePrograms, appliedProgramIds): number`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/publicSupport.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { PublicSupportProgram } from '@stock-league/household-authoring-content'
+import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
+
+const childcareSupport: PublicSupportProgram = {
+  id: 'childcare', label: '子育て支援金', conditionDescription: '世帯収入が500万円未満',
+  maxHouseholdIncomeYen: 5000000, applicationMode: 'AUTOMATIC', benefitAmountYen: 200000,
+}
+const emergencyGrant: PublicSupportProgram = {
+  id: 'emergency', label: '緊急給付金', conditionDescription: '所得制限なし',
+  maxHouseholdIncomeYen: null, applicationMode: 'APPLICATION_REQUIRED', benefitAmountYen: 100000,
+}
+
+describe('determineEligiblePrograms', () => {
+  it('includes a program only when household income is under its threshold', () => {
+    expect(determineEligiblePrograms([childcareSupport], 4000000)).toEqual([childcareSupport])
+    expect(determineEligiblePrograms([childcareSupport], 6000000)).toEqual([])
+  })
+
+  it('a null maxHouseholdIncomeYen means no income restriction — always eligible on that axis', () => {
+    expect(determineEligiblePrograms([emergencyGrant], 100000000)).toEqual([emergencyGrant])
+  })
+})
+
+describe('computePublicSupportAvailableYen', () => {
+  it('sums AUTOMATIC eligible programs without needing to be in appliedProgramIds', () => {
+    expect(computePublicSupportAvailableYen([childcareSupport], [])).toBe(200000)
+  })
+
+  it('APPLICATION_REQUIRED programs only count when their id is in appliedProgramIds (spec §13.10: 申請選択)', () => {
+    expect(computePublicSupportAvailableYen([emergencyGrant], [])).toBe(0)
+    expect(computePublicSupportAvailableYen([emergencyGrant], ['emergency'])).toBe(100000)
+  })
+
+  it('combines both modes correctly', () => {
+    expect(computePublicSupportAvailableYen([childcareSupport, emergencyGrant], ['emergency'])).toBe(300000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/publicSupport.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/publicSupport.ts`:
+
+```ts
+import type { PublicSupportProgram } from '@stock-league/household-authoring-content'
+
+/** Spec §13.10: "条件・効果を簡略表示" — a single income-threshold check, not a full eligibility engine. */
+export const determineEligiblePrograms = (
+  programs: PublicSupportProgram[],
+  householdIncomeYen: number,
+): PublicSupportProgram[] =>
+  programs.filter((program) => program.maxHouseholdIncomeYen === null || householdIncomeYen < program.maxHouseholdIncomeYen)
+
+/**
+ * Spec §13.10: "自動適用か申請選択かを教材で設定" — AUTOMATIC programs
+ * always count once eligible; APPLICATION_REQUIRED ones only count when
+ * the student actually chose to apply for them this round (via Task 10's
+ * DECISION submission, surfaced as one of Task 8's shortfall options or a
+ * standalone application choice).
+ */
+export const computePublicSupportAvailableYen = (
+  eligiblePrograms: PublicSupportProgram[],
+  appliedProgramIds: string[],
+): number =>
+  eligiblePrograms.reduce((sum, program) => {
+    if (program.applicationMode === 'AUTOMATIC') return sum + program.benefitAmountYen
+    return appliedProgramIds.includes(program.id) ? sum + program.benefitAmountYen : sum
+  }, 0)
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/publicSupport.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/publicSupport.ts functions/src/homeEconomics/engine/publicSupport.test.ts
+git commit -m "feat: add simplified public-support eligibility and benefit engine"
+```
+
+---
+
+### Task 10: `HouseholdState`リポジトリと判断提出Callable（`DECISION`フェーズ）
+
+統合仕様書 §13.4〜§13.9・§13.13を実装する。ここで初めて「チーム（または人物）が担当するプロフィールの可変状態」の永続化が必要になるため、本タスクで`HouseholdState`（Firestore正本）を導入する。**`HouseholdState`は`HouseholdProfile`（Task1、教材の初期値・非公開係数）とは別物**——`HouseholdProfile`は教材が定義する不変のテンプレート、`HouseholdState`はラウンドごとに変化する実際の進行状態（現在の現金・保有資産・保険契約・負債・ライフステージ・目標延期回数）。
+
+生徒の判断提出は、Phase Bの汎用回答機構（`LessonResponse`、Task6の`@stock-league/lesson-inputs`ウィジェット）を**個々の入力欄**には再利用しつつ（例: 資産配分は`RankingInput`/`QuantityInput`、資金不足時の選択肢は`SingleChoiceInput`）、**1ラウンド分の判断一式**は専用の構造化Callable`submitHouseholdDecision`でまとめて受け取る——資産配分・保険加入解約・資金不足対応・公的支援申請が互いに整合していなければならない（例: 資産を売って資金不足を解消する選択をしたのに、同時にその資産を全額別の株式へ配分する、という矛盾した提出を1つのトランザクションで検証できる）ため、汎用`LessonResponse`state machineへ分解すると整合性検証が複数の独立した回答にまたがってしまう。
+
+**Files:**
+- Create: `functions/src/lessonRuns/households/repository.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/submitDecision.ts`, `.test.ts`, `onCall.ts`
+- Create: `src/lib/homeEconomics/submitDecision.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`・`AssetPosition`・`InsuranceProduct`・`Liability`（Task1）、`ShortfallOption`（Task8）
+- Produces: `HouseholdState`型、`getOrInitHouseholdState(deps): Promise<HouseholdState>`、`submitHouseholdDecision(deps): Promise<{ decisionId: string; created: boolean }>`、`submitHouseholdDecisionCallable`
+
+- [ ] **Step 1: `HouseholdState`型を定義する**
+
+`functions/src/lessonRuns/households/repository.ts`:
+
+```ts
+export interface HouseholdState {
+  householdId: string
+  lessonRunId: string
+  teamId: string
+  cashYen: number
+  /** assetType → current value. Mirrors Task 1's AssetType keys. */
+  assetHoldingsYen: Record<string, number>
+  /** insuranceProductId → contract years remaining. Absence = not contracted. */
+  activeInsuranceContracts: Record<string, number>
+  /** liabilityId → remaining principal/term. `annualInterestRatePercent` is fixed at origination (from Task 1's `Liability` catalog) and never re-read from the catalog after signing, so a teacher editing the draft mid-lesson cannot retroactively change an already-taken loan's rate. */
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number; annualInterestRatePercent: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  updatedAtServerMillis: number
+}
+```
+
+- [ ] **Step 2: 冪等な初期化の失敗するテストを書く（Phase A `createLessonRun.test.ts`の`makeFakeFirestore`パターンを流用）**
+
+`functions/src/lessonRuns/households/repository.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { getOrInitHouseholdState } from './repository'
+
+const makeFakeFirestore = () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  const written = new Set<string>()
+  return {
+    docs,
+    runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
+      get: async (path: string) => {
+        if (written.has(path)) throw new Error(`read-after-write violation: ${path}`)
+        return { exists: docs.has(path), data: () => docs.get(path) }
+      },
+      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data); written.add(path) },
+    }),
+  }
+}
+
+describe('getOrInitHouseholdState', () => {
+  it('creates a fresh state with the profile\'s starting cash on first access', async () => {
+    const fake = makeFakeFirestore()
+    const state = await getOrInitHouseholdState({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a', householdId: 'case-b',
+      startingCashYen: 2000000, startingLifeStage: 'CHILD_REARING', now: () => 1,
+    })
+    expect(state).toMatchObject({ cashYen: 2000000, lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0 })
+  })
+
+  it('returns the existing state unchanged on a later access, ignoring startingCashYen', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/households/case-b', {
+      householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 500000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'INDEPENDENT', roundIndex: 3, goalDelayedRounds: 1, updatedAtServerMillis: 0,
+    })
+    const state = await getOrInitHouseholdState({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a', householdId: 'case-b',
+      startingCashYen: 999999999, startingLifeStage: 'CHILD_REARING', now: () => 2,
+    })
+    expect(state.cashYen).toBe(500000)
+    expect(state.roundIndex).toBe(3)
+  })
+})
+```
+
+- [ ] **Step 3: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/lessonRuns/households/repository.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 4: `getOrInitHouseholdState`を実装する（全read→全writeを厳守）**
+
+```ts
+export interface HouseholdFirestoreDeps {
+  firestore: { runTransaction: <T>(fn: (tx: HouseholdTx) => Promise<T>) => Promise<T> }
+}
+export interface HouseholdTx {
+  get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+  set: (path: string, data: Record<string, unknown>) => void
+}
+
+export interface GetOrInitHouseholdStateInput extends HouseholdFirestoreDeps {
+  lessonRunId: string
+  teamId: string
+  householdId: string
+  startingCashYen: number
+  startingLifeStage: string
+  now: () => number
+}
+
+export const getOrInitHouseholdState = (input: GetOrInitHouseholdStateInput): Promise<HouseholdState> =>
+  input.firestore.runTransaction(async (tx) => {
+    const path = `lessonRuns/${input.lessonRunId}/households/${input.householdId}`
+    // ---- ALL READS FIRST ----
+    const existing = await tx.get(path)
+    if (existing.exists) return existing.data() as unknown as HouseholdState
+
+    // ---- ALL WRITES AFTER ----
+    const state: HouseholdState = {
+      householdId: input.householdId, lessonRunId: input.lessonRunId, teamId: input.teamId,
+      cashYen: input.startingCashYen, assetHoldingsYen: {}, activeInsuranceContracts: {},
+      activeLiabilities: {}, lifeStage: input.startingLifeStage, roundIndex: 0,
+      goalDelayedRounds: 0, updatedAtServerMillis: input.now(),
+    }
+    tx.set(path, state as unknown as Record<string, unknown>)
+    return state
+  })
+
+/** Production wiring: Firestore Admin SDK. */
+export const householdRepositoryWithAdminSdk = (): HouseholdFirestoreDeps['firestore'] => {
+  const db = getFirestore()
+  return {
+    runTransaction: (fn) => db.runTransaction((tx) => fn({
+      get: async (path: string) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
+      set: (path: string, data: Record<string, unknown>) => { tx.set(db.doc(path), data) },
+    })),
+  }
+}
+```
+
+（`getFirestore`のimportを`firebase-admin/firestore`から追加すること。）
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions && npx vitest run src/lessonRuns/households/repository.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: 判断提出の失敗するテストを書く（1ラウンド分の判断一式を1つのCallableで受け取る）**
+
+`functions/src/homeEconomics/submitDecision.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { submitHouseholdDecision } from './submitDecision'
+
+describe('submitHouseholdDecision', () => {
+  it('is idempotent per (lessonRunId, householdId, roundIndex, idempotencyKey)', async () => {
+    const saveDecision = vi.fn().mockResolvedValue({ decisionId: 'dec-1', created: true })
+    const result1 = await submitHouseholdDecision({
+      saveDecision, lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 3,
+      assetAllocationChangesYen: { DOMESTIC_STOCK: 100000 }, insurancePurchaseIds: [], insuranceCancelIds: [],
+      shortfallResolutionType: null, publicSupportApplicationIds: [], idempotencyKey: 'key-1',
+    })
+    expect(result1.created).toBe(true)
+    expect(saveDecision).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a decision that both sells an asset for the shortfall AND reallocates more into that same asset (spec §13.13 internal consistency)', async () => {
+    await expect(submitHouseholdDecision({
+      saveDecision: vi.fn(), lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 3,
+      assetAllocationChangesYen: { DOMESTIC_STOCK: 50000 }, insurancePurchaseIds: [], insuranceCancelIds: [],
+      shortfallResolutionType: 'SELL_ASSETS', shortfallResolutionAssetType: 'DOMESTIC_STOCK',
+      publicSupportApplicationIds: [], idempotencyKey: 'key-2',
+    })).rejects.toThrow('資金不足の解消に使う資産へ、同時に追加配分することはできません。')
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/submitDecision.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `submitHouseholdDecision`を実装する**
+
+`functions/src/homeEconomics/submitDecision.ts`:
+
+```ts
+export interface HouseholdDecisionInput {
+  lessonRunId: string
+  householdId: string
+  roundIndex: number
+  /** assetType → yen delta the student wants to move into (positive) or out of (negative) that asset this round, funded from cash. */
+  assetAllocationChangesYen: Record<string, number>
+  insurancePurchaseIds: string[]
+  insuranceCancelIds: string[]
+  /** Task 8's ShortfallOptionType, or null when there is no shortfall this round / the student hasn't resolved it yet. */
+  shortfallResolutionType: 'REDUCE_EXPENSES' | 'SELL_ASSETS' | 'BORROW' | 'PUBLIC_SUPPORT' | 'DELAY_GOAL' | null
+  /** Required when shortfallResolutionType === 'SELL_ASSETS' — which asset is being sold. */
+  shortfallResolutionAssetType?: string
+  publicSupportApplicationIds: string[]
+  idempotencyKey: string
+}
+export interface SubmitHouseholdDecisionDeps {
+  saveDecision: (input: HouseholdDecisionInput) => Promise<{ decisionId: string; created: boolean }>
+}
+
+/**
+ * Spec §13.13: a shortfall resolved by selling asset X must not also be
+ * offset by allocating MORE cash into asset X in the same submission —
+ * that would let a student simultaneously "sell to cover the gap" and
+ * "buy more of the same thing", netting to a free lunch. This is the one
+ * cross-field consistency check that only makes sense once the whole
+ * round's decision is assembled — the reason this Callable accepts the
+ * decision as one bundle rather than N independent LessonResponse
+ * submissions (see this task's own top-level rationale).
+ */
+export const submitHouseholdDecision = async (
+  deps: SubmitHouseholdDecisionDeps & HouseholdDecisionInput,
+): Promise<{ decisionId: string; created: boolean }> => {
+  if (
+    deps.shortfallResolutionType === 'SELL_ASSETS'
+    && deps.shortfallResolutionAssetType !== undefined
+    && (deps.assetAllocationChangesYen[deps.shortfallResolutionAssetType] ?? 0) > 0
+  ) {
+    throw new Error('資金不足の解消に使う資産へ、同時に追加配分することはできません。')
+  }
+  const { saveDecision, ...input } = deps
+  return saveDecision(input)
+}
+```
+
+- [ ] **Step 9: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/submitDecision.test.ts`
+Expected: PASS
+
+- [ ] **Step 10: `onCall.ts`とクライアントラッパーを実装する（Phase C `submitOrderCallable`と同じ認可パターン: teamId/participantIdをclient入力から信用せずサーバー側で解決）**
+
+`functions/src/homeEconomics/onCall.ts`の`submitHouseholdDecisionCallable`は、`resolveActorParticipantId`（`functions/src/lessonRuns/responses/onCall.ts`または`functions/src/market/onCall.ts`の既存実装を参照）と`requireTeamMembership`相当のチェックで、呼び出し元が本当にこの`householdId`を担当するチームのメンバーであることを検証してから`submitHouseholdDecision`を呼ぶ。`saveDecision`のAdmin SDK実装は`functions/src/lessonRuns/households/repository.ts`の`HouseholdTx`パターンで冪等キー・決定内容をFirestoreへ保存する（Task5の`createPendingOrder`と同じ`idempotencyDocumentId`/`requestDigest`パターン）。
+
+- [ ] **Step 11: `npm run verify`**
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add functions/src/lessonRuns/households/repository.ts functions/src/lessonRuns/households/repository.test.ts \
+  functions/src/homeEconomics/submitDecision.ts functions/src/homeEconomics/submitDecision.test.ts functions/src/homeEconomics/onCall.ts \
+  src/lib/homeEconomics/submitDecision.ts src/lib/homeEconomics/submitDecision.test.ts
+git commit -m "feat: add HouseholdState repository and bundled round-decision Callable"
+```
+
+---
+
+### Task 11: ラウンド確定処理の中核（年次計算エンジンの統合オーケストレーター）
+
+統合仕様書 §13.7〜§13.13を1つの純粋関数`settleRound`に統合する。Task3〜9の純粋関数を組み合わせる「オーケストレーター」であり、Phase CのTask9（`settleBatch`）に相当する。この関数自体はI/Oを持たない——`processRound.ts`（Admin SDKラッパー）が実際のFirestore読み書きを行う薄いラッパーとして呼ぶ。
+
+**設計上の要点（実装前に理解すること）:**
+1. **「固定費」と「変動費」の対応付け**: Task1の`HouseholdProfile`は生活費を1つの`annualLivingExpensesYen`しか持たない。本タスクでは、住宅ローン返済額（Task5）と保険料（Task6）という「契約で確定した支払い」を`computeAnnualCashFlow`の`fixedExpensesYen`に、`annualLivingExpensesYen`（イベント効果反映後）を`variableExpensesYen`（物価上昇の影響を受ける、§13.7）に対応付ける。
+2. **資金不足の自動フォールバック**: 生徒が`shortfallResolutionType`を選ばずにラウンドを終えた場合（未提出、または不足が事後的に判明した場合）、自動で破綻させず`REDUCE_EXPENSES`（常に選択可能な選択肢、Task8）を既定の解決策として適用する。
+3. **順序**: 収入→税→（住宅ローン・保険料込みの）収支→イベント効果→不足判定→資産配分変更の適用→資産収益率計算、という順で進める。資産収益率は「配分変更後」の保有額に対して計算する（今年動かした資金は今年の収益から即座に恩恵/リスクを受ける、という単純化——複利計算を月割りにしない教育用モデルとして妥当）。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/settleRound.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/processRound.ts`, `.test.ts`, `onCall.ts`
+
+**Interfaces:**
+- Consumes: `computeAnnualCashFlow`/`computeTaxAndSocialInsurance`（Task3）、`computeAssetReturn`（Task4）、`applyMortgageRound`（Task5）、`computeAnnualPremiumTotal`/`computeInsuranceBenefits`（Task6）、`determineOccurredEvents`/`applyEventEffects`（Task7）、`detectShortfall`/`buildShortfallOptions`/`applyShortfallResolution`（Task8）、`determineEligiblePrograms`/`computePublicSupportAvailableYen`（Task9）、`HouseholdState`（Task10）
+- Produces: `settleRound(input): SettleRoundResult`
+
+- [ ] **Step 1: 失敗するテストを書く（イベント・住宅ローン・不足自動解決を1ラウンドで検証する）**
+
+`functions/src/homeEconomics/engine/settleRound.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { settleRound } from './settleRound'
+
+const baseHousehold = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a',
+  cashYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 },
+  activeInsuranceContracts: {}, activeLiabilities: {},
+  lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+}
+const baseProfile = {
+  householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+  annualLivingExpensesYen: 3000000, cashSavingsYen: 500000,
+  family: '配偶者・子2人', housing: '賃貸マンション', lifeGoal: '住宅購入と教育資金',
+  lifeStage: 'CHILD_REARING' as const, eventProbabilityOverrides: {}, internalRiskFactors: {},
+}
+const baseInput = {
+  household: baseHousehold, profile: baseProfile, decision: null,
+  lifeEvents: [], insuranceProducts: [], publicSupportPrograms: [], liabilityCatalog: [],
+  economicFactors: { inflationPercent: 0, interestRatePercent: 1, marketReturnPercent: 0 },
+  taxModelVersion: 1, roundYears: 5, borrowingAllowed: false,
+  randomSeed: 'seed-x', restoreGeneration: 0,
+}
+
+describe('settleRound', () => {
+  it('a household with no events/mortgage/insurance nets income-tax-expenses into cash, deterministically', () => {
+    const result = settleRound(baseInput)
+    // grossIncome 6,000,000 → tax model v1 (20% flat, Task 3 PROVISIONAL) → net 4,800,000
+    // fixedExpenses 0 (no mortgage/insurance), variableExpenses 3,000,000 (no inflation)
+    // netCashFlow = 4,800,000 - 3,000,000 = 1,800,000
+    expect(result.newHouseholdState.cashYen).toBe(baseHousehold.cashYen + 1800000)
+    expect(result.newHouseholdState.roundIndex).toBe(1)
+    expect(result.shortfallYen).toBe(0)
+  })
+
+  it('is deterministic — same inputs always produce the same asset returns', () => {
+    expect(settleRound(baseInput).newHouseholdState.assetHoldingsYen).toEqual(settleRound(baseInput).newHouseholdState.assetHoldingsYen)
+  })
+
+  it('auto-resolves an unexpected shortfall with REDUCE_EXPENSES when no decision was submitted (spec §13.13: never auto-bankrupts)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, cashYen: 0 },
+      profile: { ...baseProfile, householdIncomeYen: 0 },
+    }
+    // net income 0, expenses 3,000,000 → shortfall 3,000,000 with no decision submitted
+    const result = settleRound(input)
+    expect(result.shortfallYen).toBe(3000000)
+    expect(result.newHouseholdState.cashYen).toBeGreaterThanOrEqual(0)
+  })
+
+  it('mortgage payments count toward fixed expenses and reduce the outstanding liability (Task 5 integration)', () => {
+    const input = {
+      ...baseInput,
+      household: {
+        ...baseHousehold,
+        activeLiabilities: { 'loan-1': { remainingPrincipalYen: 20000000, remainingYears: 20, annualInterestRatePercent: 0 } },
+      },
+      liabilityCatalog: [{ id: 'loan-1', kind: 'MORTGAGE' as const, principalYen: 20000000, remainingPrincipalYen: 20000000, annualInterestRatePercent: 0, remainingYears: 20 }],
+    }
+    const result = settleRound(input)
+    // 0% interest, 20yr, roundYears=5: 5 * (20,000,000/20) = 5,000,000 paid over the round
+    expect(result.newHouseholdState.activeLiabilities['loan-1'].remainingPrincipalYen).toBe(15000000)
+    expect(result.newHouseholdState.activeLiabilities['loan-1'].remainingYears).toBe(15)
+  })
+
+  it('an insurance benefit only pays when its covered event actually fires this round (Task 6/7 integration)', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, activeInsuranceContracts: { 'ins-1': 10 } },
+      insuranceProducts: [{
+        id: 'ins-1', productName: '医療保険A', premiumYenPerYear: 60000, coveredRisk: '病気',
+        benefitDescription: 'x', benefitAmountYen: 500000, contractYears: 10,
+        coveredEventIds: ['illness'], internalClaimProbability: 0.5,
+      }],
+      lifeEvents: [{
+        id: 'illness', label: '病気', disclosureMode: 'HIDDEN' as const, triggerProbability: 1,
+        effectDescription: 'x', incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: 0,
+      }],
+    }
+    const result = settleRound(input)
+    expect(result.occurredEventIds).toEqual(['illness'])
+    expect(result.insuranceBenefitsYen).toBe(500000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/settleRound.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `settleRound`を実装する**
+
+`functions/src/homeEconomics/engine/settleRound.ts`:
+
+```ts
+import type { HouseholdProfile, InsuranceProduct, LifeEventDefinition, Liability, PublicSupportProgram } from '@stock-league/household-authoring-content'
+import type { HouseholdState } from '../../lessonRuns/households/repository'
+import type { HouseholdDecisionInput } from '../submitDecision'
+import { applyEventEffects, determineOccurredEvents } from './lifeEvents'
+import { computeAnnualCashFlow, computeTaxAndSocialInsurance } from './annualCashFlow'
+import { computeAnnualPremiumTotal, computeInsuranceBenefits } from './insurance'
+import { applyMortgageRound } from './mortgage'
+import { computeAssetReturn } from './assetReturn'
+import { applyShortfallResolution, buildShortfallOptions, detectShortfall } from './shortfallOptions'
+import { computePublicSupportAvailableYen, determineEligiblePrograms } from './publicSupport'
+
+export interface SettleRoundInput {
+  household: HouseholdState
+  profile: HouseholdProfile
+  decision: HouseholdDecisionInput | null
+  lifeEvents: LifeEventDefinition[]
+  insuranceProducts: InsuranceProduct[]
+  publicSupportPrograms: PublicSupportProgram[]
+  liabilityCatalog: Liability[]
+  economicFactors: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
+  taxModelVersion: number
+  roundYears: number
+  borrowingAllowed: boolean
+  randomSeed: string
+  restoreGeneration: number
+}
+export interface SettleRoundResult {
+  newHouseholdState: HouseholdState
+  occurredEventIds: string[]
+  incomeYen: number
+  expensesYen: number
+  netCashFlowYen: number
+  shortfallYen: number
+  insuranceBenefitsYen: number
+}
+
+export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
+  const { household, profile } = input
+
+  // 1. Life events (spec §13.12)
+  const occurredEventIds = determineOccurredEvents({
+    events: input.lifeEvents, eventProbabilityOverrides: profile.eventProbabilityOverrides,
+    householdId: household.householdId, roundIndex: household.roundIndex,
+    randomSeed: input.randomSeed, restoreGeneration: input.restoreGeneration,
+  })
+  const eventEffects = applyEventEffects(input.lifeEvents, occurredEventIds)
+
+  // 2. Income + tax (spec §13.7/§13.8)
+  const grossIncomeYen = profile.householdIncomeYen + eventEffects.incomeEffectYen
+  const taxResult = computeTaxAndSocialInsurance({ grossIncomeYen }, input.taxModelVersion)
+
+  // 3. Mortgage payments (spec §13.9) — all active MORTGAGE liabilities, this round's roundYears advanced together.
+  const newLiabilities: HouseholdState['activeLiabilities'] = {}
+  let mortgagePaymentTotalYen = 0
+  for (const [liabilityId, state] of Object.entries(household.activeLiabilities)) {
+    const catalogEntry = input.liabilityCatalog.find((l) => l.id === liabilityId)
+    if (!catalogEntry || catalogEntry.kind !== 'MORTGAGE' || state.remainingPrincipalYen <= 0) {
+      newLiabilities[liabilityId] = state
+      continue
+    }
+    const roundResult = applyMortgageRound({
+      remainingPrincipalYen: state.remainingPrincipalYen, annualInterestRatePercent: state.annualInterestRatePercent,
+      remainingYears: state.remainingYears, roundYears: input.roundYears,
+    })
+    mortgagePaymentTotalYen += roundResult.totalPaymentYen
+    newLiabilities[liabilityId] = {
+      remainingPrincipalYen: roundResult.newRemainingPrincipalYen, remainingYears: roundResult.newRemainingYears,
+      annualInterestRatePercent: state.annualInterestRatePercent,
+    }
+  }
+
+  // 4. Insurance premiums + benefits (spec §13.6)
+  const activeProducts = Object.keys(household.activeInsuranceContracts)
+    .map((id) => input.insuranceProducts.find((product) => product.id === id))
+    .filter((product): product is InsuranceProduct => product !== undefined)
+  const insurancePremiumYen = computeAnnualPremiumTotal(activeProducts)
+  const insuranceBenefitsYen = computeInsuranceBenefits(activeProducts, occurredEventIds)
+    .reduce((sum, benefit) => sum + benefit.paidYen, 0)
+
+  // 5. Cash flow (spec §13.7): fixed = contractual obligations, variable = living costs (inflation-adjusted).
+  const cashFlowResult = computeAnnualCashFlow({
+    netIncomeYen: taxResult.netIncomeYen,
+    fixedExpensesYen: mortgagePaymentTotalYen + insurancePremiumYen,
+    variableExpensesYen: Math.max(0, profile.annualLivingExpensesYen + eventEffects.expenseEffectYen),
+    inflationPercent: input.economicFactors.inflationPercent,
+  })
+  const netCashFlowYen = cashFlowResult.netCashFlowYen + eventEffects.cashEffectYen + insuranceBenefitsYen
+
+  // 6. Shortfall detection + resolution (spec §13.13) — never auto-bankrupts.
+  const shortfallYen = detectShortfall({ cashSavingsYen: household.cashYen, netCashFlowYen })
+  let resolutionCashDeltaYen = 0
+  let newLiabilityFromShortfallYen = 0
+  let goalDelayedRoundsDelta = 0
+  if (shortfallYen > 0) {
+    const eligiblePrograms = determineEligiblePrograms(input.publicSupportPrograms, grossIncomeYen)
+    const publicSupportAvailableYen = computePublicSupportAvailableYen(eligiblePrograms, input.decision?.publicSupportApplicationIds ?? [])
+    const options = buildShortfallOptions({
+      shortfallYen, liquidAssetsYen: Object.values(household.assetHoldingsYen).reduce((sum, v) => sum + v, 0),
+      publicSupportAvailableYen, borrowingAllowed: input.borrowingAllowed,
+    })
+    const chosenType = input.decision?.shortfallResolutionType ?? 'REDUCE_EXPENSES'
+    const chosenOption = options.find((option) => option.type === chosenType) ?? options[0]
+    const resolution = applyShortfallResolution(chosenOption, shortfallYen)
+    resolutionCashDeltaYen = resolution.cashDeltaYen
+    newLiabilityFromShortfallYen = resolution.newLiabilityYen
+    goalDelayedRoundsDelta = resolution.goalDelayedRounds
+  }
+
+  // 7. Asset allocation changes (from decision) + asset returns (spec §13.5/§13.15).
+  const newAssetHoldingsYen: Record<string, number> = { ...household.assetHoldingsYen }
+  for (const [assetType, deltaYen] of Object.entries(input.decision?.assetAllocationChangesYen ?? {})) {
+    newAssetHoldingsYen[assetType] = Math.max(0, (newAssetHoldingsYen[assetType] ?? 0) + deltaYen)
+  }
+  for (const assetType of Object.keys(newAssetHoldingsYen)) {
+    // NOTE (PROVISIONAL — Task 17 to review): expectedReturnPercent/volatilityPercent
+    // per asset type come from the template's authoring `assets` catalog
+    // (Task 1), matched by `assetType`. This composition assumes at most
+    // one authoring entry per assetType per household; a template with
+    // multiple products of the same assetType needs a richer key than
+    // assetType alone — deferred, see Task 17's completion-condition review.
+    const returnResult = computeAssetReturn({
+      assetType: assetType as never, valueYen: newAssetHoldingsYen[assetType],
+      expectedReturnPercent: 0, volatilityPercent: 0, // resolved from the authoring catalog by processRound.ts — settleRound itself stays a pure function of whatever it's given
+      marketReturnPercent: input.economicFactors.marketReturnPercent,
+      householdId: household.householdId, roundIndex: household.roundIndex,
+      randomSeed: input.randomSeed, restoreGeneration: input.restoreGeneration,
+    })
+    newAssetHoldingsYen[assetType] = returnResult.nextValueYen
+  }
+
+  const newCashYen = Math.max(0, household.cashYen + netCashFlowYen + resolutionCashDeltaYen)
+  if (newLiabilityFromShortfallYen > 0) {
+    newLiabilities[`shortfall-loan-round-${household.roundIndex}`] = {
+      remainingPrincipalYen: newLiabilityFromShortfallYen, remainingYears: 5, annualInterestRatePercent: 3,
+    }
+  }
+
+  return {
+    newHouseholdState: {
+      ...household, cashYen: newCashYen, assetHoldingsYen: newAssetHoldingsYen, activeLiabilities: newLiabilities,
+      roundIndex: household.roundIndex + 1, goalDelayedRounds: household.goalDelayedRounds + goalDelayedRoundsDelta,
+      updatedAtServerMillis: household.updatedAtServerMillis,
+    },
+    occurredEventIds, incomeYen: taxResult.netIncomeYen, expensesYen: cashFlowResult.totalExpensesYen,
+    netCashFlowYen, shortfallYen, insuranceBenefitsYen,
+  }
+}
+```
+
+**既知の限界（Task17で見直す、コード内コメント参照）:** `computeAssetReturn`呼び出しで`expectedReturnPercent`/`volatilityPercent`を`0`固定にしている——これはTask1の`AssetPosition`（教材が定義する資産カタログ、`expectedReturnPercent`等を持つ）を`assetType`だけで1件に解決できるという前提に依存するが、`settleRound`自体は純粋関数なので教材カタログの解決は呼び出し側（`processRound.ts`）が担う設計にする。`processRound.ts`実装時に、`assetType`ごとの教材カタログエントリを`settleRound`呼び出し前に解決し、`computeAssetReturn`への引数として正しく渡すよう修正すること（Step5参照）。
+
+- [ ] **Step 4: `processRound.ts`が教材カタログを解決してから`settleRound`を呼ぶよう実装する**
+
+`functions/src/homeEconomics/processRound.ts`（Admin SDKラッパー、Phase Cの`processBatch.ts`と同じ構造）: `HomeEconomicsContent.assets`（Task2）を`assetType`でインデックス化し、Step3の`computeAssetReturn`呼び出しへ実際の`expectedReturnPercent`/`volatilityPercent`を渡す形へ`settleRound`を修正する（`SettleRoundInput`へ`assetCatalog: AssetPosition[]`を追加し、Step3のTODOコメント箇所を`input.assetCatalog.find((a) => a.assetType === assetType)`の解決結果で置き換える）。この修正を先に行ってからテストを通すこと。
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/settleRound.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: `processRound`のAdmin SDK実装とCallableを実装する**
+
+`functions/src/homeEconomics/processRound.ts`は以下の順でI/Oを行う（Phase Cの`processBatch.ts`と同じ「全read→全write」規律、教師操作またはチーム全員のDECISION提出完了で発火）:
+1. `lessonRuns/{id}`から`randomSeed`・`restoreGeneration`・`homeEconomics`設定を読む。
+2. 対象`householdId`の`HouseholdState`（Task10）と、その回の`HouseholdDecisionInput`（Task10、未提出ならnull）を読む。
+3. `settleRound`を呼ぶ。
+4. トランザクションで`HouseholdState`を更新し、`LessonEvent`として`ROUND_SETTLED`を`appendLessonEvent`（Phase A）で追記する。
+5. RTDB`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`を更新する（Task15で結線、Phase C Task9/10/13/20と同じ先送りパターンをここでも踏襲してよいが、**Phase Cで発生した「先送りしたまま最終レビューまで気づかれなかった」という反省を踏まえ、Task15を必ず実施すること**）。
+
+`processRoundCallable`は教師操作専用（進行を1つの意思決定点に保つ、Phase Bの`TRANSITION_PHASE`と同じ独自区分の考え方を踏襲）とし、チーム全員が`submitHouseholdDecision`済みであることを確認してから呼べるようにする。
+
+- [ ] **Step 7: `npm run verify`**
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/settleRound.ts functions/src/homeEconomics/engine/settleRound.test.ts \
+  functions/src/homeEconomics/processRound.ts functions/src/homeEconomics/processRound.test.ts functions/src/homeEconomics/onCall.ts
+git commit -m "feat: add settleRound — the pure round-settlement orchestrator, and processRound wiring"
+```
+
+---
+
+### Task 12: 退職後モデル
+
+統合仕様書 §13.14を実装する。純粋関数。§13.14の6項目（収入減少・年金等の簡略給付・資産取り崩し・医療介護イベント・生活費・長寿リスク）のうち、「医療・介護イベント」はTask7のライフイベントエンジンをそのまま再利用（退職後向けの`LifeEventDefinition`を教材側で定義すればよく、専用コードは不要）、「資産取り崩し」「生活費」「収入減少」はTask3・Task8の既存エンジンの組み合わせで表現できる（退職後は`householdIncomeYen`を年金給付額に置き換えるだけ）。本タスクが新規に実装するのは**簡略年金給付額の計算**と**任意の資産取り崩し（不足対応としての強制売却ではなく、生活水準を上げるための自発的な取り崩し）**の2つに絞る。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/retirement.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Task11のラウンド確定処理が、`lifeStage === 'RETIRED'`のときだけ呼ぶ）
+- Produces: `computeSimplifiedPensionBenefit(input): number`、`computeVoluntaryAssetDrawdown(input): VoluntaryDrawdownResult`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/retirement.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeSimplifiedPensionBenefit, computeVoluntaryAssetDrawdown } from './retirement'
+
+describe('computeSimplifiedPensionBenefit', () => {
+  it('applies the replacement rate to pre-retirement income (spec §13.14: 収入減少・年金等の簡略給付)', () => {
+    expect(computeSimplifiedPensionBenefit({ preRetirementIncomeYen: 6000000, pensionReplacementRatePercent: 50 })).toBe(3000000)
+  })
+
+  it('a 0% replacement rate means no pension — never a negative or undefined value', () => {
+    expect(computeSimplifiedPensionBenefit({ preRetirementIncomeYen: 6000000, pensionReplacementRatePercent: 0 })).toBe(0)
+  })
+})
+
+describe('computeVoluntaryAssetDrawdown', () => {
+  it('withdraws exactly the requested amount, capped at what is actually held', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 2000000, CASH: 100000 } })
+    expect(result.withdrawnYen).toBe(500000)
+  })
+
+  it('caps the withdrawal at total holdings when the request exceeds what is held (spec §13.14: never goes negative)', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 5000000, assetHoldingsYen: { DOMESTIC_STOCK: 2000000 } })
+    expect(result.withdrawnYen).toBe(2000000)
+  })
+
+  it('withdraws proportionally across held asset types, never emptying one type before touching another (spec §13.5: diversification is part of what §13.17 evaluates)', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 300000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000, FOREIGN_STOCK: 500000 } })
+    // 300,000 split 2:1 by holding weight → 200,000 from DOMESTIC_STOCK, 100,000 from FOREIGN_STOCK
+    expect(result.newAssetHoldingsYen.DOMESTIC_STOCK).toBe(800000)
+    expect(result.newAssetHoldingsYen.FOREIGN_STOCK).toBe(400000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/retirement.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/retirement.ts`:
+
+```ts
+export interface SimplifiedPensionInput {
+  preRetirementIncomeYen: number
+  /** PROVISIONAL — spec §13.14 requires only "年金等の簡略給付" without a specified default rate; a value to tune during pilot runs (see Task 17). */
+  pensionReplacementRatePercent: number
+}
+
+export const computeSimplifiedPensionBenefit = (input: SimplifiedPensionInput): number =>
+  Math.round(input.preRetirementIncomeYen * (input.pensionReplacementRatePercent / 100))
+
+export interface VoluntaryDrawdownInput {
+  requestedYen: number
+  assetHoldingsYen: Record<string, number>
+}
+export interface VoluntaryDrawdownResult {
+  withdrawnYen: number
+  newAssetHoldingsYen: Record<string, number>
+}
+
+/**
+ * Spec §13.14: proportional across all held asset types by current
+ * weight — never drains one asset type to zero while leaving another
+ * untouched, which would silently undermine the diversification the
+ * student built up (evaluated in Task 16, spec §13.17).
+ */
+export const computeVoluntaryAssetDrawdown = (input: VoluntaryDrawdownInput): VoluntaryDrawdownResult => {
+  const totalHeldYen = Object.values(input.assetHoldingsYen).reduce((sum, v) => sum + v, 0)
+  const withdrawnYen = Math.min(input.requestedYen, totalHeldYen)
+  const newAssetHoldingsYen: Record<string, number> = {}
+  for (const [assetType, heldYen] of Object.entries(input.assetHoldingsYen)) {
+    const share = totalHeldYen === 0 ? 0 : heldYen / totalHeldYen
+    newAssetHoldingsYen[assetType] = Math.round(heldYen - withdrawnYen * share)
+  }
+  return { withdrawnYen, newAssetHoldingsYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/retirement.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/retirement.ts functions/src/homeEconomics/engine/retirement.test.ts
+git commit -m "feat: add simplified pension and proportional voluntary asset-drawdown engines"
+```
+
+---
+
+### Task 13: 保存・再開（人生段階途中再開、欠席者補完、チェックポイント）
+
+統合仕様書 §13.18を実装する。**「欠席者補完」は既にTask11で大部分カバーされていることに気づくのが本タスクの出発点**——`settleRound`は`decision: null`（未提出）を安全に処理し、資金不足を自動でREDUCE_EXPENSESへフォールバックする設計になっている（Task11）ため、欠席で判断を提出できなかったチーム・人物も、そのラウンドは既定の保守的な判断で自動進行し、次のラウンドから正常に復帰できる。本タスクが新規に実装するのは「複数授業にまたがる保存」「チェックポイント」——Phase A `functions/src/lessonRuns/checkpoint.ts`の`writeCheckpoint`/`restoreCheckpoint`（教科を問わない汎用の`snapshot: unknown`設計）をそのまま再利用し、家庭科向けのスナップショット構築・復元関数だけを追加する。
+
+**Files:**
+- Create: `functions/src/homeEconomics/checkpointRestore.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `writeCheckpoint`/`restoreCheckpoint`（Phase A、`functions/src/lessonRuns/checkpoint.ts`）、`HouseholdState`（Task10）
+- Produces: `buildHouseholdCheckpointSnapshot(households): HouseholdCheckpointSnapshot`、`restoreHouseholdsFromSnapshot(snapshot): HouseholdState[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/checkpointRestore.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from './checkpointRestore'
+
+const household: HouseholdState = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 1500000,
+  assetHoldingsYen: { DOMESTIC_STOCK: 800000 }, activeInsuranceContracts: { 'ins-1': 7 },
+  activeLiabilities: { 'loan-1': { remainingPrincipalYen: 18000000, remainingYears: 15, annualInterestRatePercent: 2 } },
+  lifeStage: 'CHILD_REARING', roundIndex: 4, goalDelayedRounds: 1, updatedAtServerMillis: 1234,
+}
+
+describe('buildHouseholdCheckpointSnapshot / restoreHouseholdsFromSnapshot', () => {
+  it('round-trips every household field exactly (spec §13.18: 版と乱数シード固定と同じ厳密性)', () => {
+    const snapshot = buildHouseholdCheckpointSnapshot([household])
+    const restored = restoreHouseholdsFromSnapshot(snapshot)
+    expect(restored).toEqual([household])
+  })
+
+  it('round-trips multiple households independently, never mixing state between them', () => {
+    const other: HouseholdState = { ...household, householdId: 'case-c', cashYen: 999999, roundIndex: 1 }
+    const snapshot = buildHouseholdCheckpointSnapshot([household, other])
+    const restored = restoreHouseholdsFromSnapshot(snapshot)
+    expect(restored).toHaveLength(2)
+    expect(restored.find((h) => h.householdId === 'case-b')?.cashYen).toBe(1500000)
+    expect(restored.find((h) => h.householdId === 'case-c')?.cashYen).toBe(999999)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/checkpointRestore.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/checkpointRestore.ts`:
+
+```ts
+import type { HouseholdState } from '../lessonRuns/households/repository'
+
+/** The `snapshot: unknown` payload Phase A's `writeCheckpoint` (checkpoint.ts) stores — home economics' own shape, opaque to the generic checkpoint machinery. */
+export interface HouseholdCheckpointSnapshot {
+  schemaVersion: 1
+  households: HouseholdState[]
+}
+
+export const buildHouseholdCheckpointSnapshot = (households: HouseholdState[]): HouseholdCheckpointSnapshot => ({
+  schemaVersion: 1,
+  households: households.map((household) => ({ ...household })),
+})
+
+export const restoreHouseholdsFromSnapshot = (snapshot: HouseholdCheckpointSnapshot): HouseholdState[] =>
+  snapshot.households.map((household) => ({ ...household }))
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/checkpointRestore.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: Callable結線を実装する**
+
+`functions/src/homeEconomics/onCall.ts`（Task10で作成済み）に、教師専用の`writeHouseholdCheckpointCallable`/`restoreHouseholdCheckpointCallable`を追加する。実装はPhase A `functions/src/lessonRuns/onCall.ts`の`restoreCheckpointCallable`と同一パターン（教師のみ、`teacherRoles`確認、`requireActiveOrgMember`）——`snapshot`引数に`buildHouseholdCheckpointSnapshot`の出力を渡し、`writeCheckpointWithAdminSdk`（Phase A）をそのまま呼ぶ。新規のFirestoreスキーマ・トランザクションは不要（Phase Aの`checkpoints`サブコレクションをそのまま再利用する）。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/homeEconomics/checkpointRestore.ts functions/src/homeEconomics/checkpointRestore.test.ts functions/src/homeEconomics/onCall.ts
+git commit -m "feat: add household checkpoint snapshot builder/restorer, reusing Phase A's generic checkpoint machinery"
+```
+
+---
+
+### Task 14: 目標パッケージ（表示の絞り込み）
+
+統合仕様書 §13.16を実装する。純粋関数。教師が選んだ`GoalPackage`（Task2）に応じて、生徒画面（Task15）が表示する概念カテゴリを絞り込む——**計算自体は絞り込まない**（保険や住宅の計算エンジンは常に動く。表示だけを絞る）点に注意。
+
+**Files:**
+- Create: `functions/src/homeEconomics/goalPackage.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `GoalPackage`（Task2）
+- Produces: `ConceptCategory`型、`resolveVisibleConcepts(goalPackage): ConceptCategory[]`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/goalPackage.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { resolveVisibleConcepts } from './goalPackage'
+
+describe('resolveVisibleConcepts', () => {
+  it('EMERGENCY_FUND focuses on emergency-fund and risk-management concepts (spec §13.16 example)', () => {
+    expect(resolveVisibleConcepts('EMERGENCY_FUND')).toEqual(['EMERGENCY_FUND', 'RISK_MANAGEMENT'])
+  })
+
+  it('OVERALL_BALANCE hides nothing — every concept category is visible', () => {
+    const visible = resolveVisibleConcepts('OVERALL_BALANCE')
+    expect(visible).toEqual(expect.arrayContaining(['INSURANCE', 'HOUSING', 'ASSET_DIVERSIFICATION', 'RETIREMENT_PLANNING', 'EMERGENCY_FUND', 'EDUCATION_FUND', 'RISK_MANAGEMENT']))
+  })
+
+  it('HOME_PURCHASE surfaces housing and emergency-fund concepts, not retirement planning', () => {
+    const visible = resolveVisibleConcepts('HOME_PURCHASE')
+    expect(visible).toContain('HOUSING')
+    expect(visible).not.toContain('RETIREMENT_PLANNING')
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/goalPackage.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/goalPackage.ts`:
+
+```ts
+import type { GoalPackage } from '@stock-league/household-authoring-content'
+
+export type ConceptCategory = 'INSURANCE' | 'HOUSING' | 'ASSET_DIVERSIFICATION' | 'RETIREMENT_PLANNING' | 'EMERGENCY_FUND' | 'EDUCATION_FUND' | 'RISK_MANAGEMENT'
+
+const ALL_CONCEPTS: ConceptCategory[] = ['INSURANCE', 'HOUSING', 'ASSET_DIVERSIFICATION', 'RETIREMENT_PLANNING', 'EMERGENCY_FUND', 'EDUCATION_FUND', 'RISK_MANAGEMENT']
+
+/**
+ * Spec §13.16: "目的に関係しない概念を隠す" — this narrows what the UI
+ * (Task 15) shows, never what the engine computes. A household with a
+ * mortgage still has its mortgage serviced by settleRound (Task 11) even
+ * when goalPackage is EMERGENCY_FUND and HOUSING isn't in the visible set
+ * — only the display is filtered.
+ */
+export const resolveVisibleConcepts = (goalPackage: GoalPackage): ConceptCategory[] => {
+  switch (goalPackage) {
+    case 'EMERGENCY_FUND': return ['EMERGENCY_FUND', 'RISK_MANAGEMENT']
+    case 'HOME_PURCHASE': return ['HOUSING', 'EMERGENCY_FUND']
+    case 'EDUCATION_FUND': return ['EDUCATION_FUND', 'ASSET_DIVERSIFICATION']
+    case 'RETIREMENT_PREP': return ['RETIREMENT_PLANNING', 'ASSET_DIVERSIFICATION']
+    case 'RISK_DIVERSIFICATION': return ['ASSET_DIVERSIFICATION', 'RISK_MANAGEMENT']
+    case 'INSURANCE_AND_PREPAREDNESS': return ['INSURANCE', 'RISK_MANAGEMENT', 'EMERGENCY_FUND']
+    case 'OVERALL_BALANCE': return ALL_CONCEPTS
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/goalPackage.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/goalPackage.ts functions/src/homeEconomics/goalPackage.test.ts
+git commit -m "feat: add goal-package concept-visibility resolver"
+```
+
+---
+
+### Task 15: RTDBライブスキーマ拡張と生徒・教師画面
+
+統合仕様書 §26-1（公開/非公開/チーム別の3分離）・§23.6（本名非表示）・§13.4（架空プロフィール明示）を実装する。**Phase Cの前例に倣い、Rulesの新規ノードは不要**——`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`はPhase A/B/Cで既に3分離済みのトップレベルノードであり、家庭科は既存ノードへフィールドを追加するだけでよい（Phase C Task13と同じ判断）。**Phase Cで最終レビューまで気づかれなかった教訓（RTDBへの実配信コードがno-opのまま最後まで残った）を踏まえ、本タスクでは型定義・allow-list変換関数・実際のRTDB書き込み配線までを1つのタスクとして完結させ、「配線は後続タスクで」という先送りを作らない。**
+
+**Files:**
+- Modify: `src/lib/lessonRuns/liveTypes.ts`（`LessonRunPublicState`/`LessonRunPrivateState`/`LessonRunTeamState`へ家庭科フィールド追加、オプショナル——市場フィールドと共存しSOCIAL_STUDIES/HOME_ECONOMICSどちらか一方だけが埋まる）
+- Create: `functions/src/homeEconomics/realtimeProjection.ts`, `.test.ts`（allow-list変換、Phase C Task20の`realtimeProjection.ts`と同じ設計）
+- Modify: `functions/src/homeEconomics/processRound.ts`（Task11で作成、`publishRealtimeState`の実装をこのタスクで完成させる——Task11時点では先送りにする）
+- Create: `src/components/homeEconomics/HouseholdSummaryCard.tsx`, `.test.tsx`（生徒画面の中核部品、既存の`@stock-league/lesson-inputs`ウィジェットを組み合わせる薄いshell）
+
+**Interfaces:**
+- Consumes: `HouseholdState`（Task10）、`resolveVisibleConcepts`（Task14）、`buildEventDisclosureView`（Task7）、`buildShortfallOptions`（Task8）
+- Produces: `HouseholdStateTeamView`型、`toHouseholdStateTeamView(household, visibleConcepts, disclosures, shortfallOptions): HouseholdStateTeamView`
+
+- [ ] **Step 1: 禁止情報の失敗するテストを書く（allow-list変換）**
+
+`functions/src/homeEconomics/realtimeProjection.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import { toHouseholdStateTeamView } from './realtimeProjection'
+
+const household: HouseholdState = {
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 1500000,
+  assetHoldingsYen: { DOMESTIC_STOCK: 800000 }, activeInsuranceContracts: { 'ins-1': 7 },
+  activeLiabilities: { 'loan-1': { remainingPrincipalYen: 18000000, remainingYears: 15, annualInterestRatePercent: 2 } },
+  lifeStage: 'CHILD_REARING', roundIndex: 4, goalDelayedRounds: 1, updatedAtServerMillis: 1234,
+}
+
+describe('toHouseholdStateTeamView', () => {
+  it('never leaks the other team\'s data — this function only ever sees ONE household by construction', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(view.householdId).toBe('case-b')
+  })
+
+  it('never leaks internal risk factors or claim probabilities — allow-list only, matching liveTypes.ts field-for-field', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(JSON.stringify(view)).not.toContain('internalClaimProbability')
+    expect(JSON.stringify(view)).not.toContain('internalRiskFactors')
+    expect(JSON.stringify(view)).not.toContain('eventProbabilityOverrides')
+  })
+
+  it('is always fictional (spec §13.4 — this must render as "これは授業用の架空プロフィールです" client-side)', () => {
+    const view = toHouseholdStateTeamView(household, [], [], [])
+    expect(view.isFictional).toBe(true)
+  })
+
+  it('respects the goal-package concept visibility filter — hidden concepts are omitted, not merely flagged', () => {
+    const view = toHouseholdStateTeamView(household, ['EMERGENCY_FUND'], [], [])
+    expect(view.visibleConcepts).toEqual(['EMERGENCY_FUND'])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/realtimeProjection.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/realtimeProjection.ts`:
+
+```ts
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import type { ConceptCategory } from './goalPackage'
+import type { EventDisclosureView } from './engine/lifeEvents'
+import type { ShortfallOption } from './engine/shortfallOptions'
+
+/**
+ * Server-side counterpart of src/lib/lessonRuns/liveTypes.ts's
+ * `HouseholdStateTeamView` — functions cannot import across the
+ * functions/src rootDir boundary (see functions/src/lessonRuns/
+ * projections/publicProjection.ts's established precedent). Keep both in
+ * sync by hand.
+ */
+export interface HouseholdStateTeamView {
+  householdId: string
+  isFictional: true
+  cashYen: number
+  assetHoldingsYen: Record<string, number>
+  /** insuranceProductId → years remaining — allow-list, never the product's internalClaimProbability. */
+  activeInsuranceContractYearsRemaining: Record<string, number>
+  /** liabilityId → remaining principal/years — never the origination principal or a resolved catalog entry. */
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  visibleConcepts: ConceptCategory[]
+  eventDisclosures: EventDisclosureView[]
+  shortfallOptions: ShortfallOption[]
+}
+
+/**
+ * Projects one household's `HouseholdState` (Task 10) plus this round's
+ * derived views (Task 7/8/14) down to the team-broadcast-safe shape for
+ * `lessonRunTeamState/{lessonRunId}/{teamId}`. Allow-list only — never
+ * `{...household}` — so a future field added to `HouseholdState` is
+ * excluded by default. Caller MUST pass exactly one household's own
+ * `HouseholdState`; this function has no team-membership check of its own
+ * (same discipline as Phase C's `toMyOrdersView`, Task 20).
+ */
+export const toHouseholdStateTeamView = (
+  household: HouseholdState,
+  visibleConcepts: ConceptCategory[],
+  eventDisclosures: EventDisclosureView[],
+  shortfallOptions: ShortfallOption[],
+): HouseholdStateTeamView => ({
+  householdId: household.householdId,
+  isFictional: true,
+  cashYen: household.cashYen,
+  assetHoldingsYen: { ...household.assetHoldingsYen },
+  activeInsuranceContractYearsRemaining: { ...household.activeInsuranceContracts },
+  activeLiabilities: Object.fromEntries(
+    Object.entries(household.activeLiabilities).map(([id, state]) => [id, { remainingPrincipalYen: state.remainingPrincipalYen, remainingYears: state.remainingYears }]),
+  ),
+  lifeStage: household.lifeStage,
+  roundIndex: household.roundIndex,
+  goalDelayedRounds: household.goalDelayedRounds,
+  visibleConcepts,
+  eventDisclosures,
+  shortfallOptions,
+})
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/realtimeProjection.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `src/lib/lessonRuns/liveTypes.ts`へ家庭科フィールドを追加する（Task13の市場フィールドと共存、オプショナル）**
+
+```ts
+export interface HouseholdStateTeamView {
+  householdId: string
+  isFictional: true
+  cashYen: number
+  assetHoldingsYen: Record<string, number>
+  activeInsuranceContractYearsRemaining: Record<string, number>
+  activeLiabilities: Record<string, { remainingPrincipalYen: number; remainingYears: number }>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  visibleConcepts: string[]
+  eventDisclosures: { eventId: string; label: string | null; effectDescription: string | null; revealed: boolean }[]
+  shortfallOptions: { type: string; description: string; resolvesYen: number }[]
+}
+
+export interface LessonRunTeamState {
+  cash: number
+  holdings: Record<string, number>
+  lockedBuyValue: number
+  lockedSellQuantity: Record<string, number>
+  myOrders: MyOrderView[]
+  updatedAtMillis: number
+  /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
+  household?: HouseholdStateTeamView
+}
+```
+
+- [ ] **Step 6: `processRound.ts`（Task11）の`publishRealtimeState`を完成させる（先送りにしない）**
+
+Task11の`processRound.ts`に`publishRealtimeState`のAdmin SDK実装を追加する。Phase C Task20の`publishRealtimeStateWithAdminSdk`（`functions/src/market/processBatch.ts`）と同じ設計原則を踏襲する:
+- `lessonRunTeamState/{lessonRunId}/{teamId}`を`.update()`で部分更新し、`household`フィールドだけを設定する（他のフィールドが存在すれば破壊しない）。
+- `orgId`を必ず含める（Rules上の読み取り必須条件——Phase C Task20で発見された「orgIdを付与し忘れると恒久的に読み取り不能になる」バグの再発を防ぐ、実装時に必ず確認すること）。
+- `lessonRunPublic/{lessonRunId}`には`economicFactors`（物価・金利・想定収益率、クラス全体で共有される前提条件）を`.update()`で追加する。
+- `lessonRunPrivate/{lessonRunId}`には教師向けの内部情報（`internalRiskFactors`・`internalClaimProbability`を含む完全な計算ログ）を`.update()`で追加する。
+
+- [ ] **Step 7: 生徒画面の失敗するテストを書く（既存ウィジェットの再利用を確認する）**
+
+`src/components/homeEconomics/HouseholdSummaryCard.test.tsx`:
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { HouseholdSummaryCard } from './HouseholdSummaryCard'
+
+describe('HouseholdSummaryCard', () => {
+  it('always renders the "これは授業用の架空プロフィールです" notice (spec §13.4)', () => {
+    render(<HouseholdSummaryCard householdId="case-b" cashYen={1500000} lifeStage="子育て期" roundIndex={4} visibleConcepts={['EMERGENCY_FUND']} />)
+    expect(screen.getByText('これは授業用の架空プロフィールです')).toBeInTheDocument()
+  })
+
+  it('never renders a concept category absent from visibleConcepts', () => {
+    render(<HouseholdSummaryCard householdId="case-b" cashYen={1500000} lifeStage="子育て期" roundIndex={4} visibleConcepts={['EMERGENCY_FUND']} />)
+    expect(screen.queryByText('住宅ローン')).not.toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 8: 失敗を確認し、`HouseholdSummaryCard`を実装する**
+
+Run: `npx vitest run src/components/homeEconomics/HouseholdSummaryCard.test.tsx`
+Expected: FAIL → 実装後PASS。実装は`src/components/homeEconomics/HouseholdSummaryCard.tsx`に、`visibleConcepts`（Task14）に応じてセクションを出し分ける薄いpresentationalコンポーネントとして作成する。資産配分入力は`@stock-league/lesson-inputs`の`RankingInput`/`QuantityInput`（Phase B Task6）を、資金不足時の選択肢は`SingleChoiceInput`をそのまま流用し、家庭科専用の新規ウィジェット型は追加しない（Global Constraints参照）。
+
+- [ ] **Step 9: `npm run verify`**
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/lib/lessonRuns/liveTypes.ts functions/src/homeEconomics/realtimeProjection.ts functions/src/homeEconomics/realtimeProjection.test.ts \
+  functions/src/homeEconomics/processRound.ts src/components/homeEconomics/HouseholdSummaryCard.tsx src/components/homeEconomics/HouseholdSummaryCard.test.tsx
+git commit -m "feat: add household RTDB projection, wire real-time broadcast, add student summary screen"
+```
+
+---
+
+### Task 16: 家庭科の評価（自動/ルーブリック分離、観点別ランキング）
+
+統合仕様書 §13.17を実装する。Phase C Task16（社会科の評価）と同じ設計原則——**「生活目標達成」「緊急予備資金」「生活安定性」「分散」「借入負担」は自動計算、「振り返り」は教師のルーブリック評価**（§13.17「根拠の妥当性を自動採点しない」という旧phase1b計画の原則を継承、Phase C Task16のJSDocコメント参照）。**総合点より観点別表示を優先する**（§13.17）——`computeWeightedTotalScore`はあくまで参考値として提供し、`rankByCriterion`による観点別ランキングを主とする。
+
+**Files:**
+- Create: `functions/src/homeEconomics/evaluation.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HomeEconomicsEvaluationWeights`（Task2）、`HouseholdState`（Task10）
+- Produces: `computeLifeGoalAchievementScore`、`computeEmergencyFundAdequacyScore`、`computeStabilityScore`、`computeDiversificationScore`、`computeBorrowingBurdenScore`、`computeWeightedTotalScore`、`rankByCriterion`
+
+- [ ] **Step 1: 自動計算スコアの失敗するテストを書く**
+
+`functions/src/homeEconomics/evaluation.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import {
+  computeBorrowingBurdenScore, computeDiversificationScore, computeEmergencyFundAdequacyScore,
+  computeLifeGoalAchievementScore, computeStabilityScore, computeWeightedTotalScore, rankByCriterion,
+} from './evaluation'
+
+describe('computeEmergencyFundAdequacyScore', () => {
+  it('scores 100 when cash covers 6+ months of living expenses (PROVISIONAL threshold, see Task 17)', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 1500000, annualLivingExpensesYen: 3000000 })).toBe(100)
+  })
+  it('scores proportionally below the 6-month threshold', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 750000, annualLivingExpensesYen: 3000000 })).toBeCloseTo(50, 0)
+  })
+  it('never exceeds 100 even with very large savings', () => {
+    expect(computeEmergencyFundAdequacyScore({ cashYen: 100000000, annualLivingExpensesYen: 3000000 })).toBe(100)
+  })
+})
+
+describe('computeDiversificationScore', () => {
+  it('scores higher for holdings spread across more asset types than concentrated in one', () => {
+    const concentrated = computeDiversificationScore({ DOMESTIC_STOCK: 1000000 })
+    const diversified = computeDiversificationScore({ DOMESTIC_STOCK: 250000, FOREIGN_STOCK: 250000, BOND: 250000, CASH: 250000 })
+    expect(diversified).toBeGreaterThan(concentrated)
+  })
+  it('scores 0 for no holdings at all, not NaN or undefined', () => {
+    expect(computeDiversificationScore({})).toBe(0)
+  })
+})
+
+describe('computeBorrowingBurdenScore', () => {
+  it('scores 100 for zero debt service', () => {
+    expect(computeBorrowingBurdenScore({ annualDebtServiceYen: 0, netIncomeYen: 4800000 })).toBe(100)
+  })
+  it('scores lower as debt service consumes a larger share of income', () => {
+    const light = computeBorrowingBurdenScore({ annualDebtServiceYen: 480000, netIncomeYen: 4800000 })
+    const heavy = computeBorrowingBurdenScore({ annualDebtServiceYen: 2400000, netIncomeYen: 4800000 })
+    expect(light).toBeGreaterThan(heavy)
+  })
+})
+
+describe('computeStabilityScore', () => {
+  it('scores the fraction of rounds without a shortfall, as a 0-100 score', () => {
+    expect(computeStabilityScore({ shortfallRoundCount: 1, totalRounds: 4 })).toBe(75)
+  })
+  it('scores 100 when there were never any rounds (avoid division by zero)', () => {
+    expect(computeStabilityScore({ shortfallRoundCount: 0, totalRounds: 0 })).toBe(100)
+  })
+})
+
+describe('computeLifeGoalAchievementScore', () => {
+  it('scores 100 when the goal was never delayed', () => {
+    expect(computeLifeGoalAchievementScore({ goalDelayedRounds: 0, totalRounds: 4 })).toBe(100)
+  })
+  it('scores lower as more rounds were spent delayed, relative to total rounds', () => {
+    expect(computeLifeGoalAchievementScore({ goalDelayedRounds: 2, totalRounds: 4 })).toBe(50)
+  })
+})
+
+describe('computeWeightedTotalScore', () => {
+  const weights = { lifeGoalAchievement: 0.2, emergencyFundAdequacy: 0.15, stability: 0.2, diversification: 0.15, borrowingBurden: 0.15, reflection: 0.15 }
+
+  it('renormalizes remaining weights when reflection (rubric-graded) has not been entered yet — same null-handling as Phase C Task 16', () => {
+    const total = computeWeightedTotalScore(
+      { lifeGoalAchievement: 100, emergencyFundAdequacy: 80, stability: 90, diversification: 70, borrowingBurden: 60, reflection: null },
+      weights,
+    )
+    const remainingWeightSum = 0.2 + 0.15 + 0.2 + 0.15 + 0.15
+    const expected = (100 * 0.2 + 80 * 0.15 + 90 * 0.2 + 70 * 0.15 + 60 * 0.15) / remainingWeightSum
+    expect(total).toBeCloseTo(expected, 9)
+  })
+})
+
+describe('rankByCriterion', () => {
+  it('sorts households descending by the given criterion, excluding null scores', () => {
+    const households = [{ householdId: 'a', stability: 80 }, { householdId: 'b', stability: null }, { householdId: 'c', stability: 95 }]
+    expect(rankByCriterion(households, 'stability').map((h) => h.householdId)).toEqual(['c', 'a'])
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/evaluation.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/evaluation.ts`:
+
+```ts
+import type { HomeEconomicsEvaluationWeights } from '@stock-league/household-authoring-content'
+
+/** PROVISIONAL — spec §13.17 requires "緊急予備資金" as a criterion without specifying the months-of-expenses threshold; 6 months is a common financial-literacy rule of thumb, to be tuned during pilot runs (Task 17). */
+const EMERGENCY_FUND_TARGET_MONTHS = 6
+
+export const computeEmergencyFundAdequacyScore = (input: { cashYen: number; annualLivingExpensesYen: number }): number => {
+  if (input.annualLivingExpensesYen === 0) return 100
+  const monthsCovered = (input.cashYen / input.annualLivingExpensesYen) * 12
+  return Math.min(100, Math.round((monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100))
+}
+
+/**
+ * PROVISIONAL — a simple normalized count of distinct held asset types
+ * (0 types = 0, 1 type = low, 4+ types = 100), not a variance-weighted
+ * Herfindahl index. Chosen for classroom legibility over statistical
+ * precision; revisit during pilot runs (Task 17).
+ */
+export const computeDiversificationScore = (assetHoldingsYen: Record<string, number>): number => {
+  const heldTypeCount = Object.values(assetHoldingsYen).filter((v) => v > 0).length
+  return Math.min(100, Math.round((heldTypeCount / 4) * 100))
+}
+
+export const computeBorrowingBurdenScore = (input: { annualDebtServiceYen: number; netIncomeYen: number }): number => {
+  if (input.netIncomeYen === 0) return input.annualDebtServiceYen === 0 ? 100 : 0
+  const burdenRatio = input.annualDebtServiceYen / input.netIncomeYen
+  return Math.max(0, Math.round(100 - burdenRatio * 200))
+}
+
+export const computeStabilityScore = (input: { shortfallRoundCount: number; totalRounds: number }): number => {
+  if (input.totalRounds === 0) return 100
+  return Math.round(((input.totalRounds - input.shortfallRoundCount) / input.totalRounds) * 100)
+}
+
+export const computeLifeGoalAchievementScore = (input: { goalDelayedRounds: number; totalRounds: number }): number => {
+  if (input.totalRounds === 0) return 100
+  return Math.max(0, Math.round(100 - (input.goalDelayedRounds / input.totalRounds) * 100))
+}
+
+export interface HomeEconomicsCriterionScores {
+  lifeGoalAchievement: number | null
+  emergencyFundAdequacy: number | null
+  stability: number | null
+  diversification: number | null
+  borrowingBurden: number | null
+  /** Rubric-graded by the teacher (spec §13.17: "根拠の妥当性を自動採点しない") — null until entered. */
+  reflection: number | null
+}
+
+/** Same null-renormalization discipline as Phase C Task 16's `computeWeightedTotalScore`. */
+export const computeWeightedTotalScore = (
+  scores: HomeEconomicsCriterionScores,
+  weights: HomeEconomicsEvaluationWeights,
+): number | null => {
+  const entries = (Object.keys(scores) as (keyof HomeEconomicsCriterionScores)[])
+    .map((key) => ({ score: scores[key], weight: weights[key] }))
+    .filter((e): e is { score: number; weight: number } => e.score !== null)
+  if (entries.length === 0) return null
+  const weightSum = entries.reduce((sum, e) => sum + e.weight, 0)
+  const weightedSum = entries.reduce((sum, e) => sum + e.score * e.weight, 0)
+  return weightedSum / weightSum
+}
+
+export const rankByCriterion = <T extends { householdId: string }>(households: T[], criterion: keyof T): T[] =>
+  households
+    .filter((h) => h[criterion] !== null && h[criterion] !== undefined)
+    .sort((a, b) => (b[criterion] as unknown as number) - (a[criterion] as unknown as number))
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/evaluation.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/evaluation.ts functions/src/homeEconomics/evaluation.test.ts
+git commit -m "feat: add home-economics 5-criteria evaluation with auto/rubric split and per-criterion ranking"
+```
+
+---
+
+### Task 17: §27.4受け入れテストとPhase D完了条件の確定
+
+統合仕様書 §27.4の家庭科受け入れテスト6項目を、Task 1〜16で書いたテストへ1つずつ対応付ける。**1項目（同一条件モードで全チームの初期条件が一致）は既存タスクのテストだけではカバーできていないため、本タスクで新しいテストと検証を追加して埋める**（Phase C Task19が同じ構造で2項目のギャップを発見・充填した前例を踏襲）。
+
+**Files:**
+- Modify: `functions/src/homeEconomics/templateValidation.ts`, `.test.ts`（項目4）
+- Create: `test/household-lifecycle.acceptance.test.ts`
+
+**§27.4の6項目と対応するテストの対応表:**
+
+| # | 受け入れ項目 | 対応するテスト |
+| --- | --- | --- |
+| 1 | 資産、保険、負債、キャッシュフローが分離 | Task1（`AssetPosition`/`InsuranceProduct`/`Liability`が独立した型、`HouseholdState`でも別々のフィールド）＋Task6「資産配分円グラフへ保険を混ぜない」設計 |
+| 2 | 物価・金利が指定項目へ反映 | Task3「applies inflation to variable expenses」＋Task4「経済要因反映」＋Task5（住宅ローンの金利） |
+| 3 | 資金不足時に選択肢が出る | Task8「always includes REDUCE_EXPENSES and DELAY_GOAL」＋Task11「auto-resolves an unexpected shortfall...never auto-bankrupts」 |
+| 4 | 同一条件モードで全チームの初期条件が一致 | **未カバー。Step1で追加する。** |
+| 5 | 人生段階をまたいで保存・再開 | Task13「round-trips every household field exactly」 |
+| 6 | 価格・税率等の教材版が固定 | Task3「throws for an unknown model version rather than silently falling back」＋`templateSnapshot`不変性（Phase A既存パターン、Task2がその上に構築） |
+
+- [ ] **Step 1: 項目4（同一条件モードで全チームの初期条件が一致）の失敗するテストを書く**
+
+`functions/src/homeEconomics/templateValidation.test.ts`に追記する:
+
+```ts
+describe('COMMON_CONDITIONS course format requires exactly one shared household profile (spec §27.4 item 4)', () => {
+  it('rejects COMMON_CONDITIONS with more than one household profile — teams must share identical initial conditions', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'COMMON_CONDITIONS', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+  })
+
+  it('accepts ROLE_VARIANT with multiple household profiles', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'ROLE_VARIANT', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: FAIL — バリデーションがcourseFormatを見ていない
+
+- [ ] **Step 3: `validateHomeEconomicsContent`へチェックを追加する**
+
+`functions/src/homeEconomics/templateValidation.ts`の`errors`配列構築部分へ追記する:
+
+```ts
+if (content.courseFormat === 'COMMON_CONDITIONS' && content.households.length > 1) {
+  errors.push('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+}
+```
+
+（`COMMON_CONDITIONS`モードでは、`getOrInitHouseholdState`（Task10）が全チームに対し同一の`households[0]`プロフィールから状態を初期化する——プロフィールが1件しかなければ「全チーム同じ初期条件」がデータモデル上自動的に保証される、という設計。複数プロフィールを許す他の`courseFormat`と区別するための最小限のバリデーション。）
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/templateValidation.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: Phase D全体の完了条件を確認する**
+
+以下すべてを満たすことをPhase D完了の条件とする:
+
+1. `npm run verify`（`lint` → `typecheck` → `test` → `test:rules` → `build` → `functions`/`packages/*`の`verify`）が全ワークスペースでPASSする。
+2. 上表の§27.4 6項目すべてに対応するテストが存在し、PASSする。
+3. 生徒向けに配信されるデータ（`lessonRunPublic`・`lessonRunTeamState`のRTDB書き込み内容、Task15の`toHouseholdStateTeamView`の実際の出力）を目視確認し、`internalRiskFactors`・`internalClaimProbability`・`eventProbabilityOverrides`・他チームのプロフィールのいずれも含まれていないことを確認する。**Phase C最終レビューの教訓（RTDB配信コードがno-opのまま最終レビューまで気づかれなかった）を踏まえ、Task15で配線を完結させたことを`processRound.ts`の`publishRealtimeState`実装を直接読んで再確認すること——「型は安全だが配信コードが未実装」という状態を完了条件としない。**
+4. 本計画内でPROVISIONAL（試運転で調整する暫定値）と明記した定数——`TAX_MODEL_V1_RATE_PERCENT`（Task3）、`EMERGENCY_FUND_TARGET_MONTHS`（Task16）、`pensionReplacementRatePercent`の既定値（Task12、教材設定側で暫定値を1箇所に置くこと）——を1箇所の一覧（`functions/src/homeEconomics/engine/tuningConstants.ts`のような単一ファイル、Phase C Task19と同じ形）にまとめ、後続の試運転フェーズで参照できるようにする。
+5. 冒頭の前提チェックリスト（`HOME_ECONOMICS_MARKET_FORBIDDEN`バリデーション、`DECISION`フェーズ型の存在）はPhase Bで確定済み——本計画のTask2 Step10・Step11はこれをそのまま前提にしてよい。
+6. Task11で記録した既知の限界（`computeAssetReturn`呼び出しの資産カタログ解決が`assetType`単位、同一`assetType`の複数商品を想定しない設計）を再確認し、教材バリデーション（Task2）で「同一`assetType`の資産は1商品まで」という制約を明示的に強制するか、対応が必要かを判断する。
+
+- [ ] **Step 6: `npm run verify`**
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add functions/src/homeEconomics/templateValidation.ts functions/src/homeEconomics/templateValidation.test.ts \
+  functions/src/homeEconomics/engine/tuningConstants.ts test/household-lifecycle.acceptance.test.ts
+git commit -m "test: close the §27.4 acceptance-test gap (common-conditions single-profile invariant) and confirm Phase D completion conditions"
+```
+
