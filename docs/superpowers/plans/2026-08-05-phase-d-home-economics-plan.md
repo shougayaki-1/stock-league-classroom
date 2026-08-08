@@ -968,3 +968,124 @@ git commit -m "feat: add annual cash-flow and tax/social-insurance simplified en
 ```
 
 ---
+
+### Task 4: 資産の年次収益率計算（経済要因反映、決定的PRNGノイズ）
+
+統合仕様書 §13.5（資産）・§13.11（経済要因）・§13.15（年次収益率）を実装する。純粋関数とし、`Task11`のラウンド確定処理から呼ばれる。**乱数は`functions/packages/deterministic-random`のみを使う。**
+
+`AssetPosition.expectedReturnPercent`（Task1、教材作成者が設定する非公開の期待収益率）を`EconomicFactors.marketReturnPercent`（Task2、教材の市場想定）で補正し、決定的PRNGによるノイズ項を加える。Phase C Task3の`calculateNextPrice`と同じ構造（決定論的な基礎値＋ノイズ）だが、時間の単位が3秒バッチではなくラウンド（年）である点が異なる。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/assetReturn.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `AssetPosition`（Task1）、`EconomicFactors`（Task2）、`deriveSeed`/`mulberry32`（Phase A、`@stock-league/deterministic-random`）
+- Produces: `computeAssetReturn(input): AssetReturnResult`
+
+- [ ] **Step 1: 決定的収益率計算の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/assetReturn.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeAssetReturn } from './assetReturn'
+
+const baseInput = {
+  assetType: 'DOMESTIC_STOCK' as const, valueYen: 1000000,
+  expectedReturnPercent: 5, volatilityPercent: 15,
+  marketReturnPercent: 3, householdId: 'case-b', roundIndex: 2,
+  randomSeed: 'seed-abc', restoreGeneration: 0,
+}
+
+describe('computeAssetReturn', () => {
+  it('is deterministic — same inputs always produce the same nextValueYen', () => {
+    expect(computeAssetReturn(baseInput)).toEqual(computeAssetReturn(baseInput))
+  })
+
+  it('a different roundIndex produces a different result — the noise term is not constant across rounds', () => {
+    const round2 = computeAssetReturn(baseInput)
+    const round3 = computeAssetReturn({ ...baseInput, roundIndex: 3 })
+    expect(round2.nextValueYen).not.toBe(round3.nextValueYen)
+  })
+
+  it('CASH never carries a noise term — zero volatility is exact, not approximate (spec §13.5)', () => {
+    const result = computeAssetReturn({ ...baseInput, assetType: 'CASH', expectedReturnPercent: 0, volatilityPercent: 0 })
+    expect(result.nextValueYen).toBe(baseInput.valueYen)
+    expect(result.returnPercent).toBe(0)
+  })
+
+  it('never returns a negative value even with a large negative noise draw', () => {
+    const result = computeAssetReturn({ ...baseInput, expectedReturnPercent: -50, volatilityPercent: 200 })
+    expect(result.nextValueYen).toBeGreaterThanOrEqual(0)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/assetReturn.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: `computeAssetReturn`を実装する**
+
+`functions/src/homeEconomics/engine/assetReturn.ts`:
+
+```ts
+import { deriveSeed, mulberry32 } from '@stock-league/deterministic-random'
+import type { AssetType } from '@stock-league/household-public-content'
+
+export interface AssetReturnInput {
+  assetType: AssetType
+  valueYen: number
+  /** Hidden from students (Task 1) — the teacher-authored base expectation. */
+  expectedReturnPercent: number
+  /** Hidden from students (Task 1) — drives the noise term's magnitude. */
+  volatilityPercent: number
+  /** Spec §13.11 — HomeEconomicsContent.economicFactors.marketReturnPercent (Task 2), added to expectedReturnPercent as the economic-environment adjustment. */
+  marketReturnPercent: number
+  householdId: string
+  roundIndex: number
+  randomSeed: string
+  restoreGeneration: number
+}
+export interface AssetReturnResult {
+  returnPercent: number
+  nextValueYen: number
+}
+
+/**
+ * Spec §13.5/§13.15: each asset's next value = current value × (1 +
+ * expectedReturn + marketReturn + noise). Noise is deterministic PRNG,
+ * scaled by volatilityPercent — an asset with 0 volatility (e.g. CASH)
+ * gets exactly 0 noise, never an approximately-zero draw. Never goes
+ * negative — a household's asset value floors at 0 (assets don't go
+ * short in this simulation).
+ */
+export const computeAssetReturn = (input: AssetReturnInput): AssetReturnResult => {
+  let noisePercent = 0
+  if (input.volatilityPercent !== 0) {
+    const seed = deriveSeed([input.randomSeed, input.restoreGeneration, input.householdId, input.assetType, input.roundIndex])
+    const rand = mulberry32(seed)()
+    noisePercent = (rand * 2 - 1) * input.volatilityPercent
+  }
+  const returnPercent = input.expectedReturnPercent + input.marketReturnPercent + noisePercent
+  const nextValueYen = Math.max(0, Math.round(input.valueYen * (1 + returnPercent / 100)))
+  return { returnPercent, nextValueYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/assetReturn.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/assetReturn.ts functions/src/homeEconomics/engine/assetReturn.test.ts
+git commit -m "feat: add deterministic annual asset-return engine"
+```
+
+---
