@@ -1,57 +1,67 @@
+import { getFirestore } from 'firebase-admin/firestore'
 import type { MarketOrder } from './orderTypes'
-import type { SettleBatchInput, SettleBatchResult } from './engine/settleBatch'
+import { listPendingOrdersForBatch, ordersRepositoryWithAdminSdk } from '../lessonRuns/orders/repository'
+import { appendLessonEventWithAdminSdk } from '../lessonRuns/appendLessonEvent'
+import type { TeamAccount } from '../lessonRuns/teamAccounts/types'
+import { settleBatch, type SettleBatchInput, type SettleBatchResult, type StockBatchInput } from './engine/settleBatch'
+import type { PriceSensitivityPreset } from './engine/priceCalculation'
 
 /**
  * `processBatch` is the Admin SDK wrapper around the pure `settleBatch`
  * orchestrator (Task 9). It is the entry point Task 10's Cloud Tasks
- * handler calls once per batch deadline.
- *
- * Per the Task 9 brief's Step 7, THIS FILE FIXES RESPONSIBILITIES AND
- * INTERFACES ONLY — the actual Firestore/RTDB I/O bodies are implemented
- * together with Task 10 (the Cloud Tasks handler that triggers batches
- * and schedules the next one), because they can't be meaningfully tested
- * in isolation from that scheduling loop. `npm run verify`'s pass/fail
- * for this file's *behavior* is deferred to Task 10's completion
- * condition; this task's `verify` only needs the settleBatch/
- * informationImpact pure functions and this file's types to compile and
- * export correctly.
+ * handler (`taskHandler.ts`'s `batchTaskHandler`) calls once per batch
+ * deadline.
  *
  * The nine steps below (spec §12.9〜§12.11・§12.14・§12.15・§12.20〜§12.22)
- * map 1:1 onto `ProcessBatchDeps`'s methods, in the order `processBatch`
- * must call them:
+ * map onto `ProcessBatchDeps`'s methods, in the order `processBatch`
+ * calls them:
  *
  * 1. readLessonRunState  — read `lessonRuns/{id}`'s status/randomSeed/
- *    restoreGeneration/socialStudiesMarket. If `status !== 'RUNNING'` or
+ *    restoreGeneration/pricing config. If `status !== 'RUNNING'` or
  *    `marketPaused === true`, processBatch does nothing (Task 11 stop /
- *    Task 10 chain-breaking).
+ *    Task 10 chain-breaking). This mirrors `shouldProcessBatch`'s guard
+ *    in `batchScheduler.ts` — `batchTaskHandler` already checks this
+ *    before calling `processBatch`, but the check is repeated here as
+ *    defense in depth in case `processBatch` is ever invoked directly.
  * 2. listPendingOrders    — Task 5's `listPendingOrdersForBatch`.
  * 3. readTeamAccounts     — Task 7's `TeamAccount` docs, one per team
  *    with orders this batch.
- * 4. computeInformationImpact — per stock, sum each active information
- *    item's `informationImpactPercent` (Task 9's `informationImpact.ts`
- *    window function) plus any published economic indicator's
- *    `companyImpactMultipliers` entry for that company, into the single
- *    `informationImpactPercent` value `settleBatch` expects — no separate
- *    price-calculation term is introduced for indicators. Each stock's
- *    `effectiveMarketSize` is derived from `SimulatedCompany.sizeClass`
- *    via `effectiveMarketSizeForCompany` (Task 3) — there is no path for
- *    a teacher to input share count directly.
+ * 4. listStocksForBatch + computeInformationImpact — per stock, the
+ *    latest persisted price/authoring state plus the summed
+ *    `informationImpactPercent` from active information items and
+ *    published economic indicators (Task 9's `informationImpact.ts`
+ *    window function). NOTE: `computeInformationImpact` currently
+ *    returns an empty map — no prior task built Firestore persistence
+ *    for `InformationItem`s, so there is nothing to read yet. This is a
+ *    documented gap (see task-10-report.md), not a silent omission: it
+ *    means published-information effects on price are not yet live,
+ *    but noise/demand-driven price movement and the batch chain itself
+ *    both work end-to-end.
  * 5. settleBatch          — call the pure orchestrator (Task 9) with the
- *    data step 1-4 assembled.
+ *    data steps 1-4 assembled.
  * 6. commitSettlement     — inside a single Firestore transaction (all
  *    reads before all writes, per the Global Constraints transaction
- *    rule — steps 1-4 already did the reads): transition each order's
- *    status via `transitionOrderStatus` (PROCESSING → FILLED/REJECTED),
- *    apply each `TeamAccountUpdate` (releasing the original soft lock via
- *    `releaseSoftLock` before applying the settled delta), and update
- *    each stock's `currentPrice`.
+ *    rule): transition each order from PENDING to FILLED/REJECTED,
+ *    release its original soft lock, apply each `TeamAccountUpdate`, and
+ *    update each stock's `currentPrice`.
  * 7. appendBatchSettledEvent — record a `BATCH_SETTLED` `LessonEvent`
  *    (batchId, price breakdown, rejection count) via Phase A's
  *    `appendLessonEvent`.
  * 8. publishRealtimeState — update RTDB `lessonRunPublic`/
- *    `lessonRunPrivate`/`lessonRunTeamState` projections (Task 13).
- * 9. scheduleNextBatch    — hand off to Task 10's scheduler for the next
- *    batch.
+ *    `lessonRunPrivate`/`lessonRunTeamState` projections. TODO(Task 13):
+ *    the RTDB write schema is confirmed by Task 13, not this task — this
+ *    is intentionally a no-op placeholder per this task's brief ("RTDB
+ *    書き込みスキーマの詳細はTask13で確定するため、最小限のプレースホルダ
+ *    ...で構わない").
+ * 9. scheduleNextBatch    — INTENTIONALLY A NO-OP in the real Admin SDK
+ *    wiring below. `ProcessBatchDeps` still requires this method (Task 9
+ *    fixed the interface), but Task 10's `batchTaskHandler` already
+ *    calls `enqueueNextBatch` itself immediately after `processBatch`
+ *    returns (see `taskHandler.ts`). Having both call the real
+ *    `enqueueNextBatch` would schedule two Cloud Tasks for the same next
+ *    batchIndex. This file's `processBatchDepsWithAdminSdk` wires
+ *    `scheduleNextBatch` to a no-op to resolve that overlap in favor of
+ *    the single call site `batchTaskHandler` already owns.
  */
 export interface ProcessBatchDeps {
   readLessonRunState: (lessonRunId: string) => Promise<{
@@ -59,11 +69,15 @@ export interface ProcessBatchDeps {
     marketPaused?: boolean
     randomSeed: string
     restoreGeneration: number
-    // socialStudiesMarket authoring content (companies, price guards, etc.)
-    // — shape TBD at Task 10, sourced from Task 1/2's authoring types.
+    priceSensitivityPreset: PriceSensitivityPreset
+    noiseEnabled: boolean
   }>
   listPendingOrders: (lessonRunId: string, batchId: string) => Promise<MarketOrder[]>
   readTeamAccounts: (lessonRunId: string, teamIds: string[]) => Promise<SettleBatchInput['teamAccounts']>
+  /** Per-stock price/authoring state as of the start of this batch —
+   * everything `StockBatchInput` needs except `informationImpactPercent`
+   * (added separately from `computeInformationImpact`'s result). */
+  listStocksForBatch: (lessonRunId: string) => Promise<Array<Omit<StockBatchInput, 'informationImpactPercent'>>>
   computeInformationImpact: (lessonRunId: string, batchIndex: number) => Promise<Map<string, number>>
   settleBatchFn: (input: SettleBatchInput) => SettleBatchResult
   commitSettlement: (result: SettleBatchResult, lessonRunId: string, batchId: string) => Promise<void>
@@ -78,12 +92,268 @@ export interface ProcessBatchInput {
   batchIndex: number
 }
 
-/**
- * Not implemented here — see the file-level doc comment. This throws
- * rather than silently no-op-ing so an accidental Task 10 wiring mistake
- * (calling this before its real implementation lands) fails loudly
- * instead of appearing to succeed while doing nothing.
- */
-export const processBatch = async (_deps: ProcessBatchDeps, _input: ProcessBatchInput): Promise<void> => {
-  throw new Error('processBatch is implemented together with Task 10 (Cloud Tasks handler) — see this file\'s doc comment for the fixed responsibilities/interface.')
+export const processBatch = async (deps: ProcessBatchDeps, input: ProcessBatchInput): Promise<void> => {
+  const runState = await deps.readLessonRunState(input.lessonRunId)
+  if (runState.status !== 'RUNNING' || runState.marketPaused === true) return
+
+  const orders = await deps.listPendingOrders(input.lessonRunId, input.batchId)
+  const teamIds = [...new Set(orders.map((order) => order.teamId))]
+  const [teamAccounts, stocksBase, impactByStock] = await Promise.all([
+    deps.readTeamAccounts(input.lessonRunId, teamIds),
+    deps.listStocksForBatch(input.lessonRunId),
+    deps.computeInformationImpact(input.lessonRunId, input.batchIndex),
+  ])
+
+  const stocks: StockBatchInput[] = stocksBase.map((stock) => ({
+    ...stock,
+    informationImpactPercent: impactByStock.get(stock.stockId) ?? 0,
+  }))
+
+  const result = deps.settleBatchFn({
+    lessonRunId: input.lessonRunId,
+    batchId: input.batchId,
+    batchIndex: input.batchIndex,
+    randomSeed: runState.randomSeed,
+    restoreGeneration: runState.restoreGeneration,
+    priceSensitivityPreset: runState.priceSensitivityPreset,
+    noiseEnabled: runState.noiseEnabled,
+    stocks,
+    orders: orders.map((order) => ({
+      orderId: order.orderId, teamId: order.teamId, stockId: order.stockId,
+      side: order.side, quantity: order.quantity, referencePrice: order.referencePrice,
+    })),
+    teamAccounts,
+  })
+
+  await deps.commitSettlement(result, input.lessonRunId, input.batchId)
+  await deps.appendBatchSettledEvent(result, input.lessonRunId, input.batchId)
+  await deps.publishRealtimeState(result, input.lessonRunId)
+  // Task 9 Step 9 requires this call; see this file's doc comment item 9
+  // for why the real Admin SDK wiring (processBatchDepsWithAdminSdk)
+  // supplies a no-op here instead of the real enqueueNextBatch.
+  await deps.scheduleNextBatch(input.lessonRunId, input.batchIndex)
 }
+
+// ---------------------------------------------------------------------
+// Admin SDK wiring
+// ---------------------------------------------------------------------
+
+const readLessonRunStateWithAdminSdk: ProcessBatchDeps['readLessonRunState'] = async (lessonRunId) => {
+  const snap = await getFirestore().doc(`lessonRuns/${lessonRunId}`).get()
+  const data = (snap.data() ?? {}) as {
+    status?: string
+    marketPaused?: boolean
+    randomSeed?: string
+    restoreGeneration?: number
+    priceSensitivityPreset?: PriceSensitivityPreset
+    noiseEnabled?: boolean
+  }
+  return {
+    status: data.status ?? 'UNKNOWN',
+    marketPaused: data.marketPaused ?? false,
+    randomSeed: data.randomSeed ?? '',
+    restoreGeneration: data.restoreGeneration ?? 0,
+    // PROVISIONAL defaults — no prior task wired a per-lessonRun field for
+    // these onto LessonRun yet (same gap Task 9's file doc noted for
+    // socialStudiesMarket authoring content). 'BALANCED'/noise-off keeps
+    // settleBatch callable without inventing an authoring-content schema
+    // this task does not own.
+    priceSensitivityPreset: data.priceSensitivityPreset ?? 'BALANCED',
+    noiseEnabled: data.noiseEnabled ?? false,
+  }
+}
+
+const readTeamAccountsWithAdminSdk: ProcessBatchDeps['readTeamAccounts'] = async (lessonRunId, teamIds) => {
+  if (teamIds.length === 0) return []
+  const db = getFirestore()
+  const snaps = await Promise.all(teamIds.map((teamId) => db.doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`).get()))
+  return snaps
+    .filter((snap) => snap.exists)
+    .map((snap) => {
+      const account = snap.data() as TeamAccount
+      return { teamId: account.teamId, cash: account.cash, holdings: account.holdings }
+    })
+}
+
+/**
+ * PROVISIONAL schema: `lessonRuns/{id}/stocks/{stockId}` holding
+ * currentPrice/initialPrice/priceGuard/effectiveMarketSize/
+ * demandSensitivity. No prior task (Task 1-9) created a live per-lessonRun
+ * stock-state collection — only authoring-time content types
+ * (`SimulatedCompany` etc.) exist in `market-authoring-content`. This
+ * collection path is this task's minimal placeholder so `settleBatch` has
+ * something to read/write; Task 13 owns confirming/adjusting this schema
+ * when it wires the RTDB projections that mirror it.
+ */
+const listStocksForBatchWithAdminSdk: ProcessBatchDeps['listStocksForBatch'] = async (lessonRunId) => {
+  const snap = await getFirestore().collection(`lessonRuns/${lessonRunId}/stocks`).get()
+  return snap.docs.map((doc) => doc.data() as Omit<StockBatchInput, 'informationImpactPercent'>)
+}
+
+/**
+ * TODO(Task 13 or a dedicated information-items task): no prior task
+ * persisted `InformationItem`s to Firestore, so there is nothing to sum
+ * here yet. Returns an empty map — every stock's informationImpactPercent
+ * contribution from published information/economic-indicator content is
+ * currently 0, not "unknown." See this file's doc comment step 4.
+ */
+const computeInformationImpactWithAdminSdk: ProcessBatchDeps['computeInformationImpact'] = async () => new Map()
+
+const commitSettlementWithAdminSdk: ProcessBatchDeps['commitSettlement'] = async (result, lessonRunId, batchId) => {
+  const db = getFirestore()
+  await db.runTransaction(async (tx) => {
+    // ---- ALL READS FIRST (Global Constraints transaction rule) ----
+    // The lessonRun doc's lastProcessedBatchId is this batchId's
+    // idempotency compare-and-set (矛盾解消A必須事項2): read+check+write
+    // it in THIS SAME transaction as every other settlement write, so a
+    // duplicate Cloud Tasks delivery that raced past batchTaskHandler's
+    // own (non-transactional) shouldProcessBatch check still cannot
+    // double-settle — the second delivery's transaction sees
+    // lastProcessedBatchId already equal to this batchId and no-ops.
+    const lessonRunRef = db.doc(`lessonRuns/${lessonRunId}`)
+    const lessonRunSnap = await tx.get(lessonRunRef)
+    const alreadyProcessed = (lessonRunSnap.data() as { lastProcessedBatchId?: string } | undefined)?.lastProcessedBatchId === batchId
+    if (alreadyProcessed) return
+
+    const orderRefs = result.orders.map((o) => db.doc(`lessonRuns/${lessonRunId}/orders/${o.orderId}`))
+    const orderSnaps = await Promise.all(orderRefs.map((ref) => tx.get(ref)))
+
+    const teamIds = new Set<string>()
+    orderSnaps.forEach((snap) => { if (snap.exists) teamIds.add((snap.data() as MarketOrder).teamId) })
+    result.teamAccountUpdates.forEach((u) => teamIds.add(u.teamId))
+    const teamIdList = [...teamIds]
+    const teamRefs = teamIdList.map((teamId) => db.doc(`lessonRuns/${lessonRunId}/teamAccounts/${teamId}`))
+    const teamSnaps = await Promise.all(teamRefs.map((ref) => tx.get(ref)))
+
+    const stockRefs = result.stocks.map((s) => db.doc(`lessonRuns/${lessonRunId}/stocks/${s.stockId}`))
+    const stockSnaps = await Promise.all(stockRefs.map((ref) => tx.get(ref)))
+
+    // ---- Derive per-team soft-lock release from the ORIGINAL orders ----
+    // (must use each order's own quantity/referencePrice/side/stockId —
+    // the same values applySoftLockForNewOrder locked at submission time).
+    const releaseByTeam = new Map<string, { lockedBuyValueRelease: number; lockedSellRelease: Record<string, number> }>()
+    orderSnaps.forEach((snap) => {
+      if (!snap.exists) return
+      const order = snap.data() as MarketOrder
+      if (order.status !== 'PENDING') return // already moved by a concurrent cancel — leave its lock alone
+      const entry = releaseByTeam.get(order.teamId) ?? { lockedBuyValueRelease: 0, lockedSellRelease: {} }
+      if (order.side === 'BUY') {
+        entry.lockedBuyValueRelease += order.quantity * order.referencePrice
+      } else {
+        entry.lockedSellRelease[order.stockId] = (entry.lockedSellRelease[order.stockId] ?? 0) + order.quantity
+      }
+      releaseByTeam.set(order.teamId, entry)
+    })
+
+    // ---- ALL WRITES AFTER ----
+    orderSnaps.forEach((snap, i) => {
+      if (!snap.exists) return
+      const order = snap.data() as MarketOrder
+      // Compare-and-set on PENDING: if a concurrent cancelOrder already
+      // moved this order away from PENDING, this settlement must not
+      // overwrite that outcome (mirrors transitionOrderStatus's guard).
+      if (order.status !== 'PENDING') return
+      const outcome = result.orders[i]
+      tx.update(orderRefs[i], {
+        status: outcome.status,
+        settledAtServerMillis: Date.now(),
+        ...(outcome.executionPrice !== undefined ? { executionPrice: outcome.executionPrice } : {}),
+        ...(outcome.rejectionReason !== undefined ? { rejectionReason: outcome.rejectionReason } : {}),
+      })
+    })
+
+    const settledDeltaByTeam = new Map(result.teamAccountUpdates.map((u) => [u.teamId, u]))
+    teamIdList.forEach((teamId, i) => {
+      const snap = teamSnaps[i]
+      if (!snap.exists) return
+      const account = snap.data() as TeamAccount
+      const release = releaseByTeam.get(teamId)
+      const settled = settledDeltaByTeam.get(teamId)
+      const holdings = { ...account.holdings }
+      let cash = account.cash
+      let lockedBuyValue = account.lockedBuyValue
+      const lockedSellQuantity = { ...account.lockedSellQuantity }
+      if (release) {
+        lockedBuyValue -= release.lockedBuyValueRelease
+        for (const [stockId, qty] of Object.entries(release.lockedSellRelease)) {
+          lockedSellQuantity[stockId] = (lockedSellQuantity[stockId] ?? 0) - qty
+        }
+      }
+      if (settled) {
+        cash += settled.cashDelta
+        for (const [stockId, delta] of Object.entries(settled.holdingsDelta)) {
+          holdings[stockId] = (holdings[stockId] ?? 0) + delta
+        }
+      }
+      tx.set(teamRefs[i], { ...account, cash, holdings, lockedBuyValue, lockedSellQuantity, updatedAtServerMillis: Date.now() })
+    })
+
+    result.stocks.forEach((s, i) => {
+      const snap = stockSnaps[i]
+      if (!snap.exists) return
+      tx.update(stockRefs[i], { currentPrice: s.nextPrice, updatedAtServerMillis: Date.now() })
+    })
+
+    // Marks this batchId processed — the compare-and-set this
+    // transaction's leading read checked above. Written last so a
+    // transaction that aborts partway (e.g. a read contention retry)
+    // never marks a batch processed without its settlement writes.
+    tx.update(lessonRunRef, { lastProcessedBatchId: batchId })
+  })
+}
+
+const appendBatchSettledEventWithAdminSdk: ProcessBatchDeps['appendBatchSettledEvent'] = async (result, lessonRunId, batchId) => {
+  const orgSnap = await getFirestore().doc(`lessonRuns/${lessonRunId}`).get()
+  const orgId = (orgSnap.data() as { orgId?: string } | undefined)?.orgId ?? ''
+  const rejectionCount = result.orders.filter((o) => o.status === 'REJECTED').length
+  await appendLessonEventWithAdminSdk({
+    lessonRunId, orgId, type: 'BATCH_SETTLED', actorType: 'SYSTEM',
+    payload: {
+      batchId, rejectionCount,
+      stocks: result.stocks.map((s) => ({ stockId: s.stockId, executionPrice: s.executionPrice, nextPrice: s.nextPrice })),
+    },
+    idempotencyKey: `batch-settled_${batchId}`,
+  })
+}
+
+/**
+ * TODO(Task 13): RTDB `lessonRunPublic`/`lessonRunPrivate`/
+ * `lessonRunTeamState` projection writes land with Task 13, which owns
+ * confirming the write schema. Intentionally a no-op placeholder per this
+ * task's brief.
+ */
+const publishRealtimeStateWithAdminSdk: ProcessBatchDeps['publishRealtimeState'] = async () => {}
+
+/**
+ * No-op — see this file's doc comment, item 9: `batchTaskHandler`
+ * (`taskHandler.ts`) already calls `enqueueNextBatch` right after
+ * `processBatch` returns, so `processBatch` itself must not also enqueue
+ * the next batch task.
+ */
+const scheduleNextBatchNoOp: ProcessBatchDeps['scheduleNextBatch'] = async () => {}
+
+export const processBatchDepsWithAdminSdk = (): ProcessBatchDeps => ({
+  readLessonRunState: readLessonRunStateWithAdminSdk,
+  listPendingOrders: (lessonRunId, batchId) =>
+    listPendingOrdersForBatch({ firestore: ordersRepositoryWithAdminSdk(), lessonRunId, batchId }),
+  readTeamAccounts: readTeamAccountsWithAdminSdk,
+  listStocksForBatch: listStocksForBatchWithAdminSdk,
+  computeInformationImpact: computeInformationImpactWithAdminSdk,
+  settleBatchFn: settleBatch,
+  commitSettlement: commitSettlementWithAdminSdk,
+  appendBatchSettledEvent: appendBatchSettledEventWithAdminSdk,
+  publishRealtimeState: publishRealtimeStateWithAdminSdk,
+  scheduleNextBatch: scheduleNextBatchNoOp,
+})
+
+/**
+ * Wires `processBatch` for real Admin SDK usage, and forwards its
+ * lessonRunId/nextBatchIndex to Task 10's `enqueueNextBatch`. Kept
+ * separate from `batchTaskHandler`'s own dependency wiring
+ * (`taskHandlerDepsWithAdminSdk` in `taskHandler.ts`'s admin wiring, see
+ * index.ts) only so `processBatch`'s Admin SDK deps stay independently
+ * testable/importable; `enqueueNextBatch` itself is Task 10's, imported
+ * here rather than duplicated.
+ */
+export const processBatchWithAdminSdk = (input: ProcessBatchInput): Promise<void> =>
+  processBatch(processBatchDepsWithAdminSdk(), input)

@@ -36,6 +36,8 @@ export {
 } from './lessonRuns/projections/onCall'
 export { submitSurveyCallable } from './lessonRuns/surveys/onCall'
 export { cancelOrderCallable, submitOrderCallable } from './market/onCall'
+export { batchTaskQueue } from './market/taskHandler'
+export { chainWatchdogScheduled } from './market/chainWatchdog'
 export {
   exportPersonalDataCallable,
   purgeHardDeleteCallable,

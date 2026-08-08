@@ -1,37 +1,94 @@
 import { describe, expect, it, vi } from 'vitest'
 import { processBatch, type ProcessBatchDeps } from './processBatch'
+import type { SettleBatchResult } from './engine/settleBatch'
 
 /**
- * Task 9 fixes processBatch's responsibilities and interface only — the
- * real Firestore/RTDB I/O implementation lands with Task 10's Cloud
- * Tasks handler (see processBatch.ts's doc comment, and the Task 9
- * brief's Step 7). These tests only pin down that the stub exists, is
- * callable against a fully-typed ProcessBatchDeps, and fails loudly
- * (rather than silently no-op-ing) so a premature Task 10 wiring mistake
- * would be caught immediately.
+ * Task 9 fixed processBatch's responsibilities/interface only; Task 10
+ * implements the real orchestration body (this file) together with the
+ * Cloud Tasks handler that calls it. These tests exercise the pure
+ * orchestration against fully-mocked deps — the Admin SDK wiring
+ * (`processBatchDepsWithAdminSdk`) is exercised indirectly by the rest of
+ * the suite (rules/emulator tests are out of this task's unit-test layer).
  */
-describe('processBatch (Task 9 stub — real behavior lands in Task 10)', () => {
-  const deps: ProcessBatchDeps = {
-    readLessonRunState: vi.fn(),
-    listPendingOrders: vi.fn(),
-    readTeamAccounts: vi.fn(),
-    computeInformationImpact: vi.fn(),
-    settleBatchFn: vi.fn(),
-    commitSettlement: vi.fn(),
-    appendBatchSettledEvent: vi.fn(),
-    publishRealtimeState: vi.fn(),
-    scheduleNextBatch: vi.fn(),
-  }
+describe('processBatch', () => {
+  const emptyResult: SettleBatchResult = { orders: [], stocks: [], teamAccountUpdates: [] }
 
-  it('throws — not implemented until Task 10 wires the Cloud Tasks handler', async () => {
-    await expect(processBatch(deps, { lessonRunId: 'run-1', batchId: 'batch-1', batchIndex: 1 }))
-      .rejects.toThrow(/Task 10/)
+  const makeDeps = (overrides: Partial<ProcessBatchDeps> = {}): ProcessBatchDeps => ({
+    readLessonRunState: vi.fn().mockResolvedValue({
+      status: 'RUNNING', marketPaused: false, randomSeed: 'seed', restoreGeneration: 0,
+      priceSensitivityPreset: 'BALANCED', noiseEnabled: false,
+    }),
+    listPendingOrders: vi.fn().mockResolvedValue([]),
+    readTeamAccounts: vi.fn().mockResolvedValue([]),
+    listStocksForBatch: vi.fn().mockResolvedValue([]),
+    computeInformationImpact: vi.fn().mockResolvedValue(new Map()),
+    settleBatchFn: vi.fn().mockReturnValue(emptyResult),
+    commitSettlement: vi.fn().mockResolvedValue(undefined),
+    appendBatchSettledEvent: vi.fn().mockResolvedValue(undefined),
+    publishRealtimeState: vi.fn().mockResolvedValue(undefined),
+    scheduleNextBatch: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
   })
 
-  it('does not call any dependency before real implementation lands', async () => {
-    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'batch-1', batchIndex: 1 }).catch(() => {})
-    for (const fn of Object.values(deps)) {
-      expect(fn).not.toHaveBeenCalled()
-    }
+  it('does nothing when the lessonRun is not RUNNING (Task 11 stop)', async () => {
+    const deps = makeDeps({
+      readLessonRunState: vi.fn().mockResolvedValue({
+        status: 'PAUSED', marketPaused: false, randomSeed: 'seed', restoreGeneration: 0,
+        priceSensitivityPreset: 'BALANCED', noiseEnabled: false,
+      }),
+    })
+    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+    expect(deps.listPendingOrders).not.toHaveBeenCalled()
+    expect(deps.settleBatchFn).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when marketPaused is true even if status is RUNNING (矛盾解消A必須事項4)', async () => {
+    const deps = makeDeps({
+      readLessonRunState: vi.fn().mockResolvedValue({
+        status: 'RUNNING', marketPaused: true, randomSeed: 'seed', restoreGeneration: 0,
+        priceSensitivityPreset: 'BALANCED', noiseEnabled: false,
+      }),
+    })
+    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+    expect(deps.settleBatchFn).not.toHaveBeenCalled()
+  })
+
+  it('calls settleBatchFn with assembled input and passes the result through commit/append/publish', async () => {
+    const settleBatchFn = vi.fn().mockReturnValue(emptyResult)
+    const commitSettlement = vi.fn().mockResolvedValue(undefined)
+    const appendBatchSettledEvent = vi.fn().mockResolvedValue(undefined)
+    const publishRealtimeState = vi.fn().mockResolvedValue(undefined)
+    const deps = makeDeps({ settleBatchFn, commitSettlement, appendBatchSettledEvent, publishRealtimeState })
+
+    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+
+    expect(settleBatchFn).toHaveBeenCalledWith(expect.objectContaining({
+      lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1, randomSeed: 'seed', restoreGeneration: 0,
+    }))
+    expect(commitSettlement).toHaveBeenCalledWith(emptyResult, 'run-1', 'run-1_batch_1')
+    expect(appendBatchSettledEvent).toHaveBeenCalledWith(emptyResult, 'run-1', 'run-1_batch_1')
+    expect(publishRealtimeState).toHaveBeenCalledWith(emptyResult, 'run-1')
+  })
+
+  it('calls scheduleNextBatch as the last step, per the fixed ProcessBatchDeps interface (Task 9 Step 9)', async () => {
+    const scheduleNextBatch = vi.fn().mockResolvedValue(undefined)
+    const deps = makeDeps({ scheduleNextBatch })
+    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+    expect(scheduleNextBatch).toHaveBeenCalledWith('run-1', 1)
+  })
+
+  it('assigns each stock its computed informationImpactPercent from computeInformationImpact', async () => {
+    const settleBatchFn = vi.fn().mockReturnValue(emptyResult)
+    const deps = makeDeps({
+      listStocksForBatch: vi.fn().mockResolvedValue([
+        { stockId: 'stock-a', currentPrice: 100, initialPrice: 100, priceGuard: { maxChangePercent: 10 }, effectiveMarketSize: 1000, demandSensitivity: 1 },
+      ]),
+      computeInformationImpact: vi.fn().mockResolvedValue(new Map([['stock-a', 2.5]])),
+      settleBatchFn,
+    })
+    await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+    expect(settleBatchFn).toHaveBeenCalledWith(expect.objectContaining({
+      stocks: [expect.objectContaining({ stockId: 'stock-a', informationImpactPercent: 2.5 })],
+    }))
   })
 })
