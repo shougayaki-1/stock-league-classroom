@@ -6,6 +6,9 @@ export interface AnnualMortgagePaymentInput {
 
 /** Spec §13.9: level annual payment, equal-principal-and-interest ("元利均等返済"). */
 export const computeAnnualMortgagePayment = (input: AnnualMortgagePaymentInput): number => {
+  // Guard against division by zero: a loan with no remaining years is already paid off
+  if (input.remainingYears <= 0) return 0
+
   const r = input.annualInterestRatePercent / 100
   if (r === 0) return Math.round(input.principalYen / input.remainingYears)
   const factor = (1 + r) ** input.remainingYears

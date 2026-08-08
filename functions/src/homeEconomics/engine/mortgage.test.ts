@@ -18,6 +18,11 @@ describe('computeAnnualMortgagePayment', () => {
     const payment = computeAnnualMortgagePayment({ principalYen: 20000000, annualInterestRatePercent: 0, remainingYears: 20 })
     expect(payment).toBe(1000000)
   })
+
+  it('a loan with zero remaining years (already paid off) returns 0 payment', () => {
+    const payment = computeAnnualMortgagePayment({ principalYen: 30000000, annualInterestRatePercent: 2, remainingYears: 0 })
+    expect(payment).toBe(0)
+  })
 })
 
 describe('applyMortgageRound', () => {
