@@ -17,6 +17,7 @@ const baseContent = (overrides: Partial<SocialStudiesMarketContent> = {}): Socia
   batchIntervalSeconds: 3, priceSensitivityPreset: 'BALANCED', marketNoiseEnabled: true,
   resumeConfirmationSeconds: 30, companyDifficultyTier: 'STANDARD', indicatorDifficultyTier: 'STANDARD',
   tradingFeeYen: 0, dividendEnabled: false, stockSplitEnabled: false, bankruptcyEnabled: false,
+  dividendTriggerBatchIndexes: [], stockSplitTriggerBatchIndexes: [], dividendPerShareYen: 0, stockSplitRatio: 1,
   predictionEvaluationTarget: { type: 'AFTER_BATCHES', count: 20 },
   evaluationWeights: { operationResult: 0.1, predictionAccuracy: 0.3, informationUsage: 0.4, riskManagement: 0.1, reflection: 0.1 },
   ...overrides,

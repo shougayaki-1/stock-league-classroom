@@ -15,6 +15,10 @@ describe('SocialStudiesMarketContent defaults', () => {
       dividendEnabled: false,
       stockSplitEnabled: false,
       bankruptcyEnabled: false,
+      dividendTriggerBatchIndexes: [],
+      stockSplitTriggerBatchIndexes: [],
+      dividendPerShareYen: 0,
+      stockSplitRatio: 1,
       predictionEvaluationTarget: { type: 'AFTER_BATCHES', count: 20 },
       evaluationWeights: {
         operationResult: 0.1, predictionAccuracy: 0.3, informationUsage: 0.4,

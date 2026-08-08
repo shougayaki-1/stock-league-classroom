@@ -12,6 +12,7 @@ import { DEFAULT_RESUME_CONFIRMATION_SECONDS, resumeMarketWithAdminSdk } from '.
 import { createPredictionCheckpointWithAdminSdk, submitPrediction } from './predictionCheckpoint'
 import type { PredictionDirection } from './predictionCheckpoint'
 import type { PredictionEvaluationTarget } from '@stock-league/market-authoring-content'
+import { readLifecycleConfigWithAdminSdk, triggerBankruptcyWithAdminSdk } from './lifecycleEvents'
 
 /**
  * Placeholder starting cash until a per-lessonRun/market-content field for
@@ -287,6 +288,48 @@ export const resumeMarketCallable = onCall({ region: 'asia-northeast1' }, async 
     data.lessonRunId,
     data.confirmationSeconds ?? DEFAULT_RESUME_CONFIRMATION_SECONDS,
   )
+})
+
+interface TriggerBankruptcyRequest {
+  lessonRunId: string
+  stockId: string
+}
+
+/**
+ * Teacher-facing bankruptcy Callable — spec §12.23/§12.28/§12.29 (Task 17).
+ * Bankruptcy is opt-in (`SocialStudiesMarketContent.bankruptcyEnabled`,
+ * default `false`) and, unlike dividend/stock-split, is never triggered
+ * automatically by `processBatch` — it is always this explicit one-off
+ * teacher action, so the normal batch flow is unaffected whether the flag
+ * is on or off. Authorization mirrors `pauseMarketCallable`/
+ * `resumeMarketCallable` above: teacher account, `STOP_MARKET`-authorized
+ * role (PRIMARY only per `canControlLesson`'s table) — treated as the same
+ * class of single-decision-point, hard-to-undo market control as
+ * stopping/resuming the market, absent a more specific spec carve-out.
+ */
+export const triggerBankruptcyCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as TriggerBankruptcyRequest
+  if (!data.lessonRunId || !data.stockId) throw new HttpsError('invalid-argument', 'lessonRunId、stockId は必須です。')
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, 'PRIMARY' | 'ASSISTANT' | 'VIEWER'> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'STOP_MARKET')) {
+    throw new HttpsError('permission-denied', '主担当教師のみ倒産イベントを発生させられます。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const lifecycleConfig = await readLifecycleConfigWithAdminSdk(data.lessonRunId)
+  if (!lifecycleConfig.bankruptcyEnabled) {
+    throw new HttpsError('failed-precondition', 'このレッスンランでは倒産イベントが無効です。')
+  }
+
+  await triggerBankruptcyWithAdminSdk({ lessonRunId: data.lessonRunId, stockId: data.stockId })
 })
 
 interface SubmitPredictionRequest {

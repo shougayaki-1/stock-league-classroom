@@ -5,6 +5,12 @@ import { appendLessonEventWithAdminSdk } from '../lessonRuns/appendLessonEvent'
 import type { TeamAccount } from '../lessonRuns/teamAccounts/types'
 import { settleBatch, type SettleBatchInput, type SettleBatchResult, type StockBatchInput } from './engine/settleBatch'
 import type { PriceSensitivityPreset } from './engine/priceCalculation'
+import {
+  applyLifecycleDividendsWithAdminSdk,
+  applyLifecycleStockSplitsWithAdminSdk,
+  readLifecycleConfigWithAdminSdk,
+  type LifecycleConfig,
+} from './lifecycleEvents'
 
 /**
  * `processBatch` is the Admin SDK wrapper around the pure `settleBatch`
@@ -44,6 +50,18 @@ import type { PriceSensitivityPreset } from './engine/priceCalculation'
  *    rule): transition each order from PENDING to FILLED/REJECTED,
  *    release its original soft lock, apply each `TeamAccountUpdate`, and
  *    update each stock's `currentPrice`.
+ * 6.5. lifecycle events (Task 17, spec §12.28/§12.29, default OFF) — a
+ *    thin flag branch, NOT a change to `settleBatch` itself: reads
+ *    `SocialStudiesMarketContent`'s dividend/stock-split flags +
+ *    `*TriggerBatchIndexes` for this lessonRun, and only when a flag is
+ *    `true` AND this batch's index is in its trigger list does it call
+ *    the corresponding `applyLifecycle*` dep. Bankruptcy is deliberately
+ *    NOT wired here — it is an explicit one-off teacher action
+ *    (`triggerBankruptcyCallable`, `onCall.ts`) that never routes through
+ *    `processBatch`, so the batch flow is unaffected by `bankruptcyEnabled`
+ *    either way. When all flags are false/empty (the default), this step
+ *    reads one doc and calls nothing else — zero effect on the normal
+ *    flow.
  * 7. appendBatchSettledEvent — record a `BATCH_SETTLED` `LessonEvent`
  *    (batchId, price breakdown, rejection count) via Phase A's
  *    `appendLessonEvent`.
@@ -84,6 +102,19 @@ export interface ProcessBatchDeps {
   appendBatchSettledEvent: (result: SettleBatchResult, lessonRunId: string, batchId: string) => Promise<void>
   publishRealtimeState: (result: SettleBatchResult, lessonRunId: string) => Promise<void>
   scheduleNextBatch: (lessonRunId: string, batchIndex: number) => Promise<void>
+  /** Task 17 — `SocialStudiesMarketContent`'s lifecycle-event flags for
+   * this lessonRun. Default (all flags false, empty trigger arrays) means
+   * `applyLifecycleDividends`/`applyLifecycleStockSplits` below are never
+   * called. */
+  readLifecycleConfig: (lessonRunId: string) => Promise<LifecycleConfig>
+  /** Task 17 — pays every team a dividend, called only when
+   * `dividendEnabled` and the current batchIndex is in
+   * `dividendTriggerBatchIndexes`. */
+  applyLifecycleDividends: (input: { lessonRunId: string; dividendPerShareYen: number }) => Promise<void>
+  /** Task 17 — splits every stock's price and holdings, called only when
+   * `stockSplitEnabled` and the current batchIndex is in
+   * `stockSplitTriggerBatchIndexes`. */
+  applyLifecycleStockSplits: (input: { lessonRunId: string; splitRatio: number }) => Promise<void>
 }
 
 export interface ProcessBatchInput {
@@ -126,6 +157,18 @@ export const processBatch = async (deps: ProcessBatchDeps, input: ProcessBatchIn
   })
 
   await deps.commitSettlement(result, input.lessonRunId, input.batchId)
+
+  // Task 17 (spec §12.28/§12.29) — thin, default-off flag branch. See this
+  // file's doc comment step 6.5 for why bankruptcy is deliberately absent
+  // here.
+  const lifecycleConfig = await deps.readLifecycleConfig(input.lessonRunId)
+  if (lifecycleConfig.dividendEnabled && lifecycleConfig.dividendTriggerBatchIndexes.includes(input.batchIndex)) {
+    await deps.applyLifecycleDividends({ lessonRunId: input.lessonRunId, dividendPerShareYen: lifecycleConfig.dividendPerShareYen })
+  }
+  if (lifecycleConfig.stockSplitEnabled && lifecycleConfig.stockSplitTriggerBatchIndexes.includes(input.batchIndex)) {
+    await deps.applyLifecycleStockSplits({ lessonRunId: input.lessonRunId, splitRatio: lifecycleConfig.stockSplitRatio })
+  }
+
   await deps.appendBatchSettledEvent(result, input.lessonRunId, input.batchId)
   await deps.publishRealtimeState(result, input.lessonRunId)
   // Task 9 Step 9 requires this call; see this file's doc comment item 9
@@ -344,6 +387,9 @@ export const processBatchDepsWithAdminSdk = (): ProcessBatchDeps => ({
   appendBatchSettledEvent: appendBatchSettledEventWithAdminSdk,
   publishRealtimeState: publishRealtimeStateWithAdminSdk,
   scheduleNextBatch: scheduleNextBatchNoOp,
+  readLifecycleConfig: readLifecycleConfigWithAdminSdk,
+  applyLifecycleDividends: applyLifecycleDividendsWithAdminSdk,
+  applyLifecycleStockSplits: applyLifecycleStockSplitsWithAdminSdk,
 })
 
 /**

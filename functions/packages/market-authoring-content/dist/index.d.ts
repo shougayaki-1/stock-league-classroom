@@ -119,6 +119,26 @@ export interface SocialStudiesMarketContent {
     dividendEnabled: boolean;
     stockSplitEnabled: boolean;
     bankruptcyEnabled: boolean;
+    /**
+     * §12.29. Batch indexes at which a dividend fires, when `dividendEnabled`
+     * is true. Default `[]` (never fires). Deliberately a separate array
+     * from `stockSplitTriggerBatchIndexes` rather than one shared
+     * `triggerBatchIndexes` — sharing one array would make "fire dividend
+     * only" inexpressible whenever a split is also scheduled somewhere in
+     * the run, since both features would fire together on every listed
+     * index. See Task 17.
+     */
+    dividendTriggerBatchIndexes: number[];
+    /** §12.29. Batch indexes at which a stock split fires, when
+     * `stockSplitEnabled` is true. Default `[]` (never fires). See
+     * `dividendTriggerBatchIndexes` for why this is a separate array. */
+    stockSplitTriggerBatchIndexes: number[];
+    /** §12.29. Flat per-share dividend amount (yen), applied to every
+     * company uniformly when a dividend fires. Default 0. */
+    dividendPerShareYen: number;
+    /** §12.29. Flat split ratio (e.g. 2 for a 1:2 split), applied to every
+     * company uniformly when a split fires. Default 1 (no-op). */
+    stockSplitRatio: number;
     /** §12.32/矛盾解消F. Default { type: 'AFTER_BATCHES', count: 20 } — see Task 15. */
     predictionEvaluationTarget: PredictionEvaluationTarget;
     /** §12.33. Must sum to 1; validated by `validateSocialStudiesMarketContent`. */

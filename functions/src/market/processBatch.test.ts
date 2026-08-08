@@ -27,6 +27,13 @@ describe('processBatch', () => {
     appendBatchSettledEvent: vi.fn().mockResolvedValue(undefined),
     publishRealtimeState: vi.fn().mockResolvedValue(undefined),
     scheduleNextBatch: vi.fn().mockResolvedValue(undefined),
+    readLifecycleConfig: vi.fn().mockResolvedValue({
+      bankruptcyEnabled: false, dividendEnabled: false, stockSplitEnabled: false,
+      dividendTriggerBatchIndexes: [], stockSplitTriggerBatchIndexes: [],
+      dividendPerShareYen: 0, stockSplitRatio: 1,
+    }),
+    applyLifecycleDividends: vi.fn().mockResolvedValue(undefined),
+    applyLifecycleStockSplits: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   })
 
@@ -90,5 +97,80 @@ describe('processBatch', () => {
     expect(settleBatchFn).toHaveBeenCalledWith(expect.objectContaining({
       stocks: [expect.objectContaining({ stockId: 'stock-a', informationImpactPercent: 2.5 })],
     }))
+  })
+
+  // Task 17 (spec §12.28/§12.29, default-off lifecycle events).
+  describe('lifecycle events (Task 17)', () => {
+    it('never calls applyLifecycleDividends/applyLifecycleStockSplits when all flags are false (default)', async () => {
+      const applyLifecycleDividends = vi.fn().mockResolvedValue(undefined)
+      const applyLifecycleStockSplits = vi.fn().mockResolvedValue(undefined)
+      const deps = makeDeps({ applyLifecycleDividends, applyLifecycleStockSplits })
+
+      await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+
+      expect(applyLifecycleDividends).not.toHaveBeenCalled()
+      expect(applyLifecycleStockSplits).not.toHaveBeenCalled()
+    })
+
+    it('does not call applyLifecycleDividends when dividendEnabled is true but batchIndex is not a trigger index', async () => {
+      const applyLifecycleDividends = vi.fn().mockResolvedValue(undefined)
+      const deps = makeDeps({
+        applyLifecycleDividends,
+        readLifecycleConfig: vi.fn().mockResolvedValue({
+          bankruptcyEnabled: false, dividendEnabled: true, stockSplitEnabled: false,
+          dividendTriggerBatchIndexes: [5], stockSplitTriggerBatchIndexes: [],
+          dividendPerShareYen: 20, stockSplitRatio: 1,
+        }),
+      })
+
+      await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+
+      expect(applyLifecycleDividends).not.toHaveBeenCalled()
+    })
+
+    it('calls applyLifecycleDividends when dividendEnabled is true and batchIndex is a trigger index', async () => {
+      const applyLifecycleDividends = vi.fn().mockResolvedValue(undefined)
+      const deps = makeDeps({
+        applyLifecycleDividends,
+        readLifecycleConfig: vi.fn().mockResolvedValue({
+          bankruptcyEnabled: false, dividendEnabled: true, stockSplitEnabled: false,
+          dividendTriggerBatchIndexes: [1], stockSplitTriggerBatchIndexes: [],
+          dividendPerShareYen: 20, stockSplitRatio: 1,
+        }),
+      })
+
+      await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+
+      expect(applyLifecycleDividends).toHaveBeenCalledWith({ lessonRunId: 'run-1', dividendPerShareYen: 20 })
+    })
+
+    it('calls applyLifecycleStockSplits when stockSplitEnabled is true and batchIndex is a trigger index', async () => {
+      const applyLifecycleStockSplits = vi.fn().mockResolvedValue(undefined)
+      const deps = makeDeps({
+        applyLifecycleStockSplits,
+        readLifecycleConfig: vi.fn().mockResolvedValue({
+          bankruptcyEnabled: false, dividendEnabled: false, stockSplitEnabled: true,
+          dividendTriggerBatchIndexes: [], stockSplitTriggerBatchIndexes: [1],
+          dividendPerShareYen: 0, stockSplitRatio: 2,
+        }),
+      })
+
+      await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+
+      expect(applyLifecycleStockSplits).toHaveBeenCalledWith({ lessonRunId: 'run-1', splitRatio: 2 })
+    })
+
+    it('does not read lifecycle config or call any lifecycle deps when the market is not RUNNING', async () => {
+      const readLifecycleConfig = vi.fn()
+      const deps = makeDeps({
+        readLifecycleConfig,
+        readLessonRunState: vi.fn().mockResolvedValue({
+          status: 'PAUSED', marketPaused: false, randomSeed: 'seed', restoreGeneration: 0,
+          priceSensitivityPreset: 'BALANCED', noiseEnabled: false,
+        }),
+      })
+      await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
+      expect(readLifecycleConfig).not.toHaveBeenCalled()
+    })
   })
 })
