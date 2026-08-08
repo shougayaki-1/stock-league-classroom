@@ -2415,3 +2415,114 @@ git commit -m "feat: add settleRound — the pure round-settlement orchestrator,
 ```
 
 ---
+
+### Task 12: 退職後モデル
+
+統合仕様書 §13.14を実装する。純粋関数。§13.14の6項目（収入減少・年金等の簡略給付・資産取り崩し・医療介護イベント・生活費・長寿リスク）のうち、「医療・介護イベント」はTask7のライフイベントエンジンをそのまま再利用（退職後向けの`LifeEventDefinition`を教材側で定義すればよく、専用コードは不要）、「資産取り崩し」「生活費」「収入減少」はTask3・Task8の既存エンジンの組み合わせで表現できる（退職後は`householdIncomeYen`を年金給付額に置き換えるだけ）。本タスクが新規に実装するのは**簡略年金給付額の計算**と**任意の資産取り崩し（不足対応としての強制売却ではなく、生活水準を上げるための自発的な取り崩し）**の2つに絞る。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/retirement.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Task11のラウンド確定処理が、`lifeStage === 'RETIRED'`のときだけ呼ぶ）
+- Produces: `computeSimplifiedPensionBenefit(input): number`、`computeVoluntaryAssetDrawdown(input): VoluntaryDrawdownResult`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/retirement.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { computeSimplifiedPensionBenefit, computeVoluntaryAssetDrawdown } from './retirement'
+
+describe('computeSimplifiedPensionBenefit', () => {
+  it('applies the replacement rate to pre-retirement income (spec §13.14: 収入減少・年金等の簡略給付)', () => {
+    expect(computeSimplifiedPensionBenefit({ preRetirementIncomeYen: 6000000, pensionReplacementRatePercent: 50 })).toBe(3000000)
+  })
+
+  it('a 0% replacement rate means no pension — never a negative or undefined value', () => {
+    expect(computeSimplifiedPensionBenefit({ preRetirementIncomeYen: 6000000, pensionReplacementRatePercent: 0 })).toBe(0)
+  })
+})
+
+describe('computeVoluntaryAssetDrawdown', () => {
+  it('withdraws exactly the requested amount, capped at what is actually held', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 2000000, CASH: 100000 } })
+    expect(result.withdrawnYen).toBe(500000)
+  })
+
+  it('caps the withdrawal at total holdings when the request exceeds what is held (spec §13.14: never goes negative)', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 5000000, assetHoldingsYen: { DOMESTIC_STOCK: 2000000 } })
+    expect(result.withdrawnYen).toBe(2000000)
+  })
+
+  it('withdraws proportionally across held asset types, never emptying one type before touching another (spec §13.5: diversification is part of what §13.17 evaluates)', () => {
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 300000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000, FOREIGN_STOCK: 500000 } })
+    // 300,000 split 2:1 by holding weight → 200,000 from DOMESTIC_STOCK, 100,000 from FOREIGN_STOCK
+    expect(result.newAssetHoldingsYen.DOMESTIC_STOCK).toBe(800000)
+    expect(result.newAssetHoldingsYen.FOREIGN_STOCK).toBe(400000)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/retirement.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/retirement.ts`:
+
+```ts
+export interface SimplifiedPensionInput {
+  preRetirementIncomeYen: number
+  /** PROVISIONAL — spec §13.14 requires only "年金等の簡略給付" without a specified default rate; a value to tune during pilot runs (see Task 17). */
+  pensionReplacementRatePercent: number
+}
+
+export const computeSimplifiedPensionBenefit = (input: SimplifiedPensionInput): number =>
+  Math.round(input.preRetirementIncomeYen * (input.pensionReplacementRatePercent / 100))
+
+export interface VoluntaryDrawdownInput {
+  requestedYen: number
+  assetHoldingsYen: Record<string, number>
+}
+export interface VoluntaryDrawdownResult {
+  withdrawnYen: number
+  newAssetHoldingsYen: Record<string, number>
+}
+
+/**
+ * Spec §13.14: proportional across all held asset types by current
+ * weight — never drains one asset type to zero while leaving another
+ * untouched, which would silently undermine the diversification the
+ * student built up (evaluated in Task 16, spec §13.17).
+ */
+export const computeVoluntaryAssetDrawdown = (input: VoluntaryDrawdownInput): VoluntaryDrawdownResult => {
+  const totalHeldYen = Object.values(input.assetHoldingsYen).reduce((sum, v) => sum + v, 0)
+  const withdrawnYen = Math.min(input.requestedYen, totalHeldYen)
+  const newAssetHoldingsYen: Record<string, number> = {}
+  for (const [assetType, heldYen] of Object.entries(input.assetHoldingsYen)) {
+    const share = totalHeldYen === 0 ? 0 : heldYen / totalHeldYen
+    newAssetHoldingsYen[assetType] = Math.round(heldYen - withdrawnYen * share)
+  }
+  return { withdrawnYen, newAssetHoldingsYen }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/retirement.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/retirement.ts functions/src/homeEconomics/engine/retirement.test.ts
+git commit -m "feat: add simplified pension and proportional voluntary asset-drawdown engines"
+```
+
+---
