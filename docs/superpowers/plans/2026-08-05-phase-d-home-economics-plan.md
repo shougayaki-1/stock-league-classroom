@@ -1089,3 +1089,153 @@ git commit -m "feat: add deterministic annual asset-return engine"
 ```
 
 ---
+
+### Task 5: 住宅ローン計算（元利均等返済）
+
+統合仕様書 §13.9を実装する。純粋関数。**元利均等返済（毎年の返済額が一定、内訳の元金/利息の比率だけが年ごとに変わる）を基本とする**（§13.9「元利均等返済を基本とする」）。1ラウンドが5年（既定）の場合、そのラウンド内で5年分の返済が同時に進行するため、`roundYears`年分をまとめて計算する。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/mortgage.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `Liability`（Task1、`kind: 'MORTGAGE'`のもの）
+- Produces: `computeAnnualMortgagePayment(input): number`、`applyMortgageRound(input): MortgageRoundResult`
+
+- [ ] **Step 1: 単年の元利均等返済額計算の失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/mortgage.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { applyMortgageRound, computeAnnualMortgagePayment } from './mortgage'
+
+describe('computeAnnualMortgagePayment', () => {
+  it('computes the level annual payment for an equal-principal-and-interest mortgage (spec §13.9)', () => {
+    // 30,000,000円、年利2%、返済期間20年 — 教育用の簡略年次複利モデル。
+    // r=0.02, n=20 の資本回収係数(A/P)はおよそ0.0612なので、支払額は
+    // 30,000,000 * 0.0612 ≒ 1,836,000円前後になるはず——手計算での複利誤差を
+    // 考慮し、厳密な一致ではなく妥当な範囲で検証する。総返済額(20年分)が
+    // 元本を上回る(利息が発生している)ことも合わせて確認する。
+    const payment = computeAnnualMortgagePayment({ principalYen: 30000000, annualInterestRatePercent: 2, remainingYears: 20 })
+    expect(payment).toBeGreaterThan(1800000)
+    expect(payment).toBeLessThan(1900000)
+    expect(payment * 20).toBeGreaterThan(30000000)
+  })
+
+  it('a zero-interest loan divides principal evenly across the remaining years', () => {
+    const payment = computeAnnualMortgagePayment({ principalYen: 20000000, annualInterestRatePercent: 0, remainingYears: 20 })
+    expect(payment).toBe(1000000)
+  })
+})
+
+describe('applyMortgageRound', () => {
+  it('advances 5 years of level payments, splitting each year\'s payment into principal/interest, and reduces remainingYears', () => {
+    const result = applyMortgageRound({
+      remainingPrincipalYen: 30000000, annualInterestRatePercent: 2, remainingYears: 20, roundYears: 5,
+    })
+    expect(result.newRemainingYears).toBe(15)
+    expect(result.newRemainingPrincipalYen).toBeLessThan(30000000)
+    expect(result.totalPaymentYen).toBeGreaterThan(1800000 * 5)
+    expect(result.totalPaymentYen).toBeLessThan(1900000 * 5)
+    expect(result.principalPaidYen + result.interestPaidYen).toBeCloseTo(result.totalPaymentYen, 0)
+  })
+
+  it('pays off the loan early and stops — a round longer than the remaining term never goes negative', () => {
+    const result = applyMortgageRound({
+      remainingPrincipalYen: 1000000, annualInterestRatePercent: 2, remainingYears: 2, roundYears: 5,
+    })
+    expect(result.newRemainingYears).toBe(0)
+    expect(result.newRemainingPrincipalYen).toBe(0)
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/mortgage.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/mortgage.ts`:
+
+```ts
+export interface AnnualMortgagePaymentInput {
+  principalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+}
+
+/** Spec §13.9: level annual payment, equal-principal-and-interest ("元利均等返済"). */
+export const computeAnnualMortgagePayment = (input: AnnualMortgagePaymentInput): number => {
+  const r = input.annualInterestRatePercent / 100
+  if (r === 0) return Math.round(input.principalYen / input.remainingYears)
+  const factor = (1 + r) ** input.remainingYears
+  return Math.round((input.principalYen * r * factor) / (factor - 1))
+}
+
+export interface MortgageRoundInput {
+  remainingPrincipalYen: number
+  annualInterestRatePercent: number
+  remainingYears: number
+  roundYears: number
+}
+export interface MortgageRoundResult {
+  totalPaymentYen: number
+  principalPaidYen: number
+  interestPaidYen: number
+  newRemainingPrincipalYen: number
+  newRemainingYears: number
+}
+
+/**
+ * Advances `roundYears` years of level payments in one call — a round
+ * (5 years by default, spec §13.1) covers multiple payment years at once.
+ * Stops early (never goes negative) if the loan pays off before
+ * `roundYears` elapses.
+ */
+export const applyMortgageRound = (input: MortgageRoundInput): MortgageRoundResult => {
+  let remainingPrincipalYen = input.remainingPrincipalYen
+  let remainingYears = input.remainingYears
+  let totalPaymentYen = 0
+  let interestPaidYen = 0
+
+  const yearsToRun = Math.min(input.roundYears, input.remainingYears)
+  for (let year = 0; year < yearsToRun; year += 1) {
+    if (remainingPrincipalYen <= 0) break
+    const payment = computeAnnualMortgagePayment({
+      principalYen: remainingPrincipalYen, annualInterestRatePercent: input.annualInterestRatePercent, remainingYears,
+    })
+    const interestThisYear = Math.round(remainingPrincipalYen * (input.annualInterestRatePercent / 100))
+    const principalThisYear = Math.min(remainingPrincipalYen, payment - interestThisYear)
+    remainingPrincipalYen -= principalThisYear
+    remainingYears -= 1
+    totalPaymentYen += interestThisYear + principalThisYear
+    interestPaidYen += interestThisYear
+  }
+
+  return {
+    totalPaymentYen,
+    principalPaidYen: totalPaymentYen - interestPaidYen,
+    interestPaidYen,
+    newRemainingPrincipalYen: Math.max(0, remainingPrincipalYen),
+    newRemainingYears: Math.max(0, remainingYears),
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/mortgage.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/mortgage.ts functions/src/homeEconomics/engine/mortgage.test.ts
+git commit -m "feat: add equal-principal-and-interest mortgage amortization engine"
+```
+
+---
