@@ -39,11 +39,15 @@ export const cancelOrder = async (deps: CancelOrderDeps): Promise<void> => {
   const order = await deps.getOrder({ lessonRunId: deps.lessonRunId, orderId: deps.orderId })
   if (order.status !== 'PENDING') throw new Error('処理中の注文は取消できません。')
 
+  // Final defense line — see comment above: this compare-and-set is what
+  // actually prevents a cancel/settle race, not the early status check.
+  // It must run *before* releaseSoftLock: if a batch process has already
+  // advanced the order past PENDING, this transition fails and we must
+  // not release funds/shares for an order that may actually get filled.
+  await deps.transition({ lessonRunId: deps.lessonRunId, orderId: deps.orderId, from: 'PENDING', to: 'CANCELLED' })
+
   await deps.releaseSoftLock({
     lessonRunId: order.lessonRunId, teamId: order.teamId, side: order.side,
     stockId: order.stockId, quantity: order.quantity, referencePrice: order.referencePrice,
   })
-  // Final defense line — see comment above: this compare-and-set is what
-  // actually prevents a cancel/settle race, not the early status check.
-  await deps.transition({ lessonRunId: deps.lessonRunId, orderId: deps.orderId, from: 'PENDING', to: 'CANCELLED' })
 }
