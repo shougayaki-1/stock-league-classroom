@@ -1548,3 +1548,186 @@ git commit -m "feat: add life-event trigger/disclosure/effect engine"
 ```
 
 ---
+
+### Task 8: 資金不足時の選択肢提示
+
+統合仕様書 §13.13を実装する。純粋関数。**資金不足時は自動で破綻させず、判断機会として選択肢を提示する**（§13.13）——このタスクは「不足を検知する」「実行可能な選択肢を列挙する」「選んだ選択肢を適用する」の3段階に分ける。「実行可能」の判定（資産があるか、借入が教材で許可されているか等）はこのタスクが受け取る入力から機械的に決まり、公的支援が実際に条件を満たすかどうかの判定自体はTask9の責務——本タスクは`publicSupportAvailableYen`（Task9の出力）を受け取るだけで、公的支援の適格性ロジックを重複実装しない。
+
+**Files:**
+- Create: `functions/src/homeEconomics/engine/shortfallOptions.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: なし（Task11のラウンド確定処理が、Task3の`netCashFlowYen`とTask9の`publicSupportAvailableYen`を渡して呼ぶ）
+- Produces: `detectShortfall(input): number`、`buildShortfallOptions(input): ShortfallOption[]`、`applyShortfallResolution(option, shortfallYen): ShortfallResolutionResult`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`functions/src/homeEconomics/engine/shortfallOptions.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { applyShortfallResolution, buildShortfallOptions, detectShortfall } from './shortfallOptions'
+
+describe('detectShortfall', () => {
+  it('returns 0 when savings cover a negative cash flow', () => {
+    expect(detectShortfall({ cashSavingsYen: 1000000, netCashFlowYen: -500000 })).toBe(0)
+  })
+  it('returns the exact shortfall amount when savings run out', () => {
+    expect(detectShortfall({ cashSavingsYen: 300000, netCashFlowYen: -500000 })).toBe(200000)
+  })
+  it('returns 0 for a positive cash flow regardless of savings', () => {
+    expect(detectShortfall({ cashSavingsYen: 0, netCashFlowYen: 100000 })).toBe(0)
+  })
+})
+
+describe('buildShortfallOptions', () => {
+  it('always includes REDUCE_EXPENSES and DELAY_GOAL — always available regardless of assets/permissions (spec §13.13)', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 0, publicSupportAvailableYen: 0, borrowingAllowed: false })
+    const types = options.map((o) => o.type)
+    expect(types).toContain('REDUCE_EXPENSES')
+    expect(types).toContain('DELAY_GOAL')
+    expect(types).not.toContain('SELL_ASSETS')
+    expect(types).not.toContain('BORROW')
+    expect(types).not.toContain('PUBLIC_SUPPORT')
+  })
+
+  it('includes SELL_ASSETS only when liquid assets exist, BORROW only when the template allows it, PUBLIC_SUPPORT only when available', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 500000, publicSupportAvailableYen: 100000, borrowingAllowed: true })
+    const types = options.map((o) => o.type)
+    expect(types).toEqual(expect.arrayContaining(['REDUCE_EXPENSES', 'SELL_ASSETS', 'BORROW', 'PUBLIC_SUPPORT', 'DELAY_GOAL']))
+  })
+
+  it('caps SELL_ASSETS\'s resolvesYen at whichever is smaller — the shortfall or the available liquid assets', () => {
+    const options = buildShortfallOptions({ shortfallYen: 200000, liquidAssetsYen: 50000, publicSupportAvailableYen: 0, borrowingAllowed: false })
+    const sellAssets = options.find((o) => o.type === 'SELL_ASSETS')
+    expect(sellAssets?.resolvesYen).toBe(50000)
+  })
+})
+
+describe('applyShortfallResolution', () => {
+  it('SELL_ASSETS converts assetDelta negative and cashDelta positive by the same amount', () => {
+    const result = applyShortfallResolution({ type: 'SELL_ASSETS', description: 'x', resolvesYen: 150000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 150000, assetDeltaYen: -150000, newLiabilityYen: 0, goalDelayedRounds: 0 })
+  })
+
+  it('BORROW creates a new liability for the full shortfall, not just the option\'s resolvesYen cap', () => {
+    const result = applyShortfallResolution({ type: 'BORROW', description: 'x', resolvesYen: 999999999 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 200000, assetDeltaYen: 0, newLiabilityYen: 200000, goalDelayedRounds: 0 })
+  })
+
+  it('DELAY_GOAL resolves the shortfall with no cash movement, only a delay', () => {
+    const result = applyShortfallResolution({ type: 'DELAY_GOAL', description: 'x', resolvesYen: 200000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 0, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 1 })
+  })
+
+  it('REDUCE_EXPENSES covers the shortfall by cutting this round\'s spending — a real cash resolution, not a no-op', () => {
+    const result = applyShortfallResolution({ type: 'REDUCE_EXPENSES', description: 'x', resolvesYen: 200000 }, 200000)
+    expect(result).toEqual({ cashDeltaYen: 200000, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 })
+  })
+})
+```
+
+- [ ] **Step 2: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/shortfallOptions.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: 実装する**
+
+`functions/src/homeEconomics/engine/shortfallOptions.ts`:
+
+```ts
+export interface DetectShortfallInput {
+  cashSavingsYen: number
+  netCashFlowYen: number
+}
+
+/** Spec §13.13: a shortfall exists only when this round's cash flow would drive savings below 0. Returns the exact positive shortfall, or 0 when covered. */
+export const detectShortfall = (input: DetectShortfallInput): number => {
+  const projectedCashYen = input.cashSavingsYen + input.netCashFlowYen
+  return projectedCashYen < 0 ? -projectedCashYen : 0
+}
+
+export type ShortfallOptionType = 'REDUCE_EXPENSES' | 'SELL_ASSETS' | 'BORROW' | 'PUBLIC_SUPPORT' | 'DELAY_GOAL'
+export interface ShortfallOption {
+  type: ShortfallOptionType
+  description: string
+  resolvesYen: number
+}
+
+export interface BuildShortfallOptionsInput {
+  shortfallYen: number
+  liquidAssetsYen: number
+  /** Task 9's output — 0 when the household doesn't qualify this round. */
+  publicSupportAvailableYen: number
+  /** From `HomeEconomicsContent` (Task 2) — whether the template permits emergency borrowing at all. */
+  borrowingAllowed: boolean
+}
+
+/**
+ * Spec §13.13: never auto-bankrupts — REDUCE_EXPENSES and DELAY_GOAL are
+ * always offered regardless of assets/permissions (a student can always
+ * choose to cut spending or push the goal back). The other three only
+ * appear when actually possible, so the UI never offers a resolution path
+ * that would fail.
+ */
+export const buildShortfallOptions = (input: BuildShortfallOptionsInput): ShortfallOption[] => {
+  const options: ShortfallOption[] = [
+    { type: 'REDUCE_EXPENSES', description: '生活費を切り詰める', resolvesYen: input.shortfallYen },
+    { type: 'DELAY_GOAL', description: '目標達成を先送りする', resolvesYen: input.shortfallYen },
+  ]
+  if (input.liquidAssetsYen > 0) {
+    options.push({ type: 'SELL_ASSETS', description: '資産を売却する', resolvesYen: Math.min(input.shortfallYen, input.liquidAssetsYen) })
+  }
+  if (input.borrowingAllowed) {
+    options.push({ type: 'BORROW', description: '借入をする', resolvesYen: input.shortfallYen })
+  }
+  if (input.publicSupportAvailableYen > 0) {
+    options.push({ type: 'PUBLIC_SUPPORT', description: '公的支援を申請する', resolvesYen: Math.min(input.shortfallYen, input.publicSupportAvailableYen) })
+  }
+  return options
+}
+
+export interface ShortfallResolutionResult {
+  cashDeltaYen: number
+  assetDeltaYen: number
+  newLiabilityYen: number
+  goalDelayedRounds: number
+}
+
+/**
+ * BORROW always covers the FULL shortfall (a loan sized to need, not
+ * capped by the option's own `resolvesYen`) — unlike SELL_ASSETS/
+ * PUBLIC_SUPPORT, which are capped by what's actually available.
+ */
+export const applyShortfallResolution = (option: ShortfallOption, shortfallYen: number): ShortfallResolutionResult => {
+  switch (option.type) {
+    case 'SELL_ASSETS':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: -option.resolvesYen, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'PUBLIC_SUPPORT':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'BORROW':
+      return { cashDeltaYen: shortfallYen, assetDeltaYen: 0, newLiabilityYen: shortfallYen, goalDelayedRounds: 0 }
+    case 'REDUCE_EXPENSES':
+      return { cashDeltaYen: option.resolvesYen, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 0 }
+    case 'DELAY_GOAL':
+      return { cashDeltaYen: 0, assetDeltaYen: 0, newLiabilityYen: 0, goalDelayedRounds: 1 }
+  }
+}
+```
+
+- [ ] **Step 4: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/engine/shortfallOptions.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: `npm run verify`**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add functions/src/homeEconomics/engine/shortfallOptions.ts functions/src/homeEconomics/engine/shortfallOptions.test.ts
+git commit -m "feat: add shortfall-detection and resolution-options engine, never auto-bankrupts"
+```
+
+---
