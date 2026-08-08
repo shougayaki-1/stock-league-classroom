@@ -6,7 +6,7 @@
  * be adjusted during pilot runs — see Task 17's PROVISIONAL constants
  * roundup.
  */
-const TAX_MODEL_V1_RATE_PERCENT = 20
+export const TAX_MODEL_V1_RATE_PERCENT = 20
 
 export interface TaxAndSocialInsuranceInput {
   grossIncomeYen: number

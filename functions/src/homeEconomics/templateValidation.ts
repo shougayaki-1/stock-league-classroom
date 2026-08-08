@@ -7,12 +7,24 @@ export const validateHomeEconomicsContent = (content: HomeEconomicsContent): Val
 
   if (content.households.length === 0) errors.push('担当プロフィールが1件も設定されていません。')
 
+  if (content.courseFormat === 'COMMON_CONDITIONS' && content.households.length > 1) {
+    errors.push('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+  }
+
   const idCounts = new Map<string, number>()
   for (const household of content.households) {
     idCounts.set(household.householdId, (idCounts.get(household.householdId) ?? 0) + 1)
   }
   for (const [id, count] of idCounts) {
     if (count > 1) errors.push(`プロフィールIDが重複しています: ${id}`)
+  }
+
+  const assetTypeCounts = new Map<string, number>()
+  for (const asset of content.assets) {
+    assetTypeCounts.set(asset.assetType, (assetTypeCounts.get(asset.assetType) ?? 0) + 1)
+  }
+  for (const [assetType, count] of assetTypeCounts) {
+    if (count > 1) errors.push(`資産カタログのassetTypeが重複しています: ${assetType}`)
   }
 
   const weights = content.evaluationWeights

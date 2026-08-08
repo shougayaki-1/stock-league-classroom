@@ -60,3 +60,45 @@ describe('validateHomeEconomicsContent', () => {
     if (!result.valid) expect(result.errors).toContain('イベント job-loss の発生確率は0〜1の範囲にしてください。')
   })
 })
+
+describe('COMMON_CONDITIONS course format requires exactly one shared household profile (spec §27.4 item 4)', () => {
+  it('rejects COMMON_CONDITIONS with more than one household profile — teams must share identical initial conditions', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'COMMON_CONDITIONS', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('共通条件モードでは担当プロフィールを1件だけ設定してください。')
+  })
+
+  it('accepts ROLE_VARIANT with multiple household profiles', () => {
+    const two = baseContent().households[0]
+    const result = validateHomeEconomicsContent(baseContent({
+      courseFormat: 'ROLE_VARIANT', households: [two, { ...two, householdId: 'case-c' }],
+    }))
+    expect(result.valid).toBe(true)
+  })
+})
+
+describe('asset catalog must have at most one entry per assetType (Task 17: settleRound.computeAssetReturn resolves by assetType alone)', () => {
+  it('rejects two asset catalog entries sharing the same assetType', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      assets: [
+        { assetType: 'DOMESTIC_STOCK', valueYen: 0, expectedReturnPercent: 5, volatilityPercent: 10 },
+        { assetType: 'DOMESTIC_STOCK', valueYen: 0, expectedReturnPercent: 3, volatilityPercent: 8 },
+      ],
+    }))
+    expect(result.valid).toBe(false)
+    if (!result.valid) expect(result.errors).toContain('資産カタログのassetTypeが重複しています: DOMESTIC_STOCK')
+  })
+
+  it('accepts distinct assetTypes in the asset catalog', () => {
+    const result = validateHomeEconomicsContent(baseContent({
+      assets: [
+        { assetType: 'DOMESTIC_STOCK', valueYen: 0, expectedReturnPercent: 5, volatilityPercent: 10 },
+        { assetType: 'FOREIGN_STOCK', valueYen: 0, expectedReturnPercent: 6, volatilityPercent: 12 },
+      ],
+    }))
+    expect(result.valid).toBe(true)
+  })
+})

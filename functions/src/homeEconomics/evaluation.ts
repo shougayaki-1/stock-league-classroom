@@ -1,7 +1,7 @@
 import type { HomeEconomicsEvaluationWeights } from '@stock-league/household-authoring-content'
 
 /** PROVISIONAL — spec §13.17 requires "緊急予備資金" as a criterion without specifying the months-of-expenses threshold; 6 months is a common financial-literacy rule of thumb, to be tuned during pilot runs (Task 17). */
-const EMERGENCY_FUND_TARGET_MONTHS = 6
+export const EMERGENCY_FUND_TARGET_MONTHS = 6
 
 export const computeEmergencyFundAdequacyScore = (input: { cashYen: number; annualLivingExpensesYen: number }): number => {
   if (input.annualLivingExpensesYen === 0) return 100

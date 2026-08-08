@@ -1,3 +1,20 @@
+/**
+ * PROVISIONAL — spec §13.14 requires only "年金等の簡略給付" without a
+ * specified default rate. This is the single-source default a caller
+ * SHOULD use for `pensionReplacementRatePercent` when the template (or a
+ * future `HomeEconomicsContent` field) doesn't specify one; nothing in
+ * `HomeEconomicsContent` carries this value yet (checked as part of Task
+ * 17's completion-condition review — `computeSimplifiedPensionBenefit` is
+ * currently a caller-supplied-parameter pure function that is NOT invoked
+ * by `settleRound`/`processRound`, so no live round settlement actually
+ * applies a pension benefit today; this constant exists so that if/when
+ * that wiring is added, it has one documented starting value rather than
+ * an ad-hoc number chosen at the call site). 50% is a common financial-
+ * literacy rule-of-thumb replacement rate, matching the value already
+ * used illustratively in this file's own tests.
+ */
+export const PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT = 50
+
 export interface SimplifiedPensionInput {
   preRetirementIncomeYen: number
   /** PROVISIONAL — spec §13.14 requires only "年金等の簡略給付" without a specified default rate; a value to tune during pilot runs (see Task 17). */
