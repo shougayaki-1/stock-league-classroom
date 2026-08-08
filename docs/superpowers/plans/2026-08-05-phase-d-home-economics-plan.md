@@ -1857,3 +1857,260 @@ git commit -m "feat: add simplified public-support eligibility and benefit engin
 ```
 
 ---
+
+### Task 10: `HouseholdState`リポジトリと判断提出Callable（`DECISION`フェーズ）
+
+統合仕様書 §13.4〜§13.9・§13.13を実装する。ここで初めて「チーム（または人物）が担当するプロフィールの可変状態」の永続化が必要になるため、本タスクで`HouseholdState`（Firestore正本）を導入する。**`HouseholdState`は`HouseholdProfile`（Task1、教材の初期値・非公開係数）とは別物**——`HouseholdProfile`は教材が定義する不変のテンプレート、`HouseholdState`はラウンドごとに変化する実際の進行状態（現在の現金・保有資産・保険契約・負債・ライフステージ・目標延期回数）。
+
+生徒の判断提出は、Phase Bの汎用回答機構（`LessonResponse`、Task6の`@stock-league/lesson-inputs`ウィジェット）を**個々の入力欄**には再利用しつつ（例: 資産配分は`RankingInput`/`QuantityInput`、資金不足時の選択肢は`SingleChoiceInput`）、**1ラウンド分の判断一式**は専用の構造化Callable`submitHouseholdDecision`でまとめて受け取る——資産配分・保険加入解約・資金不足対応・公的支援申請が互いに整合していなければならない（例: 資産を売って資金不足を解消する選択をしたのに、同時にその資産を全額別の株式へ配分する、という矛盾した提出を1つのトランザクションで検証できる）ため、汎用`LessonResponse`state machineへ分解すると整合性検証が複数の独立した回答にまたがってしまう。
+
+**Files:**
+- Create: `functions/src/lessonRuns/households/repository.ts`, `.test.ts`
+- Create: `functions/src/homeEconomics/submitDecision.ts`, `.test.ts`, `onCall.ts`
+- Create: `src/lib/homeEconomics/submitDecision.ts`, `.test.ts`
+
+**Interfaces:**
+- Consumes: `HouseholdProfile`・`AssetPosition`・`InsuranceProduct`・`Liability`（Task1）、`ShortfallOption`（Task8）
+- Produces: `HouseholdState`型、`getOrInitHouseholdState(deps): Promise<HouseholdState>`、`submitHouseholdDecision(deps): Promise<{ decisionId: string; created: boolean }>`、`submitHouseholdDecisionCallable`
+
+- [ ] **Step 1: `HouseholdState`型を定義する**
+
+`functions/src/lessonRuns/households/repository.ts`:
+
+```ts
+export interface HouseholdState {
+  householdId: string
+  lessonRunId: string
+  teamId: string
+  cashYen: number
+  /** assetType → current value. Mirrors Task 1's AssetType keys. */
+  assetHoldingsYen: Record<string, number>
+  /** insuranceProductId → contract years remaining. Absence = not contracted. */
+  activeInsuranceContracts: Record<string, number>
+  /** liabilityId → remaining principal (yen). */
+  activeLiabilities: Record<string, number>
+  lifeStage: string
+  roundIndex: number
+  goalDelayedRounds: number
+  updatedAtServerMillis: number
+}
+```
+
+- [ ] **Step 2: 冪等な初期化の失敗するテストを書く（Phase A `createLessonRun.test.ts`の`makeFakeFirestore`パターンを流用）**
+
+`functions/src/lessonRuns/households/repository.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { getOrInitHouseholdState } from './repository'
+
+const makeFakeFirestore = () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  const written = new Set<string>()
+  return {
+    docs,
+    runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
+      get: async (path: string) => {
+        if (written.has(path)) throw new Error(`read-after-write violation: ${path}`)
+        return { exists: docs.has(path), data: () => docs.get(path) }
+      },
+      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data); written.add(path) },
+    }),
+  }
+}
+
+describe('getOrInitHouseholdState', () => {
+  it('creates a fresh state with the profile\'s starting cash on first access', async () => {
+    const fake = makeFakeFirestore()
+    const state = await getOrInitHouseholdState({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a', householdId: 'case-b',
+      startingCashYen: 2000000, startingLifeStage: 'CHILD_REARING', now: () => 1,
+    })
+    expect(state).toMatchObject({ cashYen: 2000000, lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0 })
+  })
+
+  it('returns the existing state unchanged on a later access, ignoring startingCashYen', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1/households/case-b', {
+      householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 500000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'INDEPENDENT', roundIndex: 3, goalDelayedRounds: 1, updatedAtServerMillis: 0,
+    })
+    const state = await getOrInitHouseholdState({
+      firestore: fake as never, lessonRunId: 'run-1', teamId: 'team-a', householdId: 'case-b',
+      startingCashYen: 999999999, startingLifeStage: 'CHILD_REARING', now: () => 2,
+    })
+    expect(state.cashYen).toBe(500000)
+    expect(state.roundIndex).toBe(3)
+  })
+})
+```
+
+- [ ] **Step 3: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/lessonRuns/households/repository.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 4: `getOrInitHouseholdState`を実装する（全read→全writeを厳守）**
+
+```ts
+export interface HouseholdFirestoreDeps {
+  firestore: { runTransaction: <T>(fn: (tx: HouseholdTx) => Promise<T>) => Promise<T> }
+}
+export interface HouseholdTx {
+  get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+  set: (path: string, data: Record<string, unknown>) => void
+}
+
+export interface GetOrInitHouseholdStateInput extends HouseholdFirestoreDeps {
+  lessonRunId: string
+  teamId: string
+  householdId: string
+  startingCashYen: number
+  startingLifeStage: string
+  now: () => number
+}
+
+export const getOrInitHouseholdState = (input: GetOrInitHouseholdStateInput): Promise<HouseholdState> =>
+  input.firestore.runTransaction(async (tx) => {
+    const path = `lessonRuns/${input.lessonRunId}/households/${input.householdId}`
+    // ---- ALL READS FIRST ----
+    const existing = await tx.get(path)
+    if (existing.exists) return existing.data() as unknown as HouseholdState
+
+    // ---- ALL WRITES AFTER ----
+    const state: HouseholdState = {
+      householdId: input.householdId, lessonRunId: input.lessonRunId, teamId: input.teamId,
+      cashYen: input.startingCashYen, assetHoldingsYen: {}, activeInsuranceContracts: {},
+      activeLiabilities: {}, lifeStage: input.startingLifeStage, roundIndex: 0,
+      goalDelayedRounds: 0, updatedAtServerMillis: input.now(),
+    }
+    tx.set(path, state as unknown as Record<string, unknown>)
+    return state
+  })
+
+/** Production wiring: Firestore Admin SDK. */
+export const householdRepositoryWithAdminSdk = (): HouseholdFirestoreDeps['firestore'] => {
+  const db = getFirestore()
+  return {
+    runTransaction: (fn) => db.runTransaction((tx) => fn({
+      get: async (path: string) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
+      set: (path: string, data: Record<string, unknown>) => { tx.set(db.doc(path), data) },
+    })),
+  }
+}
+```
+
+（`getFirestore`のimportを`firebase-admin/firestore`から追加すること。）
+
+- [ ] **Step 5: テストを通す**
+
+Run: `cd functions && npx vitest run src/lessonRuns/households/repository.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: 判断提出の失敗するテストを書く（1ラウンド分の判断一式を1つのCallableで受け取る）**
+
+`functions/src/homeEconomics/submitDecision.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { submitHouseholdDecision } from './submitDecision'
+
+describe('submitHouseholdDecision', () => {
+  it('is idempotent per (lessonRunId, householdId, roundIndex, idempotencyKey)', async () => {
+    const saveDecision = vi.fn().mockResolvedValue({ decisionId: 'dec-1', created: true })
+    const result1 = await submitHouseholdDecision({
+      saveDecision, lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 3,
+      assetAllocationChangesYen: { DOMESTIC_STOCK: 100000 }, insurancePurchaseIds: [], insuranceCancelIds: [],
+      shortfallResolutionType: null, publicSupportApplicationIds: [], idempotencyKey: 'key-1',
+    })
+    expect(result1.created).toBe(true)
+    expect(saveDecision).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a decision that both sells an asset for the shortfall AND reallocates more into that same asset (spec §13.13 internal consistency)', async () => {
+    await expect(submitHouseholdDecision({
+      saveDecision: vi.fn(), lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 3,
+      assetAllocationChangesYen: { DOMESTIC_STOCK: 50000 }, insurancePurchaseIds: [], insuranceCancelIds: [],
+      shortfallResolutionType: 'SELL_ASSETS', shortfallResolutionAssetType: 'DOMESTIC_STOCK',
+      publicSupportApplicationIds: [], idempotencyKey: 'key-2',
+    })).rejects.toThrow('資金不足の解消に使う資産へ、同時に追加配分することはできません。')
+  })
+})
+```
+
+- [ ] **Step 7: 失敗を確認する**
+
+Run: `cd functions && npx vitest run src/homeEconomics/submitDecision.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 8: `submitHouseholdDecision`を実装する**
+
+`functions/src/homeEconomics/submitDecision.ts`:
+
+```ts
+export interface HouseholdDecisionInput {
+  lessonRunId: string
+  householdId: string
+  roundIndex: number
+  /** assetType → yen delta the student wants to move into (positive) or out of (negative) that asset this round, funded from cash. */
+  assetAllocationChangesYen: Record<string, number>
+  insurancePurchaseIds: string[]
+  insuranceCancelIds: string[]
+  /** Task 8's ShortfallOptionType, or null when there is no shortfall this round / the student hasn't resolved it yet. */
+  shortfallResolutionType: 'REDUCE_EXPENSES' | 'SELL_ASSETS' | 'BORROW' | 'PUBLIC_SUPPORT' | 'DELAY_GOAL' | null
+  /** Required when shortfallResolutionType === 'SELL_ASSETS' — which asset is being sold. */
+  shortfallResolutionAssetType?: string
+  publicSupportApplicationIds: string[]
+  idempotencyKey: string
+}
+export interface SubmitHouseholdDecisionDeps {
+  saveDecision: (input: HouseholdDecisionInput) => Promise<{ decisionId: string; created: boolean }>
+}
+
+/**
+ * Spec §13.13: a shortfall resolved by selling asset X must not also be
+ * offset by allocating MORE cash into asset X in the same submission —
+ * that would let a student simultaneously "sell to cover the gap" and
+ * "buy more of the same thing", netting to a free lunch. This is the one
+ * cross-field consistency check that only makes sense once the whole
+ * round's decision is assembled — the reason this Callable accepts the
+ * decision as one bundle rather than N independent LessonResponse
+ * submissions (see this task's own top-level rationale).
+ */
+export const submitHouseholdDecision = async (
+  deps: SubmitHouseholdDecisionDeps & HouseholdDecisionInput,
+): Promise<{ decisionId: string; created: boolean }> => {
+  if (
+    deps.shortfallResolutionType === 'SELL_ASSETS'
+    && deps.shortfallResolutionAssetType !== undefined
+    && (deps.assetAllocationChangesYen[deps.shortfallResolutionAssetType] ?? 0) > 0
+  ) {
+    throw new Error('資金不足の解消に使う資産へ、同時に追加配分することはできません。')
+  }
+  const { saveDecision, ...input } = deps
+  return saveDecision(input)
+}
+```
+
+- [ ] **Step 9: テストを通す**
+
+Run: `cd functions && npx vitest run src/homeEconomics/submitDecision.test.ts`
+Expected: PASS
+
+- [ ] **Step 10: `onCall.ts`とクライアントラッパーを実装する（Phase C `submitOrderCallable`と同じ認可パターン: teamId/participantIdをclient入力から信用せずサーバー側で解決）**
+
+`functions/src/homeEconomics/onCall.ts`の`submitHouseholdDecisionCallable`は、`resolveActorParticipantId`（`functions/src/lessonRuns/responses/onCall.ts`または`functions/src/market/onCall.ts`の既存実装を参照）と`requireTeamMembership`相当のチェックで、呼び出し元が本当にこの`householdId`を担当するチームのメンバーであることを検証してから`submitHouseholdDecision`を呼ぶ。`saveDecision`のAdmin SDK実装は`functions/src/lessonRuns/households/repository.ts`の`HouseholdTx`パターンで冪等キー・決定内容をFirestoreへ保存する（Task5の`createPendingOrder`と同じ`idempotencyDocumentId`/`requestDigest`パターン）。
+
+- [ ] **Step 11: `npm run verify`**
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add functions/src/lessonRuns/households/repository.ts functions/src/lessonRuns/households/repository.test.ts \
+  functions/src/homeEconomics/submitDecision.ts functions/src/homeEconomics/submitDecision.test.ts functions/src/homeEconomics/onCall.ts \
+  src/lib/homeEconomics/submitDecision.ts src/lib/homeEconomics/submitDecision.test.ts
+git commit -m "feat: add HouseholdState repository and bundled round-decision Callable"
+```
+
+---
