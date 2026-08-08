@@ -38,4 +38,33 @@ describe('computeVoluntaryAssetDrawdown', () => {
     const newTotal = Object.values(result.newAssetHoldingsYen).reduce((sum, v) => sum + v, 0) + result.withdrawnYen
     expect(newTotal).toBe(originalTotal)
   })
+
+  it('never drives any single entry negative, even when the largest-remainder residual would exceed the last entry (regression for the "last entry absorbs residual" bug)', () => {
+    const holdings = { X1: 3, X2: 3, X3: 3, X4: 3, LAST: 1 }
+    const result = computeVoluntaryAssetDrawdown({ requestedYen: 10, assetHoldingsYen: holdings })
+    for (const value of Object.values(result.newAssetHoldingsYen)) {
+      expect(value).toBeGreaterThanOrEqual(0)
+    }
+    const originalTotal = Object.values(holdings).reduce((sum, v) => sum + v, 0)
+    const newTotal = Object.values(result.newAssetHoldingsYen).reduce((sum, v) => sum + v, 0) + result.withdrawnYen
+    expect(newTotal).toBe(originalTotal)
+  })
+
+  it.each<Record<string, number>>([
+    { A: 7, B: 7, C: 7, D: 1 }, // requesting near-total forces heavy remainder distribution across small holdings
+    { ONLY: 5 },
+    { A: 1, B: 1, C: 1 },
+    { A: 100, B: 1 },
+    { A: 1000000, B: 1, C: 1, D: 1, E: 1 },
+  ])('conserves the total and never goes negative for holdings %j across a range of requested amounts', (holdings) => {
+    const originalTotal = Object.values(holdings).reduce((sum, v) => sum + v, 0)
+    for (const requestedYen of [0, 1, 2, Math.ceil(originalTotal / 2), originalTotal, originalTotal * 2]) {
+      const result = computeVoluntaryAssetDrawdown({ requestedYen, assetHoldingsYen: holdings })
+      for (const value of Object.values(result.newAssetHoldingsYen)) {
+        expect(value).toBeGreaterThanOrEqual(0)
+      }
+      const newTotal = Object.values(result.newAssetHoldingsYen).reduce((sum, v) => sum + v, 0) + result.withdrawnYen
+      expect(newTotal).toBe(originalTotal)
+    }
+  })
 })

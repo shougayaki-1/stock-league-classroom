@@ -26,17 +26,48 @@ export const computeVoluntaryAssetDrawdown = (input: VoluntaryDrawdownInput): Vo
   const entries = Object.entries(input.assetHoldingsYen)
   const totalHeldYen = entries.reduce((sum, [, v]) => sum + v, 0)
   const withdrawnYen = Math.min(input.requestedYen, totalHeldYen)
-  const newAssetHoldingsYen: Record<string, number> = {}
-  let withdrawnSoFar = 0
-  entries.forEach(([assetType, heldYen], i) => {
-    if (i === entries.length - 1) {
-      newAssetHoldingsYen[assetType] = heldYen - (withdrawnYen - withdrawnSoFar)
-      return
+
+  // Largest-remainder (apportionment) method: guarantees exact sum
+  // conservation AND that no entry ever goes negative. "Last entry
+  // absorbs the residual" was tried before this and conserved the sum
+  // but could push the last entry below zero when its own floor share
+  // was smaller than the accumulated rounding residual.
+  const shares = entries.map(([assetType, heldYen]) => {
+    const exactWithdrawal = totalHeldYen === 0 ? 0 : (withdrawnYen * heldYen) / totalHeldYen
+    const floorWithdrawal = Math.floor(exactWithdrawal)
+    return {
+      assetType,
+      heldYen,
+      floorWithdrawal,
+      fractionalPart: exactWithdrawal - floorWithdrawal,
     }
-    const share = totalHeldYen === 0 ? 0 : heldYen / totalHeldYen
-    const withdrawnFromThis = Math.round(withdrawnYen * share)
-    newAssetHoldingsYen[assetType] = heldYen - withdrawnFromThis
-    withdrawnSoFar += withdrawnFromThis
   })
+
+  // Every floorWithdrawal <= heldYen here: exactWithdrawal = withdrawnYen *
+  // heldYen / totalHeldYen <= heldYen because withdrawnYen <= totalHeldYen
+  // (guaranteed by the Math.min cap above), so flooring only shrinks it
+  // further. Each entry therefore has non-negative headroom before any
+  // remainder is distributed.
+  let remainder = withdrawnYen - shares.reduce((sum, s) => sum + s.floorWithdrawal, 0)
+
+  const byFractionalPartDesc = [...shares].sort((a, b) => b.fractionalPart - a.fractionalPart)
+  const extraWithdrawal = new Map<string, number>()
+  for (const share of byFractionalPartDesc) {
+    if (remainder <= 0) break
+    const headroom = share.heldYen - share.floorWithdrawal
+    if (headroom <= 0) continue // this asset type is already fully depleted by its floor share
+    extraWithdrawal.set(share.assetType, 1)
+    remainder -= 1
+  }
+  // remainder should always reach 0: sum(floorWithdrawal) = withdrawnYen -
+  // remainder < withdrawnYen <= totalHeldYen = sum(heldYen), so combined
+  // headroom across all entries always covers the remainder.
+
+  const newAssetHoldingsYen: Record<string, number> = {}
+  for (const share of shares) {
+    const extra = extraWithdrawal.get(share.assetType) ?? 0
+    newAssetHoldingsYen[share.assetType] = share.heldYen - share.floorWithdrawal - extra
+  }
+
   return { withdrawnYen, newAssetHoldingsYen }
 }
