@@ -90,6 +90,16 @@ describe('organization membership Firestore rules', () => {
   })
 })
 
+describe('organizations/{orgId}/invitations/{invitationId}', () => {
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const invitation = doc(context.firestore(), 'organizations/org-1/invitations/invitation-1')
+
+    await assertFails(getDoc(invitation))
+    await assertFails(setDoc(invitation, { email: 'x@example.com' }))
+  })
+})
+
 describe('orgId/createdByUid immutability on lessonTemplates', () => {
   beforeEach(async () => {
     await environment.withSecurityRulesDisabled(async (context) => {

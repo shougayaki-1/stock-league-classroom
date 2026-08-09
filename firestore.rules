@@ -53,6 +53,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /organizations/{orgId}/invitations/{invitationId} {
+      // Callable経由のみ(createInvitationCallable/acceptInvitationCallable/
+      // listMyInvitationsCallable)。招待には秘密トークンを持たせない設計
+      // (メールアドレス一致が資格情報)のため、クライアントへの直接読み取り
+      // を許可すると他人宛の招待の存在を推測されるリスクがある。
+      allow read, write: if false;
+    }
+
     match /organizations/{orgId}/aiUsageLog/{logId} { allow read, write: if false; }
 
     match /lessonTemplates/{templateId} {
