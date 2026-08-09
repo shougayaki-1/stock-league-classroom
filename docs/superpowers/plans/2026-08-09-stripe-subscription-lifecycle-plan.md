@@ -593,7 +593,7 @@ it('hides the manage-billing button when onManageBilling is not provided', () =>
 ```tsx
 it('opens the Stripe customer portal and redirects the browser to the returned url', async () => {
   window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
-  getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+  getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active', stripeCustomerId: 'cus_1' }) })
   httpsCallableMock.mockImplementation((_functions: unknown, name: string) =>
     name === 'createStripeCustomerPortalSessionCallable'
       ? vi.fn().mockResolvedValue({ data: { url: 'https://billing.stripe.com/p/x' } })
@@ -605,6 +605,16 @@ it('opens the Stripe customer portal and redirects the browser to the returned u
   await userEvent.click(await screen.findByRole('button', { name: '支払い方法の変更・解約' }))
   await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://billing.stripe.com/p/x'))
   vi.unstubAllGlobals()
+  window.history.pushState({}, '', '/')
+})
+
+it('hides the manage-billing button for an organization with no stripeCustomerId', async () => {
+  window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+  getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+  render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+  authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+  await screen.findByRole('button', { name: 'このプランで申し込む' })
+  expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
   window.history.pushState({}, '', '/')
 })
 ```
@@ -626,21 +636,62 @@ Expected: FAIL
       )}
 ```
 
-`src/App.tsx`の`import`に`createStripeCustomerPortalSession`（`./lib/billing/stripeCustomerPortal`）を追加し、`PlanLimitsRoute`に`managingBilling`のstateと`handleManageBilling`を追加する(既存の`data`/`error`/`checkingOut`のstate・`useEffect`・`handleCheckout`はそのまま残す):
+**設計メモ(セルフレビューで修正):** 仕様は「`stripeCustomerId`が存在する組織でのみボタンを表示する」としている。`orgId`の有無だけで`onManageBilling`を組み立てると、まだ一度も決済していない組織(`stripeCustomerId`が無い)にもボタンが出てしまい仕様と矛盾する。`organizations/{orgId}`ドキュメントを直接Firestore読み取りして`stripeCustomerId`を取得し、それが存在する場合のみ`onManageBilling`を渡す(`SchoolOrgSettingsRoute`が`parentOrgId`を読む時と同じ`getDoc`パターンを流用する——`getDoc`/`doc`は`src/App.tsx`に既にimportされている)。
+
+`src/App.tsx`の`import`に`createStripeCustomerPortalSession`（`./lib/billing/stripeCustomerPortal`）を追加し、`PlanLimitsRoute`を以下のように書き換える(既存の`data`/`error`/`checkingOut`のstate・`useEffect`・`handleCheckout`はそのまま残す):
 
 ```tsx
+function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>()
+  const [data, setData] = useState<PlanLimits>()
+  const [error, setError] = useState<string>()
+  const [checkingOut, setCheckingOut] = useState(false)
   const [managingBilling, setManagingBilling] = useState(false)
-  const handleManageBilling = orgId ? () => {
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!orgId) return
+    getOrgPlanLimits(services.functions, { orgId })
+      .then((limits) => { if (!cancelled) setData(limits) })
+      .catch(() => { if (!cancelled) setError('failed') })
+    return () => { cancelled = true }
+  }, [services, orgId])
+
+  useEffect(() => {
+    if (!orgId) return
+    void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => {
+      setStripeCustomerId(snapshot.exists() ? ((snapshot.data().stripeCustomerId as string | undefined) ?? null) : null)
+    })
+  }, [services, orgId])
+
+  const handleCheckout = orgId ? () => {
+    setCheckingOut(true)
+    void createStripeCheckoutSession(services.functions, {
+      orgId, planId: 'SCHOOL',
+      successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`,
+      cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`,
+    }).then(({ url }) => { window.location.assign(url) }).finally(() => setCheckingOut(false))
+  } : undefined
+
+  const handleManageBilling = (orgId && stripeCustomerId) ? () => {
     setManagingBilling(true)
     void createStripeCustomerPortalSession(services.functions, {
       orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`,
-    })
-      .then(({ url }) => { window.location.assign(url) })
-      .finally(() => setManagingBilling(false))
+    }).then(({ url }) => { window.location.assign(url) }).finally(() => setManagingBilling(false))
   } : undefined
+
+  return (
+    <PlanLimitsPage
+      data={data} error={error}
+      onCheckout={handleCheckout} checkingOut={checkingOut}
+      onManageBilling={handleManageBilling} managingBilling={managingBilling}
+    />
+  )
+}
 ```
 
-`return`文の`<PlanLimitsPage .../>`呼び出しに`onManageBilling={handleManageBilling}`・`managingBilling={managingBilling}`を追加する。
+（既存の`PlanLimitsRoute`全体をこの内容で置き換える。）
 
 - [ ] **Step 4: テストが通ることを確認する**
 
