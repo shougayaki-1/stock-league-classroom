@@ -4,7 +4,7 @@ initializeApp()
 
 export { ping } from './ping'
 export { ensurePersonalOrgCallable } from './organizations/onCall'
-export { generateLessonDraftCallable } from './ai/onCall'
+export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export { duplicateLessonTemplateCallable, publishLessonVersionCallable } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
@@ -35,6 +35,7 @@ export {
 export {
   exchangeDisplaySessionTokenCallable,
   issueDisplaySessionTokenCallable,
+  setTeacherGuidanceCallable,
 } from './lessonRuns/projections/onCall'
 export { submitSurveyCallable } from './lessonRuns/surveys/onCall'
 export {

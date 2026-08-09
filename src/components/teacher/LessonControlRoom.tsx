@@ -13,6 +13,7 @@ import { LessonStatusHeader } from './LessonStatusHeader'
 import { ParticipantMonitor } from './ParticipantMonitor'
 import { InterventionPanel, type InterventionApplyInput } from './InterventionPanel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
+import { TeacherGuidanceDialog } from './TeacherGuidanceDialog'
 
 const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
   START: '開始待機画面',
@@ -76,6 +77,7 @@ export interface LessonControlRoomProps {
   onAdvancePhase?: () => void
   startLessonLabel?: string
   advancePhaseLabel?: string
+  aiEnabled?: boolean
 }
 
 /**
@@ -103,11 +105,13 @@ export function LessonControlRoom({
   onAdvancePhase,
   startLessonLabel = '授業を開始',
   advancePhaseLabel = '次のフェーズへ進む',
+  aiEnabled = false,
 }: LessonControlRoomProps) {
   const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
   const [displayState, setDisplayState] = useState<LessonRunDisplayState | null>(null)
   const [participants, setParticipants] = useState<LessonParticipantView[]>([])
   const [interventionOpen, setInterventionOpen] = useState(false)
+  const [guidanceDialogOpen, setGuidanceDialogOpen] = useState(false)
 
   useEffect(() => subscribePublicRun(database, lessonRunId, setPublicState), [database, lessonRunId])
   useEffect(() => subscribeDisplayRun(database, lessonRunId, setDisplayState), [database, lessonRunId])
@@ -155,6 +159,7 @@ export function LessonControlRoom({
 
   const canEndLesson = canControlLesson(role, 'END_LESSON') && (status === 'RUNNING' || status === 'REFLECTION')
   const canHandleConnection = canControlLesson(role, 'HANDLE_CONNECTION')
+  const canEditGuidance = role === 'PRIMARY' || role === 'ASSISTANT'
   const hasAnyIntervention = useMemo(() => {
     const types: LessonInterventionType[] = [
       'EXTEND_TIME', 'PROXY_CONFIRM', 'CHANGE_REPRESENTATIVE', 'RECONNECT_PARTICIPANT',
@@ -234,6 +239,7 @@ export function LessonControlRoom({
               介入操作を開く
             </Button>
           )}
+          {canEditGuidance && <Button variant="outlined" onClick={() => setGuidanceDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>説明スライドを編集</Button>}
           {!interrupted && canHandleConnection && (
             <Button variant="outlined" onClick={handleInterrupt} sx={{ minHeight: MIN_TOUCH_TARGET }}>
               授業を安全停止
@@ -255,6 +261,7 @@ export function LessonControlRoom({
         role={role}
         onApply={handleApplyIntervention}
       />
+      {canEditGuidance && <TeacherGuidanceDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
     </Stack>
   )
 }

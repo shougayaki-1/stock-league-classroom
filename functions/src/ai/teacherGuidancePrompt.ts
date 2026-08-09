@@ -1,0 +1,4 @@
+export interface TeacherGuidancePromptInput { topic: string }
+export interface ParsedTeacherGuidance { teacherGuidance: string }
+export const buildTeacherGuidancePrompt = ({ topic }: TeacherGuidancePromptInput): string => `あなたは学校教員向けの授業支援アシスタントです。教室のプロジェクター画面（説明スライド）に表示する、生徒向けの短い説明文を1つ作成してください。\n説明したいトピック: ${topic}\n必ず次のJSONのみを出力してください: {"teacherGuidance":"説明文の本文"}`
+export const parseTeacherGuidanceResponse = (text: string): ParsedTeacherGuidance => { let parsed: unknown; try { parsed = JSON.parse(text) } catch { throw new Error('AI response was not valid JSON') }; if (!parsed || typeof parsed !== 'object' || typeof (parsed as Record<string, unknown>).teacherGuidance !== 'string') throw new Error('AI response is missing required field: teacherGuidance'); return { teacherGuidance: (parsed as Record<string, string>).teacherGuidance } }

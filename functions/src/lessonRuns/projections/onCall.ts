@@ -3,6 +3,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { isCallerTeacher } from '../../organizations/onCall'
 import { requireActiveOrgMember } from '../../organizations/authorization'
 import { exchangeDisplaySessionTokenWithAdminSdk, issueDisplaySessionTokenWithAdminSdk } from './displaySession'
+import { setTeacherGuidanceWithAdminSdk } from './setTeacherGuidance'
 
 interface IssueDisplaySessionTokenRequest { lessonRunId: string }
 
@@ -66,3 +67,16 @@ const translateExchangeError = (error: unknown): unknown => {
   }
   return error
 }
+
+export const setTeacherGuidanceCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as { lessonRunId?: unknown; teacherGuidance?: unknown }
+  if (typeof data.lessonRunId !== 'string' || typeof data.teacherGuidance !== 'string') throw new HttpsError('invalid-argument', 'lessonRunId と teacherGuidance は必須です。')
+  const db = getFirestore(); const run = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!run.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const role = (run.get('teacherRoles') as Record<string, string> | undefined)?.[request.auth.uid]
+  if (role !== 'PRIMARY' && role !== 'ASSISTANT') throw new HttpsError('permission-denied', 'PRIMARYまたはASSISTANTの教師のみ説明スライドを編集できます。')
+  await requireActiveOrgMember(db, run.get('orgId') as string, request.auth.uid)
+  return setTeacherGuidanceWithAdminSdk({ lessonRunId: data.lessonRunId, teacherGuidance: data.teacherGuidance })
+})
