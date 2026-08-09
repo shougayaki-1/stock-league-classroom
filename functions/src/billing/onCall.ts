@@ -11,7 +11,8 @@ interface CreateStripeCustomerPortalSessionRequest { orgId?: unknown; returnUrl?
 export const createStripeCustomerPortalSessionCallable = onCall({ region: 'asia-northeast1', secrets: [stripeSecretKey] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
-  const data = request.data as CreateStripeCustomerPortalSessionRequest
+  const data = request.data as CreateStripeCustomerPortalSessionRequest | null
+  if (!data || typeof data !== 'object') throw new HttpsError('invalid-argument', '入力内容が不正です。')
   if (typeof data.orgId !== 'string' || typeof data.returnUrl !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。')
   const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
   if (membership.role !== 'owner' && membership.role !== 'admin') {

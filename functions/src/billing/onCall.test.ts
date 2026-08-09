@@ -20,6 +20,11 @@ describe('createStripeCustomerPortalSessionCallable', () => {
     await expect(createStripeCustomerPortalSessionCallable.run(portalRequest)).rejects.toMatchObject({ code: 'permission-denied' })
   })
 
+  it('rejects a null payload as invalid-argument', async () => {
+    const nullPayloadRequest = { auth, data: null } as unknown as CallableRequest
+    await expect(createStripeCustomerPortalSessionCallable.run(nullPayloadRequest)).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
   it('creates a portal session for an owner', async () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
     vi.mocked(createStripeCustomerPortalSessionWithAdminSdk).mockResolvedValueOnce({ url: 'https://billing.stripe.com/p/x' })

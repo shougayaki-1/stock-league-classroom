@@ -1,4 +1,4 @@
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore, type Firestore } from 'firebase-admin/firestore'
 import { logger } from 'firebase-functions/v2'
 import { onRequest } from 'firebase-functions/v2/https'
 import { defineSecret } from 'firebase-functions/params'
@@ -19,8 +19,7 @@ export interface HandleStripeWebhookEventDeps {
   linkStripeCustomer?: (orgId: string, stripeCustomerId: string) => Promise<void>
   getOrgIdForStripeCustomer?: (stripeCustomerId: string) => Promise<string | null>
   setSubscriptionStatus?: (orgId: string, status: 'ACTIVE' | 'PAST_DUE' | 'CANCELED') => Promise<void>
-  hasBillingRecordForInvoice?: (orgId: string, invoiceId: string) => Promise<boolean>
-  createBillingRecordForInvoice?: (orgId: string, invoiceId: string, status: 'PAID' | 'OVERDUE') => Promise<void>
+  applyInvoiceLifecycle?: (orgId: string, invoiceId: string, subscriptionStatus: 'ACTIVE' | 'PAST_DUE', billingRecordStatus: 'PAID' | 'OVERDUE') => Promise<void>
   logUnresolvedStripeCustomer?: (stripeCustomerId: string) => void
   logStripeCustomerLookupError?: (stripeCustomerId: string, error: unknown) => void
 }
@@ -43,13 +42,40 @@ const resolveOrgIdForStripeCustomer = async (deps: HandleStripeWebhookEventDeps,
   }
 }
 
+export const createFirestoreInvoiceLifecycleApplier = (db: Firestore, now: () => string = () => new Date().toISOString()) => async (
+  orgId: string,
+  invoiceId: string,
+  subscriptionStatus: 'ACTIVE' | 'PAST_DUE',
+  billingRecordStatus: 'PAID' | 'OVERDUE',
+): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  const billingRecordRef = db.doc(`organizations/${orgId}/billingRecords/${invoiceId}`)
+  await db.runTransaction(async (transaction) => {
+    const existingRecord = await transaction.get(billingRecordRef)
+    if (!existingRecord.exists) {
+      transaction.update(organizationRef, { subscriptionStatus })
+      transaction.set(billingRecordRef, {
+        status: billingRecordStatus,
+        paymentMethod: 'CARD',
+        stripeInvoiceId: invoiceId,
+        createdAt: now(),
+      })
+      return
+    }
+    if (existingRecord.get('status') === 'OVERDUE' && billingRecordStatus === 'PAID') {
+      transaction.update(organizationRef, { subscriptionStatus })
+      transaction.update(billingRecordRef, { status: billingRecordStatus })
+    }
+  })
+}
+
 /**
  * Handles the 4 subscription-lifecycle events this app cares about.
  * checkout.session.completed uses billingRecords.status for idempotency
  * (the record already exists, created by createStripeCheckoutSession);
- * invoice.paid/invoice.payment_failed use Stripe's own invoice id instead,
- * since each billing cycle creates a brand-new billingRecords entry rather
- * than reusing one (see this task's design note in the plan).
+ * invoice.paid/invoice.payment_failed atomically apply the organization and
+ * deterministic invoice-record transition, using Stripe's invoice id as the
+ * billingRecords document id and deduplication key.
  */
 export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDeps, event: StripeWebhookEvent): Promise<void> => {
   switch (event.type) {
@@ -64,14 +90,12 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
     }
     case 'invoice.paid':
     case 'invoice.payment_failed': {
-      if (!event.invoiceId || !event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.hasBillingRecordForInvoice || !deps.setSubscriptionStatus || !deps.createBillingRecordForInvoice) return
+      if (!event.invoiceId || !event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.applyInvoiceLifecycle) return
       const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
       if (!orgId) return
-      if (await deps.hasBillingRecordForInvoice(orgId, event.invoiceId)) return
       const status = event.type === 'invoice.paid' ? 'ACTIVE' : 'PAST_DUE'
       const recordStatus = event.type === 'invoice.paid' ? 'PAID' : 'OVERDUE'
-      await deps.setSubscriptionStatus(orgId, status)
-      await deps.createBillingRecordForInvoice(orgId, event.invoiceId, recordStatus)
+      await deps.applyInvoiceLifecycle(orgId, event.invoiceId, status, recordStatus)
       return
     }
     case 'customer.subscription.deleted': {
@@ -132,6 +156,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
   }
 
   const db = getFirestore()
+  const applyInvoiceLifecycle = createFirestoreInvoiceLifecycleApplier(db)
   await handleStripeWebhookEvent({
     getBillingRecord: async (orgId, recordId) => {
       const snap = await db.doc(`organizations/${orgId}/billingRecords/${recordId}`).get()
@@ -155,15 +180,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
       logger.error('Stripe customer reverse lookup failed', { stripeCustomerId, error })
     },
     setSubscriptionStatus: async (orgId, status) => { await db.doc(`organizations/${orgId}`).update({ subscriptionStatus: status }) },
-    hasBillingRecordForInvoice: async (orgId, invoiceId) => {
-      const snap = await db.collection(`organizations/${orgId}/billingRecords`).where('stripeInvoiceId', '==', invoiceId).limit(1).get()
-      return !snap.empty
-    },
-    createBillingRecordForInvoice: async (orgId, invoiceId, status) => {
-      await db.collection(`organizations/${orgId}/billingRecords`).add({
-        status, paymentMethod: 'CARD', stripeInvoiceId: invoiceId, createdAt: new Date().toISOString(),
-      })
-    },
+    applyInvoiceLifecycle,
   }, extractEvent(stripeEvent))
 
   response.status(200).send('ok')
