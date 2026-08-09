@@ -51,6 +51,17 @@ export interface HouseholdSummaryCardProps {
   shortfallOptions?: HouseholdShortfallOption[]
   shortfallResolutionValue?: string
   onShortfallResolutionChange?: (value: string) => void
+  /**
+   * Critical Fix #2 (final whole-branch review): required whenever
+   * `shortfallResolutionValue === 'SELL_ASSETS'` — `onCall.ts`'s
+   * `submitHouseholdDecisionCallable` rejects a SELL_ASSETS submission with
+   * `invalid-argument` unless a non-empty `shortfallResolutionAssetType` is
+   * also sent. Which asset to name is picked from this household's
+   * currently-held asset types (`assetHoldingsYen`'s own keys), not from a
+   * separate catalog.
+   */
+  shortfallResolutionAssetType?: string
+  onShortfallResolutionAssetTypeChange?: (assetType: string) => void
   assetAllocationOrder?: string[]
   onAssetAllocationOrderChange?: (order: string[]) => void
 }
@@ -84,6 +95,8 @@ export function HouseholdSummaryCard({
   shortfallOptions,
   shortfallResolutionValue,
   onShortfallResolutionChange,
+  shortfallResolutionAssetType,
+  onShortfallResolutionAssetTypeChange,
   assetAllocationOrder,
   onAssetAllocationOrderChange,
 }: HouseholdSummaryCardProps) {
@@ -96,6 +109,12 @@ export function HouseholdSummaryCard({
   const descriptionByChoice = new Map((shortfallOptions ?? []).map((option) => [option.description, option]))
   const selectedShortfallDescription = (shortfallOptions ?? []).find((option) => option.type === shortfallResolutionValue)?.description
   const revealedEvents = (eventDisclosures ?? []).filter((event) => event.revealed)
+  // Critical Fix #2: which asset to sell is picked from this household's
+  // currently-held asset types, revealed only once SELL_ASSETS is the
+  // selected shortfall resolution — never shown for any other resolution
+  // type, and never shown when there is nothing held to sell.
+  const showAssetSalePicker = shortfallResolutionValue === 'SELL_ASSETS' && assetTypes.length > 0
+  const assetSaleConfig: SingleChoiceConfig = { type: 'SINGLE_CHOICE', options: assetTypes }
 
   return (
     <StudentSurfaceCard>
@@ -154,6 +173,17 @@ export function HouseholdSummaryCard({
               const option = descriptionByChoice.get(description)
               if (option) onShortfallResolutionChange?.(option.type)
             }}
+          />
+        )}
+
+        {showAssetSalePicker && (
+          <SingleChoiceInput
+            id={`${householdId}-shortfall-sell-asset`}
+            label="売却する資産を選んでください"
+            config={assetSaleConfig}
+            value={shortfallResolutionAssetType}
+            errors={[]}
+            onChange={(assetType) => onShortfallResolutionAssetTypeChange?.(assetType)}
           />
         )}
       </Stack>

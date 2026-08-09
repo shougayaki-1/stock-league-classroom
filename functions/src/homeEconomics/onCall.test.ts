@@ -8,6 +8,7 @@ import {
 } from './onCall'
 import {
   getHouseholdStateWithAdminSdk,
+  getOrInitHouseholdState,
   householdRepositoryWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
@@ -34,6 +35,7 @@ vi.mock('firebase-admin/firestore', () => ({
 
 vi.mock('../lessonRuns/households/repository', () => ({
   getHouseholdStateWithAdminSdk: vi.fn(),
+  getOrInitHouseholdState: vi.fn(),
   householdRepositoryWithAdminSdk: vi.fn(() => ({})),
   saveHouseholdDecision: vi.fn(),
 }))
@@ -129,10 +131,67 @@ describe('submitHouseholdDecisionCallable', () => {
     expect(getHouseholdStateWithAdminSdk).not.toHaveBeenCalled()
   })
 
-  it('rejects when the household cannot be found', async () => {
-    vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
-    await expect(submitHouseholdDecisionCallable.run(makeRequest())).rejects.toMatchObject({ code: 'not-found' })
-    expect(saveHouseholdDecision).not.toHaveBeenCalled()
+  // Critical Fix #1 (final whole-branch review): a missing household no
+  // longer means an unconditional 'not-found' — it triggers lazy-init
+  // (`lazyInitHouseholdWithAdminSdk`). These tests replace the old
+  // unconditional-'not-found' expectation with the lazy-init decision tree.
+  describe('lazy household initialization (Critical Fix #1)', () => {
+    const homeEconomicsContent = {
+      households: [{
+        householdId: 'template-profile-1', age: 32, householdIncomeYen: 6000000,
+        annualLivingExpensesYen: 3000000, cashSavingsYen: 500000, family: '配偶者・子2人',
+        housing: '賃貸マンション', lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING',
+        eventProbabilityOverrides: {}, internalRiskFactors: {},
+      }],
+      courseFormat: 'COMMON_CONDITIONS',
+    }
+
+    it('rejects with not-found when the household is missing AND the LessonRun itself does not exist', async () => {
+      vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(false))
+      await expect(submitHouseholdDecisionCallable.run(makeRequest())).rejects.toMatchObject({ code: 'not-found' })
+      expect(saveHouseholdDecision).not.toHaveBeenCalled()
+      expect(getOrInitHouseholdState).not.toHaveBeenCalled()
+    })
+
+    it('rejects with permission-denied when the caller is not a member of the team named by householdId, without creating a household', async () => {
+      vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
+      teamGetMock.mockResolvedValue({ exists: true, data: () => ({ memberParticipantIds: ['someone-else'] }) })
+      await expect(submitHouseholdDecisionCallable.run(makeRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(getOrInitHouseholdState).not.toHaveBeenCalled()
+      expect(saveHouseholdDecision).not.toHaveBeenCalled()
+    })
+
+    it('rejects with failed-precondition when the template is not COMMON_CONDITIONS / has more than one profile', async () => {
+      vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+        templateSnapshot: { homeEconomics: { ...homeEconomicsContent, courseFormat: 'ROLE_VARIANT' } },
+      }))
+      await expect(submitHouseholdDecisionCallable.run(makeRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(getOrInitHouseholdState).not.toHaveBeenCalled()
+      expect(saveHouseholdDecision).not.toHaveBeenCalled()
+    })
+
+    it('lazily creates the household from the template\'s sole profile, keyed by householdId===teamId, then proceeds to save the decision', async () => {
+      vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { templateSnapshot: { homeEconomics: homeEconomicsContent } }))
+      const initializedHousehold = {
+        householdId: 'case-b', lessonRunId: 'run-1', teamId: 'case-b', cashYen: 500000,
+        assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+        lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+      }
+      vi.mocked(getOrInitHouseholdState).mockResolvedValue(initializedHousehold)
+      vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-new', created: true })
+
+      await expect(submitHouseholdDecisionCallable.run(makeRequest({ roundIndex: 0 })))
+        .resolves.toEqual({ decisionId: 'dec-new', created: true })
+
+      expect(getOrInitHouseholdState).toHaveBeenCalledWith(expect.objectContaining({
+        lessonRunId: 'run-1', teamId: 'case-b', householdId: 'case-b',
+        startingCashYen: 500000, startingLifeStage: 'CHILD_REARING',
+      }))
+      expect(saveHouseholdDecision).toHaveBeenCalledWith(expect.objectContaining({ lessonRunId: 'run-1', householdId: 'case-b' }))
+    })
   })
 
   it('rejects a caller who is not a member of the team that owns this household (never trusting a client-supplied teamId)', async () => {

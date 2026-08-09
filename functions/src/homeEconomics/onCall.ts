@@ -1,8 +1,10 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
 import {
   getHouseholdStateWithAdminSdk,
+  getOrInitHouseholdState,
   householdRepositoryWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
@@ -45,6 +47,64 @@ const requireTeamMembership = async (lessonRunId: string, teamId: string, actorP
   if (!team.memberParticipantIds.includes(actorParticipantId)) {
     throw new HttpsError('permission-denied', 'このチームのメンバーではありません。')
   }
+}
+
+/**
+ * Critical Fix #1 (final whole-branch review): `getOrInitHouseholdState`
+ * (Task 10, households/repository.ts) had ZERO production callers — no
+ * household document was ever created through normal lesson-run flow. This
+ * lazily creates the caller's own household document the FIRST time they
+ * submit a decision for it, rather than requiring a separate seeding step.
+ *
+ * Scoped deliberately to the COMMON_CONDITIONS course format —
+ * `templateValidation.ts`'s `validateHomeEconomicsContent` is the only
+ * place in this codebase that guarantees a `HomeEconomicsContent` has
+ * exactly one `HouseholdProfile`, which is what makes "which profile does
+ * this new household start from" unambiguous without a team→profile
+ * assignment mechanism. ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM
+ * (multiple profiles per template) are NOT supported by this lazy-init path
+ * — see task-critical-fix-report.md for why that is a deliberate, documented
+ * follow-up rather than a silent gap.
+ *
+ * `householdId` doubles as `teamId` under this scope: since there is only
+ * one profile, every team's household is simply keyed by that team's own
+ * `teamId` — no separate team→householdId assignment table is needed. This
+ * also makes authorization trivial and safe: `requireTeamMembership` is
+ * called FIRST, using the requested `householdId` itself as the `teamId` to
+ * check. That confirms BOTH that a real team with this id exists in this
+ * lessonRun AND that the caller is one of its members, before any household
+ * document is created — a caller can never conjure a household for an
+ * arbitrary or nonexistent team id, or for a team they do not belong to.
+ */
+const lazyInitHouseholdWithAdminSdk = async (
+  lessonRunId: string,
+  householdId: string,
+  actorParticipantId: string,
+): Promise<HouseholdState> => {
+  await requireTeamMembership(lessonRunId, householdId, actorParticipantId)
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', '対象の家庭の状態が見つかりません。')
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  const homeEconomics = templateSnapshot?.homeEconomics
+  if (!homeEconomics || homeEconomics.courseFormat !== 'COMMON_CONDITIONS' || homeEconomics.households.length !== 1) {
+    throw new HttpsError(
+      'failed-precondition',
+      'このコース形式では家庭の自動初期化に対応していません（共通条件モードでプロフィールが1件の教材のみ対応）。',
+    )
+  }
+  const profile = homeEconomics.households[0]
+
+  return getOrInitHouseholdState({
+    firestore: householdRepositoryWithAdminSdk(),
+    lessonRunId,
+    teamId: householdId,
+    householdId,
+    startingCashYen: profile.cashSavingsYen,
+    startingLifeStage: profile.lifeStage,
+    now: Date.now,
+  })
 }
 
 interface SubmitHouseholdDecisionRequest {
@@ -159,10 +219,18 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
 
   const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
 
-  const household = await getHouseholdStateWithAdminSdk(data.lessonRunId, data.householdId)
-  if (!household) throw new HttpsError('not-found', '対象の家庭の状態が見つかりません。')
-
-  await requireTeamMembership(data.lessonRunId, household.teamId, actorParticipantId)
+  // Critical Fix #1: previously this threw 'not-found' unconditionally when
+  // no household document existed yet — the exact gap the final
+  // whole-branch review found (no production path ever created one). Now a
+  // missing household triggers `lazyInitHouseholdWithAdminSdk`, which
+  // performs its own authorization (see that function's doc comment) before
+  // creating anything, so no membership check is skipped on this path.
+  let household = await getHouseholdStateWithAdminSdk(data.lessonRunId, data.householdId)
+  if (household) {
+    await requireTeamMembership(data.lessonRunId, household.teamId, actorParticipantId)
+  } else {
+    household = await lazyInitHouseholdWithAdminSdk(data.lessonRunId, data.householdId, actorParticipantId)
+  }
 
   // The household doc is already in scope from authorization above — its
   // own `roundIndex` is the source of truth for which round a student may

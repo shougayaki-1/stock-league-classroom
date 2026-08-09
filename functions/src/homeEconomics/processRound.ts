@@ -141,7 +141,21 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
   ])
   if (!household) throw new Error('HouseholdState not found')
 
-  const profile = config.homeEconomics.households.find((p) => p.householdId === input.householdId)
+  // Critical Fix #1 (final whole-branch review): under the COMMON_CONDITIONS
+  // course format `templateValidation.ts` guarantees exactly one
+  // `HouseholdProfile` in `households`, and `HouseholdState.householdId` is
+  // team-scoped (`householdId === teamId`, see `onCall.ts`'s
+  // `lazyInitHouseholdWithAdminSdk`) rather than equal to the profile's own
+  // `householdId` — so an exact-match `.find` would never resolve a
+  // COMMON_CONDITIONS household's profile. When there is exactly one
+  // profile there is no ambiguity to resolve regardless of naming scheme,
+  // so that single profile is used directly. This is unchanged/backward
+  // compatible for every existing caller: single-profile fixtures already
+  // use a matching id, and the multi-profile `.find` path (ROLE_VARIANT/etc,
+  // out of this fix's scope) is untouched.
+  const profile = config.homeEconomics.households.length === 1
+    ? config.homeEconomics.households[0]
+    : config.homeEconomics.households.find((p) => p.householdId === input.householdId)
   if (!profile) throw new Error('HouseholdProfile not found in template snapshot')
 
   const decision = await deps.readHouseholdDecision(input.lessonRunId, input.householdId, household.roundIndex)

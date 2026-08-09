@@ -109,6 +109,26 @@ describe('processRound', () => {
   })
 
   /**
+   * Critical Fix #1 (final whole-branch review) — under COMMON_CONDITIONS,
+   * `HouseholdState.householdId` is team-scoped (`householdId === teamId`,
+   * see `onCall.ts`'s `lazyInitHouseholdWithAdminSdk`) and will generally
+   * NOT equal the template's single `HouseholdProfile.householdId`. With
+   * exactly one profile in the snapshot, `processRound` must still resolve
+   * it rather than throwing 'HouseholdProfile not found in template
+   * snapshot'.
+   */
+  it('resolves the sole profile by position (not by id match) when the household is team-scoped and the template has exactly one profile', async () => {
+    const teamScopedHousehold: HouseholdState = { ...household, householdId: 'team-a' }
+    const deps = makeDeps({
+      readHouseholdState: vi.fn().mockResolvedValue(teamScopedHousehold),
+      readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'team-a' }),
+    })
+    const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'team-a', actorId: 'teacher-a' })
+    expect(result).toBe(settleResult)
+    expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ profile }))
+  })
+
+  /**
    * Task 15 — `publishRealtimeState` must actually be invoked (not left
    * unwired the way Phase C's RTDB broadcast was until its final
    * whole-branch review), with everything the Admin SDK implementation
