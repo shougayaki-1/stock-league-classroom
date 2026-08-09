@@ -25,6 +25,8 @@ import { TemplateOverviewPage } from './components/teacher/templates/TemplateOve
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
 import { SocialStudiesQuestionStep } from './components/teacher/templates/wizardSteps/socialStudies/QuestionSteps'
 import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizardSteps/homeEconomics/QuestionSteps'
+import { getTuningConstants, type TuningConstantsResponse } from './lib/platformConfig/getTuningConstants'
+import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboardPage'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -267,6 +269,19 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   return <TemplateEditorPage draft={draft} saving={saving} publishing={publishing} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
 }
 
+function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
+  const [data, setData] = useState<TuningConstantsResponse>()
+  const [error, setError] = useState<string>()
+  useEffect(() => {
+    let cancelled = false
+    getTuningConstants(services.functions)
+      .then((response) => { if (!cancelled) setData(response) })
+      .catch(() => { if (!cancelled) setError('failed') })
+    return () => { cancelled = true }
+  }, [services])
+  return <TuningDashboardPage data={data} error={error} />
+}
+
 function StudentLessonRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useStudentLessonAccess(runId ?? '', services)
@@ -329,6 +344,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
 </Routes></>
