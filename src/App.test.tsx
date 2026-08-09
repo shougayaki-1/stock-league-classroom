@@ -61,7 +61,7 @@ vi.mock('firebase/database', () => ({
 }))
 
 const callableMock = vi.fn().mockResolvedValue({ data: {} })
-const httpsCallableMock = vi.fn(() => callableMock)
+const httpsCallableMock = vi.fn((_functions: unknown, _name: string) => callableMock)
 vi.mock('firebase/functions', () => ({
   httpsCallable: (...args: Parameters<typeof httpsCallableMock>) => httpsCallableMock(...args),
 }))
