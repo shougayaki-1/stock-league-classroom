@@ -7,4 +7,8 @@ describe('lesson draft prompt', () => {
     expect(() => parseLessonDraftResponse('not json')).toThrow('AI response was not valid JSON')
     expect(() => parseLessonDraftResponse('{"title":123}')).toThrow('AI response is missing required field: title')
   })
+  it('includes materials only when supplied', () => {
+    expect(buildLessonDraftPrompt({ theme: 'x', mainObjective: 'y', subject: 'SOCIAL_STUDIES', difficulty: 'STANDARD', materialTexts: ['資料A', '資料B'] })).toContain('資料A')
+    expect(buildLessonDraftPrompt({ theme: 'x', mainObjective: 'y', subject: 'SOCIAL_STUDIES', difficulty: 'STANDARD' })).not.toContain('参考資料')
+  })
 })

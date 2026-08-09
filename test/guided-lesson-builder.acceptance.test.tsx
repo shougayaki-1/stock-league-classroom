@@ -25,7 +25,7 @@ describe('Guided Lesson Builder acceptance flow', () => {
     expect(created?.homeEconomics?.courseFormat).toBe('COMMON_CONDITIONS')
 
     const save = vi.fn()
-    render(<TemplateEditorPage draft={created!} saving={false} publishing={false} onSaveDraft={save} onPublish={vi.fn()} />)
+    render(<TemplateEditorPage draft={created!} templateId="t1" orgId="org-1" storage={{} as never} firestore={{} as never} functions={{} as never} aiEnabled={false} materialsUploadEnabled={false} saving={false} publishing={false} onSaveDraft={save} onPublish={vi.fn()} />)
     fireEvent.click(screen.getByRole('tab', { name: '主要な一覧' }))
     fireEvent.click(screen.getByRole('button', { name: '担当プロフィールを追加' }))
     fireEvent.click(screen.getByRole('button', { name: '下書き保存' }))

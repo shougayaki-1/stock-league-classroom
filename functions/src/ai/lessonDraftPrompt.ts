@@ -1,10 +1,10 @@
-export interface LessonDraftPromptInput { theme: string; mainObjective: string; subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'; difficulty: 'BASIC' | 'STANDARD' | 'ADVANCED' }
+export interface LessonDraftPromptInput { theme: string; mainObjective: string; subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'; difficulty: 'BASIC' | 'STANDARD' | 'ADVANCED'; materialTexts?: string[] }
 export interface ParsedLessonDraft { title: string; description: string }
 export const buildLessonDraftPrompt = (input: LessonDraftPromptInput): string => `あなたは学校教員向けの授業設計アシスタントです。以下の条件に基づいて教材案を1つ提案してください。
 科目: ${input.subject === 'SOCIAL_STUDIES' ? '社会科（市場シミュレーション）' : '家庭科（生活設計シミュレーション）'}
 テーマ: ${input.theme}
 主な学習目標: ${input.mainObjective}
-難易度: ${input.difficulty}
+難易度: ${input.difficulty}${input.materialTexts?.length ? `\n\n参考資料:\n${input.materialTexts.map((text, index) => `[資料${index + 1}]\n${text}`).join('\n\n')}` : ''}
 必ず次のJSONのみを出力してください: {"title":"教材のタイトル","description":"教材の概要説明"}`
 export const parseLessonDraftResponse = (text: string): ParsedLessonDraft => {
   let parsed: unknown

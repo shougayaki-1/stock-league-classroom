@@ -274,9 +274,13 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   const [draft, setDraft] = useState<LessonContent>()
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [aiEnabled, setAiEnabled] = useState(false)
+  const [materialsUploadEnabled, setMaterialsUploadEnabled] = useState(false)
+  const uid = services.auth.currentUser?.uid
   useEffect(() => { if (templateId) getDoc(doc(services.firestore, 'lessonTemplates', templateId)).then((snapshot) => { if (snapshot.exists()) setDraft((snapshot.data() as LessonTemplate).draft) }) }, [services, templateId])
+  useEffect(() => { if (uid) getDoc(doc(services.firestore, 'organizations', personalOrgId(uid))).then((snapshot) => { setAiEnabled(snapshot.exists() && snapshot.data()?.aiEnabled === true); setMaterialsUploadEnabled(snapshot.exists() && snapshot.data()?.materialsUploadEnabled === true) }).catch(() => { setAiEnabled(false); setMaterialsUploadEnabled(false) }) }, [services, uid])
   if (!templateId || !draft) return <GuardLoading />
-  return <TemplateEditorPage draft={draft} saving={saving} publishing={publishing} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
+  return <TemplateEditorPage draft={draft} templateId={templateId} orgId={personalOrgId(uid ?? '')} storage={services.storage} firestore={services.firestore} functions={services.functions} aiEnabled={aiEnabled} materialsUploadEnabled={materialsUploadEnabled} saving={saving} publishing={publishing} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {

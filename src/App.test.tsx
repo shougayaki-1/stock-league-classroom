@@ -5,6 +5,7 @@ import type { Auth } from 'firebase/auth'
 import type { Firestore } from 'firebase/firestore'
 import type { Database } from 'firebase/database'
 import type { Functions } from 'firebase/functions'
+import type { FirebaseStorage } from 'firebase/storage'
 import App from './App'
 
 // Same module-boundary mock pattern as LessonControlRoom.test.tsx: App.tsx's
@@ -67,6 +68,7 @@ const fakeServices = {
   firestore: {} as Firestore,
   database: {} as Database,
   functions: {} as Functions,
+  storage: {} as FirebaseStorage,
 }
 const getServices = () => fakeServices
 

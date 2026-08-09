@@ -81,6 +81,13 @@ service cloud.firestore {
         // update cannot split or duplicate. Clients never write versions.
         allow create, update, delete: if false;
       }
+
+      match /materials/{materialId} {
+        allow get, list, create, delete: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
+          && get(/databases/$(database)/documents/organizations/$(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)).data.materialsUploadEnabled == true;
+        allow update: if false;
+      }
     }
     match /lessonVersionPublishIdempotency/{key} { allow read, write: if false; }
 
