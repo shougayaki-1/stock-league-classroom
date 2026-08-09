@@ -392,3 +392,17 @@ describe('School org creation and invitation routes', () => {
     window.history.pushState({}, '', '/')
   })
 })
+
+describe('Parent org hierarchy routes', () => {
+  it('routes /teacher/organizations/new-parent to the parent org creation form', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/new-parent'); getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />); authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('heading', { name: '上位組織を作成' })).toBeInTheDocument(); window.history.pushState({}, '', '/')
+  })
+  it('shows child schools on the parent settings route', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/parent-1/parent-settings'); getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => name === 'listChildSchoolsCallable' ? vi.fn().mockResolvedValue({ data: [{ orgId: 'school-1', name: 'A高校', verificationStatus: 'PENDING' }] }) : callableMock)
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />); authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByText('A高校')).toBeInTheDocument(); window.history.pushState({}, '', '/')
+  })
+})

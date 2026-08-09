@@ -8,6 +8,10 @@ import {
   listOrgMembersCallable,
   listMyInvitationsCallable,
   suspendOrgMemberCallable,
+  createParentOrgCallable,
+  linkSchoolToParentOrgCallable,
+  listChildSchoolsCallable,
+  unlinkSchoolFromParentOrgCallable,
 } from './onCall'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import { requireActiveOrgMember } from './authorization'
@@ -16,6 +20,8 @@ import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvit
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
 import { suspendOrgMemberWithAdminSdk } from './suspendMember'
+import { createParentOrgWithAdminSdk } from './parentOrg'
+import { linkSchoolToParentOrgWithAdminSdk, listChildSchoolsWithAdminSdk, unlinkSchoolFromParentOrgWithAdminSdk } from './schoolHierarchy'
 
 vi.mock('./authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./schoolOrg', () => ({ createSchoolOrgWithAdminSdk: vi.fn() }))
@@ -27,6 +33,8 @@ vi.mock('./invitations', () => ({
 vi.mock('./planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
 vi.mock('./orgMembers', () => ({ listOrgMembersWithAdminSdk: vi.fn() }))
 vi.mock('./suspendMember', () => ({ suspendOrgMemberWithAdminSdk: vi.fn() }))
+vi.mock('./parentOrg', () => ({ createParentOrgWithAdminSdk: vi.fn() }))
+vi.mock('./schoolHierarchy', () => ({ linkSchoolToParentOrgWithAdminSdk: vi.fn(), unlinkSchoolFromParentOrgWithAdminSdk: vi.fn(), listChildSchoolsWithAdminSdk: vi.fn() }))
 const docGetMock = vi.fn()
 vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
 
@@ -180,5 +188,29 @@ describe('suspendOrgMemberCallable', () => {
     vi.mocked(suspendOrgMemberWithAdminSdk).mockRejectedValueOnce(new Error('組織には少なくとも1人のownerが必要です'))
     const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2' } } as unknown as CallableRequest
     await expect(suspendOrgMemberCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+})
+
+describe('parent organization hierarchy Callables', () => {
+  beforeEach(() => vi.clearAllMocks())
+  it('creates a parent org for an authenticated teacher', async () => {
+    vi.mocked(createParentOrgWithAdminSdk).mockResolvedValueOnce({ orgId: 'parentOrg_1' })
+    await expect(createParentOrgCallable.run({ auth: teacher, data: { name: '桜丘市教育委員会' } } as unknown as CallableRequest)).resolves.toEqual({ orgId: 'parentOrg_1' })
+  })
+  it('requires owner/admin of both orgs to link a school', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 }).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(linkSchoolToParentOrgWithAdminSdk).mockResolvedValueOnce(undefined)
+    const request = { auth: teacher, data: { parentOrgId: 'parent-1', schoolOrgId: 'school-1' } } as unknown as CallableRequest
+    await expect(linkSchoolToParentOrgCallable.run(request)).resolves.toBeUndefined()
+    expect(linkSchoolToParentOrgWithAdminSdk).toHaveBeenCalledWith({ parentOrgId: 'parent-1', schoolOrgId: 'school-1' })
+  })
+  it('requires management of the current parent org to unlink', async () => {
+    docGetMock.mockResolvedValueOnce({ exists: true, get: () => 'parent-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 }); vi.mocked(unlinkSchoolFromParentOrgWithAdminSdk).mockResolvedValueOnce(undefined)
+    await expect(unlinkSchoolFromParentOrgCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toBeUndefined()
+  })
+  it('lists child schools for an active parent member', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 }); vi.mocked(listChildSchoolsWithAdminSdk).mockResolvedValueOnce([{ orgId: 'school-1', name: 'A高校', verificationStatus: 'PENDING' }])
+    await expect(listChildSchoolsCallable.run({ auth: teacher, data: { parentOrgId: 'parent-1' } } as unknown as CallableRequest)).resolves.toHaveLength(1)
   })
 })

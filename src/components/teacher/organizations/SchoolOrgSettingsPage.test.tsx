@@ -118,3 +118,13 @@ describe('member list', () => {
     expect(onSuspendMember).toHaveBeenCalledWith('uid-teacher')
   })
 })
+
+describe('parent organization display', () => {
+  it('shows none when unlinked and the name when linked', () => {
+    const props = { orgName: '桜丘高校', orgId: 'org-1', invitations: [], onInvite: vi.fn(), inviting: false, ...memberProps }
+    const { rerender } = render(<MemoryRouter><SchoolOrgSettingsPage {...props} parentOrgName={null} /></MemoryRouter>)
+    expect(screen.getByText('所属する上位組織: なし')).toBeInTheDocument()
+    rerender(<MemoryRouter><SchoolOrgSettingsPage {...props} parentOrgName="桜丘市教育委員会" /></MemoryRouter>)
+    expect(screen.getByText('所属する上位組織: 桜丘市教育委員会')).toBeInTheDocument()
+  })
+})
