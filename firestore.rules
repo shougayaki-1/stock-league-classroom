@@ -53,6 +53,8 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /organizations/{orgId}/aiUsageLog/{logId} { allow read, write: if false; }
+
     match /lessonTemplates/{templateId} {
       allow get: if teacher() && activeMember(resource.data.orgId);
       allow list: if teacher() && activeMember(resource.data.orgId);

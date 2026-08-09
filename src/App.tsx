@@ -250,8 +250,18 @@ function TemplateNewRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
   const [completed, setCompleted] = useState<{ goal: LearningGoal; answers: Record<string, unknown> }>()
   const [creating, setCreating] = useState(false)
+  const [aiEnabled, setAiEnabled] = useState(false)
+  useEffect(() => {
+    const uid = services.auth.currentUser?.uid
+    if (!uid) return
+    let cancelled = false
+    getDoc(doc(services.firestore, 'organizations', personalOrgId(uid)))
+      .then((snapshot) => { if (!cancelled) setAiEnabled(snapshot.exists() && snapshot.data()?.aiEnabled === true) })
+      .catch(() => { if (!cancelled) setAiEnabled(false) })
+    return () => { cancelled = true }
+  }, [services])
   if (!completed) return <GuidedBuilderWizard socialStudiesSteps={[SocialStudiesQuestionStep]} homeEconomicsSteps={[HomeEconomicsQuestionStep]} onComplete={(goal, answers) => setCompleted({ goal, answers })} />
-  return <TemplateOverviewPage answers={{ goal: completed.goal, ...completed.answers } as WizardAnswers} creating={creating} onCreate={async (draft) => {
+  return <TemplateOverviewPage answers={{ goal: completed.goal, ...completed.answers } as WizardAnswers} creating={creating} functions={services.functions} aiEnabled={aiEnabled} onCreate={async (draft) => {
     const uid = services.auth.currentUser?.uid
     if (!uid) return
     setCreating(true)

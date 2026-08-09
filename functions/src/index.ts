@@ -4,6 +4,7 @@ initializeApp()
 
 export { ping } from './ping'
 export { ensurePersonalOrgCallable } from './organizations/onCall'
+export { generateLessonDraftCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export { duplicateLessonTemplateCallable, publishLessonVersionCallable } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'

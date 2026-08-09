@@ -18,7 +18,7 @@ describe('Guided Lesson Builder acceptance flow', () => {
     expect(completed).toBeDefined()
 
     let created: LessonContent | undefined
-    const overview = render(<TemplateOverviewPage answers={{ goal: completed!.goal, ...completed!.answers } as WizardAnswers} creating={false} onCreate={(draft) => { created = draft }} />)
+    const overview = render(<TemplateOverviewPage answers={{ goal: completed!.goal, ...completed!.answers } as WizardAnswers} creating={false} functions={{} as never} aiEnabled={false} onCreate={(draft) => { created = draft }} />)
     fireEvent.click(screen.getByRole('button', { name: /標準案/ }))
     fireEvent.click(screen.getByRole('button', { name: 'この内容で作成' }))
     overview.unmount()
