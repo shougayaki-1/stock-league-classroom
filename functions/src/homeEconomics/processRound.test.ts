@@ -129,6 +129,28 @@ describe('processRound', () => {
   })
 
   /**
+   * Single-profile fallback fix (final review) — the fallback is gated on
+   * courseFormat === 'COMMON_CONDITIONS', NOT just array length. Under
+   * other course formats (e.g. ROLE_VARIANT), a single-profile template
+   * with mismatched householdId must correctly fall through to the
+   * exact-match `.find()` and throw 'HouseholdProfile not found', rather
+   * than silently returning the mismatched profile.
+   */
+  it('throws when single-profile template uses ROLE_VARIANT courseFormat and householdId does not match the profile', async () => {
+    const singleProfileRoleVariant = { ...homeEconomics, courseFormat: 'ROLE_VARIANT' as const }
+    const deps = makeDeps({
+      readLessonRunConfig: vi.fn().mockResolvedValue({
+        orgId: 'org-1', randomSeed: 'seed-x', restoreGeneration: 0, homeEconomics: singleProfileRoleVariant,
+      }),
+      readHouseholdState: vi.fn().mockResolvedValue({ ...household, householdId: 'different-id' }),
+      readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'different-id' }),
+    })
+    await expect(processRound(deps, { lessonRunId: 'run-1', householdId: 'different-id', actorId: 'teacher-a' }))
+      .rejects.toThrow('HouseholdProfile not found in template snapshot')
+    expect(deps.settleRoundFn).not.toHaveBeenCalled()
+  })
+
+  /**
    * Task 15 — `publishRealtimeState` must actually be invoked (not left
    * unwired the way Phase C's RTDB broadcast was until its final
    * whole-branch review), with everything the Admin SDK implementation
