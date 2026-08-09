@@ -264,3 +264,36 @@ describe('Guided Lesson Builder routes', () => {
     window.history.pushState({}, '', '/')
   })
 })
+
+describe('School org creation and invitation routes', () => {
+  it('routes /teacher/organizations/new to the school org creation form', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/new')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('heading', { name: '学校組織を作成' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('routes /teacher/organizations/:orgId/settings to the settings page for a signed-in teacher', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/settings')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    callableMock.mockResolvedValue({ data: [] })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('button', { name: '招待を送る' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('shows the pending invitations banner on the template list route when invitations exist', async () => {
+    window.history.pushState({}, '', '/teacher/templates')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    callableMock.mockResolvedValue({
+      data: [{ id: 'invitation-1', orgId: 'org-1', email: 'teacher@example.com', role: 'teacher', status: 'PENDING', invitedByUid: 'owner-1', createdAt: null }],
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('button', { name: '参加する' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+})

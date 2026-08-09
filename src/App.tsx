@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { Box, Button, CircularProgress, CssBaseline, Link, Stack, ThemeProvider, Typography } from '@mui/material'
+import { Box, Button, CircularProgress, CssBaseline, Link, Stack, TextField, ThemeProvider, Typography } from '@mui/material'
 import { onAuthStateChanged } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import { onValue, ref } from 'firebase/database'
@@ -27,6 +27,10 @@ import { SocialStudiesQuestionStep } from './components/teacher/templates/wizard
 import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizardSteps/homeEconomics/QuestionSteps'
 import { getTuningConstants, type TuningConstantsResponse } from './lib/platformConfig/getTuningConstants'
 import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboardPage'
+import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
+import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
+import { createSchoolOrg } from './lib/organizations/schoolOrg'
+import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -235,7 +239,12 @@ function TemplateRouteGuard({ services, children }: { services: FirebaseServices
 function TemplateListRoute({ services }: { services: FirebaseServices }) {
   const [templates, setTemplates] = useState<LessonTemplate[]>([])
   const [loading, setLoading] = useState(true)
+  const [invitations, setInvitations] = useState<Invitation[]>([])
+  const [accepting, setAccepting] = useState(false)
   const navigate = useNavigate()
+  useEffect(() => {
+    void listMyInvitations(services.functions).then(setInvitations).catch(() => setInvitations([]))
+  }, [services])
   useEffect(() => {
     const uid = services.auth.currentUser?.uid
     if (!uid) { setLoading(false); return }
@@ -243,7 +252,21 @@ function TemplateListRoute({ services }: { services: FirebaseServices }) {
       .then((snapshot) => setTemplates(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as LessonTemplate)))
       .finally(() => setLoading(false))
   }, [services])
-  return <TemplateListPage templates={templates} loading={loading} onCreateNew={() => navigate('/teacher/templates/new')} onOpen={(id) => navigate(`/teacher/templates/${id}/edit`)} />
+  return (
+    <Stack spacing={2}>
+      <PendingInvitationsBanner
+        invitations={invitations}
+        accepting={accepting}
+        onAccept={(invitation) => {
+          setAccepting(true)
+          void acceptInvitation(services.functions, { orgId: invitation.orgId, invitationId: invitation.id })
+            .then(() => setInvitations((prev) => prev.filter((item) => item.id !== invitation.id)))
+            .finally(() => setAccepting(false))
+        }}
+      />
+      <TemplateListPage templates={templates} loading={loading} onCreateNew={() => navigate('/teacher/templates/new')} onOpen={(id) => navigate(`/teacher/templates/${id}/edit`)} />
+    </Stack>
+  )
 }
 
 function TemplateNewRoute({ services }: { services: FirebaseServices }) {
@@ -281,6 +304,58 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   useEffect(() => { if (uid) getDoc(doc(services.firestore, 'organizations', personalOrgId(uid))).then((snapshot) => { setAiEnabled(snapshot.exists() && snapshot.data()?.aiEnabled === true); setMaterialsUploadEnabled(snapshot.exists() && snapshot.data()?.materialsUploadEnabled === true) }).catch(() => { setAiEnabled(false); setMaterialsUploadEnabled(false) }) }, [services, uid])
   if (!templateId || !draft) return <GuardLoading />
   return <TemplateEditorPage draft={draft} templateId={templateId} orgId={personalOrgId(uid ?? '')} storage={services.storage} firestore={services.firestore} functions={services.functions} aiEnabled={aiEnabled} materialsUploadEnabled={materialsUploadEnabled} saving={saving} publishing={publishing} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
+}
+
+function SchoolOrgNewRoute({ services }: { services: FirebaseServices }) {
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const navigate = useNavigate()
+  return (
+    <Stack spacing={2} sx={{ p: 2 }}>
+      <Typography variant="h5" component="h1">学校組織を作成</Typography>
+      <TextField label="組織名" value={name} onChange={(e) => setName(e.target.value)} />
+      <Button
+        variant="contained"
+        disabled={creating || !name}
+        sx={{ alignSelf: 'flex-start' }}
+        onClick={async () => {
+          setCreating(true)
+          try {
+            const { orgId } = await createSchoolOrg(services.functions, { name })
+            navigate(`/teacher/organizations/${orgId}/settings`)
+          } finally {
+            setCreating(false)
+          }
+        }}
+      >
+        作成する
+      </Button>
+    </Stack>
+  )
+}
+
+function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>()
+  const [invitations, setInvitations] = useState<Invitation[]>([])
+  const [inviting, setInviting] = useState(false)
+  useEffect(() => { void listMyInvitations(services.functions) }, [services])
+  if (!orgId) return <GuardLoading />
+  return (
+    <SchoolOrgSettingsPage
+      orgName={orgId}
+      invitations={invitations}
+      inviting={inviting}
+      onInvite={async (email, role) => {
+        setInviting(true)
+        try {
+          await createInvitation(services.functions, { orgId, email, role })
+          setInvitations((prev) => [...prev, { id: crypto.randomUUID(), orgId, email, role, status: 'PENDING', invitedByUid: '', createdAt: null }])
+        } finally {
+          setInviting(false)
+        }
+      }}
+    />
+  )
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
@@ -358,6 +433,8 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
