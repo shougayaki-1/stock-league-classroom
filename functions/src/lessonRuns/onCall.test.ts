@@ -131,6 +131,22 @@ describe('createLessonRunCallable', () => {
 
     await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code, message })
   })
+
+  it('translates a quota-exceeded error into resource-exhausted', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('この組織の同時授業・市場数の上限に達しています'))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'resource-exhausted' })
+  })
+
+  it('translates a missing-plan error into failed-precondition', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
 })
 
 interface RestoreCheckpointRequest { lessonRunId: string; checkpointId: string; reason: string; idempotencyKey: string }

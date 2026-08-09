@@ -3,13 +3,19 @@ import { createLessonRun } from './createLessonRun'
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
+  const activeLessonRunCounts = new Map<string, number>()
+  docs.set('organizations/personal_teacher-a', { planId: 'FREE' })
+  docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 100 } })
   return {
     docs,
+    activeLessonRunCounts,
     runTransaction: async (fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      countActiveLessonRuns: (orgId: string) => Promise<number>
       set: (path: string, data: Record<string, unknown>) => void
     }) => Promise<string>) => fn({
       get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
+      countActiveLessonRuns: async (orgId: string) => activeLessonRunCounts.get(orgId) ?? 0,
       set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
     }),
   }
@@ -117,5 +123,71 @@ describe('createLessonRun', () => {
       lessonRunIdempotencyKey: 'idem-3', orgId: 'personal_teacher-a',
       templateId: 'tpl-3', primaryTeacherUid: 'teacher-a',
     })).rejects.toThrow('担当プロフィールが1件も設定されていません。')
+  })
+})
+
+describe('createLessonRun quota enforcement', () => {
+  it('rejects creation when the active lessonRun count has reached the plan limit', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    fake.docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 2 } })
+    fake.activeLessonRunCounts.set('personal_teacher-a', 2)
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-x',
+      lessonRunIdempotencyKey: 'idem-quota', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('この組織の同時授業・市場数の上限に達しています')
+    expect(fake.docs.has('lessonRuns/run-x')).toBe(false)
+  })
+
+  it('allows creation when the active count is below the plan limit', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    fake.docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 2 } })
+    fake.activeLessonRunCounts.set('personal_teacher-a', 1)
+    const result = await createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-y',
+      lessonRunIdempotencyKey: 'idem-quota-2', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })
+    expect(result.created).toBe(true)
+  })
+
+  it('rejects when the organization has no planId', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('organizations/personal_teacher-a', {})
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-z',
+      lessonRunIdempotencyKey: 'idem-quota-3', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('この組織にはプランが設定されていません')
+  })
+
+  it('rejects when planDefinitions does not have a matching document', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('organizations/personal_teacher-a', { planId: 'NONEXISTENT' })
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-w',
+      lessonRunIdempotencyKey: 'idem-quota-4', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('この組織にはプランが設定されていません')
+  })
+
+  it('does not check the quota again for an idempotent retry', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    const input = {
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-retry',
+      lessonRunIdempotencyKey: 'idem-quota-retry', orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    }
+    const first = await createLessonRun(input)
+    fake.docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 0 } })
+    fake.activeLessonRunCounts.set('personal_teacher-a', 1)
+    const second = await createLessonRun(input)
+    expect(second.lessonRunId).toBe(first.lessonRunId)
+    expect(second.created).toBe(false)
   })
 })
