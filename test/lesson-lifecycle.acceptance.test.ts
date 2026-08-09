@@ -39,10 +39,18 @@ import { submitSurvey } from '../functions/src/lessonRuns/surveys/submitSurvey'
 // ---------------------------------------------------------------------------
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
+  // createLessonRun (Phase F's concurrent-lesson quota enforcement) requires
+  // the caller's org to have a plan with a concurrentLessonsAndMarkets limit.
+  // Seeded generously here (100) so this acceptance test's scenarios — none
+  // of which exercise quota enforcement itself, see createLessonRun.test.ts
+  // for that — never trip the limit.
+  docs.set('organizations/org-1', { planId: 'FREE' })
+  docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 100 } })
   return {
     docs,
     runTransaction: async <T>(fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      countActiveLessonRuns: (orgId: string) => Promise<number>
       set: (path: string, data: Record<string, unknown>) => void
       update: (path: string, data: Record<string, unknown>) => void
     }) => Promise<T>) => {
@@ -52,6 +60,7 @@ const makeFakeFirestore = () => {
           if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
           return { exists: docs.has(path), data: () => docs.get(path) }
         },
+        countActiveLessonRuns: async () => 0,
         set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
         update: (path: string, data: Record<string, unknown>) => {
           written = true
