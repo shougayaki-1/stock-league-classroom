@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { FirebaseApp } from 'firebase/app'
@@ -442,6 +442,41 @@ describe('Stripe checkout route', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     await screen.findByRole('button', { name: 'このプランで申し込む' })
+    expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('keeps the manage-billing button hidden when the organization read is rejected', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockImplementation((reference: { __path: string }) => reference.__path === 'organizations/personal_teacher-uid/members/teacher-uid'
+      ? Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) })
+      : Promise.reject(new Error('Firestore unavailable')))
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await screen.findByRole('button', { name: 'このプランで申し込む' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument())
+    window.history.pushState({}, '', '/')
+  })
+
+  it('does not show manage billing from a stale organization read after navigation', async () => {
+    let resolveFirstRead: ((snapshot: { exists: () => boolean; data: () => { stripeCustomerId: string } }) => void) | undefined
+    const firstRead = new Promise<{ exists: () => boolean; data: () => { stripeCustomerId: string } }>((resolve) => { resolveFirstRead = resolve })
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockImplementation((reference: { __path: string }) => reference.__path === 'organizations/org-1'
+      ? firstRead
+      : Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) }))
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await screen.findByRole('button', { name: 'このプランで申し込む' })
+    await act(async () => {
+      window.history.pushState({}, '', '/teacher/organizations/org-2/plan-limits')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(getDocMock).toHaveBeenCalledWith(expect.objectContaining({ __path: 'organizations/org-2' })))
+    await act(async () => {
+      resolveFirstRead?.({ exists: () => true, data: () => ({ stripeCustomerId: 'cus_stale' }) })
+      await Promise.resolve()
+    })
     expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })

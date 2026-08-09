@@ -455,10 +455,15 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
     return () => { cancelled = true }
   }, [services, orgId])
   useEffect(() => {
-    if (!orgId) return
+    let cancelled = false
+    setStripeCustomerId(null)
+    if (!orgId) return () => { cancelled = true }
     void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => {
-      setStripeCustomerId(snapshot.exists() ? ((snapshot.data().stripeCustomerId as string | undefined) ?? null) : null)
+      if (!cancelled) setStripeCustomerId(snapshot.exists() ? ((snapshot.data().stripeCustomerId as string | undefined) ?? null) : null)
+    }).catch(() => {
+      if (!cancelled) setStripeCustomerId(null)
     })
+    return () => { cancelled = true }
   }, [services, orgId])
   const onCheckout = orgId ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
   const onManageBilling = (orgId && stripeCustomerId) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
