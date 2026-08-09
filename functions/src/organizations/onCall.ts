@@ -7,6 +7,8 @@ import { requireActiveOrgMember } from './authorization'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
 import { suspendOrgMemberWithAdminSdk } from './suspendMember'
+import { createParentOrgWithAdminSdk } from './parentOrg'
+import { linkSchoolToParentOrgWithAdminSdk, listChildSchoolsWithAdminSdk, unlinkSchoolFromParentOrgWithAdminSdk } from './schoolHierarchy'
 
 /** Mirrors src/lib/auth/roles.ts's isTeacherIdentity and firestore.rules' teacher(). */
 export const isCallerTeacher = (token: { email_verified?: boolean; firebase?: { sign_in_provider?: string } }): boolean =>
@@ -118,4 +120,48 @@ export const suspendOrgMemberCallable = onCall({ region: 'asia-northeast1' }, as
     }
     throw error
   }
+})
+
+const requireManager = (membership: { role: string }, message: string) => {
+  if (membership.role !== 'owner' && membership.role !== 'admin') throw new HttpsError('permission-denied', message)
+}
+export const createParentOrgCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as { name?: unknown }
+  if (typeof data.name !== 'string' || data.name.trim().length === 0) throw new HttpsError('invalid-argument', '組織名は必須です。')
+  return createParentOrgWithAdminSdk({ name: data.name, ownerUid: request.auth.uid })
+})
+export const linkSchoolToParentOrgCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as { parentOrgId?: unknown; schoolOrgId?: unknown }
+  if (typeof data.parentOrgId !== 'string' || typeof data.schoolOrgId !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  const db = getFirestore()
+  requireManager(await requireActiveOrgMember(db, data.parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
+  requireManager(await requireActiveOrgMember(db, data.schoolOrgId, request.auth.uid), '学校組織のowner または admin である必要があります。')
+  try { await linkSchoolToParentOrgWithAdminSdk({ parentOrgId: data.parentOrgId, schoolOrgId: data.schoolOrgId }) } catch (error) {
+    if (error instanceof Error && (error.message === '対象は学校組織ではありません' || error.message === 'この学校は既に別の上位組織に所属しています')) throw new HttpsError('failed-precondition', error.message)
+    throw error
+  }
+})
+export const unlinkSchoolFromParentOrgCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as { schoolOrgId?: unknown }
+  if (typeof data.schoolOrgId !== 'string') throw new HttpsError('invalid-argument', 'schoolOrgId は必須です。')
+  const db = getFirestore(); const school = await db.doc(`organizations/${data.schoolOrgId}`).get()
+  if (!school.exists) throw new HttpsError('not-found', '学校組織が見つかりません。')
+  const parentOrgId = school.get('parentOrgId') as string | undefined
+  if (!parentOrgId) throw new HttpsError('failed-precondition', 'この学校はどの上位組織にも所属していません。')
+  requireManager(await requireActiveOrgMember(db, parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
+  await unlinkSchoolFromParentOrgWithAdminSdk({ schoolOrgId: data.schoolOrgId })
+})
+export const listChildSchoolsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as { parentOrgId?: unknown }
+  if (typeof data.parentOrgId !== 'string') throw new HttpsError('invalid-argument', 'parentOrgId は必須です。')
+  await requireActiveOrgMember(getFirestore(), data.parentOrgId, request.auth.uid)
+  return listChildSchoolsWithAdminSdk({ parentOrgId: data.parentOrgId })
 })

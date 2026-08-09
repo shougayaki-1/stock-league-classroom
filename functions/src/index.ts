@@ -12,6 +12,10 @@ export {
   getOrgPlanLimitsCallable,
   listOrgMembersCallable,
   suspendOrgMemberCallable,
+  createParentOrgCallable,
+  linkSchoolToParentOrgCallable,
+  unlinkSchoolFromParentOrgCallable,
+  listChildSchoolsCallable,
 } from './organizations/onCall'
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'

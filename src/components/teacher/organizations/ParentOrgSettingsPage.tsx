@@ -1,0 +1,7 @@
+import { useState } from 'react'
+import { Button, List, ListItem, ListItemText, Stack, TextField, Typography } from '@mui/material'
+import type { ChildSchool } from '../../../lib/organizations/schoolHierarchy'
+export function ParentOrgSettingsPage({ orgName, childSchools, onLinkSchool, linking, onUnlinkSchool, unlinking }: { orgName: string; childSchools: ChildSchool[]; onLinkSchool: (id: string) => void; linking: boolean; onUnlinkSchool: (id: string) => void; unlinking: boolean }) {
+  const [schoolOrgId, setSchoolOrgId] = useState('')
+  return <Stack spacing={3} sx={{ p: 2 }}><Typography variant="h5">{orgName}</Typography><Stack spacing={2}><Typography variant="subtitle1">学校を追加</Typography><TextField label="学校の組織ID" value={schoolOrgId} onChange={(e) => setSchoolOrgId(e.target.value)} /><Button variant="contained" disabled={linking || !schoolOrgId} onClick={() => { onLinkSchool(schoolOrgId); setSchoolOrgId('') }} sx={{ alignSelf: 'flex-start' }}>追加</Button></Stack><Stack spacing={1}><Typography variant="subtitle1">所属する学校</Typography>{childSchools.length === 0 ? <Typography variant="body2" color="text.secondary">まだ学校が紐付けられていません。</Typography> : <List>{childSchools.map((school) => <ListItem key={school.orgId} secondaryAction={<Button size="small" disabled={unlinking} onClick={() => onUnlinkSchool(school.orgId)}>解除</Button>}><ListItemText primary={school.name} secondary={school.verificationStatus} /></ListItem>)}</List>}</Stack></Stack>
+}

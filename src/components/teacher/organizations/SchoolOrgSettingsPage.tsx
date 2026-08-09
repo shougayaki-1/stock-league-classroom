@@ -23,10 +23,11 @@ export interface SchoolOrgSettingsPageProps {
   onSuspendMember: (uid: string) => void
   suspending: boolean
   teacherSeatLimit: number | undefined
+  parentOrgName?: string | null
 }
 
 export function SchoolOrgSettingsPage({
-  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit,
+  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -36,6 +37,7 @@ export function SchoolOrgSettingsPage({
     <Stack spacing={3} sx={{ p: 2 }}>
       <Typography variant="h5">{orgName}</Typography>
       <Link to={`/teacher/organizations/${orgId}/plan-limits`}>利用枠を確認</Link>
+      <Typography variant="body2">所属する上位組織: {parentOrgName ?? 'なし'}</Typography>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>
         <TextField label="招待するメールアドレス" value={email} onChange={(event) => setEmail(event.target.value)} />

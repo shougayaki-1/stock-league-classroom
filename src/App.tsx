@@ -33,6 +33,9 @@ import { PendingInvitationsBanner } from './components/teacher/organizations/Pen
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimits } from './lib/organizations/planLimits'
+import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
+import { createParentOrg } from './lib/organizations/parentOrg'
+import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, type ChildSchool } from './lib/organizations/schoolHierarchy'
 import { listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
 
 const docPages: Record<string, () => React.JSX.Element> = {
@@ -367,6 +370,7 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const [members, setMembers] = useState<OrgMember[]>([])
   const [teacherSeatLimit, setTeacherSeatLimit] = useState<number>()
   const [suspending, setSuspending] = useState(false)
+  const [parentOrgId, setParentOrgId] = useState<string | null>(null)
   const uid = services.auth.currentUser?.uid
 
   const loadMembers = useCallback(() => {
@@ -381,6 +385,10 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .then((limits) => setTeacherSeatLimit(limits.teacherSeats))
       .catch(() => setTeacherSeatLimit(undefined))
   }, [orgId, services.functions])
+  useEffect(() => {
+    if (!orgId) return
+    void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => setParentOrgId(snapshot.exists() ? ((snapshot.data().parentOrgId as string | undefined) ?? null) : null))
+  }, [orgId, services.firestore])
 
   if (!orgId || !uid) return <GuardLoading />
   const viewerMembership = members.find((member) => member.uid === uid)
@@ -397,6 +405,7 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       canManageMembers={canManageMembers}
       suspending={suspending}
       teacherSeatLimit={teacherSeatLimit}
+      parentOrgName={parentOrgId}
       onSuspendMember={(targetUid) => {
         setSuspending(true)
         void suspendOrgMember(services.functions, { orgId, uid: targetUid })
@@ -414,6 +423,18 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       }}
     />
   )
+}
+
+function ParentOrgNewRoute({ services }: { services: FirebaseServices }) {
+  const [name, setName] = useState(''); const [creating, setCreating] = useState(false); const navigate = useNavigate()
+  return <Stack spacing={2} sx={{ p: 2 }}><Typography variant="h5" component="h1">上位組織を作成</Typography><TextField label="組織名" value={name} onChange={(e) => setName(e.target.value)} /><Button variant="contained" disabled={creating || !name} sx={{ alignSelf: 'flex-start' }} onClick={async () => { setCreating(true); try { const { orgId } = await createParentOrg(services.functions, { name }); navigate(`/teacher/organizations/${orgId}/parent-settings`) } finally { setCreating(false) } }}>作成する</Button></Stack>
+}
+function ParentOrgSettingsRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>(); const [childSchools, setChildSchools] = useState<ChildSchool[]>([]); const [linking, setLinking] = useState(false); const [unlinking, setUnlinking] = useState(false)
+  const loadChildren = useCallback(() => { if (orgId) void listChildSchools(services.functions, { parentOrgId: orgId }).then(setChildSchools).catch(() => setChildSchools([])) }, [orgId, services.functions])
+  useEffect(() => { loadChildren() }, [loadChildren])
+  if (!orgId) return <GuardLoading />
+  return <ParentOrgSettingsPage orgName={orgId} childSchools={childSchools} linking={linking} unlinking={unlinking} onLinkSchool={(schoolOrgId) => { setLinking(true); void linkSchoolToParentOrg(services.functions, { parentOrgId: orgId, schoolOrgId }).then(loadChildren).finally(() => setLinking(false)) }} onUnlinkSchool={(schoolOrgId) => { setUnlinking(true); void unlinkSchoolFromParentOrg(services.functions, { schoolOrgId }).then(loadChildren).finally(() => setUnlinking(false)) }} />
 }
 
 function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
@@ -507,8 +528,10 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
