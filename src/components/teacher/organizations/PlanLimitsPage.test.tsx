@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { PlanLimitsPage } from './PlanLimitsPage'
 
 const limits = { concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0 }
@@ -27,3 +27,5 @@ describe('PlanLimitsPage', () => {
     expect(screen.getByText('イベント追加枠')).toBeInTheDocument()
   })
 })
+
+it('shows checkout only when supplied', () => { const onCheckout = vi.fn(); const { rerender } = render(<PlanLimitsPage data={limits} error={undefined} onCheckout={onCheckout} checkingOut={false} />); fireEvent.click(screen.getByRole('button', { name: 'このプランで申し込む' })); expect(onCheckout).toHaveBeenCalled(); rerender(<PlanLimitsPage data={limits} error={undefined} onCheckout={undefined} checkingOut={false} />); expect(screen.queryByRole('button', { name: 'このプランで申し込む' })).not.toBeInTheDocument() })

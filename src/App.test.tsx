@@ -406,3 +406,16 @@ describe('Parent org hierarchy routes', () => {
     expect(await screen.findByText('A高校')).toBeInTheDocument(); window.history.pushState({}, '', '/')
   })
 })
+
+describe('Stripe checkout route', () => {
+  it('starts checkout and redirects to its returned URL', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => name === 'createStripeCheckoutSessionCallable' ? vi.fn().mockResolvedValue({ data: { url: 'https://checkout.stripe.com/x' } }) : callableMock)
+    const assignMock = vi.fn(); vi.stubGlobal('location', { ...window.location, assign: assignMock })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />); authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await userEvent.click(await screen.findByRole('button', { name: 'このプランで申し込む' }))
+    await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://checkout.stripe.com/x'))
+    vi.unstubAllGlobals(); window.history.pushState({}, '', '/')
+  })
+})

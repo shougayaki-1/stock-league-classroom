@@ -1,0 +1,6 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createStripeCheckoutSession } from './stripeCheckout'
+describe('createStripeCheckoutSession', () => {
+  it('rejects a plan with no stripePriceId', async () => await expect(createStripeCheckoutSession({ getPlanDefinition: async () => ({ stripePriceId: null }), createBillingRecord: vi.fn(), createCheckoutSession: vi.fn() }, { orgId: 'org-1', planId: 'FREE', successUrl: 'https://x/s', cancelUrl: 'https://x/c' })).rejects.toThrow('このプランはまだ決済に対応していません'))
+  it('creates the pending record before the Stripe session', async () => { const record = vi.fn().mockResolvedValue('record-1'), session = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/s' }); await expect(createStripeCheckoutSession({ getPlanDefinition: async () => ({ stripePriceId: 'price_1' }), createBillingRecord: record, createCheckoutSession: session, now: () => 'now' }, { orgId: 'org-1', planId: 'SCHOOL', successUrl: 'https://x/s', cancelUrl: 'https://x/c' })).resolves.toEqual({ url: 'https://checkout.stripe.com/s' }); expect(record).toHaveBeenCalledWith('org-1', { status: 'PENDING', paymentMethod: 'CARD', planId: 'SCHOOL', createdAt: 'now' }); expect(session).toHaveBeenCalledWith({ priceId: 'price_1', clientReferenceId: 'org-1:record-1', successUrl: 'https://x/s', cancelUrl: 'https://x/c' }) })
+})
