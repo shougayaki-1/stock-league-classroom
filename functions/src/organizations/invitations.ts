@@ -14,15 +14,22 @@ export interface Invitation {
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase()
 
+export interface PendingInvitationData {
+  email: string
+  role: 'admin' | 'teacher'
+  status: 'PENDING'
+  invitedByUid: string
+  createdAt: unknown
+}
+
 export interface CreateInvitationDeps {
   findPendingInvitation: (orgId: string, email: string) => Promise<Invitation | null>
-  createInvitationDoc: (orgId: string, data: {
-    email: string
-    role: 'admin' | 'teacher'
-    status: 'PENDING'
-    invitedByUid: string
-    createdAt: unknown
-  }) => Promise<string>
+  createInvitationDoc: (orgId: string, data: PendingInvitationData) => Promise<string>
+  /**
+   * Optional atomic production adapter. The pure fallback stays available for
+   * unit tests and alternate stores that provide their own duplicate control.
+   */
+  reservePendingInvitation?: (orgId: string, data: PendingInvitationData) => Promise<string>
   now?: () => unknown
 }
 
@@ -38,16 +45,20 @@ export const createInvitation = async (
   input: CreateInvitationInput,
 ): Promise<{ invitationId: string }> => {
   const email = normalizeEmail(input.email)
-  const existing = await deps.findPendingInvitation(input.orgId, email)
-  if (existing) return { invitationId: existing.id }
-
-  const invitationId = await deps.createInvitationDoc(input.orgId, {
+  const data: PendingInvitationData = {
     email,
     role: input.role,
     status: 'PENDING',
     invitedByUid: input.invitedByUid,
     createdAt: deps.now ? deps.now() : new Date().toISOString(),
-  })
+  }
+  if (deps.reservePendingInvitation) {
+    return { invitationId: await deps.reservePendingInvitation(input.orgId, data) }
+  }
+
+  const existing = await deps.findPendingInvitation(input.orgId, email)
+  if (existing) return { invitationId: existing.id }
+  const invitationId = await deps.createInvitationDoc(input.orgId, data)
   return { invitationId }
 }
 
@@ -57,6 +68,19 @@ export const createInvitationWithAdminSdk = (
 ): Promise<{ invitationId: string }> => {
   const db = getFirestore()
   return createInvitation({
+    reservePendingInvitation: async (orgId, data) => {
+      const invitationId = `email:${encodeURIComponent(data.email)}`
+      const ref = db.doc(`organizations/${orgId}/invitations/${invitationId}`)
+      return db.runTransaction(async (transaction) => {
+        const existing = await transaction.get(ref)
+        if (existing.exists && existing.get('status') === 'PENDING') return ref.id
+
+        const invitation = { ...data, createdAt: FieldValue.serverTimestamp() }
+        if (existing.exists) transaction.set(ref, invitation)
+        else transaction.create(ref, invitation)
+        return ref.id
+      })
+    },
     findPendingInvitation: async (orgId, email) => {
       const snap = await db.collection(`organizations/${orgId}/invitations`)
         .where('email', '==', email)

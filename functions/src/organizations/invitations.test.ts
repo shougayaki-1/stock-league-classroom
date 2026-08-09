@@ -41,6 +41,31 @@ describe('createInvitation', () => {
     expect(result).toEqual({ invitationId: 'invitation-1' })
     expect(createInvitationDoc).not.toHaveBeenCalled()
   })
+
+  it('uses an atomic reservation when concurrent requests create the same invitation', async () => {
+    const created = vi.fn(async () => `non-atomic-${created.mock.calls.length}`)
+    let reservationId: string | undefined
+    const deps = {
+      findPendingInvitation: vi.fn(async () => null),
+      createInvitationDoc: created,
+      reservePendingInvitation: async (_orgId: string, data: { email: string }) => {
+        reservationId ??= `invitation:${data.email}`
+        return reservationId
+      },
+    }
+    const input = { orgId: 'org-1', email: 'Teacher@Example.com', role: 'teacher' as const, invitedByUid: 'owner-1' }
+
+    const results = await Promise.all([
+      createInvitation(deps, input),
+      createInvitation(deps, input),
+    ])
+
+    expect(results).toEqual([
+      { invitationId: 'invitation:teacher@example.com' },
+      { invitationId: 'invitation:teacher@example.com' },
+    ])
+    expect(created).not.toHaveBeenCalled()
+  })
 })
 
 describe('acceptInvitation', () => {
