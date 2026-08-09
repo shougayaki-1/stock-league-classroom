@@ -1,5 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
-import { acceptInvitation, createInvitation, listMyInvitations } from './invitations'
+
+const firestore = vi.hoisted(() => ({
+  getFirestore: vi.fn(),
+  serverTimestamp: vi.fn(() => 'server-timestamp'),
+}))
+
+vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: firestore.serverTimestamp },
+  getFirestore: firestore.getFirestore,
+}))
+
+import {
+  acceptInvitation,
+  createInvitation,
+  createInvitationWithAdminSdk,
+  listMyInvitations,
+} from './invitations'
 
 describe('createInvitation', () => {
   it('normalizes the email and creates a PENDING invitation', async () => {
@@ -65,6 +81,42 @@ describe('createInvitation', () => {
       { invitationId: 'invitation:teacher@example.com' },
     ])
     expect(created).not.toHaveBeenCalled()
+  })
+
+  it('returns a legacy random-ID PENDING invitation before reserving a deterministic document', async () => {
+    const pendingQuery = {
+      where: vi.fn(),
+      limit: vi.fn(),
+    }
+    pendingQuery.where.mockReturnValue(pendingQuery)
+    pendingQuery.limit.mockReturnValue(pendingQuery)
+    const deterministicRef = { id: 'email:teacher%40example.com' }
+    const transaction = {
+      get: vi.fn(async (target) => (
+        target === pendingQuery
+          ? { empty: false, docs: [{ id: 'legacy-random-id' }] }
+          : { exists: false }
+      )),
+      create: vi.fn(),
+      set: vi.fn(),
+    }
+    const db = {
+      collection: vi.fn(() => pendingQuery),
+      doc: vi.fn(() => deterministicRef),
+      runTransaction: vi.fn(async (operation) => operation(transaction)),
+    }
+    firestore.getFirestore.mockReturnValue(db)
+
+    const result = await createInvitationWithAdminSdk({
+      orgId: 'org-1',
+      email: 'Teacher@Example.com',
+      role: 'teacher',
+      invitedByUid: 'owner-1',
+    })
+
+    expect(result).toEqual({ invitationId: 'legacy-random-id' })
+    expect(transaction.create).not.toHaveBeenCalled()
+    expect(transaction.set).not.toHaveBeenCalled()
   })
 })
 

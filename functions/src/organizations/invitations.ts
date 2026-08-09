@@ -71,7 +71,14 @@ export const createInvitationWithAdminSdk = (
     reservePendingInvitation: async (orgId, data) => {
       const invitationId = `email:${encodeURIComponent(data.email)}`
       const ref = db.doc(`organizations/${orgId}/invitations/${invitationId}`)
+      const pendingForEmail = db.collection(`organizations/${orgId}/invitations`)
+        .where('email', '==', data.email)
+        .where('status', '==', 'PENDING')
+        .limit(1)
       return db.runTransaction(async (transaction) => {
+        const pending = await transaction.get(pendingForEmail)
+        if (!pending.empty) return pending.docs[0].id
+
         const existing = await transaction.get(ref)
         if (existing.exists && existing.get('status') === 'PENDING') return ref.id
 
