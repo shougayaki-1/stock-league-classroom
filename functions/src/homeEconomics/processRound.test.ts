@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { processRound, type ProcessRoundDeps } from './processRound'
 import type { SettleRoundResult } from './engine/settleRound'
 import type { HouseholdState } from '../lessonRuns/households/repository'
@@ -199,5 +199,77 @@ describe('processRound', () => {
       expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ decision: null }))
       expect(deps.commitRoundSettlement).toHaveBeenCalled()
     })
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Exercises `readLessonRunConfigWithAdminSdk` directly (Important I3, final
+// whole-branch review) — the Admin SDK wiring has no injected dependency
+// seam (it calls getFirestore() directly, matching every other
+// *WithAdminSdk function in this codebase), so a module-level
+// vi.mock('firebase-admin/firestore', ...) is the established way to test
+// it without a real emulator, same precedent as
+// market/processBatch.publishRealtimeState.test.ts.
+// -----------------------------------------------------------------------------
+const firestoreDocs = new Map<string, Record<string, unknown>>()
+
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: () => ({
+    doc: (path: string) => ({
+      get: async () => ({ exists: firestoreDocs.has(path), data: () => firestoreDocs.get(path) }),
+    }),
+  }),
+}))
+
+beforeEach(() => {
+  firestoreDocs.clear()
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('readLessonRunConfigWithAdminSdk (Important I3)', () => {
+  const homeEconomicsSnapshot = {
+    households: [], assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+    publicSupportPrograms: [], roundYears: 5, courseFormat: 'COMMON_CONDITIONS',
+    taxAndSocialInsuranceModelVersion: 1,
+    economicFactors: { inflationPercent: 0, interestRatePercent: 1, marketReturnPercent: 0 },
+    borrowingAllowed: false, goalPackage: 'OVERALL_BALANCE',
+    evaluationWeights: {
+      lifeGoalAchievement: 1, emergencyFundAdequacy: 0, stability: 0, diversification: 0, borrowingBurden: 0, reflection: 0,
+    },
+  }
+
+  /**
+   * The core I3 regression test: a LessonRun document missing `orgId`
+   * entirely must THROW during settlement, not silently coerce to `''` and
+   * proceed to write an unreadable RTDB node downstream.
+   */
+  it('throws when the LessonRun document has no orgId at all', async () => {
+    firestoreDocs.set('lessonRuns/run-1', {
+      randomSeed: 'seed-x', restoreGeneration: 0, templateSnapshot: { homeEconomics: homeEconomicsSnapshot },
+    })
+    const { readLessonRunConfigWithAdminSdk } = await import('./processRound')
+    await expect(readLessonRunConfigWithAdminSdk('run-1'))
+      .rejects.toThrow('LessonRun is missing orgId — cannot settle round safely.')
+  })
+
+  it('throws when orgId is an empty string', async () => {
+    firestoreDocs.set('lessonRuns/run-1', {
+      orgId: '', randomSeed: 'seed-x', restoreGeneration: 0, templateSnapshot: { homeEconomics: homeEconomicsSnapshot },
+    })
+    const { readLessonRunConfigWithAdminSdk } = await import('./processRound')
+    await expect(readLessonRunConfigWithAdminSdk('run-1'))
+      .rejects.toThrow('LessonRun is missing orgId — cannot settle round safely.')
+  })
+
+  it('succeeds and returns the real orgId when present', async () => {
+    firestoreDocs.set('lessonRuns/run-1', {
+      orgId: 'org-real', randomSeed: 'seed-x', restoreGeneration: 0, templateSnapshot: { homeEconomics: homeEconomicsSnapshot },
+    })
+    const { readLessonRunConfigWithAdminSdk } = await import('./processRound')
+    const config = await readLessonRunConfigWithAdminSdk('run-1')
+    expect(config.orgId).toBe('org-real')
   })
 })

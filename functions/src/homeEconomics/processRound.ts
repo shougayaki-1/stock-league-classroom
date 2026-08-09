@@ -208,7 +208,7 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
 // Admin SDK wiring
 // ---------------------------------------------------------------------
 
-const readLessonRunConfigWithAdminSdk: ProcessRoundDeps['readLessonRunConfig'] = async (lessonRunId) => {
+export const readLessonRunConfigWithAdminSdk: ProcessRoundDeps['readLessonRunConfig'] = async (lessonRunId) => {
   const snap = await getFirestore().doc(`lessonRuns/${lessonRunId}`).get()
   if (!snap.exists) throw new Error('LessonRun not found')
   const data = snap.data() as {
@@ -218,8 +218,20 @@ const readLessonRunConfigWithAdminSdk: ProcessRoundDeps['readLessonRunConfig'] =
     templateSnapshot?: { homeEconomics?: HomeEconomicsContent }
   }
   if (!data.templateSnapshot?.homeEconomics) throw new Error('LessonRun has no homeEconomics content')
+  // Important I3 (final whole-branch review): `orgId` previously fell back
+  // to `''` here (`data.orgId ?? ''`), which reads as superficially valid —
+  // it satisfies a naive `exists()` check — but every RTDB security-rule
+  // lookup this write later depends on (`orgAccess/''/...`, see
+  // `publishRealtimeStateWithAdminSdk`'s doc comment above and
+  // `database.rules.json`) fails against an empty-string orgId, producing a
+  // PERMANENTLY UNREADABLE `lessonRunPublic`/`lessonRunPrivate`/
+  // `lessonRunTeamState` node. This is the exact bug class Phase C Task 20's
+  // postmortem already hit in production once. A missing `orgId` on a
+  // LessonRun that's actively being settled is a data-integrity bug, not a
+  // recoverable default, so it must throw here rather than silently coerce.
+  if (!data.orgId) throw new Error('LessonRun is missing orgId — cannot settle round safely.')
   return {
-    orgId: data.orgId ?? '',
+    orgId: data.orgId,
     randomSeed: data.randomSeed ?? '',
     restoreGeneration: data.restoreGeneration ?? 0,
     homeEconomics: data.templateSnapshot.homeEconomics,

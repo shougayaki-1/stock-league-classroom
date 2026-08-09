@@ -50,6 +50,37 @@ const requireTeamMembership = async (lessonRunId: string, teamId: string, actorP
 }
 
 /**
+ * Important I2 (final whole-branch review): neither home-economics Callable
+ * previously checked the LessonRun's `status` at all — a student could
+ * submit a household decision, and a teacher could settle further rounds,
+ * on a lesson that is already `COMPLETED`/`ABORTED`/`INTERRUPTED`/etc.
+ *
+ * Matches `market/onCall.ts`'s `isMarketAcceptingOrdersWithAdminSdk`
+ * precedent exactly on the `status` field/value this repo already has
+ * (`LessonRun.status === 'RUNNING'`, `lessonRuns/phases/stateMachine.ts`'s
+ * `LessonRunStatus`) — no new "phase" or "status" concept is invented for
+ * home economics. Unlike the market check, this does not also gate on a
+ * `marketPaused`-equivalent flag: no such field exists for home-economics
+ * lessonRuns, and inventing one is out of scope for this fix (STATUS only,
+ * per this task's brief).
+ *
+ * Placed, in both Callables below, AFTER authorization has been established
+ * (team/role membership resolved) but BEFORE any state-mutating work — the
+ * same relative ordering `submitOrderCallable` uses (`requireTeamMembership`
+ * → `getOrInitTeamAccount` init → `isMarketAcceptingOrdersWithAdminSdk` →
+ * the actual mutating `submitOrder` call).
+ */
+const requireLessonRunRunning = async (lessonRunId: string): Promise<void> => {
+  const db = getFirestore()
+  const snap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  if (!snap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const status = snap.get('status') as string | undefined
+  if (status !== 'RUNNING') {
+    throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
+}
+
+/**
  * Critical Fix #1 (final whole-branch review): `getOrInitHouseholdState`
  * (Task 10, households/repository.ts) had ZERO production callers — no
  * household document was ever created through normal lesson-run flow. This
@@ -232,6 +263,13 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
     household = await lazyInitHouseholdWithAdminSdk(data.lessonRunId, data.householdId, actorParticipantId)
   }
 
+  // Important I2: gate on the LessonRun's own status AFTER authorization
+  // (team membership / lazy-init) has resolved, but BEFORE the roundIndex
+  // check and the actual decision-saving mutation below — see
+  // `requireLessonRunRunning`'s doc comment for the market precedent this
+  // mirrors.
+  await requireLessonRunRunning(data.lessonRunId)
+
   // The household doc is already in scope from authorization above — its
   // own `roundIndex` is the source of truth for which round a student may
   // submit a decision for, so this check is free and closes off submitting
@@ -353,6 +391,17 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
   }
   const orgId = runSnap.get('orgId') as string
   await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  // Important I2: gate on the LessonRun's own status AFTER authorization
+  // (teacher role + active org membership) has resolved, but BEFORE the
+  // actual round-settlement mutation below — mirrors
+  // `submitHouseholdDecisionCallable`'s placement and the market precedent
+  // (see `requireLessonRunRunning`'s doc comment). Reuses `runSnap`, already
+  // fetched above for `teacherRoles`/`orgId` — no extra read.
+  const status = runSnap.get('status') as string | undefined
+  if (status !== 'RUNNING') {
+    throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
 
   try {
     return await processRoundWithAdminSdk({

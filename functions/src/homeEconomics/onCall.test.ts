@@ -81,6 +81,11 @@ const household = {
   lifeStage: 'INDEPENDENT', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
 }
 
+const makeLessonRunSnap = (exists: boolean, fields: Record<string, unknown> = {}) => ({
+  exists,
+  get: (field: string) => fields[field],
+})
+
 describe('submitHouseholdDecisionCallable', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -88,6 +93,11 @@ describe('submitHouseholdDecisionCallable', () => {
     participantGetMock.mockResolvedValue({ exists: true, data: () => ({ participantId: 'p-1' }) })
     teamGetMock.mockResolvedValue({ exists: true, data: () => ({ memberParticipantIds: ['p-1'] }) })
     vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(household)
+    // Important I2: `requireLessonRunRunning` now reads the LessonRun doc on
+    // every call — default it to RUNNING so every pre-existing test (which
+    // predates I2 and doesn't set this up itself) keeps exercising its own
+    // intended path rather than tripping the new status gate.
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status: 'RUNNING' }))
   })
 
   it('rejects unauthenticated callers without touching Firestore', async () => {
@@ -174,7 +184,7 @@ describe('submitHouseholdDecisionCallable', () => {
 
     it('lazily creates the household from the template\'s sole profile, keyed by householdId===teamId, then proceeds to save the decision', async () => {
       vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
-      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { templateSnapshot: { homeEconomics: homeEconomicsContent } }))
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status: 'RUNNING', templateSnapshot: { homeEconomics: homeEconomicsContent } }))
       const initializedHousehold = {
         householdId: 'case-b', lessonRunId: 'run-1', teamId: 'case-b', cashYen: 500000,
         assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
@@ -274,6 +284,47 @@ describe('submitHouseholdDecisionCallable', () => {
     const call = vi.mocked(saveHouseholdDecision).mock.calls[0][0]
     expect('voluntaryDrawdownRequestedYen' in call).toBe(false)
   })
+
+  /**
+   * Important I2 (final whole-branch review): a lesson that is
+   * COMPLETED/ABORTED/INTERRUPTED/etc. must reject a decision submission —
+   * previously this Callable never checked `LessonRun.status` at all.
+   * Mirrors `market/onCall.ts`'s `isMarketAcceptingOrdersWithAdminSdk`
+   * precedent (status !== 'RUNNING' → rejected).
+   */
+  describe('lesson-status gate (Important I2)', () => {
+    it.each(['COMPLETED', 'ABORTED', 'INTERRUPTED', 'WAITING', 'PAUSED'])(
+      'rejects with failed-precondition when the LessonRun status is %s, without saving a decision',
+      async (status) => {
+        lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status }))
+        await expect(submitHouseholdDecisionCallable.run(makeRequest()))
+          .rejects.toMatchObject({ code: 'failed-precondition' })
+        expect(saveHouseholdDecision).not.toHaveBeenCalled()
+      },
+    )
+
+    it('rejects with failed-precondition when the LessonRun has no status field at all', async () => {
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {}))
+      await expect(submitHouseholdDecisionCallable.run(makeRequest()))
+        .rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(saveHouseholdDecision).not.toHaveBeenCalled()
+    })
+
+    it('rejects even for an existing (non-lazy-init) household, before authorization-adjacent state is touched', async () => {
+      // household already exists (default beforeEach mock) — this is NOT
+      // the lazy-init path; the gate must still apply.
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status: 'COMPLETED' }))
+      await expect(submitHouseholdDecisionCallable.run(makeRequest()))
+        .rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(saveHouseholdDecision).not.toHaveBeenCalled()
+    })
+
+    it('proceeds normally when status is RUNNING (regression guard)', async () => {
+      vi.mocked(saveHouseholdDecision).mockResolvedValue({ decisionId: 'dec-1', created: true })
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status: 'RUNNING' }))
+      await expect(submitHouseholdDecisionCallable.run(makeRequest())).resolves.toEqual({ decisionId: 'dec-1', created: true })
+    })
+  })
 })
 
 interface ProcessRoundRequestData {
@@ -289,11 +340,6 @@ const makeProcessRoundRequest = (
   data: { lessonRunId: 'run-1', householdId: 'case-b', ...data },
   rawRequest: {},
 } as unknown as CallableRequest<ProcessRoundRequestData>)
-
-const makeLessonRunSnap = (exists: boolean, fields: Record<string, unknown> = {}) => ({
-  exists,
-  get: (field: string) => fields[field],
-})
 
 describe('processRoundCallable', () => {
   beforeEach(() => {
@@ -340,7 +386,7 @@ describe('processRoundCallable', () => {
   })
 
   it('proceeds for a PRIMARY-role teacher who is an active org member (happy path)', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
     const result = {
       newHouseholdState: { householdId: 'case-b' }, occurredEventIds: [], incomeYen: 0, expensesYen: 0,
@@ -357,7 +403,7 @@ describe('processRoundCallable', () => {
   })
 
   it('translates "HouseholdState not found" into not-found', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(processRoundWithAdminSdk).mockRejectedValue(new Error('HouseholdState not found'))
     await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'not-found' })
@@ -371,14 +417,14 @@ describe('processRoundCallable', () => {
   })
 
   it('translates "HouseholdDecision not submitted for this round" into failed-precondition', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(processRoundWithAdminSdk).mockRejectedValue(new Error('HouseholdDecision not submitted for this round'))
     await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 
   it('forwards forceSettle: true through to processRoundWithAdminSdk when the teacher explicitly opts in', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
     const result = {
       newHouseholdState: { householdId: 'case-b' }, occurredEventIds: [], incomeYen: 0, expensesYen: 0,
@@ -389,6 +435,45 @@ describe('processRoundCallable', () => {
     await expect(processRoundCallable.run(makeProcessRoundRequest({ forceSettle: true }))).resolves.toEqual(result)
     expect(processRoundWithAdminSdk).toHaveBeenCalledWith({
       lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: true,
+    })
+  })
+
+  /**
+   * Important I2 (final whole-branch review): a teacher must not be able to
+   * settle further rounds on a lesson that is already
+   * COMPLETED/ABORTED/INTERRUPTED/etc. — previously this Callable never
+   * checked `LessonRun.status` at all. Mirrors `market/onCall.ts`'s
+   * `isMarketAcceptingOrdersWithAdminSdk` precedent (status !== 'RUNNING' →
+   * rejected), placed after teacher-role + active-org-member authorization
+   * has resolved but before `processRoundWithAdminSdk` is ever invoked.
+   */
+  describe('lesson-status gate (Important I2)', () => {
+    it.each(['COMPLETED', 'ABORTED', 'INTERRUPTED', 'WAITING', 'PAUSED'])(
+      'rejects with failed-precondition when the LessonRun status is %s, never calling processRoundWithAdminSdk',
+      async (status) => {
+        lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status, teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+        vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+        await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+        expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+      },
+    )
+
+    it('rejects with failed-precondition when the LessonRun has no status field at all', async () => {
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+      vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+      await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+    })
+
+    it('checks status only after teacher-role authorization has already passed (ordering)', async () => {
+      // No teacherRoles entry for teacher-a at all — authorization must
+      // still fail with permission-denied, not the status gate's
+      // failed-precondition, proving the status check runs strictly after
+      // authorization.
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'COMPLETED', teacherRoles: {} }))
+      await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(requireActiveOrgMember).not.toHaveBeenCalled()
+      expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
     })
   })
 })
