@@ -33,6 +33,7 @@ import { PendingInvitationsBanner } from './components/teacher/organizations/Pen
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimits } from './lib/organizations/planLimits'
+import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
 import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
 import { createParentOrg } from './lib/organizations/parentOrg'
 import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, type ChildSchool } from './lib/organizations/schoolHierarchy'
@@ -441,6 +442,7 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [data, setData] = useState<PlanLimits>()
   const [error, setError] = useState<string>()
+  const [checkingOut, setCheckingOut] = useState(false)
   useEffect(() => {
     let cancelled = false
     if (!orgId) return
@@ -449,7 +451,8 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       .catch(() => { if (!cancelled) setError('failed') })
     return () => { cancelled = true }
   }, [services, orgId])
-  return <PlanLimitsPage data={data} error={error} />
+  const onCheckout = orgId ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
+  return <PlanLimitsPage data={data} error={error} onCheckout={onCheckout} checkingOut={checkingOut} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {

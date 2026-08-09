@@ -3,6 +3,8 @@ import { initializeApp } from 'firebase-admin/app'
 initializeApp()
 
 export { ping } from './ping'
+export { createStripeCheckoutSessionCallable } from './billing/onCall'
+export { stripeWebhookCallable } from './billing/stripeWebhook'
 export {
   ensurePersonalOrgCallable,
   createSchoolOrgCallable,

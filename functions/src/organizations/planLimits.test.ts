@@ -10,7 +10,7 @@ describe('getOrgPlanLimits', () => {
   it('resolves the org plan and returns its limits', async () => {
     const result = await getOrgPlanLimits({
       getOrgPlanId: async (orgId) => { expect(orgId).toBe('org-1'); return 'FREE' },
-      getPlanDefinition: async (planId) => { expect(planId).toBe('FREE'); return { planId: 'FREE', displayName: '無料', limits } },
+      getPlanDefinition: async (planId) => { expect(planId).toBe('FREE'); return { planId: 'FREE', displayName: '無料', limits, stripePriceId: null } },
     }, { orgId: 'org-1' })
     expect(result).toEqual(limits)
   })

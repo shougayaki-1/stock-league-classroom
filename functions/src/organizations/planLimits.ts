@@ -14,6 +14,7 @@ export interface PlanDefinition {
   planId: string
   displayName: string
   limits: PlanLimits
+  stripePriceId: string | null
 }
 
 export interface GetOrgPlanLimitsDeps {

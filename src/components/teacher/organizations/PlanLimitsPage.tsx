@@ -1,7 +1,7 @@
-import { Alert, CircularProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { Alert, Button, CircularProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import type { PlanLimits } from '../../../lib/organizations/planLimits'
 
-export interface PlanLimitsPageProps { data: PlanLimits | undefined; error: string | undefined }
+export interface PlanLimitsPageProps { data: PlanLimits | undefined; error: string | undefined; onCheckout?: () => void; checkingOut?: boolean }
 
 const rows: { label: string; key: keyof PlanLimits }[] = [
   { label: '同時授業・市場数', key: 'concurrentLessonsAndMarkets' },
@@ -13,7 +13,7 @@ const rows: { label: string; key: keyof PlanLimits }[] = [
   { label: 'イベント追加枠', key: 'eventExtraCapacity' },
 ]
 
-export function PlanLimitsPage({ data, error }: PlanLimitsPageProps) {
+export function PlanLimitsPage({ data, error, onCheckout, checkingOut }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   return (
@@ -27,6 +27,7 @@ export function PlanLimitsPage({ data, error }: PlanLimitsPageProps) {
           ))}
         </TableBody>
       </Table>
+      {onCheckout && <Button variant="contained" disabled={checkingOut} onClick={onCheckout} sx={{ alignSelf: 'flex-start' }}>このプランで申し込む</Button>}
     </Stack>
   )
 }
