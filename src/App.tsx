@@ -28,9 +28,11 @@ import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizard
 import { getTuningConstants, type TuningConstantsResponse } from './lib/platformConfig/getTuningConstants'
 import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboardPage'
 import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
+import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
+import { getOrgPlanLimits, type PlanLimits } from './lib/organizations/planLimits'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -365,6 +367,7 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
+      orgId={orgId}
       invitations={invitations}
       inviting={inviting}
       onInvite={async (email, role) => {
@@ -378,6 +381,21 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       }}
     />
   )
+}
+
+function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>()
+  const [data, setData] = useState<PlanLimits>()
+  const [error, setError] = useState<string>()
+  useEffect(() => {
+    let cancelled = false
+    if (!orgId) return
+    getOrgPlanLimits(services.functions, { orgId })
+      .then((limits) => { if (!cancelled) setData(limits) })
+      .catch(() => { if (!cancelled) setError('failed') })
+    return () => { cancelled = true }
+  }, [services, orgId])
+  return <PlanLimitsPage data={data} error={error} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
@@ -457,6 +475,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />

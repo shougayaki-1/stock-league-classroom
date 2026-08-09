@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { Button, List, ListItem, ListItemText, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import type { Invitation } from '../../../lib/organizations/invitations'
 
@@ -9,18 +10,20 @@ const STATUS_LABEL: Record<Invitation['status'], string> = {
 
 export interface SchoolOrgSettingsPageProps {
   orgName: string
+  orgId: string
   invitations: Invitation[]
   onInvite: (email: string, role: 'admin' | 'teacher') => void
   inviting: boolean
 }
 
-export function SchoolOrgSettingsPage({ orgName, invitations, onInvite, inviting }: SchoolOrgSettingsPageProps) {
+export function SchoolOrgSettingsPage({ orgName, orgId, invitations, onInvite, inviting }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
 
   return (
     <Stack spacing={3} sx={{ p: 2 }}>
       <Typography variant="h5">{orgName}</Typography>
+      <Link to={`/teacher/organizations/${orgId}/plan-limits`}>利用枠を確認</Link>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>
         <TextField label="招待するメールアドレス" value={email} onChange={(event) => setEmail(event.target.value)} />

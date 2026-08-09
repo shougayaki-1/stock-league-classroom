@@ -288,6 +288,18 @@ describe('School org creation and invitation routes', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('routes /teacher/organizations/:orgId/plan-limits to the plan limits page', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    callableMock.mockResolvedValue({
+      data: { concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0 },
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByText('参加人数')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
   it('shows the pending invitations banner on the template list route when invitations exist', async () => {
     window.history.pushState({}, '', '/teacher/templates')
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
