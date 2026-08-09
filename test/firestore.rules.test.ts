@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
 const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'google.com' as const } }
@@ -91,6 +91,14 @@ describe('organization membership Firestore rules', () => {
 })
 
 describe('organizations/{orgId}/invitations/{invitationId}', () => {
+  it('declares an explicit deny rule for the invitation subcollection', () => {
+    const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
+
+    expect(rules).toMatch(
+      /match \/organizations\/\{orgId\}\/invitations\/\{invitationId\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+    )
+  })
+
   it('denies all direct client reads and writes', async () => {
     const context = environment.authenticatedContext('teacher-a', teacherToken)
     const invitation = doc(context.firestore(), 'organizations/org-1/invitations/invitation-1')
