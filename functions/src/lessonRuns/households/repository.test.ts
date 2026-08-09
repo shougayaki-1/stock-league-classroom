@@ -81,6 +81,19 @@ describe('saveHouseholdDecision', () => {
     })).rejects.toThrow('Idempotency key payload mismatch')
   })
 
+  // Review finding (Important #2): `voluntaryDrawdownRequestedYen` is
+  // included in `requestDigest` (see `saveHouseholdDecision` above), but
+  // that was only covered transitively by other tests — this proves
+  // replaying the same key with a different `voluntaryDrawdownRequestedYen`
+  // is rejected, same as any other digest-relevant field.
+  it('rejects the same idempotencyKey replayed with a different voluntaryDrawdownRequestedYen', async () => {
+    const fake = makeFakeFirestore()
+    await saveHouseholdDecision({ firestore: fake as never, ...baseInput, voluntaryDrawdownRequestedYen: 100 })
+    await expect(saveHouseholdDecision({
+      firestore: fake as never, ...baseInput, voluntaryDrawdownRequestedYen: 200,
+    })).rejects.toThrow('Idempotency key payload mismatch')
+  })
+
   it('scopes idempotency per roundIndex — the same key on a different round creates a separate decision', async () => {
     const fake = makeFakeFirestore()
     const round3 = await saveHouseholdDecision({ firestore: fake as never, ...baseInput })

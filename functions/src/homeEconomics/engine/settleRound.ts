@@ -291,8 +291,15 @@ export const settleRound = (input: SettleRoundInput): SettleRoundResult => {
   // at validation time), `settleRound` itself never applies it outside
   // retirement, which is the actual authorization boundary spec §13.14
   // describes.
+  // Defense-in-depth: `settleRound` is a standalone pure engine function
+  // that could theoretically be called directly, bypassing the Callable's
+  // `isValidOptionalNonNegativeNumber` integer check (`onCall.ts`). Floor
+  // and clamp here so a malformed/fractional value never reaches
+  // `computeVoluntaryAssetDrawdown`, whose whole-yen-per-step remainder
+  // logic would otherwise destroy the fractional part of the requested
+  // amount instead of simply dropping it.
   let drawdownWithdrawnYen = 0
-  const requestedDrawdownYen = input.decision?.voluntaryDrawdownRequestedYen ?? 0
+  const requestedDrawdownYen = Math.floor(Math.max(0, input.decision?.voluntaryDrawdownRequestedYen ?? 0))
   if (isRetired && requestedDrawdownYen > 0) {
     const drawdownResult = computeVoluntaryAssetDrawdown({
       requestedYen: requestedDrawdownYen, assetHoldingsYen: newAssetHoldingsYen,

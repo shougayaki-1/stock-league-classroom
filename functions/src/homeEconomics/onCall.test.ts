@@ -120,6 +120,10 @@ describe('submitHouseholdDecisionCallable', () => {
     ['voluntaryDrawdownRequestedYen negative', { voluntaryDrawdownRequestedYen: -1 }],
     ['voluntaryDrawdownRequestedYen non-finite', { voluntaryDrawdownRequestedYen: Infinity }],
     ['voluntaryDrawdownRequestedYen NaN', { voluntaryDrawdownRequestedYen: NaN }],
+    // Review finding (Important #1): a fractional request would otherwise
+    // flow into `computeVoluntaryAssetDrawdown`'s whole-yen-per-step
+    // remainder math and silently destroy the fractional part of a yen.
+    ['voluntaryDrawdownRequestedYen fractional', { voluntaryDrawdownRequestedYen: 100.5 }],
   ])('rejects a request with an invalid %s', async (_field, override) => {
     await expect(submitHouseholdDecisionCallable.run(makeRequest(override))).rejects.toMatchObject({ code: 'invalid-argument' })
     expect(getHouseholdStateWithAdminSdk).not.toHaveBeenCalled()

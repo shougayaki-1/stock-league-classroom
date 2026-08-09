@@ -415,6 +415,36 @@ describe('settleRound', () => {
     expect(totalAfter).toBe(totalBefore) // exact conservation
   })
 
+  // Review finding (Important #1): `settleRound` is a standalone pure engine
+  // function that could theoretically be called directly, bypassing the
+  // Callable's (`onCall.ts`) integer validation. This proves the engine's own
+  // `Math.floor(Math.max(0, ...))` defensive clamp makes a fractional
+  // request behave as if the fractional part were simply dropped (floored
+  // to 100), not destroyed — money conservation still holds exactly.
+  it('a fractional voluntaryDrawdownRequestedYen passed directly to settleRound (bypassing the Callable) is floored, not destroyed — money is still exactly conserved', () => {
+    const input = {
+      ...baseInput,
+      household: { ...baseHousehold, lifeStage: 'RETIRED', cashYen: 0, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 } },
+      profile: { ...baseProfile, lifeStage: 'RETIRED' as const, householdIncomeYen: 0, annualLivingExpensesYen: 0 },
+      decision: {
+        lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 0,
+        assetAllocationChangesYen: {},
+        insurancePurchaseIds: [], insuranceCancelIds: [],
+        shortfallResolutionType: null, shortfallResolutionAssetType: undefined,
+        publicSupportApplicationIds: [], idempotencyKey: 'k10',
+        voluntaryDrawdownRequestedYen: 100.5,
+      },
+      assetCatalog: [{ assetType: 'DOMESTIC_STOCK' as const, valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 }],
+    }
+    const totalBefore = 0 + 1000000
+    const result = settleRound(input)
+    // 100.5 is floored to 100 before reaching computeVoluntaryAssetDrawdown.
+    expect(result.newHouseholdState.cashYen).toBe(100)
+    expect(result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK).toBe(999900)
+    const totalAfter = result.newHouseholdState.cashYen + result.newHouseholdState.assetHoldingsYen.DOMESTIC_STOCK
+    expect(totalAfter).toBe(totalBefore) // exact conservation — no fractional yen destroyed
+  })
+
   it('a voluntary drawdown request is IGNORED for a non-RETIRED household (voluntary drawdown is retirement-only)', () => {
     const input = {
       ...baseInput,

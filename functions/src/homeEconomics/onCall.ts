@@ -73,9 +73,18 @@ const isFiniteNumberMap = (value: unknown): value is Record<string, number> =>
 
 const isNonEmptyStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isNonEmptyString)
 
-/** Optional non-negative finite number — `undefined` (field omitted) is valid; a present value must not be negative/NaN/Infinity (would otherwise flow into the money-conservation-critical drawdown math in `settleRound`). */
+/**
+ * Optional non-negative INTEGER-yen number — `undefined` (field omitted) is
+ * valid; a present value must not be negative/NaN/Infinity/fractional.
+ * Fractional yen is rejected here (not just clamped) because
+ * `computeVoluntaryAssetDrawdown` (`engine/retirement.ts`) debits whole-yen
+ * amounts per remainder step against the requested amount — a fractional
+ * request like `100.5` would leave 0.5 yen unaccounted for, silently
+ * destroying money that every other path in this engine treats as integer
+ * yen (see `HouseholdState.cashYen`).
+ */
 const isValidOptionalNonNegativeNumber = (value: unknown): boolean =>
-  value === undefined || (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+  value === undefined || (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0)
 
 /**
  * `shortfallResolutionType` is validated here as the already-normalized
@@ -104,7 +113,7 @@ const validateRequest = (
   ) {
     throw new HttpsError(
       'invalid-argument',
-      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。shortfallResolutionType が SELL_ASSETS の場合、shortfallResolutionAssetType も必須です。voluntaryDrawdownRequestedYen を指定する場合は0以上の有限数である必要があります。',
+      'lessonRunId、householdId、roundIndex、assetAllocationChangesYen、insurancePurchaseIds、insuranceCancelIds、shortfallResolutionType、publicSupportApplicationIds、idempotencyKey は必須です。shortfallResolutionType が SELL_ASSETS の場合、shortfallResolutionAssetType も必須です。voluntaryDrawdownRequestedYen を指定する場合は0以上の整数である必要があります。',
     )
   }
 }
