@@ -25,7 +25,7 @@ describe('ensurePersonalOrg', () => {
       mirrorExists: async () => false,
     })
     expect(result).toEqual({ orgId: 'personal_uid-1', created: true })
-    expect(fake.docs.get('organizations/personal_uid-1')).toMatchObject({ type: 'personal', ownerUid: 'uid-1' })
+    expect(fake.docs.get('organizations/personal_uid-1')).toMatchObject({ type: 'personal', ownerUid: 'uid-1', planId: 'FREE' })
     expect(fake.docs.get('organizations/personal_uid-1/members/uid-1')).toMatchObject({ role: 'owner', status: 'active', membershipVersion: 1 })
     expect(fake.docs.get('users/uid-1')).toMatchObject({ personalOrgId: 'personal_uid-1' })
     // membershipVersion mirrors the Firestore membership doc (Task 4's rules

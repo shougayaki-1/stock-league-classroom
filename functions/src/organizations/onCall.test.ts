@@ -3,6 +3,7 @@ import {
   acceptInvitationCallable,
   createInvitationCallable,
   createSchoolOrgCallable,
+  getOrgPlanLimitsCallable,
   isCallerTeacher,
   listMyInvitationsCallable,
 } from './onCall'
@@ -10,6 +11,7 @@ import type { CallableRequest } from 'firebase-functions/v2/https'
 import { requireActiveOrgMember } from './authorization'
 import { createSchoolOrgWithAdminSdk } from './schoolOrg'
 import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
+import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
 
 vi.mock('./authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./schoolOrg', () => ({ createSchoolOrgWithAdminSdk: vi.fn() }))
@@ -18,6 +20,7 @@ vi.mock('./invitations', () => ({
   createInvitationWithAdminSdk: vi.fn(),
   listMyInvitationsWithAdminSdk: vi.fn(),
 }))
+vi.mock('./planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
 const docGetMock = vi.fn()
 vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
 
@@ -98,5 +101,32 @@ describe('listMyInvitationsCallable', () => {
     } as unknown as CallableRequest
     await expect(listMyInvitationsCallable.run(request)).resolves.toEqual([])
     expect(listMyInvitationsWithAdminSdk).toHaveBeenCalledWith({ email: 'x@example.com' })
+  })
+})
+
+describe('getOrgPlanLimitsCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('requires an active org member', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new Error('permission-denied'))
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgPlanLimitsCallable.run(request)).rejects.toThrow('permission-denied')
+  })
+
+  it('returns the resolved plan limits for an active member', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
+      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+    })
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgPlanLimitsCallable.run(request)).resolves.toMatchObject({ participants: 40 })
+    expect(getOrgPlanLimitsWithAdminSdk).toHaveBeenCalledWith('org-1')
+  })
+
+  it('translates a missing plan into a failed-precondition error', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getOrgPlanLimitsWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgPlanLimitsCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 })

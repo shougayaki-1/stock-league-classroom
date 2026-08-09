@@ -26,7 +26,7 @@ describe('createSchoolOrg', () => {
     }, { name: '桜丘高校', ownerUid: 'uid-1' })
 
     expect(result).toEqual({ orgId: 'school_fixed-id' })
-    expect(fake.docs.get('organizations/school_fixed-id')).toMatchObject({ type: 'school', name: '桜丘高校', verificationStatus: 'PENDING', ownerUid: 'uid-1' })
+    expect(fake.docs.get('organizations/school_fixed-id')).toMatchObject({ type: 'school', name: '桜丘高校', verificationStatus: 'PENDING', ownerUid: 'uid-1', planId: 'FREE' })
     expect(fake.docs.get('organizations/school_fixed-id/members/uid-1')).toMatchObject({ role: 'owner', status: 'active', membershipVersion: 1 })
     expect(rtdbWrites).toEqual([{ orgId: 'school_fixed-id', uid: 'uid-1', role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 }])
   })

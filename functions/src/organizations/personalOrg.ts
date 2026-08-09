@@ -67,7 +67,7 @@ export const ensurePersonalOrg = async (uid: string, deps: EnsurePersonalOrgDeps
   const created = await deps.firestore.runTransaction(async (tx) => {
     const orgSnap = await tx.get(orgPath)
     if (orgSnap.exists) return false
-    tx.set(orgPath, { type: 'personal', ownerUid: uid, createdAt: nowValue })
+    tx.set(orgPath, { type: 'personal', ownerUid: uid, planId: 'FREE', createdAt: nowValue })
     tx.set(memberPath, { role: 'owner', status: 'active', membershipVersion: 1, joinedAt: nowValue })
     tx.set(userPath, { personalOrgId: orgId }, { merge: true })
     return true

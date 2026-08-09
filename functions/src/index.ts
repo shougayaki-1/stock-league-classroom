@@ -9,6 +9,7 @@ export {
   createInvitationCallable,
   acceptInvitationCallable,
   listMyInvitationsCallable,
+  getOrgPlanLimitsCallable,
 } from './organizations/onCall'
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'

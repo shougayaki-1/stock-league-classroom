@@ -30,7 +30,7 @@ export const createSchoolOrg = async (deps: CreateSchoolOrgDeps, input: CreateSc
   const memberPath = `organizations/${orgId}/members/${input.ownerUid}`
 
   await deps.firestore.runTransaction(async (tx) => {
-    tx.set(orgPath, { type: 'school', name: input.name, verificationStatus: 'PENDING', ownerUid: input.ownerUid, createdAt: nowValue })
+    tx.set(orgPath, { type: 'school', name: input.name, verificationStatus: 'PENDING', ownerUid: input.ownerUid, planId: 'FREE', createdAt: nowValue })
     tx.set(memberPath, { role: 'owner', status: 'active', membershipVersion: 1, joinedAt: nowValue })
   })
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
@@ -87,6 +87,26 @@ describe('organization membership Firestore rules', () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
 
     await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a')))
+  })
+})
+
+describe('planDefinitions/{planId}', () => {
+  beforeEach(async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'planDefinitions', 'FREE'), { planId: 'FREE', displayName: '無料', limits: {} })
+    })
+  })
+
+  it('allows a signed-in teacher to read and list plan definitions', async () => {
+    const firestore = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(firestore, 'planDefinitions', 'FREE')))
+    await assertSucceeds(getDocs(collection(firestore, 'planDefinitions')))
+  })
+
+  it('denies writes from clients and unauthenticated reads', async () => {
+    const teacherFirestore = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(setDoc(doc(teacherFirestore, 'planDefinitions', 'FREE'), { displayName: '改ざん' }))
+    await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'planDefinitions', 'FREE')))
   })
 })
 
