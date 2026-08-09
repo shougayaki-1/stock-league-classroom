@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 import { SchoolOrgSettingsPage } from './SchoolOrgSettingsPage'
 
+const members = [
+  { uid: 'uid-owner', email: 'owner@example.com', role: 'owner' as const, status: 'active' as const, membershipVersion: 1 },
+  { uid: 'uid-teacher', email: 'teacher@example.com', role: 'teacher' as const, status: 'active' as const, membershipVersion: 1 },
+]
+
+const memberProps = {
+  members: [],
+  viewerUid: 'uid-owner',
+  canManageMembers: false,
+  onSuspendMember: vi.fn(),
+  suspending: false,
+  teacherSeatLimit: undefined,
+}
+
 describe('SchoolOrgSettingsPage', () => {
   it('shows the organization name and existing invitations', () => {
     render(
@@ -23,6 +37,7 @@ describe('SchoolOrgSettingsPage', () => {
           ]}
           onInvite={vi.fn()}
           inviting={false}
+          {...memberProps}
         />
       </MemoryRouter>,
     )
@@ -37,7 +52,7 @@ describe('SchoolOrgSettingsPage', () => {
 
     render(
       <MemoryRouter>
-        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={onInvite} inviting={false} />
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={onInvite} inviting={false} {...memberProps} />
       </MemoryRouter>,
     )
 
@@ -50,10 +65,56 @@ describe('SchoolOrgSettingsPage', () => {
   it('links to the plan limits page', () => {
     render(
       <MemoryRouter>
-        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} />
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} />
       </MemoryRouter>,
     )
 
     expect(screen.getByRole('link', { name: '利用枠を確認' })).toHaveAttribute('href', '/teacher/organizations/org-1/plan-limits')
+  })
+})
+
+describe('member list', () => {
+  it('shows the seat usage and member list', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('教師席: 使用中 2 / 上限 5')).toBeInTheDocument()
+    expect(screen.getByText('owner@example.com')).toBeInTheDocument()
+    expect(screen.getByText('teacher@example.com')).toBeInTheDocument()
+  })
+
+  it('shows a suspend button for other members but not for the viewer, when the viewer can manage members', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+      </MemoryRouter>,
+    )
+    expect(screen.getAllByRole('button', { name: '解除' })).toHaveLength(1)
+  })
+
+  it('hides suspend buttons entirely when the viewer cannot manage members', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('button', { name: '解除' })).not.toBeInTheDocument()
+  })
+
+  it('calls onSuspendMember with the target uid', () => {
+    const onSuspendMember = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={onSuspendMember} teacherSeatLimit={5} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '解除' }))
+    expect(onSuspendMember).toHaveBeenCalledWith('uid-teacher')
   })
 })

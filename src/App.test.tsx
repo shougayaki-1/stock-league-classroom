@@ -15,7 +15,10 @@ import App from './App'
 type AuthUser = { uid: string; emailVerified?: boolean; providerData?: Array<{ providerId: string }> }
 let authStateCallback: ((user: AuthUser | null) => void) | undefined
 const onAuthStateChangedMock = vi.fn((_auth: unknown, callback: (user: AuthUser | null) => void) => {
-  authStateCallback = callback
+  authStateCallback = (user) => {
+    ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = user
+    callback(user)
+  }
   return () => {}
 })
 const signInAnonymouslyMock = vi.fn().mockResolvedValue({ user: { uid: 'student-uid' } })
@@ -65,7 +68,7 @@ vi.mock('firebase/functions', () => ({
 
 const fakeServices = {
   app: {} as FirebaseApp,
-  auth: {} as Auth,
+  auth: { currentUser: null } as unknown as Auth,
   firestore: {} as Firestore,
   database: {} as Database,
   functions: {} as Functions,
@@ -79,6 +82,7 @@ function emitMembership(value: { access: string; teamId?: string } | null) {
 
 beforeEach(() => {
   authStateCallback = undefined
+  ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = null
   membershipListener = undefined
   onAuthStateChangedMock.mockClear()
   signInAnonymouslyMock.mockClear()
@@ -284,7 +288,24 @@ describe('School org creation and invitation routes', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     expect(await screen.findByRole('button', { name: '招待を送る' })).toBeInTheDocument()
-    expect(httpsCallableMock).not.toHaveBeenCalled()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('shows the member list and seat usage on the school org settings route', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/settings')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'listOrgMembersCallable') {
+        return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'teacher-uid@example.com', role: 'owner', status: 'active', membershipVersion: 1 }] })
+      }
+      if (name === 'getOrgPlanLimitsCallable') {
+        return vi.fn().mockResolvedValue({ data: { concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 5, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0 } })
+      }
+      return callableMock
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByText('教師席: 使用中 1 / 上限 5')).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 

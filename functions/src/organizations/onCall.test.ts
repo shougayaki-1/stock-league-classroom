@@ -5,13 +5,17 @@ import {
   createSchoolOrgCallable,
   getOrgPlanLimitsCallable,
   isCallerTeacher,
+  listOrgMembersCallable,
   listMyInvitationsCallable,
+  suspendOrgMemberCallable,
 } from './onCall'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import { requireActiveOrgMember } from './authorization'
 import { createSchoolOrgWithAdminSdk } from './schoolOrg'
 import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
+import { listOrgMembersWithAdminSdk } from './orgMembers'
+import { suspendOrgMemberWithAdminSdk } from './suspendMember'
 
 vi.mock('./authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./schoolOrg', () => ({ createSchoolOrgWithAdminSdk: vi.fn() }))
@@ -21,6 +25,8 @@ vi.mock('./invitations', () => ({
   listMyInvitationsWithAdminSdk: vi.fn(),
 }))
 vi.mock('./planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
+vi.mock('./orgMembers', () => ({ listOrgMembersWithAdminSdk: vi.fn() }))
+vi.mock('./suspendMember', () => ({ suspendOrgMemberWithAdminSdk: vi.fn() }))
 const docGetMock = vi.fn()
 vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
 
@@ -128,5 +134,51 @@ describe('getOrgPlanLimitsCallable', () => {
     vi.mocked(getOrgPlanLimitsWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
     const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
     await expect(getOrgPlanLimitsCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+})
+
+describe('listOrgMembersCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('requires an active org member', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new Error('permission-denied'))
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(listOrgMembersCallable.run(request)).rejects.toThrow('permission-denied')
+  })
+
+  it('returns members for an active member', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(listOrgMembersWithAdminSdk).mockResolvedValueOnce([
+      { uid: 'uid-1', email: 'x@example.com', role: 'owner', status: 'active', membershipVersion: 1 },
+    ])
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(listOrgMembersCallable.run(request)).resolves.toEqual([
+      { uid: 'uid-1', email: 'x@example.com', role: 'owner', status: 'active', membershipVersion: 1 },
+    ])
+  })
+})
+
+describe('suspendOrgMemberCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects a caller whose role is not owner or admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2' } } as unknown as CallableRequest
+    await expect(suspendOrgMemberCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('suspends a member for an owner caller', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(suspendOrgMemberWithAdminSdk).mockResolvedValueOnce(undefined)
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2' } } as unknown as CallableRequest
+    await expect(suspendOrgMemberCallable.run(request)).resolves.toBeUndefined()
+    expect(suspendOrgMemberWithAdminSdk).toHaveBeenCalledWith({ orgId: 'org-1', uid: 'uid-2' })
+  })
+
+  it('translates sole-owner protection into failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(suspendOrgMemberWithAdminSdk).mockRejectedValueOnce(new Error('組織には少なくとも1人のownerが必要です'))
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2' } } as unknown as CallableRequest
+    await expect(suspendOrgMemberCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 })

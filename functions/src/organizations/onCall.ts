@@ -5,6 +5,8 @@ import { createSchoolOrgWithAdminSdk } from './schoolOrg'
 import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
 import { requireActiveOrgMember } from './authorization'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
+import { listOrgMembersWithAdminSdk } from './orgMembers'
+import { suspendOrgMemberWithAdminSdk } from './suspendMember'
 
 /** Mirrors src/lib/auth/roles.ts's isTeacherIdentity and firestore.rules' teacher(). */
 export const isCallerTeacher = (token: { email_verified?: boolean; firebase?: { sign_in_provider?: string } }): boolean =>
@@ -80,6 +82,38 @@ export const getOrgPlanLimitsCallable = onCall({ region: 'asia-northeast1' }, as
     return await getOrgPlanLimitsWithAdminSdk(data.orgId)
   } catch (error) {
     if (error instanceof Error && error.message === 'この組織にはプランが設定されていません') {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
+})
+
+interface ListOrgMembersRequest { orgId?: unknown }
+
+export const listOrgMembersCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ListOrgMembersRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+  await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  return listOrgMembersWithAdminSdk(data.orgId)
+})
+
+interface SuspendOrgMemberRequest { orgId?: unknown; uid?: unknown }
+
+export const suspendOrgMemberCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as SuspendOrgMemberRequest
+  if (typeof data.orgId !== 'string' || typeof data.uid !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'owner または admin のみメンバーを解除できます。')
+  }
+  try {
+    await suspendOrgMemberWithAdminSdk({ orgId: data.orgId, uid: data.uid })
+  } catch (error) {
+    if (error instanceof Error && (error.message === 'このメンバーは既に解除されています' || error.message === '組織には少なくとも1人のownerが必要です')) {
       throw new HttpsError('failed-precondition', error.message)
     }
     throw error

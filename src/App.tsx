@@ -33,6 +33,7 @@ import { PendingInvitationsBanner } from './components/teacher/organizations/Pen
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimits } from './lib/organizations/planLimits'
+import { listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -363,13 +364,45 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [inviting, setInviting] = useState(false)
-  if (!orgId) return <GuardLoading />
+  const [members, setMembers] = useState<OrgMember[]>([])
+  const [teacherSeatLimit, setTeacherSeatLimit] = useState<number>()
+  const [suspending, setSuspending] = useState(false)
+  const uid = services.auth.currentUser?.uid
+
+  const loadMembers = useCallback(() => {
+    if (!orgId) return
+    void listOrgMembers(services.functions, { orgId }).then(setMembers).catch(() => setMembers([]))
+  }, [orgId, services.functions])
+
+  useEffect(() => { loadMembers() }, [loadMembers])
+  useEffect(() => {
+    if (!orgId) return
+    void getOrgPlanLimits(services.functions, { orgId })
+      .then((limits) => setTeacherSeatLimit(limits.teacherSeats))
+      .catch(() => setTeacherSeatLimit(undefined))
+  }, [orgId, services.functions])
+
+  if (!orgId || !uid) return <GuardLoading />
+  const viewerMembership = members.find((member) => member.uid === uid)
+  const canManageMembers = viewerMembership?.role === 'owner' || viewerMembership?.role === 'admin'
+
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
       orgId={orgId}
       invitations={invitations}
       inviting={inviting}
+      members={members}
+      viewerUid={uid}
+      canManageMembers={canManageMembers}
+      suspending={suspending}
+      teacherSeatLimit={teacherSeatLimit}
+      onSuspendMember={(targetUid) => {
+        setSuspending(true)
+        void suspendOrgMember(services.functions, { orgId, uid: targetUid })
+          .then(loadMembers)
+          .finally(() => setSuspending(false))
+      }}
       onInvite={async (email, role) => {
         setInviting(true)
         try {
