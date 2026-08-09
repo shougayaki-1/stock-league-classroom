@@ -1,5 +1,30 @@
-import { describe, expect, it } from 'vitest'
-import { isCallerTeacher } from './onCall'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import {
+  acceptInvitationCallable,
+  createInvitationCallable,
+  createSchoolOrgCallable,
+  isCallerTeacher,
+  listMyInvitationsCallable,
+} from './onCall'
+import type { CallableRequest } from 'firebase-functions/v2/https'
+import { requireActiveOrgMember } from './authorization'
+import { createSchoolOrgWithAdminSdk } from './schoolOrg'
+import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
+
+vi.mock('./authorization', () => ({ requireActiveOrgMember: vi.fn() }))
+vi.mock('./schoolOrg', () => ({ createSchoolOrgWithAdminSdk: vi.fn() }))
+vi.mock('./invitations', () => ({
+  acceptInvitationWithAdminSdk: vi.fn(),
+  createInvitationWithAdminSdk: vi.fn(),
+  listMyInvitationsWithAdminSdk: vi.fn(),
+}))
+const docGetMock = vi.fn()
+vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
+
+const teacher = {
+  uid: 'teacher-1',
+  token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } },
+} as unknown as CallableRequest['auth']
 
 describe('isCallerTeacher', () => {
   it('accepts a verified google.com sign-in', () => {
@@ -10,5 +35,68 @@ describe('isCallerTeacher', () => {
   })
   it('rejects an unverified email', () => {
     expect(isCallerTeacher({ email_verified: false, firebase: { sign_in_provider: 'google.com' } })).toBe(false)
+  })
+})
+
+describe('createSchoolOrgCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects an empty name', async () => {
+    const request = { auth: teacher, data: { name: '' } } as unknown as CallableRequest
+    await expect(createSchoolOrgCallable.run(request)).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('creates a school org for an authenticated teacher', async () => {
+    vi.mocked(createSchoolOrgWithAdminSdk).mockResolvedValueOnce({ orgId: 'school_1' })
+    const request = { auth: teacher, data: { name: '桜丘高校' } } as unknown as CallableRequest
+    await expect(createSchoolOrgCallable.run(request)).resolves.toEqual({ orgId: 'school_1' })
+    expect(createSchoolOrgWithAdminSdk).toHaveBeenCalledWith({ name: '桜丘高校', ownerUid: 'teacher-1' })
+  })
+})
+
+describe('createInvitationCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects a caller whose role is not owner/admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1', email: 'x@example.com', role: 'teacher' } } as unknown as CallableRequest
+    await expect(createInvitationCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('creates an invitation for an owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(createInvitationWithAdminSdk).mockResolvedValueOnce({ invitationId: 'invitation-1' })
+    const request = { auth: teacher, data: { orgId: 'org-1', email: 'x@example.com', role: 'teacher' } } as unknown as CallableRequest
+    await expect(createInvitationCallable.run(request)).resolves.toEqual({ invitationId: 'invitation-1' })
+  })
+})
+
+describe('acceptInvitationCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('passes the caller uid and verified email through to acceptInvitation', async () => {
+    vi.mocked(acceptInvitationWithAdminSdk).mockResolvedValueOnce({ status: 'ACCEPTED' })
+    const request = {
+      auth: { uid: 'uid-2', token: { email_verified: true, email: 'x@example.com', firebase: { sign_in_provider: 'google.com' } } },
+      data: { orgId: 'org-1', invitationId: 'invitation-1' },
+    } as unknown as CallableRequest
+    await expect(acceptInvitationCallable.run(request)).resolves.toEqual({ status: 'ACCEPTED' })
+    expect(acceptInvitationWithAdminSdk).toHaveBeenCalledWith({
+      orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'x@example.com',
+    })
+  })
+})
+
+describe('listMyInvitationsCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('queries by the caller verified email', async () => {
+    vi.mocked(listMyInvitationsWithAdminSdk).mockResolvedValueOnce([])
+    const request = {
+      auth: { uid: 'uid-2', token: { email_verified: true, email: 'x@example.com', firebase: { sign_in_provider: 'google.com' } } },
+      data: {},
+    } as unknown as CallableRequest
+    await expect(listMyInvitationsCallable.run(request)).resolves.toEqual([])
+    expect(listMyInvitationsWithAdminSdk).toHaveBeenCalledWith({ email: 'x@example.com' })
   })
 })

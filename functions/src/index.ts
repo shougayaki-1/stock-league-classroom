@@ -3,7 +3,13 @@ import { initializeApp } from 'firebase-admin/app'
 initializeApp()
 
 export { ping } from './ping'
-export { ensurePersonalOrgCallable } from './organizations/onCall'
+export {
+  ensurePersonalOrgCallable,
+  createSchoolOrgCallable,
+  createInvitationCallable,
+  acceptInvitationCallable,
+  listMyInvitationsCallable,
+} from './organizations/onCall'
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export { duplicateLessonTemplateCallable, publishLessonVersionCallable } from './lessonTemplates/onCall'
