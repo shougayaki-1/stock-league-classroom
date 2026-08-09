@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { Box, Button, CircularProgress, CssBaseline, Link, Stack, TextField, ThemeProvider, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, CssBaseline, Link, Stack, TextField, ThemeProvider, Typography } from '@mui/material'
 import { onAuthStateChanged } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import { onValue, ref } from 'firebase/database'
@@ -241,10 +241,19 @@ function TemplateListRoute({ services }: { services: FirebaseServices }) {
   const [loading, setLoading] = useState(true)
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [accepting, setAccepting] = useState(false)
+  const [invitationError, setInvitationError] = useState<'load' | 'accept'>()
   const navigate = useNavigate()
-  useEffect(() => {
-    void listMyInvitations(services.functions).then(setInvitations).catch(() => setInvitations([]))
+  const loadInvitations = useCallback(async () => {
+    setInvitationError(undefined)
+    try {
+      setInvitations(await listMyInvitations(services.functions))
+    } catch {
+      setInvitationError('load')
+    }
   }, [services])
+  useEffect(() => {
+    void loadInvitations()
+  }, [loadInvitations])
   useEffect(() => {
     const uid = services.auth.currentUser?.uid
     if (!uid) { setLoading(false); return }
@@ -254,13 +263,27 @@ function TemplateListRoute({ services }: { services: FirebaseServices }) {
   }, [services])
   return (
     <Stack spacing={2}>
+      {invitationError && (
+        <Alert
+          severity="error"
+          action={invitationError === 'load' ? (
+            <Button color="inherit" size="small" onClick={() => { void loadInvitations() }}>再読み込み</Button>
+          ) : undefined}
+        >
+          {invitationError === 'load'
+            ? '招待一覧を読み込めませんでした。もう一度お試しください。'
+            : '招待への参加に失敗しました。もう一度お試しください。'}
+        </Alert>
+      )}
       <PendingInvitationsBanner
         invitations={invitations}
         accepting={accepting}
         onAccept={(invitation) => {
           setAccepting(true)
+          setInvitationError(undefined)
           void acceptInvitation(services.functions, { orgId: invitation.orgId, invitationId: invitation.id })
             .then(() => setInvitations((prev) => prev.filter((item) => item.id !== invitation.id)))
+            .catch(() => setInvitationError('accept'))
             .finally(() => setAccepting(false))
         }}
       />
@@ -338,7 +361,6 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [inviting, setInviting] = useState(false)
-  useEffect(() => { void listMyInvitations(services.functions) }, [services])
   if (!orgId) return <GuardLoading />
   return (
     <SchoolOrgSettingsPage
@@ -348,8 +370,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       onInvite={async (email, role) => {
         setInviting(true)
         try {
-          await createInvitation(services.functions, { orgId, email, role })
-          setInvitations((prev) => [...prev, { id: crypto.randomUUID(), orgId, email, role, status: 'PENDING', invitedByUid: '', createdAt: null }])
+          const { invitationId } = await createInvitation(services.functions, { orgId, email, role })
+          setInvitations((prev) => [...prev, { id: invitationId, orgId, email, role, status: 'PENDING', invitedByUid: '', createdAt: null }])
         } finally {
           setInviting(false)
         }

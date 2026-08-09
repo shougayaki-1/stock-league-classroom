@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { FirebaseApp } from 'firebase/app'
 import type { Auth } from 'firebase/auth'
@@ -239,6 +240,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
 describe('Guided Lesson Builder routes', () => {
   it('routes /teacher/templates to the teacher template list', async () => {
     window.history.pushState({}, '', '/teacher/templates')
+    callableMock.mockResolvedValue({ data: [] })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
@@ -282,6 +284,7 @@ describe('School org creation and invitation routes', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     expect(await screen.findByRole('button', { name: '招待を送る' })).toBeInTheDocument()
+    expect(httpsCallableMock).not.toHaveBeenCalled()
     window.history.pushState({}, '', '/')
   })
 
@@ -294,6 +297,65 @@ describe('School org creation and invitation routes', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     expect(await screen.findByRole('button', { name: '参加する' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('lets the teacher retry loading invitations after a visible error', async () => {
+    const invitation = { id: 'invitation-1', orgId: 'org-1', email: 'teacher@example.com', role: 'teacher' as const, status: 'PENDING' as const, invitedByUid: 'owner-1', createdAt: null }
+    callableMock.mockRejectedValueOnce(new Error('list failed')).mockResolvedValueOnce({ data: [invitation] })
+    window.history.pushState({}, '', '/teacher/templates')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('招待一覧を読み込めませんでした。もう一度お試しください。')
+    await userEvent.click(screen.getByRole('button', { name: '再読み込み' }))
+    expect(await screen.findByRole('button', { name: '参加する' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('accepts an invitation with its exact identifiers and removes it after success', async () => {
+    const invitation = { id: 'invitation-1', orgId: 'org-1', email: 'teacher@example.com', role: 'teacher' as const, status: 'PENDING' as const, invitedByUid: 'owner-1', createdAt: null }
+    callableMock.mockResolvedValueOnce({ data: [invitation] }).mockResolvedValueOnce({ data: { status: 'ACCEPTED' } })
+    window.history.pushState({}, '', '/teacher/templates')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    await userEvent.click(await screen.findByRole('button', { name: '参加する' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '参加する' })).not.toBeInTheDocument())
+    expect(httpsCallableMock).toHaveBeenCalledWith(fakeServices.functions, 'acceptInvitationCallable')
+    expect(callableMock).toHaveBeenLastCalledWith({ orgId: 'org-1', invitationId: 'invitation-1' })
+    window.history.pushState({}, '', '/')
+  })
+
+  it('keeps a failed invitation visible and re-enables acceptance for retry', async () => {
+    const invitation = { id: 'invitation-1', orgId: 'org-1', email: 'teacher@example.com', role: 'teacher' as const, status: 'PENDING' as const, invitedByUid: 'owner-1', createdAt: null }
+    callableMock.mockResolvedValueOnce({ data: [invitation] }).mockRejectedValueOnce(new Error('accept failed'))
+    window.history.pushState({}, '', '/teacher/templates')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    await userEvent.click(await screen.findByRole('button', { name: '参加する' }))
+    expect(await screen.findByText('招待への参加に失敗しました。もう一度お試しください。')).toBeVisible()
+    expect(screen.getByRole('button', { name: '参加する' })).toBeEnabled()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('uses the invitation ID returned by the server when adding a sent invitation', async () => {
+    callableMock.mockResolvedValue({ data: { invitationId: 'server-invitation-1' } })
+    const randomUUIDMock = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('local invitation IDs must not be generated') })
+    window.history.pushState({}, '', '/teacher/organizations/org-1/settings')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    await userEvent.type(await screen.findByRole('textbox', { name: '招待するメールアドレス' }), 'invitee@example.com')
+    await userEvent.click(screen.getByRole('button', { name: '招待を送る' }))
+    expect(await screen.findByText('invitee@example.com')).toBeInTheDocument()
+    expect(callableMock).toHaveBeenLastCalledWith({ orgId: 'org-1', email: 'invitee@example.com', role: 'teacher' })
+    randomUUIDMock.mockRestore()
     window.history.pushState({}, '', '/')
   })
 })
