@@ -1,4 +1,5 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import { logger } from 'firebase-functions/v2'
 import { onRequest } from 'firebase-functions/v2/https'
 import { defineSecret } from 'firebase-functions/params'
 import Stripe from 'stripe'
@@ -20,12 +21,26 @@ export interface HandleStripeWebhookEventDeps {
   setSubscriptionStatus?: (orgId: string, status: 'ACTIVE' | 'PAST_DUE' | 'CANCELED') => Promise<void>
   hasBillingRecordForInvoice?: (orgId: string, invoiceId: string) => Promise<boolean>
   createBillingRecordForInvoice?: (orgId: string, invoiceId: string, status: 'PAID' | 'OVERDUE') => Promise<void>
+  logUnresolvedStripeCustomer?: (stripeCustomerId: string) => void
+  logStripeCustomerLookupError?: (stripeCustomerId: string, error: unknown) => void
 }
 
 const parseClientReferenceId = (value: string): { orgId: string; recordId: string } | null => {
   const separatorIndex = value.indexOf(':')
   if (separatorIndex < 1 || separatorIndex === value.length - 1) return null
   return { orgId: value.slice(0, separatorIndex), recordId: value.slice(separatorIndex + 1) }
+}
+
+const resolveOrgIdForStripeCustomer = async (deps: HandleStripeWebhookEventDeps, stripeCustomerId: string): Promise<string | null> => {
+  if (!deps.getOrgIdForStripeCustomer) return null
+  try {
+    const orgId = await deps.getOrgIdForStripeCustomer(stripeCustomerId)
+    if (!orgId) deps.logUnresolvedStripeCustomer?.(stripeCustomerId)
+    return orgId
+  } catch (error) {
+    deps.logStripeCustomerLookupError?.(stripeCustomerId, error)
+    return null
+  }
 }
 
 /**
@@ -50,7 +65,7 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
     case 'invoice.paid':
     case 'invoice.payment_failed': {
       if (!event.invoiceId || !event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.hasBillingRecordForInvoice || !deps.setSubscriptionStatus || !deps.createBillingRecordForInvoice) return
-      const orgId = await deps.getOrgIdForStripeCustomer(event.stripeCustomerId)
+      const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
       if (!orgId) return
       if (await deps.hasBillingRecordForInvoice(orgId, event.invoiceId)) return
       const status = event.type === 'invoice.paid' ? 'ACTIVE' : 'PAST_DUE'
@@ -61,7 +76,7 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
     }
     case 'customer.subscription.deleted': {
       if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.setSubscriptionStatus) return
-      const orgId = await deps.getOrgIdForStripeCustomer(event.stripeCustomerId)
+      const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
       if (!orgId) return
       await deps.setSubscriptionStatus(orgId, 'CANCELED')
       return
@@ -132,6 +147,12 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     getOrgIdForStripeCustomer: async (stripeCustomerId) => {
       const snap = await db.doc(`stripeCustomers/${stripeCustomerId}`).get()
       return snap.exists ? (snap.get('orgId') as string) : null
+    },
+    logUnresolvedStripeCustomer: (stripeCustomerId) => {
+      logger.warn('Stripe customer could not be resolved to an organization', { stripeCustomerId })
+    },
+    logStripeCustomerLookupError: (stripeCustomerId, error) => {
+      logger.error('Stripe customer reverse lookup failed', { stripeCustomerId, error })
     },
     setSubscriptionStatus: async (orgId, status) => { await db.doc(`organizations/${orgId}`).update({ subscriptionStatus: status }) },
     hasBillingRecordForInvoice: async (orgId, invoiceId) => {

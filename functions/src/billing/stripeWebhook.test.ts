@@ -66,4 +66,25 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_unknown' })
     expect(setSubscriptionStatus).not.toHaveBeenCalled()
   })
+
+  it('logs an unresolved Stripe customer id without processing the invoice', async () => {
+    const logUnresolvedStripeCustomer = vi.fn()
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => null, setSubscriptionStatus: vi.fn(), hasBillingRecordForInvoice: vi.fn(), createBillingRecordForInvoice: vi.fn(),
+      logUnresolvedStripeCustomer,
+    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_unknown' })
+    expect(logUnresolvedStripeCustomer).toHaveBeenCalledWith('cus_unknown')
+  })
+
+  it('logs a reverse lookup exception and does not let it escape', async () => {
+    const logStripeCustomerLookupError = vi.fn()
+    const lookupError = new Error('Firestore unavailable')
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => { throw lookupError }, setSubscriptionStatus: vi.fn(), hasBillingRecordForInvoice: vi.fn(), createBillingRecordForInvoice: vi.fn(),
+      logStripeCustomerLookupError,
+    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_1' })).resolves.toBeUndefined()
+    expect(logStripeCustomerLookupError).toHaveBeenCalledWith('cus_1', lookupError)
+  })
 })
