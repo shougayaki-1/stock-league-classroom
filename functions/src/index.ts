@@ -4,6 +4,7 @@ initializeApp()
 
 export { ping } from './ping'
 export { createStripeCheckoutSessionCallable } from './billing/onCall'
+export { createStripeCustomerPortalSessionCallable } from './billing/onCall'
 export { stripeWebhookCallable } from './billing/stripeWebhook'
 export {
   ensurePersonalOrgCallable,
