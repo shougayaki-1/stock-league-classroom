@@ -26,6 +26,18 @@ describe('PlanLimitsPage', () => {
     expect(screen.getByText('結果保持（日数）')).toBeInTheDocument()
     expect(screen.getByText('イベント追加枠')).toBeInTheDocument()
   })
+
+  it('shows a manage-billing button when onManageBilling is provided', () => {
+    const onManageBilling = vi.fn()
+    render(<PlanLimitsPage data={limits} error={undefined} onManageBilling={onManageBilling} managingBilling={false} />)
+    fireEvent.click(screen.getByRole('button', { name: '支払い方法の変更・解約' }))
+    expect(onManageBilling).toHaveBeenCalled()
+  })
+
+  it('hides the manage-billing button when onManageBilling is not provided', () => {
+    render(<PlanLimitsPage data={limits} error={undefined} onManageBilling={undefined} managingBilling={false} />)
+    expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+  })
 })
 
 it('shows checkout only when supplied', () => { const onCheckout = vi.fn(); const { rerender } = render(<PlanLimitsPage data={limits} error={undefined} onCheckout={onCheckout} checkingOut={false} />); fireEvent.click(screen.getByRole('button', { name: 'このプランで申し込む' })); expect(onCheckout).toHaveBeenCalled(); rerender(<PlanLimitsPage data={limits} error={undefined} onCheckout={undefined} checkingOut={false} />); expect(screen.queryByRole('button', { name: 'このプランで申し込む' })).not.toBeInTheDocument() })
