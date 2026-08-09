@@ -418,4 +418,31 @@ describe('Stripe checkout route', () => {
     await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://checkout.stripe.com/x'))
     vi.unstubAllGlobals(); window.history.pushState({}, '', '/')
   })
+
+  it('opens the Stripe customer portal and redirects the browser to the returned url', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active', stripeCustomerId: 'cus_1' }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) =>
+      name === 'createStripeCustomerPortalSessionCallable'
+        ? vi.fn().mockResolvedValue({ data: { url: 'https://billing.stripe.com/p/x' } })
+        : callableMock)
+    const assignMock = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign: assignMock })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await userEvent.click(await screen.findByRole('button', { name: '支払い方法の変更・解約' }))
+    await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://billing.stripe.com/p/x'))
+    vi.unstubAllGlobals()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('hides the manage-billing button for an organization with no stripeCustomerId', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await screen.findByRole('button', { name: 'このプランで申し込む' })
+    expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
 })

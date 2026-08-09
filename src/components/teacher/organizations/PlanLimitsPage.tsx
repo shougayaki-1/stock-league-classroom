@@ -1,7 +1,7 @@
 import { Alert, Button, CircularProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import type { PlanLimits } from '../../../lib/organizations/planLimits'
 
-export interface PlanLimitsPageProps { data: PlanLimits | undefined; error: string | undefined; onCheckout?: () => void; checkingOut?: boolean }
+export interface PlanLimitsPageProps { data: PlanLimits | undefined; error: string | undefined; onCheckout?: () => void; checkingOut?: boolean; onManageBilling?: () => void; managingBilling?: boolean }
 
 const rows: { label: string; key: keyof PlanLimits }[] = [
   { label: '同時授業・市場数', key: 'concurrentLessonsAndMarkets' },
@@ -13,7 +13,7 @@ const rows: { label: string; key: keyof PlanLimits }[] = [
   { label: 'イベント追加枠', key: 'eventExtraCapacity' },
 ]
 
-export function PlanLimitsPage({ data, error, onCheckout, checkingOut }: PlanLimitsPageProps) {
+export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   return (
@@ -28,6 +28,7 @@ export function PlanLimitsPage({ data, error, onCheckout, checkingOut }: PlanLim
         </TableBody>
       </Table>
       {onCheckout && <Button variant="contained" disabled={checkingOut} onClick={onCheckout} sx={{ alignSelf: 'flex-start' }}>このプランで申し込む</Button>}
+      {onManageBilling && <Button variant="outlined" disabled={managingBilling} onClick={onManageBilling} sx={{ alignSelf: 'flex-start' }}>支払い方法の変更・解約</Button>}
     </Stack>
   )
 }
