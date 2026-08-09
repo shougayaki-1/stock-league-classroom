@@ -96,15 +96,51 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     expect(logUnresolvedStripeCustomer).toHaveBeenCalledWith('cus_unknown')
   })
 
-  it('logs a reverse lookup exception and does not let it escape', async () => {
+  it('returns a retry outcome when the reverse lookup throws, without letting the exception escape', async () => {
     const logStripeCustomerLookupError = vi.fn()
     const lookupError = new Error('Firestore unavailable')
     await expect(handleStripeWebhookEvent({
       getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
       getOrgIdForStripeCustomer: async () => { throw lookupError }, setSubscriptionStatus: vi.fn(), applyInvoiceLifecycle: vi.fn(),
       logStripeCustomerLookupError,
-    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_1' })).resolves.toBeUndefined()
+    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_1' })).resolves.toEqual({ status: 'retry' })
     expect(logStripeCustomerLookupError).toHaveBeenCalledWith('cus_1', lookupError)
+  })
+
+  it('returns a retry outcome for invoice.paid when the customer cannot be resolved', async () => {
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => null, setSubscriptionStatus: vi.fn(), applyInvoiceLifecycle: vi.fn(),
+    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_unknown' })
+    expect(result).toEqual({ status: 'retry' })
+  })
+
+  it('returns a retry outcome for customer.subscription.deleted when the customer cannot be resolved', async () => {
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => null, setSubscriptionStatus: vi.fn(), applyInvoiceLifecycle: vi.fn(),
+    }, { type: 'customer.subscription.deleted', stripeCustomerId: 'cus_unknown' })
+    expect(result).toEqual({ status: 'retry' })
+  })
+
+  it('returns an ok outcome for a successfully processed invoice.paid event', async () => {
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1', setSubscriptionStatus: vi.fn(), applyInvoiceLifecycle: vi.fn(),
+    }, { type: 'invoice.paid', invoiceId: 'in_1', stripeCustomerId: 'cus_1' })
+    expect(result).toEqual({ status: 'ok' })
+  })
+
+  it('returns an ok outcome for a malformed checkout.session.completed event (a permanent, non-retriable mismatch)', async () => {
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+    }, { type: 'checkout.session.completed', clientReferenceId: 'bad', stripeSessionId: 's' })
+    expect(result).toEqual({ status: 'ok' })
+  })
+
+  it('returns an ok outcome for an unrecognized event type', async () => {
+    const result = await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn() }, { type: 'customer.updated' })
+    expect(result).toEqual({ status: 'ok' })
   })
 })
 

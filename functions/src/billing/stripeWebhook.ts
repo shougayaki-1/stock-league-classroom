@@ -69,6 +69,8 @@ export const createFirestoreInvoiceLifecycleApplier = (db: Firestore, now: () =>
   })
 }
 
+export type StripeWebhookOutcome = { status: 'ok' } | { status: 'retry' }
+
 /**
  * Handles the 4 subscription-lifecycle events this app cares about.
  * checkout.session.completed uses billingRecords.status for idempotency
@@ -76,37 +78,43 @@ export const createFirestoreInvoiceLifecycleApplier = (db: Firestore, now: () =>
  * invoice.paid/invoice.payment_failed atomically apply the organization and
  * deterministic invoice-record transition, using Stripe's invoice id as the
  * billingRecords document id and deduplication key.
+ *
+ * Returns `{status: 'retry'}` only when a Stripe customer id could not be
+ * resolved to an organization for the three update events. This can be
+ * temporary because Stripe does not guarantee webhook delivery order or the
+ * lookup itself may have failed. All other skips are permanent mismatches and
+ * return `{status: 'ok'}`.
  */
-export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDeps, event: StripeWebhookEvent): Promise<void> => {
+export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDeps, event: StripeWebhookEvent): Promise<StripeWebhookOutcome> => {
   switch (event.type) {
     case 'checkout.session.completed': {
-      if (!event.clientReferenceId || !event.stripeSessionId) return
+      if (!event.clientReferenceId || !event.stripeSessionId) return { status: 'ok' }
       const parsed = parseClientReferenceId(event.clientReferenceId)
-      if (!parsed) return
+      if (!parsed) return { status: 'ok' }
       const record = await deps.getBillingRecord(parsed.orgId, parsed.recordId)
       if (record && record.status !== 'PAID') await deps.markBillingRecordPaid(parsed.orgId, parsed.recordId, event.stripeSessionId)
       if (event.stripeCustomerId && deps.linkStripeCustomer) await deps.linkStripeCustomer(parsed.orgId, event.stripeCustomerId)
-      return
+      return { status: 'ok' }
     }
     case 'invoice.paid':
     case 'invoice.payment_failed': {
-      if (!event.invoiceId || !event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.applyInvoiceLifecycle) return
+      if (!event.invoiceId || !event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.applyInvoiceLifecycle) return { status: 'ok' }
       const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
-      if (!orgId) return
+      if (!orgId) return { status: 'retry' }
       const status = event.type === 'invoice.paid' ? 'ACTIVE' : 'PAST_DUE'
       const recordStatus = event.type === 'invoice.paid' ? 'PAID' : 'OVERDUE'
       await deps.applyInvoiceLifecycle(orgId, event.invoiceId, status, recordStatus)
-      return
+      return { status: 'ok' }
     }
     case 'customer.subscription.deleted': {
-      if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.setSubscriptionStatus) return
+      if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.setSubscriptionStatus) return { status: 'ok' }
       const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
-      if (!orgId) return
+      if (!orgId) return { status: 'retry' }
       await deps.setSubscriptionStatus(orgId, 'CANCELED')
-      return
+      return { status: 'ok' }
     }
     default:
-      return
+      return { status: 'ok' }
   }
 }
 
@@ -157,7 +165,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
 
   const db = getFirestore()
   const applyInvoiceLifecycle = createFirestoreInvoiceLifecycleApplier(db)
-  await handleStripeWebhookEvent({
+  const outcome = await handleStripeWebhookEvent({
     getBillingRecord: async (orgId, recordId) => {
       const snap = await db.doc(`organizations/${orgId}/billingRecords/${recordId}`).get()
       return snap.exists ? (snap.data() as { status: string }) : null
@@ -183,5 +191,9 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     applyInvoiceLifecycle,
   }, extractEvent(stripeEvent))
 
+  if (outcome.status === 'retry') {
+    response.status(503).send('retry')
+    return
+  }
   response.status(200).send('ok')
 })
