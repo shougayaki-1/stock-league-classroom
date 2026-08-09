@@ -1,0 +1,5 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { GuidedBuilderWizard, type WizardStepComponent } from './GuidedBuilderWizard'
+const Step: WizardStepComponent = ({ value, onChange, onNext, onBack }) => <><input aria-label="値" value={String(value.value ?? '')} onChange={(event) => onChange({ value: event.target.value })} /><button onClick={onBack}>戻る</button><button onClick={onNext}>次へ</button></>
+describe('GuidedBuilderWizard', () => it('keeps answers while navigating and completes with the chosen goal', () => { const onComplete = vi.fn(); render(<GuidedBuilderWizard socialStudiesSteps={[Step]} homeEconomicsSteps={[Step]} onComplete={onComplete} />); fireEvent.click(screen.getByRole('button', { name: /市場のしくみ/ })); fireEvent.change(screen.getByLabelText('値'), { target: { value: '回答' } }); fireEvent.click(screen.getByRole('button', { name: '次へ' })); expect(onComplete).toHaveBeenCalledWith('MARKET_AND_INVESTING', { value: '回答' }) }))

@@ -1,0 +1,5 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { TemplateOverviewPage } from './TemplateOverviewPage'
+const answers = { goal: 'MARKET_AND_INVESTING' as const, mainObjective: '需給', lessonDurationMinutes: 50, studentCount: 30, deviceEnvironment: 'ONE_PER_STUDENT' as const, teamMode: 'TEAM' as const, readingDepth: 'STANDARD' as const, theme: '企業', difficulty: 'STANDARD' as const, companyCount: 5, useEarnings: true, useUncertainty: false, infoVsDemandWeight: 'BALANCED' as const, alwaysOnMarketMinutes: 20, predictionCheckpoints: 2, evaluationFocus: 'OPERATION_RESULT' as const }
+describe('TemplateOverviewPage', () => it('compares tiers and creates the selected draft', () => { const create = vi.fn(); render(<TemplateOverviewPage answers={answers} onCreate={create} creating={false} />); fireEvent.click(screen.getByRole('button', { name: /標準案/ })); fireEvent.click(screen.getByRole('button', { name: 'この内容で作成' })); expect(create).toHaveBeenCalledWith(expect.objectContaining({ subject: 'SOCIAL_STUDIES' })) }))

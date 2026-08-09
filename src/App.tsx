@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { Box, Button, CircularProgress, CssBaseline, Link, Stack, ThemeProvider, Typography } from '@mui/material'
 import { onAuthStateChanged } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import { onValue, ref } from 'firebase/database'
 import { appTheme } from './theme/theme'
 import { AboutPage, ContactPage, GuidePage, PrivacyPage, TermsPage } from './components/PublicDocs'
@@ -14,6 +14,17 @@ import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
+import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
+import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
+import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repository'
+import { publishLessonVersion } from './lib/lessonTemplates/publishLessonVersion'
+import { personalOrgId } from './lib/org/personalOrgId'
+import { TemplateListPage } from './components/teacher/templates/TemplateListPage'
+import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilderWizard'
+import { TemplateOverviewPage } from './components/teacher/templates/TemplateOverviewPage'
+import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
+import { SocialStudiesQuestionStep } from './components/teacher/templates/wizardSteps/socialStudies/QuestionSteps'
+import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizardSteps/homeEconomics/QuestionSteps'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -196,6 +207,66 @@ function TeacherAnalyticsRoute({ services }: { services: FirebaseServices }) {
   return <DeferredDataNotice heading="授業分析" />
 }
 
+function useTemplateAccess(services: FirebaseServices): AccessStatus {
+  const [status, setStatus] = useState<AccessStatus>('LOADING')
+  useEffect(() => {
+    let cancelled = false
+    return onAuthStateChanged(services.auth, (user) => {
+      if (!user || !user.emailVerified || !user.providerData.some((provider) => provider.providerId === 'google.com')) {
+        if (!cancelled) setStatus('DENIED')
+        return
+      }
+      getDoc(doc(services.firestore, 'organizations', personalOrgId(user.uid), 'members', user.uid))
+        .then((snapshot) => { if (!cancelled) setStatus(snapshot.exists() && snapshot.data()?.status === 'active' ? 'GRANTED' : 'DENIED') })
+        .catch(() => { if (!cancelled) setStatus('DENIED') })
+    })
+  }, [services])
+  return status
+}
+
+function TemplateRouteGuard({ services, children }: { services: FirebaseServices; children: React.JSX.Element }) {
+  const access = useTemplateAccess(services)
+  if (access === 'LOADING') return <GuardLoading />
+  return access === 'GRANTED' ? children : <Navigate replace to="/about" />
+}
+
+function TemplateListRoute({ services }: { services: FirebaseServices }) {
+  const [templates, setTemplates] = useState<LessonTemplate[]>([])
+  const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
+  useEffect(() => {
+    const uid = services.auth.currentUser?.uid
+    if (!uid) { setLoading(false); return }
+    getDocs(query(collection(services.firestore, 'lessonTemplates'), where('orgId', '==', personalOrgId(uid))))
+      .then((snapshot) => setTemplates(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as LessonTemplate)))
+      .finally(() => setLoading(false))
+  }, [services])
+  return <TemplateListPage templates={templates} loading={loading} onCreateNew={() => navigate('/teacher/templates/new')} onOpen={(id) => navigate(`/teacher/templates/${id}/edit`)} />
+}
+
+function TemplateNewRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
+  const [completed, setCompleted] = useState<{ goal: LearningGoal; answers: Record<string, unknown> }>()
+  const [creating, setCreating] = useState(false)
+  if (!completed) return <GuidedBuilderWizard socialStudiesSteps={[SocialStudiesQuestionStep]} homeEconomicsSteps={[HomeEconomicsQuestionStep]} onComplete={(goal, answers) => setCompleted({ goal, answers })} />
+  return <TemplateOverviewPage answers={{ goal: completed.goal, ...completed.answers } as WizardAnswers} creating={creating} onCreate={async (draft) => {
+    const uid = services.auth.currentUser?.uid
+    if (!uid) return
+    setCreating(true)
+    try { navigate(`/teacher/templates/${await createLessonTemplate(services.firestore, uid, draft)}/edit`) } finally { setCreating(false) }
+  }} />
+}
+
+function TemplateEditRoute({ services }: { services: FirebaseServices }) {
+  const { templateId } = useParams<{ templateId: string }>()
+  const [draft, setDraft] = useState<LessonContent>()
+  const [saving, setSaving] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  useEffect(() => { if (templateId) getDoc(doc(services.firestore, 'lessonTemplates', templateId)).then((snapshot) => { if (snapshot.exists()) setDraft((snapshot.data() as LessonTemplate).draft) }) }, [services, templateId])
+  if (!templateId || !draft) return <GuardLoading />
+  return <TemplateEditorPage draft={draft} saving={saving} publishing={publishing} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
+}
+
 function StudentLessonRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useStudentLessonAccess(runId ?? '', services)
@@ -255,6 +326,9 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
 </Routes></>

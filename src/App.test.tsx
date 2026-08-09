@@ -10,8 +10,9 @@ import App from './App'
 // Same module-boundary mock pattern as LessonControlRoom.test.tsx: App.tsx's
 // route guards (and the Task 11/12/13 screens they wire up) call the real
 // client wrappers, so only the underlying Firebase SDK calls are faked here.
-let authStateCallback: ((user: { uid: string } | null) => void) | undefined
-const onAuthStateChangedMock = vi.fn((_auth: unknown, callback: (user: { uid: string } | null) => void) => {
+type AuthUser = { uid: string; emailVerified?: boolean; providerData?: Array<{ providerId: string }> }
+let authStateCallback: ((user: AuthUser | null) => void) | undefined
+const onAuthStateChangedMock = vi.fn((_auth: unknown, callback: (user: AuthUser | null) => void) => {
   authStateCallback = callback
   return () => {}
 })
@@ -30,10 +31,14 @@ const onSnapshotMock = vi.fn((_ref: unknown, onNext: (s: { docs: unknown[] }) =>
   onNext({ docs: [] })
   return () => {}
 })
+const getDocsMock = vi.fn().mockResolvedValue({ docs: [] })
 vi.mock('firebase/firestore', () => ({
   doc: (...args: Parameters<typeof docMock>) => docMock(...args),
   getDoc: (...args: unknown[]) => getDocMock(...args),
   collection: (...args: Parameters<typeof collectionMock>) => collectionMock(...args),
+  getDocs: (...args: unknown[]) => getDocsMock(...args),
+  query: (...args: unknown[]) => args[0],
+  where: (...args: unknown[]) => args,
   onSnapshot: (...args: Parameters<typeof onSnapshotMock>) => onSnapshotMock(...args),
 }))
 
@@ -79,6 +84,7 @@ beforeEach(() => {
   docMock.mockClear()
   collectionMock.mockClear()
   onSnapshotMock.mockClear()
+  getDocsMock.mockClear().mockResolvedValue({ docs: [] })
   refMock.mockClear()
   onValueMock.mockClear()
   offMock.mockClear()
@@ -224,6 +230,25 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     callableMock.mockRejectedValue(new Error('exchange failed'))
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     expect(await screen.findByRole('alert')).toHaveTextContent(/この教室表示を表示できません/)
+    window.history.pushState({}, '', '/')
+  })
+})
+
+describe('Guided Lesson Builder routes', () => {
+  it('routes /teacher/templates to the teacher template list', async () => {
+    window.history.pushState({}, '', '/teacher/templates')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('heading', { name: '教材一覧' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('redirects an unauthenticated visitor from the template routes', async () => {
+    window.history.pushState({}, '', '/teacher/templates/new')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.(null)
+    expect(await screen.findByRole('heading', { name: /サービス概要/ })).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 })

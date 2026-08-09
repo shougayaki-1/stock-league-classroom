@@ -1,0 +1,13 @@
+import type { AssetPosition, HouseholdProfile, InsuranceProduct, LifeEventDefinition } from '@stock-league/household-authoring-content'
+import type { ArrayItemFieldConfig } from '../ArrayFieldEditor'
+
+let nextId = 0
+const id = (prefix: string) => `${prefix}-${++nextId}`
+export const householdProfileFields: ArrayItemFieldConfig<HouseholdProfile>[] = [{ key: 'family', label: '家族構成', type: 'text' }, { key: 'housing', label: '住居', type: 'text' }, { key: 'lifeGoal', label: '生活目標', type: 'text' }, { key: 'age', label: '年齢', type: 'number' }, { key: 'householdIncomeYen', label: '世帯収入（円）', type: 'number' }, { key: 'annualLivingExpensesYen', label: '年間生活費（円）', type: 'number' }, { key: 'cashSavingsYen', label: '初期貯蓄（円）', type: 'number' }]
+export const createEmptyHouseholdProfile = (): HouseholdProfile => ({ householdId: id('case'), age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 2800000, cashSavingsYen: 1000000, family: '', housing: '', lifeGoal: '', lifeStage: 'INDEPENDENT', eventProbabilityOverrides: {}, internalRiskFactors: {} })
+export const assetFields: ArrayItemFieldConfig<AssetPosition>[] = [{ key: 'assetType', label: '資産の種類', type: 'text' }, { key: 'valueYen', label: '評価額（円）', type: 'number' }]
+export const createEmptyAsset = (): AssetPosition => ({ assetType: 'DOMESTIC_STOCK', valueYen: 0, expectedReturnPercent: 0, volatilityPercent: 0 })
+export const insuranceProductFields: ArrayItemFieldConfig<InsuranceProduct>[] = [{ key: 'productName', label: '商品名', type: 'text' }, { key: 'coveredRisk', label: '対象リスク', type: 'text' }, { key: 'benefitDescription', label: '給付内容', type: 'text' }, { key: 'premiumYenPerYear', label: '年間保険料（円）', type: 'number' }, { key: 'benefitAmountYen', label: '給付額（円）', type: 'number' }, { key: 'contractYears', label: '契約年数', type: 'number' }]
+export const createEmptyInsuranceProduct = (): InsuranceProduct => ({ id: id('ins'), productName: '', premiumYenPerYear: 0, coveredRisk: '', benefitDescription: '', benefitAmountYen: 0, contractYears: 10, coveredEventIds: [], internalClaimProbability: 0 })
+export const lifeEventFields: ArrayItemFieldConfig<LifeEventDefinition>[] = [{ key: 'label', label: 'イベント名', type: 'text' }, { key: 'effectDescription', label: '効果の説明', type: 'text' }, { key: 'incomeEffectYen', label: '収入への影響（円）', type: 'number' }, { key: 'expenseEffectYen', label: '支出への影響（円）', type: 'number' }, { key: 'cashEffectYen', label: '現金への影響（円）', type: 'number' }]
+export const createEmptyLifeEvent = (): LifeEventDefinition => ({ id: id('event'), label: '', disclosureMode: 'ANNOUNCED', triggerProbability: 0, effectDescription: '', incomeEffectYen: 0, expenseEffectYen: 0, cashEffectYen: 0 })
