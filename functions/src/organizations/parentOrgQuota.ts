@@ -40,7 +40,8 @@ const reservationIdFor = (resourceKey: QuotaResourceKey, schoolOrgId: string, ta
 
 export const reserveSharedQuota = (input: ReserveSharedQuotaInput): QuotaReservation | null => {
   const allocation = input.allocations.find(({ schoolOrgId }) => schoolOrgId === input.schoolOrgId)
-  const guarantee = allocation ? guaranteeFor(allocation, input.resourceKey) : 0
+  if (!allocation) throw new Error('この学校の配分が見つかりません')
+  const guarantee = guaranteeFor(allocation, input.resourceKey)
   if (input.currentUsage <= guarantee) return null
 
   const reservationId = reservationIdFor(input.resourceKey, input.schoolOrgId, input.targetId)

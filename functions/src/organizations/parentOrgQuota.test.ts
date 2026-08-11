@@ -20,6 +20,18 @@ const reservation = (targetId: string): QuotaReservation => ({
 })
 
 describe('parent organization quota ledger', () => {
+  it('rejects a school that does not have a quota allocation', () => {
+    expect(() => reserveSharedQuota({
+      resourceKey: 'teacherSeats',
+      parentLimit: 3,
+      allocations,
+      reservations: [],
+      schoolOrgId: 'unallocated-school',
+      targetId: 'teacher-1',
+      currentUsage: 1,
+    })).toThrow('この学校の配分が見つかりません')
+  })
+
   it('does not reserve shared quota while usage is within the school guarantee', () => {
     expect(reserveSharedQuota({
       resourceKey: 'teacherSeats',
@@ -30,6 +42,40 @@ describe('parent organization quota ledger', () => {
       targetId: 'teacher-1',
       currentUsage: 1,
     })).toBeNull()
+  })
+
+  it('uses the concurrent lessons and markets guarantee for that resource', () => {
+    const allocationsWithDistinctGuarantees: SchoolQuotaAllocation[] = [
+      { schoolOrgId: 'school-1', guaranteedConcurrentLessonsAndMarkets: 2, guaranteedTeacherSeats: 1 },
+      { schoolOrgId: 'school-2', guaranteedConcurrentLessonsAndMarkets: 1, guaranteedTeacherSeats: 1 },
+    ]
+
+    expect(reserveSharedQuota({
+      resourceKey: 'concurrentLessonsAndMarkets',
+      parentLimit: 4,
+      allocations: allocationsWithDistinctGuarantees,
+      reservations: [],
+      schoolOrgId: 'school-1',
+      targetId: 'lesson-run-1',
+      currentUsage: 2,
+    })).toBeNull()
+  })
+
+  it('uses the concurrent lesson and market guarantee field for an overage reservation', () => {
+    expect(reserveSharedQuota({
+      resourceKey: 'concurrentLessonsAndMarkets',
+      parentLimit: 5,
+      allocations,
+      reservations: [],
+      schoolOrgId: 'school-1',
+      targetId: 'lesson-run-1',
+      currentUsage: 3,
+    })).toEqual({
+      reservationId: 'concurrentLessonsAndMarkets:school-1:lesson-run-1',
+      resourceKey: 'concurrentLessonsAndMarkets',
+      schoolOrgId: 'school-1',
+      targetId: 'lesson-run-1',
+    })
   })
 
   it('creates a deterministic reservation when usage exceeds the guarantee', () => {
