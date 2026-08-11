@@ -1,6 +1,7 @@
 import { getDatabase } from 'firebase-admin/database'
 import { getFirestore } from 'firebase-admin/firestore'
 import { syncOrganizationMembershipChange, type MembershipChange } from './membershipSync'
+import { quotaReservationDocumentPath } from './parentOrgQuotaFirestore'
 
 interface MemberSnapshot {
   role: 'owner' | 'admin' | 'teacher'
@@ -12,6 +13,7 @@ export interface SuspendOrgMemberDeps {
   getMember: (orgId: string, uid: string) => Promise<MemberSnapshot | null>
   countActiveOwners: (orgId: string) => Promise<number>
   syncMembership: (change: MembershipChange) => Promise<void>
+  releaseTeacherSeat?: (orgId: string, uid: string) => Promise<void>
   nowSeconds: () => number
 }
 
@@ -37,6 +39,33 @@ export const suspendOrgMember = async (
     membershipVersion: member.membershipVersion + 1,
     revokedAtSeconds: deps.nowSeconds(),
   })
+  if (member.role === 'teacher' && deps.releaseTeacherSeat) {
+    await deps.releaseTeacherSeat(input.orgId, input.uid)
+  }
+}
+
+export interface ReleaseTeacherSeatReservationDeps {
+  getParentOrgId: (schoolOrgId: string) => Promise<string | null>
+  deleteReservation: (path: string) => Promise<void>
+}
+
+export interface ReleaseTeacherSeatReservationInput {
+  schoolOrgId: string
+  teacherUid: string
+}
+
+export const releaseTeacherSeatReservation = async (
+  deps: ReleaseTeacherSeatReservationDeps,
+  input: ReleaseTeacherSeatReservationInput,
+): Promise<void> => {
+  const parentOrgId = await deps.getParentOrgId(input.schoolOrgId)
+  if (!parentOrgId) return
+  await deps.deleteReservation(quotaReservationDocumentPath(
+    parentOrgId,
+    'teacherSeats',
+    input.schoolOrgId,
+    input.teacherUid,
+  ))
 }
 
 /** Production wiring: Firestore Admin SDK and the RTDB membership mirror. */
@@ -78,6 +107,14 @@ export const suspendOrgMemberWithAdminSdk = (input: SuspendOrgMemberInput): Prom
         })
       },
     }, change),
+    releaseTeacherSeat: (orgId, uid) => releaseTeacherSeatReservation({
+      getParentOrgId: async (schoolOrgId) => {
+        const snapshot = await db.doc(`organizations/${schoolOrgId}`).get()
+        const parentOrgId = snapshot.get('parentOrgId') as unknown
+        return typeof parentOrgId === 'string' && parentOrgId.length > 0 ? parentOrgId : null
+      },
+      deleteReservation: async (path) => { await db.doc(path).delete() },
+    }, { schoolOrgId: orgId, teacherUid: uid }),
     nowSeconds: () => Math.floor(Date.now() / 1000),
   }, input)
 }

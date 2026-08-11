@@ -2,6 +2,13 @@ import { getDatabase } from 'firebase-admin/database'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { syncOrganizationMembershipChange, type MembershipChange } from './membershipSync'
 import { canIncreaseLimitedResource, type DowngradeStatus } from './downgradeEnforcement'
+import { reserveSharedQuota } from './parentOrgQuota'
+import {
+  allocationFromQuotaDocument,
+  quotaReservationDocumentPath,
+  reservationFromQuotaDocument,
+  type QuotaDocument,
+} from './parentOrgQuotaFirestore'
 import { getDowngradeStatusWithAdminSdk } from './planLimits'
 
 export interface Invitation {
@@ -114,6 +121,7 @@ export interface AcceptInvitationDeps {
   getInvitation: (orgId: string, invitationId: string) => Promise<Invitation | null>
   getMembership: (orgId: string, uid: string) => Promise<{ status: string } | null>
   getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
+  reserveTeacherSeat?: (orgId: string, uid: string) => Promise<{ alreadyActive: boolean }>
   syncMembership: (change: MembershipChange) => Promise<void>
   markInvitationAccepted: (orgId: string, invitationId: string) => Promise<void>
 }
@@ -143,7 +151,7 @@ export const acceptInvitation = async (
   }
 
   const membership = await deps.getMembership(input.orgId, input.callerUid)
-  const alreadyActive = membership?.status === 'active'
+  let alreadyActive = membership?.status === 'active'
   if (!alreadyActive) {
     if (invitation.role === 'teacher' && deps.getDowngradeStatus) {
       const status = await deps.getDowngradeStatus(input.orgId)
@@ -151,17 +159,119 @@ export const acceptInvitation = async (
         throw new Error('教師席を整理する必要があります')
       }
     }
-    await deps.syncMembership({
-      orgId: input.orgId,
-      uid: input.callerUid,
-      role: invitation.role,
-      status: 'active',
-      membershipVersion: 1,
-      revokedAtSeconds: 0,
-    })
+    if (invitation.role === 'teacher' && deps.reserveTeacherSeat) {
+      alreadyActive = (await deps.reserveTeacherSeat(input.orgId, input.callerUid)).alreadyActive
+    }
+    if (!alreadyActive) {
+      await deps.syncMembership({
+        orgId: input.orgId,
+        uid: input.callerUid,
+        role: invitation.role,
+        status: 'active',
+        membershipVersion: 1,
+        revokedAtSeconds: 0,
+      })
+    }
   }
   await deps.markInvitationAccepted(input.orgId, input.invitationId)
   return { status: alreadyActive ? 'ALREADY_MEMBER' : 'ACCEPTED' }
+}
+
+export interface TeacherSeatQuotaTransaction {
+  get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+  getCollection: (path: string) => Promise<QuotaDocument[]>
+  countActiveTeachers: (orgId: string) => Promise<number>
+  set: (path: string, data: Record<string, unknown>) => void
+}
+
+export interface ReserveTeacherSeatForInvitationDeps {
+  firestore: {
+    runTransaction: (
+      operation: (transaction: TeacherSeatQuotaTransaction) => Promise<{ alreadyActive: boolean }>,
+    ) => Promise<{ alreadyActive: boolean }>
+  }
+  now?: () => unknown
+}
+
+export interface ReserveTeacherSeatForInvitationInput {
+  schoolOrgId: string
+  teacherUid: string
+}
+
+export const reserveTeacherSeatForInvitation = (
+  deps: ReserveTeacherSeatForInvitationDeps,
+  input: ReserveTeacherSeatForInvitationInput,
+): Promise<{ alreadyActive: boolean }> => {
+  const nowValue = deps.now ? deps.now() : new Date().toISOString()
+  return deps.firestore.runTransaction(async (transaction) => {
+    const schoolPath = `organizations/${input.schoolOrgId}`
+    const memberPath = `${schoolPath}/members/${input.teacherUid}`
+    const [schoolSnapshot, memberSnapshot] = await Promise.all([
+      transaction.get(schoolPath),
+      transaction.get(memberPath),
+    ])
+    const member = memberSnapshot.data()
+    if (memberSnapshot.exists && member?.status === 'active') return { alreadyActive: true }
+
+    const school = schoolSnapshot.data()
+    const parentOrgId = school?.parentOrgId
+    if (school?.type !== 'school' || typeof parentOrgId !== 'string' || parentOrgId.length === 0) {
+      return { alreadyActive: false }
+    }
+
+    const allocationPath = `organizations/${parentOrgId}/schoolAllocations/${input.schoolOrgId}`
+    const [allocationSnapshot, activeTeachers] = await Promise.all([
+      transaction.get(allocationPath),
+      transaction.countActiveTeachers(input.schoolOrgId),
+    ])
+    if (!allocationSnapshot.exists) throw new Error('この学校の配分が見つかりません')
+    const allocation = allocationFromQuotaDocument({
+      id: input.schoolOrgId,
+      data: () => allocationSnapshot.data() ?? {},
+    })
+    const currentUsage = activeTeachers + 1
+    if (currentUsage <= allocation.guaranteedTeacherSeats) return { alreadyActive: false }
+
+    const parentSnapshot = await transaction.get(`organizations/${parentOrgId}`)
+    const parent = parentSnapshot.data()
+    if (!parentSnapshot.exists || parent?.type !== 'parentOrg') throw new Error('上位組織が見つかりません')
+    if (typeof parent.planId !== 'string') throw new Error('上位組織のプランが設定されていません')
+
+    const [parentPlanSnapshot, allocationDocuments, reservationDocuments] = await Promise.all([
+      transaction.get(`planDefinitions/${parent.planId}`),
+      transaction.getCollection(`organizations/${parentOrgId}/schoolAllocations`),
+      transaction.getCollection(`organizations/${parentOrgId}/quotaReservations`),
+    ])
+    if (!parentPlanSnapshot.exists) throw new Error('上位組織のプランが設定されていません')
+    const parentLimit = (parentPlanSnapshot.data()?.limits as Record<string, unknown> | undefined)?.teacherSeats
+    if (typeof parentLimit !== 'number') throw new Error('上位組織の利用上限が見つかりません')
+
+    const allocations = allocationDocuments.map(allocationFromQuotaDocument)
+    const reservations = reservationDocuments
+      .map(reservationFromQuotaDocument)
+      .filter((reservation): reservation is NonNullable<typeof reservation> => reservation !== null)
+    const reservation = reserveSharedQuota({
+      resourceKey: 'teacherSeats',
+      parentLimit,
+      allocations,
+      reservations,
+      schoolOrgId: input.schoolOrgId,
+      targetId: input.teacherUid,
+      currentUsage,
+    })
+    if (reservation && !reservations.some(({ reservationId }) => reservationId === reservation.reservationId)) {
+      transaction.set(quotaReservationDocumentPath(
+        parentOrgId,
+        'teacherSeats',
+        input.schoolOrgId,
+        input.teacherUid,
+      ), {
+        ...reservation,
+        createdAt: nowValue,
+      })
+    }
+    return { alreadyActive: false }
+  })
 }
 
 /** Production wiring: Firestore Admin SDK plus the canonical membership sync. */
@@ -180,6 +290,30 @@ export const acceptInvitationWithAdminSdk = (
       return snap.exists ? { status: snap.get('status') as string } : null
     },
     getDowngradeStatus: getDowngradeStatusWithAdminSdk,
+    reserveTeacherSeat: (orgId, uid) => reserveTeacherSeatForInvitation({
+      firestore: {
+        runTransaction: (operation) => db.runTransaction((transaction) => operation({
+          get: async (path) => {
+            const snapshot = await transaction.get(db.doc(path))
+            return { exists: snapshot.exists, data: () => snapshot.data() }
+          },
+          getCollection: async (path) => {
+            const snapshot = await transaction.get(db.collection(path))
+            return snapshot.docs.map((document) => ({ id: document.id, data: () => document.data() }))
+          },
+          countActiveTeachers: async (schoolOrgId) => {
+            const snapshot = await transaction.get(
+              db.collection(`organizations/${schoolOrgId}/members`)
+                .where('status', '==', 'active')
+                .where('role', '==', 'teacher'),
+            )
+            return snapshot.size
+          },
+          set: (path, data) => { transaction.set(db.doc(path), data) },
+        })),
+      },
+      now: FieldValue.serverTimestamp,
+    }, { schoolOrgId: orgId, teacherUid: uid }),
     syncMembership: (change) => syncOrganizationMembershipChange({
       markMirrorPending: async (orgId, membershipVersion) => {
         await getDatabase().ref(`orgAccessMeta/${orgId}/${change.uid}`).set({
