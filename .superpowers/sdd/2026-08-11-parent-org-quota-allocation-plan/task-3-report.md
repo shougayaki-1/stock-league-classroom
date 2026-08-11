@@ -206,6 +206,19 @@ cd .. && git diff --check
 
 Focused testsは`2 files / 46 tests passed`。typecheck、lint、diff checkもexit code 0。
 
+## Task 3 Fix Round 4
+
+再レビューで判明した、古い受諾処理のマーカー削除が再有効化後の新しい招待マーカーを消し得る競合を修正した。productionのマーカー削除をFirestore transaction化し、対象memberを再読して`pendingMembershipSyncInvitationId`が削除対象の招待IDと一致する場合だけ`FieldValue.delete()`を実行する。これにより、後続受諾が先に書いたマーカーを古い処理が消去しない。
+
+```bash
+cd functions && npx vitest run src/organizations/invitations.test.ts src/organizations/onCall.test.ts
+cd functions && npm run typecheck
+cd functions && npm run lint
+cd .. && git diff --check
+```
+
+Focused testsは`2 files / 46 tests passed`。typecheck、lint、diff checkもexit code 0。
+
 ---
 
 # Task 3 Fix Round

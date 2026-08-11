@@ -388,10 +388,15 @@ export const acceptInvitationWithAdminSdk = (
         })
       },
       }, change),
-    clearPendingMembershipSyncInvitation: async (orgId, uid) => {
-      await db.doc(`organizations/${orgId}/members/${uid}`).set({
-        pendingMembershipSyncInvitationId: FieldValue.delete(),
-      }, { merge: true })
+    clearPendingMembershipSyncInvitation: async (orgId, uid, invitationId) => {
+      const memberRef = db.doc(`organizations/${orgId}/members/${uid}`)
+      await db.runTransaction(async (transaction) => {
+        const memberSnapshot = await transaction.get(memberRef)
+        if (!memberSnapshot.exists || memberSnapshot.get('pendingMembershipSyncInvitationId') !== invitationId) return
+        transaction.set(memberRef, {
+          pendingMembershipSyncInvitationId: FieldValue.delete(),
+        }, { merge: true })
+      })
     },
     markInvitationAccepted: async (orgId, invitationId) => {
       await db.doc(`organizations/${orgId}/invitations/${invitationId}`).update({
