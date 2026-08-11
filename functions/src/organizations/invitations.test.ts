@@ -6,7 +6,7 @@ const firestore = vi.hoisted(() => ({
 }))
 
 vi.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: firestore.serverTimestamp },
+  FieldValue: { serverTimestamp: firestore.serverTimestamp, delete: vi.fn(() => 'delete-field') },
   getFirestore: firestore.getFirestore,
 }))
 
@@ -296,6 +296,35 @@ describe('acceptInvitation', () => {
     expect(reserveTeacherSeat).toHaveBeenCalledWith('org-1', 'uid-2', 'invitation-1')
     expect(syncMembership).toHaveBeenCalledTimes(2)
     expect(markInvitationAccepted).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the admission marker so a later invitation reusing the ID remains ALREADY_MEMBER', async () => {
+    let membership: { status: string; pendingMembershipSyncInvitationId?: string } | null = null
+    let invitationStatus: 'PENDING' | 'ACCEPTED' = 'PENDING'
+    const reserveTeacherSeat = vi.fn(async (_orgId: string, _uid: string, invitationId: string) => {
+      membership = { status: 'active', pendingMembershipSyncInvitationId: invitationId }
+      return { alreadyActive: false }
+    })
+    const clearPendingMembershipSyncInvitation = vi.fn(async () => {
+      membership = { status: 'active' }
+    })
+    const syncMembership = vi.fn()
+    const deps = {
+      getInvitation: async () => ({ ...pending, status: invitationStatus }),
+      getMembership: async () => membership,
+      reserveTeacherSeat,
+      syncMembership,
+      clearPendingMembershipSyncInvitation,
+      markInvitationAccepted: vi.fn(async () => { invitationStatus = 'ACCEPTED' }),
+    }
+    const input = { orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'teacher@example.com' }
+
+    await expect(acceptInvitation(deps, input)).resolves.toEqual({ status: 'ACCEPTED' })
+    expect(clearPendingMembershipSyncInvitation).toHaveBeenCalledWith('org-1', 'uid-2', 'invitation-1')
+
+    invitationStatus = 'PENDING'
+    await expect(acceptInvitation(deps, input)).resolves.toEqual({ status: 'ALREADY_MEMBER' })
+    expect(syncMembership).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a new teacher when the teacher-seat resource is restricted', async () => {

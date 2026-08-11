@@ -193,6 +193,19 @@ cd functions && npm test
 
 Task 3Cの指定範囲に既知の未解決事項はない。reservation削除はLessonRunのterminal更新と同一transactionのため、Task 3Bの教師suspend返却で報告されたsync後deleteの部分失敗問題はこの経路には存在しない。
 
+## Task 3 Fix Round 3
+
+再レビューで判明した、RTDB同期成功後も招待IDマーカーが残り、決定的IDの招待再利用を誤判定する問題を修正した。同期成功後にFirestoreの`pendingMembershipSyncInvitationId`を`FieldValue.delete()`で消去し、マーカー削除失敗時も招待を受諾済みにせず次回再試行できるようにした。同一IDを再利用した後続招待が、既存active会員として`ALREADY_MEMBER`になるテストを追加した。
+
+```bash
+cd functions && npx vitest run src/organizations/invitations.test.ts src/organizations/onCall.test.ts
+cd functions && npm run typecheck
+cd functions && npm run lint
+cd .. && git diff --check
+```
+
+Focused testsは`2 files / 46 tests passed`。typecheck、lint、diff checkもexit code 0。
+
 ---
 
 # Task 3 Fix Round

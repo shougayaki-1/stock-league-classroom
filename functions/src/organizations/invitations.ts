@@ -126,6 +126,7 @@ export interface AcceptInvitationDeps {
   getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
   reserveTeacherSeat?: (orgId: string, uid: string, invitationId: string) => Promise<{ alreadyActive: boolean }>
   syncMembership: (change: MembershipChange) => Promise<void>
+  clearPendingMembershipSyncInvitation?: (orgId: string, uid: string, invitationId: string) => Promise<void>
   markInvitationAccepted: (orgId: string, invitationId: string) => Promise<void>
 }
 
@@ -186,6 +187,13 @@ export const acceptInvitation = async (
       membershipVersion: 1,
       revokedAtSeconds: 0,
     })
+    if (invitation.role === 'teacher') {
+      await deps.clearPendingMembershipSyncInvitation?.(
+        input.orgId,
+        input.callerUid,
+        input.invitationId,
+      )
+    }
   }
   await deps.markInvitationAccepted(input.orgId, input.invitationId)
   return { status: alreadyActive && !admissionNeedsSync ? 'ALREADY_MEMBER' : 'ACCEPTED' }
@@ -379,7 +387,12 @@ export const acceptInvitationWithAdminSdk = (
           [`orgAccessMeta/${membership.orgId}/${membership.uid}`]: { syncState: 'SYNCED' },
         })
       },
-    }, change),
+      }, change),
+    clearPendingMembershipSyncInvitation: async (orgId, uid) => {
+      await db.doc(`organizations/${orgId}/members/${uid}`).set({
+        pendingMembershipSyncInvitationId: FieldValue.delete(),
+      }, { merge: true })
+    },
     markInvitationAccepted: async (orgId, invitationId) => {
       await db.doc(`organizations/${orgId}/invitations/${invitationId}`).update({
         status: 'ACCEPTED',
