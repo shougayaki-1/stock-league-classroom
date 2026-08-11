@@ -1,4 +1,4 @@
-import { getFirestore, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { logger } from 'firebase-functions/v2'
 import { onRequest } from 'firebase-functions/v2/https'
 import { defineSecret } from 'firebase-functions/params'
@@ -11,7 +11,26 @@ export type StripeWebhookEvent =
   | { type: 'checkout.session.completed'; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string }
   | { type: 'invoice.paid' | 'invoice.payment_failed'; invoiceId?: string; stripeCustomerId?: string }
   | { type: 'customer.subscription.deleted'; stripeCustomerId?: string }
-  | { type: string; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string; invoiceId?: string }
+  | { type: 'customer.subscription.updated'; stripeCustomerId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string }
+  | { type: string; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string; invoiceId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string }
+
+export interface ScheduledPlanChange {
+  planId: string
+  effectiveAtMillis: number
+}
+
+export interface PendingPlanChangeSummary {
+  planId: string
+  stripeScheduleId?: string
+}
+
+export interface SubscriptionPlanChangeSyncInput {
+  kind: 'SCHEDULE' | 'APPLY'
+  planId: string
+  effectiveAtMillis?: number
+  stripeSubscriptionId: string
+  stripeScheduleId: string
+}
 
 export interface HandleStripeWebhookEventDeps {
   getBillingRecord: (orgId: string, recordId: string) => Promise<{ status: string } | null>
@@ -20,6 +39,12 @@ export interface HandleStripeWebhookEventDeps {
   getOrgIdForStripeCustomer?: (stripeCustomerId: string) => Promise<string | null>
   setSubscriptionStatus?: (orgId: string, status: 'ACTIVE' | 'PAST_DUE' | 'CANCELED') => Promise<void>
   applyInvoiceLifecycle?: (orgId: string, invoiceId: string, subscriptionStatus: 'ACTIVE' | 'PAST_DUE', billingRecordStatus: 'PAID' | 'OVERDUE') => Promise<void>
+  getPlanIdForStripePrice?: (stripePriceId: string) => Promise<string | null>
+  getScheduledPlanChange?: (stripeScheduleId: string) => Promise<ScheduledPlanChange | null>
+  getPendingPlanChange?: (orgId: string) => Promise<PendingPlanChangeSummary | null>
+  syncSubscriptionPlanChange?: (orgId: string, input: SubscriptionPlanChangeSyncInput) => Promise<void>
+  clearPendingPlanChange?: (orgId: string) => Promise<void>
+  logSubscriptionPlanChangeIssue?: (details: Record<string, unknown>) => void
   logUnresolvedStripeCustomer?: (stripeCustomerId: string) => void
   logStripeCustomerLookupError?: (stripeCustomerId: string, error: unknown) => void
 }
@@ -66,6 +91,72 @@ export const createFirestoreInvoiceLifecycleApplier = (db: Firestore, now: () =>
       transaction.update(organizationRef, { subscriptionStatus })
       transaction.update(billingRecordRef, { status: billingRecordStatus })
     }
+  })
+}
+
+const GRACE_PERIOD_MILLIS = 30 * 24 * 60 * 60 * 1_000
+
+export const createFirestoreSubscriptionPlanChangeSynchronizer = (
+  db: Firestore,
+  nowMillis: () => number = () => Date.now(),
+) => async (orgId: string, input: SubscriptionPlanChangeSyncInput): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    if (!organization.exists) throw new Error('Organization not found')
+
+    if (input.kind === 'SCHEDULE') {
+      if (input.effectiveAtMillis == null || !Number.isFinite(input.effectiveAtMillis)) {
+        throw new Error('Invalid scheduled plan change')
+      }
+      transaction.update(organizationRef, {
+        pendingPlanChange: {
+          planId: input.planId,
+          stripeSubscriptionId: input.stripeSubscriptionId,
+          stripeScheduleId: input.stripeScheduleId,
+          effectiveAt: Timestamp.fromMillis(input.effectiveAtMillis),
+        },
+      })
+      return
+    }
+
+    const pending = organization.get('pendingPlanChange') as { planId?: unknown; stripeScheduleId?: unknown } | undefined
+    if (pending?.planId !== input.planId || pending.stripeScheduleId !== input.stripeScheduleId) return
+
+    const update: Record<string, unknown> = {
+      planId: input.planId,
+      pendingPlanChange: FieldValue.delete(),
+    }
+    const grace = organization.get('downgradeGrace') as { planId?: unknown; startedAt?: unknown; endsAt?: unknown } | undefined
+    if (grace?.planId !== input.planId || !grace.startedAt || !grace.endsAt) {
+      const startedAtMillis = nowMillis()
+      update.downgradeGrace = {
+        planId: input.planId,
+        startedAt: Timestamp.fromMillis(startedAtMillis),
+        endsAt: Timestamp.fromMillis(startedAtMillis + GRACE_PERIOD_MILLIS),
+      }
+    }
+    transaction.update(organizationRef, update)
+  })
+}
+
+export const createFirestorePendingPlanChangeReader = (db: Firestore) => async (orgId: string): Promise<PendingPlanChangeSummary | null> => {
+  const snap = await db.doc(`organizations/${orgId}`).get()
+  if (!snap.exists) return null
+  const pending = snap.get('pendingPlanChange') as { planId?: unknown; stripeScheduleId?: unknown } | undefined
+  if (!pending || typeof pending.planId !== 'string') return null
+  return {
+    planId: pending.planId,
+    ...(typeof pending.stripeScheduleId === 'string' ? { stripeScheduleId: pending.stripeScheduleId } : {}),
+  }
+}
+
+export const createFirestorePendingPlanChangeClearer = (db: Firestore) => async (orgId: string): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    if (!organization.exists || !organization.get('pendingPlanChange')) return
+    transaction.update(organizationRef, { pendingPlanChange: FieldValue.delete() })
   })
 }
 
@@ -124,6 +215,50 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
       await deps.setSubscriptionStatus(orgId, 'CANCELED')
       return { status: 'ok' }
     }
+    case 'customer.subscription.updated': {
+      if (!event.stripeCustomerId || !event.currentPriceId || !deps.getOrgIdForStripeCustomer) return { status: 'ok' }
+      const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
+      if (!orgId) return { status: 'retry' }
+      if (!deps.getPlanIdForStripePrice) return { status: 'ok' }
+
+      const currentPlanId = await deps.getPlanIdForStripePrice(event.currentPriceId)
+      if (!currentPlanId) {
+        deps.logSubscriptionPlanChangeIssue?.({ reason: 'unknown-current-price', orgId, stripePriceId: event.currentPriceId })
+        return { status: 'ok' }
+      }
+
+      if (!event.stripeSubscriptionId || !deps.syncSubscriptionPlanChange) return { status: 'ok' }
+
+      const pending = deps.getPendingPlanChange ? await deps.getPendingPlanChange(orgId) : null
+      if (!event.stripeScheduleId || !deps.getScheduledPlanChange) {
+        if (pending && deps.clearPendingPlanChange) await deps.clearPendingPlanChange(orgId)
+        return { status: 'ok' }
+      }
+
+      const scheduled = await deps.getScheduledPlanChange(event.stripeScheduleId)
+      if (!scheduled) {
+        deps.logSubscriptionPlanChangeIssue?.({ reason: 'invalid-or-ambiguous-schedule', orgId, stripeScheduleId: event.stripeScheduleId })
+        return { status: 'ok' }
+      }
+
+      if (currentPlanId === scheduled.planId) {
+        if (pending?.planId === currentPlanId && pending.stripeScheduleId === event.stripeScheduleId) {
+          await deps.syncSubscriptionPlanChange(orgId, {
+            kind: 'APPLY', planId: currentPlanId,
+            stripeSubscriptionId: event.stripeSubscriptionId, stripeScheduleId: event.stripeScheduleId,
+          })
+        } else {
+          deps.logSubscriptionPlanChangeIssue?.({ reason: 'current-price-without-matching-pending-plan', orgId, currentPlanId })
+        }
+        return { status: 'ok' }
+      }
+
+      await deps.syncSubscriptionPlanChange(orgId, {
+        kind: 'SCHEDULE', planId: scheduled.planId, effectiveAtMillis: scheduled.effectiveAtMillis,
+        stripeSubscriptionId: event.stripeSubscriptionId, stripeScheduleId: event.stripeScheduleId,
+      })
+      return { status: 'ok' }
+    }
     default:
       return { status: 'ok' }
   }
@@ -156,6 +291,18 @@ const extractEvent = (stripeEvent: Stripe.Event): StripeWebhookEvent => {
         stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
       }
     }
+    case 'customer.subscription.updated': {
+      const subscription = stripeEvent.data.object as Stripe.Subscription
+      const itemPriceIds = subscription.items.data.map((item) => typeof item.price === 'string' ? item.price : item.price.id)
+      const schedule = subscription.schedule
+      return {
+        type: 'customer.subscription.updated',
+        stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
+        stripeSubscriptionId: subscription.id,
+        currentPriceId: itemPriceIds.length === 1 ? itemPriceIds[0] : undefined,
+        stripeScheduleId: typeof schedule === 'string' ? schedule : schedule?.id,
+      }
+    }
     default:
       return { type: stripeEvent.type }
   }
@@ -175,6 +322,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
   }
 
   const db = getFirestore()
+  const stripe = new Stripe(stripeSecretKey.value())
   const applyInvoiceLifecycle = createFirestoreInvoiceLifecycleApplier(db)
   const outcome = await handleStripeWebhookEvent({
     getBillingRecord: async (orgId, recordId) => {
@@ -200,6 +348,30 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     },
     setSubscriptionStatus: async (orgId, status) => { await db.doc(`organizations/${orgId}`).update({ subscriptionStatus: status }) },
     applyInvoiceLifecycle,
+    getPlanIdForStripePrice: async (stripePriceId) => {
+      const snap = await db.collection('planDefinitions').where('stripePriceId', '==', stripePriceId).get()
+      if (snap.size !== 1) return null
+      return snap.docs[0].id
+    },
+    getScheduledPlanChange: async (stripeScheduleId) => {
+      type SchedulePhase = { start_date: number; items: Array<{ price: string | { id: string } }> }
+      type ScheduleLike = { phases: SchedulePhase[]; current_phase?: { end_date: number } | null }
+      const schedule = await stripe.subscriptionSchedules.retrieve(stripeScheduleId) as unknown as ScheduleLike
+      const currentPhaseEnd = schedule.current_phase?.end_date
+      const nextPhase = [...schedule.phases]
+        .filter((phase) => currentPhaseEnd != null ? phase.start_date >= currentPhaseEnd : phase.start_date * 1_000 > Date.now())
+        .sort((left, right) => left.start_date - right.start_date)[0]
+      if (!nextPhase) return null
+      const priceIds = [...new Set(nextPhase.items.map((item) => typeof item.price === 'string' ? item.price : item.price.id))]
+      if (priceIds.length !== 1) return null
+      const planSnap = await db.collection('planDefinitions').where('stripePriceId', '==', priceIds[0]).get()
+      if (planSnap.size !== 1) return null
+      return { planId: planSnap.docs[0].id, effectiveAtMillis: nextPhase.start_date * 1_000 }
+    },
+    getPendingPlanChange: createFirestorePendingPlanChangeReader(db),
+    syncSubscriptionPlanChange: createFirestoreSubscriptionPlanChangeSynchronizer(db),
+    clearPendingPlanChange: createFirestorePendingPlanChangeClearer(db),
+    logSubscriptionPlanChangeIssue: (details) => { logger.warn('Stripe subscription plan change was not synchronized', details) },
   }, extractEvent(stripeEvent))
 
   sendStripeWebhookOutcome(response, outcome)

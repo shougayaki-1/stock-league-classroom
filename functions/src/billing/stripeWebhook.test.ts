@@ -1,12 +1,100 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Firestore as AdminFirestore } from 'firebase-admin/firestore'
-import { createFirestoreInvoiceLifecycleApplier, handleStripeWebhookEvent, sendStripeWebhookOutcome } from './stripeWebhook'
+import { createFirestoreInvoiceLifecycleApplier, createFirestoreSubscriptionPlanChangeSynchronizer, handleStripeWebhookEvent, sendStripeWebhookOutcome } from './stripeWebhook'
 describe('handleStripeWebhookEvent', () => {
   it('ignores unrelated and malformed events', async () => { const markBillingRecordPaid = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'invoice.payment_failed' }); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'checkout.session.completed', clientReferenceId: 'bad', stripeSessionId: 's' }); expect(markBillingRecordPaid).not.toHaveBeenCalled() })
   it('marks a pending record paid and is idempotent', async () => { const mark = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PENDING' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledWith('org-1', 'record-1', 's'); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PAID' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledTimes(1) })
 })
 
 describe('handleStripeWebhookEvent — subscription lifecycle', () => {
+  it('synchronizes a future lower price as a scheduled plan change', async () => {
+    const syncSubscriptionPlanChange = vi.fn()
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async (priceId) => priceId === 'price_pro' ? 'PRO' : null,
+      getScheduledPlanChange: async (scheduleId) => {
+        expect(scheduleId).toBe('sub_sched_1')
+        return { planId: 'SCHOOL', effectiveAtMillis: 2_000 }
+      },
+      getPendingPlanChange: async () => null,
+      syncSubscriptionPlanChange,
+    }, {
+      type: 'customer.subscription.updated',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+      currentPriceId: 'price_pro',
+      stripeScheduleId: 'sub_sched_1',
+    })
+
+    expect(result).toEqual({ status: 'ok' })
+    expect(syncSubscriptionPlanChange).toHaveBeenCalledWith('org-1', expect.objectContaining({
+      kind: 'SCHEDULE', planId: 'SCHOOL', effectiveAtMillis: 2_000,
+    }))
+  })
+
+  it('applies a current lower price only when it matches the saved pending plan', async () => {
+    const syncSubscriptionPlanChange = vi.fn()
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async () => 'SCHOOL',
+      getScheduledPlanChange: async () => ({ planId: 'SCHOOL', effectiveAtMillis: 2_000 }),
+      getPendingPlanChange: async () => ({ planId: 'SCHOOL', stripeScheduleId: 'sub_sched_1' }),
+      syncSubscriptionPlanChange,
+    }, {
+      type: 'customer.subscription.updated', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      currentPriceId: 'price_school', stripeScheduleId: 'sub_sched_1',
+    })
+
+    expect(syncSubscriptionPlanChange).toHaveBeenCalledWith('org-1', expect.objectContaining({ kind: 'APPLY', planId: 'SCHOOL' }))
+  })
+
+  it('returns retry when a subscription customer cannot be resolved', async () => {
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => null,
+    }, {
+      type: 'customer.subscription.updated', stripeCustomerId: 'cus_unknown', currentPriceId: 'price_school',
+    })).resolves.toEqual({ status: 'retry' })
+  })
+
+  it('returns ok and does not mutate state for an unknown current price', async () => {
+    const syncSubscriptionPlanChange = vi.fn()
+    const logSubscriptionPlanChangeIssue = vi.fn()
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async () => null,
+      syncSubscriptionPlanChange,
+      logSubscriptionPlanChangeIssue,
+    }, {
+      type: 'customer.subscription.updated', stripeCustomerId: 'cus_1', currentPriceId: 'price_unknown',
+    })).resolves.toEqual({ status: 'ok' })
+    expect(syncSubscriptionPlanChange).not.toHaveBeenCalled()
+    expect(logSubscriptionPlanChangeIssue).toHaveBeenCalled()
+  })
+
+  it('clears a pending plan change when Stripe removes its schedule without applying the plan', async () => {
+    const clearPendingPlanChange = vi.fn()
+    const syncSubscriptionPlanChange = vi.fn()
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async () => 'PRO',
+      getPendingPlanChange: async () => ({ planId: 'SCHOOL', stripeScheduleId: 'sub_sched_1' }),
+      syncSubscriptionPlanChange,
+      clearPendingPlanChange,
+    }, {
+      type: 'customer.subscription.updated', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', currentPriceId: 'price_pro',
+    })
+
+    expect(clearPendingPlanChange).toHaveBeenCalledWith('org-1')
+    expect(syncSubscriptionPlanChange).not.toHaveBeenCalled()
+  })
+
   it('links the Stripe customer id on checkout.session.completed', async () => {
     const linkStripeCustomer = vi.fn()
     await handleStripeWebhookEvent({
@@ -164,6 +252,46 @@ describe('sendStripeWebhookOutcome', () => {
     expect(okStatus).toHaveBeenCalledWith(200)
     expect(retrySend).toHaveBeenCalledWith('retry')
     expect(okSend).toHaveBeenCalledWith('ok')
+  })
+})
+
+describe('Firestore subscription plan-change wiring', () => {
+  it('starts a 30-day grace period once and does not extend it on a repeated apply', async () => {
+    const documents: Record<string, unknown> = {
+      planId: 'PRO',
+      pendingPlanChange: { planId: 'SCHOOL', stripeScheduleId: 'sub_sched_1' },
+    }
+    const updates: Record<string, unknown>[] = []
+    const organizationRef = { path: 'organizations/org-1' }
+    const firestore = {
+      doc: vi.fn(() => organizationRef),
+      runTransaction: async (operation: (transaction: {
+        get: (ref: typeof organizationRef) => Promise<{ exists: boolean; get: (field: string) => unknown }>
+        update: (ref: typeof organizationRef, data: Record<string, unknown>) => void
+      }) => Promise<void>) => operation({
+        get: async () => ({ exists: true, get: (field) => documents[field] }),
+        update: (_ref, data) => {
+          updates.push(data)
+          for (const [key, value] of Object.entries(data)) {
+            if (key === 'pendingPlanChange') delete documents.pendingPlanChange
+            else documents[key] = value
+          }
+        },
+      }),
+    }
+    const synchronize = createFirestoreSubscriptionPlanChangeSynchronizer(firestore as never, () => 1_000)
+    const input = { kind: 'APPLY' as const, planId: 'SCHOOL', stripeSubscriptionId: 'sub_1', stripeScheduleId: 'sub_sched_1' }
+
+    await synchronize('org-1', input)
+    await synchronize('org-1', input)
+
+    expect(updates).toHaveLength(1)
+    expect(updates[0].planId).toBe('SCHOOL')
+    expect((updates[0].downgradeGrace as { planId: string; startedAt: { toMillis: () => number }; endsAt: { toMillis: () => number } })).toMatchObject({
+      planId: 'SCHOOL',
+    })
+    expect((updates[0].downgradeGrace as { startedAt: { toMillis: () => number }; endsAt: { toMillis: () => number } }).startedAt.toMillis()).toBe(1_000)
+    expect((updates[0].downgradeGrace as { startedAt: { toMillis: () => number }; endsAt: { toMillis: () => number } }).endsAt.toMillis()).toBe(1_000 + 30 * 24 * 60 * 60 * 1_000)
   })
 })
 
