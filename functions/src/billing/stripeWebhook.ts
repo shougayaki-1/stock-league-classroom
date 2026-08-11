@@ -71,6 +71,17 @@ export const createFirestoreInvoiceLifecycleApplier = (db: Firestore, now: () =>
 
 export type StripeWebhookOutcome = { status: 'ok' } | { status: 'retry' }
 
+export const sendStripeWebhookOutcome = (
+  response: { status: (code: number) => { send: (body: string) => unknown } },
+  outcome: StripeWebhookOutcome,
+): void => {
+  if (outcome.status === 'retry') {
+    response.status(503).send('retry')
+    return
+  }
+  response.status(200).send('ok')
+}
+
 /**
  * Handles the 4 subscription-lifecycle events this app cares about.
  * checkout.session.completed uses billingRecords.status for idempotency
@@ -191,9 +202,5 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     applyInvoiceLifecycle,
   }, extractEvent(stripeEvent))
 
-  if (outcome.status === 'retry') {
-    response.status(503).send('retry')
-    return
-  }
-  response.status(200).send('ok')
+  sendStripeWebhookOutcome(response, outcome)
 })

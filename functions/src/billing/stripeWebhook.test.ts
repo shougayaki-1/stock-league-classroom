@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Firestore as AdminFirestore } from 'firebase-admin/firestore'
-import { createFirestoreInvoiceLifecycleApplier, handleStripeWebhookEvent } from './stripeWebhook'
+import { createFirestoreInvoiceLifecycleApplier, handleStripeWebhookEvent, sendStripeWebhookOutcome } from './stripeWebhook'
 describe('handleStripeWebhookEvent', () => {
   it('ignores unrelated and malformed events', async () => { const markBillingRecordPaid = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'invoice.payment_failed' }); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'checkout.session.completed', clientReferenceId: 'bad', stripeSessionId: 's' }); expect(markBillingRecordPaid).not.toHaveBeenCalled() })
   it('marks a pending record paid and is idempotent', async () => { const mark = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PENDING' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledWith('org-1', 'record-1', 's'); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PAID' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledTimes(1) })
@@ -115,6 +115,14 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     expect(result).toEqual({ status: 'retry' })
   })
 
+  it('returns a retry outcome for invoice.payment_failed when the customer cannot be resolved', async () => {
+    const result = await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => null, applyInvoiceLifecycle: vi.fn(),
+    }, { type: 'invoice.payment_failed', invoiceId: 'in_1', stripeCustomerId: 'cus_unknown' })
+    expect(result).toEqual({ status: 'retry' })
+  })
+
   it('returns a retry outcome for customer.subscription.deleted when the customer cannot be resolved', async () => {
     const result = await handleStripeWebhookEvent({
       getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
@@ -141,6 +149,17 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
   it('returns an ok outcome for an unrecognized event type', async () => {
     const result = await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn() }, { type: 'customer.updated' })
     expect(result).toEqual({ status: 'ok' })
+  })
+})
+
+describe('sendStripeWebhookOutcome', () => {
+  it('sends 503 for a retry outcome and 200 for non-retriable outcomes', () => {
+    const retrySend = vi.fn()
+    const okSend = vi.fn()
+    sendStripeWebhookOutcome({ status: vi.fn(() => ({ send: retrySend })) }, { status: 'retry' })
+    sendStripeWebhookOutcome({ status: vi.fn(() => ({ send: okSend })) }, { status: 'ok' })
+    expect(retrySend).toHaveBeenCalledWith('retry')
+    expect(okSend).toHaveBeenCalledWith('ok')
   })
 })
 
