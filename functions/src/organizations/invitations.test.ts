@@ -187,6 +187,38 @@ describe('acceptInvitation', () => {
     expect(syncMembership).not.toHaveBeenCalled()
     expect(markInvitationAccepted).toHaveBeenCalledWith('org-1', 'invitation-1')
   })
+
+  it('rejects a new teacher when the teacher-seat resource is restricted', async () => {
+    const syncMembership = vi.fn()
+    await expect(acceptInvitation({
+      getInvitation: async () => pending,
+      getMembership: async () => null,
+      getDowngradeStatus: async () => ({
+        state: 'RESTRICTED',
+        violations: [{ key: 'teacherSeats', label: '教師席', used: 2, limit: 1 }],
+      }),
+      syncMembership,
+      markInvitationAccepted: vi.fn(),
+    }, { orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'teacher@example.com' }))
+      .rejects.toThrow('教師席を整理する必要があります')
+    expect(syncMembership).not.toHaveBeenCalled()
+  })
+
+  it('allows an admin invitation even when teacher seats are restricted', async () => {
+    const adminInvitation = { ...pending, role: 'admin' as const }
+    const result = await acceptInvitation({
+      getInvitation: async () => adminInvitation,
+      getMembership: async () => null,
+      getDowngradeStatus: async () => ({
+        state: 'RESTRICTED',
+        violations: [{ key: 'teacherSeats', label: '教師席', used: 2, limit: 1 }],
+      }),
+      syncMembership: vi.fn(),
+      markInvitationAccepted: vi.fn(),
+    }, { orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'teacher@example.com' })
+
+    expect(result).toEqual({ status: 'ACCEPTED' })
+  })
 })
 
 describe('listMyInvitations', () => {

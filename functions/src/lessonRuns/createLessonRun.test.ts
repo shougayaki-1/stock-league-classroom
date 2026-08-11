@@ -190,4 +190,36 @@ describe('createLessonRun quota enforcement', () => {
     expect(second.lessonRunId).toBe(first.lessonRunId)
     expect(second.created).toBe(false)
   })
+
+  it('allows a new run during the downgrade grace period even when the reduced limit is full', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    fake.docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 1 } })
+    fake.activeLessonRunCounts.set('personal_teacher-a', 1)
+
+    const result = await createLessonRun({
+      firestore: fake as never,
+      getDowngradeStatus: async () => ({ state: 'GRACE', graceEndsAtMillis: 2_000, violations: [{ key: 'concurrentLessonsAndMarkets', label: '同時授業・市場数', used: 1, limit: 1 }] }),
+      generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-grace', lessonRunIdempotencyKey: 'idem-grace',
+      orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })
+
+    expect(result.created).toBe(true)
+  })
+
+  it('rejects a new run when the concurrent resource is restricted', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    fake.docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 1 } })
+    fake.activeLessonRunCounts.set('personal_teacher-a', 1)
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      getDowngradeStatus: async () => ({ state: 'RESTRICTED', graceEndsAtMillis: 2_000, violations: [{ key: 'concurrentLessonsAndMarkets', label: '同時授業・市場数', used: 1, limit: 1 }] }),
+      generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-restricted', lessonRunIdempotencyKey: 'idem-restricted',
+      orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('同時授業・市場数を整理する必要があります')
+  })
 })

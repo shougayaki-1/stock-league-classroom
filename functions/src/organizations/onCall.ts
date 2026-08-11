@@ -60,6 +60,7 @@ export const acceptInvitationCallable = onCall({ region: 'asia-northeast1' }, as
   } catch (error) {
     if (error instanceof Error && error.message === 'あなた宛の招待ではありません') throw new HttpsError('permission-denied', error.message)
     if (error instanceof Error && error.message === 'この招待は既に処理されています') throw new HttpsError('failed-precondition', error.message)
+    if (error instanceof Error && error.message === '教師席を整理する必要があります') throw new HttpsError('resource-exhausted', error.message)
     throw error
   }
 })

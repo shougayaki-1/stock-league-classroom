@@ -102,6 +102,19 @@ describe('acceptInvitationCallable', () => {
       orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'x@example.com',
     })
   })
+
+  it('translates a restricted teacher-seat invitation into resource-exhausted', async () => {
+    vi.mocked(acceptInvitationWithAdminSdk).mockRejectedValueOnce(new Error('教師席を整理する必要があります'))
+    const request = {
+      auth: { uid: 'uid-2', token: { email_verified: true, email: 'x@example.com', firebase: { sign_in_provider: 'google.com' } } },
+      data: { orgId: 'org-1', invitationId: 'invitation-1' },
+    } as unknown as CallableRequest
+
+    await expect(acceptInvitationCallable.run(request)).rejects.toMatchObject({
+      code: 'resource-exhausted',
+      message: '教師席を整理する必要があります',
+    })
+  })
 })
 
 describe('listMyInvitationsCallable', () => {
@@ -131,10 +144,22 @@ describe('getOrgPlanLimitsCallable', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
       concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+      downgradeStatus: { state: 'NORMAL', violations: [] },
     })
     const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
     await expect(getOrgPlanLimitsCallable.run(request)).resolves.toMatchObject({ participants: 40 })
     expect(getOrgPlanLimitsWithAdminSdk).toHaveBeenCalledWith('org-1')
+  })
+
+  it('returns downgrade status alongside the plan limits', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
+      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+      downgradeStatus: { state: 'RESTRICTED', violations: [{ key: 'teacherSeats', label: '教師席', used: 2, limit: 1 }] },
+    })
+
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgPlanLimitsCallable.run(request)).resolves.toMatchObject({ downgradeStatus: { state: 'RESTRICTED' } })
   })
 
   it('translates a missing plan into a failed-precondition error', async () => {

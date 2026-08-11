@@ -140,6 +140,14 @@ describe('createLessonRunCallable', () => {
     await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'resource-exhausted' })
   })
 
+  it('translates a downgrade restriction into resource-exhausted', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('同時授業・市場数を整理する必要があります'))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'resource-exhausted', message: '同時授業・市場数を整理する必要があります' })
+  })
+
   it('translates a missing-plan error into failed-precondition', async () => {
     templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })

@@ -42,6 +42,7 @@ const translateCreateLessonRunError = (error: unknown): unknown => {
     if (error.message === 'Published version pointer mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'この組織の同時授業・市場数の上限に達しています') return new HttpsError('resource-exhausted', error.message)
+    if (error.message === '同時授業・市場数を整理する必要があります') return new HttpsError('resource-exhausted', error.message)
     if (error.message === 'この組織にはプランが設定されていません') return new HttpsError('failed-precondition', error.message)
   }
   return error

@@ -3,6 +3,8 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 import { validateSocialStudiesMarketContent } from '../market/templateValidation'
 import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
+import { canIncreaseLimitedResource, type DowngradeStatus } from '../organizations/downgradeEnforcement'
+import { ACTIVE_LESSON_RUN_STATUSES, getDowngradeStatusWithAdminSdk } from '../organizations/planLimits'
 
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
@@ -10,8 +12,6 @@ export interface FirestoreTx {
   set: (path: string, data: Record<string, unknown>) => void
 }
 
-/** lessonRunsの`status`のうち、まだ市場・教室資源を使用中とみなす値。COMPLETED/ABORTED/ARCHIVEDのみ枠を解放する。 */
-export const ACTIVE_LESSON_RUN_STATUSES = ['DRAFT', 'READY', 'WAITING', 'RUNNING', 'PAUSED', 'INTERRUPTED', 'REFLECTION'] as const
 export interface CreateLessonRunDeps {
   firestore: { runTransaction: (fn: (tx: FirestoreTx) => Promise<string>) => Promise<string> }
   generateRandomSeed: () => string
@@ -20,6 +20,7 @@ export interface CreateLessonRunDeps {
   orgId: string
   templateId: string
   primaryTeacherUid: string
+  getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
   now?: () => unknown
 }
 export interface CreateLessonRunResult { lessonRunId: string; created: boolean }
@@ -83,7 +84,12 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     if (!planSnap.exists) throw new Error('この組織にはプランが設定されていません')
     const plan = planSnap.data() as { limits: { concurrentLessonsAndMarkets: number } }
     const activeCount = await tx.countActiveLessonRuns(deps.orgId)
-    if (activeCount >= plan.limits.concurrentLessonsAndMarkets) {
+    const downgradeStatus = deps.getDowngradeStatus ? await deps.getDowngradeStatus(deps.orgId) : undefined
+    if (downgradeStatus && !canIncreaseLimitedResource(downgradeStatus, 'concurrentLessonsAndMarkets')) {
+      throw new Error('同時授業・市場数を整理する必要があります')
+    }
+    if ((!downgradeStatus || downgradeStatus.state === 'NORMAL' || downgradeStatus.state === 'SCHEDULED')
+      && activeCount >= plan.limits.concurrentLessonsAndMarkets) {
       throw new Error('この組織の同時授業・市場数の上限に達しています')
     }
 
@@ -121,6 +127,6 @@ export const createLessonRunWithAdminSdk = (input: {
         set: (path, data) => { tx.set(db.doc(path), { ...data, createdAt: FieldValue.serverTimestamp() }) },
       })),
     },
-    generateRandomSeed, generateLessonRunId: randomUUID, ...input,
+    generateRandomSeed, generateLessonRunId: randomUUID, getDowngradeStatus: getDowngradeStatusWithAdminSdk, ...input,
   })
 }

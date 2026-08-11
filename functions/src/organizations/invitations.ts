@@ -1,6 +1,8 @@
 import { getDatabase } from 'firebase-admin/database'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { syncOrganizationMembershipChange, type MembershipChange } from './membershipSync'
+import { canIncreaseLimitedResource, type DowngradeStatus } from './downgradeEnforcement'
+import { getDowngradeStatusWithAdminSdk } from './planLimits'
 
 export interface Invitation {
   id: string
@@ -111,6 +113,7 @@ export const createInvitationWithAdminSdk = (
 export interface AcceptInvitationDeps {
   getInvitation: (orgId: string, invitationId: string) => Promise<Invitation | null>
   getMembership: (orgId: string, uid: string) => Promise<{ status: string } | null>
+  getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
   syncMembership: (change: MembershipChange) => Promise<void>
   markInvitationAccepted: (orgId: string, invitationId: string) => Promise<void>
 }
@@ -142,6 +145,12 @@ export const acceptInvitation = async (
   const membership = await deps.getMembership(input.orgId, input.callerUid)
   const alreadyActive = membership?.status === 'active'
   if (!alreadyActive) {
+    if (invitation.role === 'teacher' && deps.getDowngradeStatus) {
+      const status = await deps.getDowngradeStatus(input.orgId)
+      if (!canIncreaseLimitedResource(status, 'teacherSeats')) {
+        throw new Error('教師席を整理する必要があります')
+      }
+    }
     await deps.syncMembership({
       orgId: input.orgId,
       uid: input.callerUid,
@@ -170,6 +179,7 @@ export const acceptInvitationWithAdminSdk = (
       const snap = await db.doc(`organizations/${orgId}/members/${uid}`).get()
       return snap.exists ? { status: snap.get('status') as string } : null
     },
+    getDowngradeStatus: getDowngradeStatusWithAdminSdk,
     syncMembership: (change) => syncOrganizationMembershipChange({
       markMirrorPending: async (orgId, membershipVersion) => {
         await getDatabase().ref(`orgAccessMeta/${orgId}/${change.uid}`).set({
