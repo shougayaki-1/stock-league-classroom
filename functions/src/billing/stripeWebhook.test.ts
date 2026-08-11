@@ -7,6 +7,21 @@ describe('handleStripeWebhookEvent', () => {
 })
 
 describe('handleStripeWebhookEvent — subscription lifecycle', () => {
+  it('applies a pending downgrade when Stripe releases its schedule after the target price becomes current', async () => {
+    const syncSubscriptionPlanChange = vi.fn()
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async () => 'SCHOOL',
+      getPendingPlanChange: async () => ({ planId: 'SCHOOL', stripeScheduleId: 'sub_sched_1' }),
+      syncSubscriptionPlanChange,
+      clearPendingPlanChange: vi.fn(),
+    }, { type: 'customer.subscription.updated', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', currentPriceId: 'price_school' })).resolves.toEqual({ status: 'ok' })
+    expect(syncSubscriptionPlanChange).toHaveBeenCalledWith('org-1', {
+      kind: 'APPLY', planId: 'SCHOOL', stripeSubscriptionId: 'sub_1', stripeScheduleId: 'sub_sched_1',
+    })
+  })
+
   it('synchronizes a future lower price as a scheduled plan change', async () => {
     const syncSubscriptionPlanChange = vi.fn()
     const result = await handleStripeWebhookEvent({

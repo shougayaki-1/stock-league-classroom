@@ -231,6 +231,13 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
 
       const pending = deps.getPendingPlanChange ? await deps.getPendingPlanChange(orgId) : null
       if (!event.stripeScheduleId || !deps.getScheduledPlanChange) {
+        if (pending?.planId === currentPlanId && pending.stripeScheduleId) {
+          await deps.syncSubscriptionPlanChange(orgId, {
+            kind: 'APPLY', planId: currentPlanId,
+            stripeSubscriptionId: event.stripeSubscriptionId, stripeScheduleId: pending.stripeScheduleId,
+          })
+          return { status: 'ok' }
+        }
         if (pending && deps.clearPendingPlanChange) await deps.clearPendingPlanChange(orgId)
         return { status: 'ok' }
       }
