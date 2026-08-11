@@ -16,7 +16,13 @@ export const createParentOrg = async (deps: CreateParentOrgDeps, input: CreatePa
   const orgId = deps.generateOrgId()
   const now = deps.now ? deps.now() : new Date().toISOString()
   await deps.firestore.runTransaction(async (tx) => {
-    tx.set(`organizations/${orgId}`, { type: 'parentOrg', name: input.name, ownerUid: input.ownerUid, createdAt: now })
+    tx.set(`organizations/${orgId}`, {
+      type: 'parentOrg',
+      name: input.name,
+      ownerUid: input.ownerUid,
+      planId: 'PARENT_ORG',
+      createdAt: now,
+    })
     tx.set(`organizations/${orgId}/members/${input.ownerUid}`, { role: 'owner', status: 'active', membershipVersion: 1, joinedAt: now })
   })
   await deps.writeOrgAccessMirror({ orgId, uid: input.ownerUid, role: 'owner', status: 'active', membershipVersion: 1, revokedAtSeconds: 0 })

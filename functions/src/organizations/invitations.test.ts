@@ -466,6 +466,23 @@ describe('reserveTeacherSeatForInvitation', () => {
     expect(fake.collectionReads).toEqual([])
   })
 
+  it('retries the same invitation admission when an earlier concurrent attempt left its sync marker', async () => {
+    const fake = makeQuotaFirestore()
+    seedLinkedSchoolTeacherQuota(fake, { guarantee: 1, parentLimit: 2, activeTeachers: 1 })
+    fake.documents.set('organizations/school-1/members/uid-2', {
+      role: 'teacher',
+      status: 'active',
+      pendingMembershipSyncInvitationId: 'invitation-1',
+    })
+
+    await expect(reserveTeacherSeatForInvitation({ firestore: fake }, {
+      schoolOrgId: 'school-1',
+      teacherUid: 'uid-2',
+      pendingMembershipSyncInvitationId: 'invitation-1',
+    })).resolves.toEqual({ alreadyActive: false })
+    expect(fake.writes).toEqual([])
+  })
+
   it('converges concurrent admissions so only one transaction activates the teacher and reserves the shared seat', async () => {
     const fake = makeQuotaFirestore()
     seedLinkedSchoolTeacherQuota(fake, { guarantee: 1, parentLimit: 2, activeTeachers: 1 })

@@ -206,6 +206,10 @@ cd .. && git diff --check
 
 Focused testsは`2 files / 46 tests passed`。typecheck、lint、diff checkもexit code 0。
 
+## Final branch review fixes
+
+最終レビューで、親組織作成時に`PARENT_ORG`プランを設定していないため作成直後のquota UI・Callableが利用できない問題と、同時受諾の後続トランザクションが先行受諾の同期失敗を隠して招待を`ACCEPTED`にできる問題を修正した。親組織作成transactionに`planId: 'PARENT_ORG'`を追加し、既にactiveでも同じ`pendingMembershipSyncInvitationId`を持つ教師席予約は`alreadyActive: false`としてRTDB同期を再試行する。focused testsは親組織・招待・Callableの49 testsを通過し、Functions typecheck/lint/diff checkも通過した。
+
 ## Task 3 Fix Round 4
 
 再レビューで判明した、古い受諾処理のマーカー削除が再有効化後の新しい招待マーカーを消し得る競合を修正した。productionのマーカー削除をFirestore transaction化し、対象memberを再読して`pendingMembershipSyncInvitationId`が削除対象の招待IDと一致する場合だけ`FieldValue.delete()`を実行する。これにより、後続受諾が先に書いたマーカーを古い処理が消去しない。

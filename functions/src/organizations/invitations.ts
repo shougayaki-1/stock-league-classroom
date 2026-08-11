@@ -234,7 +234,13 @@ export const reserveTeacherSeatForInvitation = (
       transaction.get(memberPath),
     ])
     const member = memberSnapshot.data()
-    if (memberSnapshot.exists && member?.status === 'active') return { alreadyActive: true }
+    if (memberSnapshot.exists && member?.status === 'active') {
+      if (typeof input.pendingMembershipSyncInvitationId === 'string'
+        && member.pendingMembershipSyncInvitationId === input.pendingMembershipSyncInvitationId) {
+        return { alreadyActive: false }
+      }
+      return { alreadyActive: true }
+    }
 
     const school = schoolSnapshot.data()
     const parentOrgId = school?.parentOrgId
