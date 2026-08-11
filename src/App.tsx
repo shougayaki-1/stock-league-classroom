@@ -33,6 +33,7 @@ import { PendingInvitationsBanner } from './components/teacher/organizations/Pen
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/planLimits'
+import { getParentOrgQuotaUsage, getSchoolEffectiveQuota, setSchoolQuotaAllocation, type ParentOrgQuotaUsageResult, type SchoolEffectiveQuotaResult } from './lib/organizations/parentOrgQuota'
 import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
 import { createStripeCustomerPortalSession } from './lib/billing/stripeCustomerPortal'
 import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
@@ -432,16 +433,52 @@ function ParentOrgNewRoute({ services }: { services: FirebaseServices }) {
   return <Stack spacing={2} sx={{ p: 2 }}><Typography variant="h5" component="h1">上位組織を作成</Typography><TextField label="組織名" value={name} onChange={(e) => setName(e.target.value)} /><Button variant="contained" disabled={creating || !name} sx={{ alignSelf: 'flex-start' }} onClick={async () => { setCreating(true); try { const { orgId } = await createParentOrg(services.functions, { name }); navigate(`/teacher/organizations/${orgId}/parent-settings`) } finally { setCreating(false) } }}>作成する</Button></Stack>
 }
 function ParentOrgSettingsRoute({ services }: { services: FirebaseServices }) {
-  const { orgId } = useParams<{ orgId: string }>(); const [childSchools, setChildSchools] = useState<ChildSchool[]>([]); const [linking, setLinking] = useState(false); const [unlinking, setUnlinking] = useState(false)
-  const loadChildren = useCallback(() => { if (orgId) void listChildSchools(services.functions, { parentOrgId: orgId }).then(setChildSchools).catch(() => setChildSchools([])) }, [orgId, services.functions])
+  const { orgId } = useParams<{ orgId: string }>()
+  const [childSchools, setChildSchools] = useState<ChildSchool[]>([])
+  const [quotaUsage, setQuotaUsage] = useState<ParentOrgQuotaUsageResult>()
+  const [members, setMembers] = useState<OrgMember[]>([])
+  const [linking, setLinking] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
+  const [settingAllocation, setSettingAllocation] = useState(false)
+  const uid = services.auth.currentUser?.uid
+
+  const loadChildren = useCallback(() => {
+    if (!orgId) return
+    void listChildSchools(services.functions, { parentOrgId: orgId }).then(setChildSchools).catch(() => setChildSchools([]))
+    void getParentOrgQuotaUsage(services.functions, { parentOrgId: orgId }).then((usage) => {
+      if (usage && typeof usage === 'object' && Array.isArray(usage.schools)) setQuotaUsage(usage)
+      else setQuotaUsage(undefined)
+    }).catch(() => setQuotaUsage(undefined))
+    void listOrgMembers(services.functions, { orgId }).then((value) => setMembers(Array.isArray(value) ? value : [])).catch(() => setMembers([]))
+  }, [orgId, services.functions])
+
   useEffect(() => { loadChildren() }, [loadChildren])
-  if (!orgId) return <GuardLoading />
-  return <ParentOrgSettingsPage orgName={orgId} childSchools={childSchools} linking={linking} unlinking={unlinking} onLinkSchool={(schoolOrgId) => { setLinking(true); void linkSchoolToParentOrg(services.functions, { parentOrgId: orgId, schoolOrgId }).then(loadChildren).finally(() => setLinking(false)) }} onUnlinkSchool={(schoolOrgId) => { setUnlinking(true); void unlinkSchoolFromParentOrg(services.functions, { schoolOrgId }).then(loadChildren).finally(() => setUnlinking(false)) }} />
+  if (!orgId || !uid) return <GuardLoading />
+  const viewerMembership = members.find((member) => member.uid === uid)
+  const canManageAllocations = viewerMembership?.role === 'owner' || viewerMembership?.role === 'admin'
+
+  return <ParentOrgSettingsPage
+    orgName={orgId}
+    childSchools={childSchools}
+    quotaUsage={quotaUsage}
+    canEditAllocations={canManageAllocations}
+    settingAllocation={settingAllocation}
+    onSetSchoolQuotaAllocation={(input) => {
+      setSettingAllocation(true)
+      void setSchoolQuotaAllocation(services.functions, input).then(loadChildren).finally(() => setSettingAllocation(false))
+    }}
+    linking={linking}
+    unlinking={unlinking}
+    onLinkSchool={(schoolOrgId) => { setLinking(true); void linkSchoolToParentOrg(services.functions, { parentOrgId: orgId, schoolOrgId }).then(loadChildren).finally(() => setLinking(false)) }}
+    onUnlinkSchool={(schoolOrgId) => { setUnlinking(true); void unlinkSchoolFromParentOrg(services.functions, { schoolOrgId }).then(loadChildren).finally(() => setUnlinking(false)) }}
+  />
 }
 
 function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [data, setData] = useState<PlanLimitsResult>()
+  const [schoolEffectiveQuota, setSchoolEffectiveQuota] = useState<SchoolEffectiveQuotaResult>()
+  const [orgType, setOrgType] = useState<string>()
   const [error, setError] = useState<string>()
   const [checkingOut, setCheckingOut] = useState(false)
   const [managingBilling, setManagingBilling] = useState(false)
@@ -457,17 +494,34 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   useEffect(() => {
     let cancelled = false
     setStripeCustomerId(null)
+    setSchoolEffectiveQuota(undefined)
+    setOrgType(undefined)
     if (!orgId) return () => { cancelled = true }
     void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => {
-      if (!cancelled) setStripeCustomerId(snapshot.exists() ? ((snapshot.data().stripeCustomerId as string | undefined) ?? null) : null)
+      if (cancelled || !snapshot.exists()) return
+      const organization = snapshot.data()
+      const type = organization.type as string | undefined
+      setOrgType(type)
+      if (type !== 'parentOrg') {
+        setStripeCustomerId((organization.stripeCustomerId as string | undefined) ?? null)
+      }
+      if (type === 'school') {
+        if (typeof organization.parentOrgId === 'string' && organization.parentOrgId.length > 0) {
+          void getSchoolEffectiveQuota(services.functions, { schoolOrgId: orgId }).then((quota) => {
+            if (!cancelled) setSchoolEffectiveQuota(quota)
+          }).catch(() => {
+            if (!cancelled) setSchoolEffectiveQuota(undefined)
+          })
+        }
+      }
     }).catch(() => {
       if (!cancelled) setStripeCustomerId(null)
     })
     return () => { cancelled = true }
   }, [services, orgId])
-  const onCheckout = orgId ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
-  const onManageBilling = (orgId && stripeCustomerId) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
-  return <PlanLimitsPage data={data} error={error} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
+  const onCheckout = (orgId && orgType !== 'parentOrg') ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
+  const onManageBilling = (orgId && orgType !== 'parentOrg' && stripeCustomerId) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
+  return <PlanLimitsPage data={data} error={error} schoolEffectiveQuota={schoolEffectiveQuota} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {

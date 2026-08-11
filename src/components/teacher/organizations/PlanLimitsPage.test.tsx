@@ -1,10 +1,18 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PlanLimitsPage } from './PlanLimitsPage'
+import type { SchoolEffectiveQuotaResult } from '../../../lib/organizations/parentOrgQuota'
 
 const limits = {
   concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
   downgradeStatus: { state: 'NORMAL' as const, violations: [] },
+}
+
+const effectiveQuota: SchoolEffectiveQuotaResult = {
+  schoolOrgId: 'school-1',
+  parentOrgId: 'parent-1',
+  concurrentLessonsAndMarkets: { guaranteed: 2, usage: 3, sharedReserved: 1, effectiveAvailable: 4 },
+  teacherSeats: { guaranteed: 2, usage: 1, sharedReserved: 0, effectiveAvailable: 3 },
 }
 
 describe('PlanLimitsPage', () => {
@@ -61,6 +69,15 @@ describe('PlanLimitsPage', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('同時授業・市場数: 2 / 1')
     expect(screen.getByRole('alert')).toHaveTextContent('教師席: 3 / 1')
     expect(screen.getByRole('alert')).toHaveTextContent(/新規作成を停止中/)
+  })
+
+  it('shows only the current school effective quota when supplied', () => {
+    render(<PlanLimitsPage data={limits} error={undefined} schoolEffectiveQuota={effectiveQuota} />)
+
+    expect(screen.getByText('学校の実効利用枠')).toBeInTheDocument()
+    expect(screen.getByText('同時授業・市場数: 保証 2 / 使用中 3 / 共有予約 1 / 実効利用可能 4')).toBeInTheDocument()
+    expect(screen.getByText('教師席: 保証 2 / 使用中 1 / 共有予約 0 / 実効利用可能 3')).toBeInTheDocument()
+    expect(screen.queryByText('上位組織の利用枠')).not.toBeInTheDocument()
   })
 })
 

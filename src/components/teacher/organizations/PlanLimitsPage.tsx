@@ -1,7 +1,16 @@
 import { Alert, Button, CircularProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import type { DowngradeStatus, PlanLimits, PlanLimitsResult } from '../../../lib/organizations/planLimits'
+import type { SchoolEffectiveQuotaResult } from '../../../lib/organizations/parentOrgQuota'
 
-export interface PlanLimitsPageProps { data: PlanLimitsResult | undefined; error: string | undefined; onCheckout?: () => void; checkingOut?: boolean; onManageBilling?: () => void; managingBilling?: boolean }
+export interface PlanLimitsPageProps {
+  data: PlanLimitsResult | undefined
+  error: string | undefined
+  onCheckout?: () => void
+  checkingOut?: boolean
+  onManageBilling?: () => void
+  managingBilling?: boolean
+  schoolEffectiveQuota?: SchoolEffectiveQuotaResult
+}
 
 const rows: { label: string; key: keyof PlanLimits }[] = [
   { label: '同時授業・市場数', key: 'concurrentLessonsAndMarkets' },
@@ -37,7 +46,7 @@ const renderDowngradeStatus = (status: DowngradeStatus) => {
   return null
 }
 
-export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling }: PlanLimitsPageProps) {
+export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling, schoolEffectiveQuota }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   const downgradeStatus = data.downgradeStatus ?? { state: 'NORMAL' as const, violations: [] }
@@ -45,6 +54,17 @@ export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageB
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="h5">この組織の利用枠</Typography>
       {renderDowngradeStatus(downgradeStatus)}
+      {schoolEffectiveQuota && (
+        <Stack spacing={1}>
+          <Typography variant="subtitle1">学校の実効利用枠</Typography>
+          <Typography variant="body2">
+            同時授業・市場数: 保証 {schoolEffectiveQuota.concurrentLessonsAndMarkets.guaranteed} / 使用中 {schoolEffectiveQuota.concurrentLessonsAndMarkets.usage} / 共有予約 {schoolEffectiveQuota.concurrentLessonsAndMarkets.sharedReserved} / 実効利用可能 {schoolEffectiveQuota.concurrentLessonsAndMarkets.effectiveAvailable}
+          </Typography>
+          <Typography variant="body2">
+            教師席: 保証 {schoolEffectiveQuota.teacherSeats.guaranteed} / 使用中 {schoolEffectiveQuota.teacherSeats.usage} / 共有予約 {schoolEffectiveQuota.teacherSeats.sharedReserved} / 実効利用可能 {schoolEffectiveQuota.teacherSeats.effectiveAvailable}
+          </Typography>
+        </Stack>
+      )}
       <Table size="small">
         <TableHead><TableRow><TableCell>項目</TableCell><TableCell>上限</TableCell></TableRow></TableHead>
         <TableBody>
