@@ -142,7 +142,7 @@ export const linkSchoolToParentOrgCallable = onCall({ region: 'asia-northeast1' 
   requireManager(await requireActiveOrgMember(db, data.parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
   requireManager(await requireActiveOrgMember(db, data.schoolOrgId, request.auth.uid), '学校組織のowner または admin である必要があります。')
   try { await linkSchoolToParentOrgWithAdminSdk({ parentOrgId: data.parentOrgId, schoolOrgId: data.schoolOrgId }) } catch (error) {
-    if (error instanceof Error && (error.message === '対象は学校組織ではありません' || error.message === 'この学校は既に別の上位組織に所属しています')) throw new HttpsError('failed-precondition', error.message)
+    if (error instanceof Error && (error.message === '対象は上位組織ではありません' || error.message === '対象は学校組織ではありません' || error.message === 'この学校は既に別の上位組織に所属しています')) throw new HttpsError('failed-precondition', error.message)
     throw error
   }
 })
@@ -157,9 +157,9 @@ export const unlinkSchoolFromParentOrgCallable = onCall({ region: 'asia-northeas
   if (!parentOrgId) throw new HttpsError('failed-precondition', 'この学校はどの上位組織にも所属していません。')
   requireManager(await requireActiveOrgMember(db, parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
   try {
-    await unlinkSchoolFromParentOrgWithAdminSdk({ schoolOrgId: data.schoolOrgId })
+    await unlinkSchoolFromParentOrgWithAdminSdk({ schoolOrgId: data.schoolOrgId, expectedParentOrgId: parentOrgId })
   } catch (error) {
-    if (error instanceof Error && error.message === '共有枠の予約が残っているため学校を解除できません') {
+    if (error instanceof Error && (error.message === '共有枠の予約が残っているため学校を解除できません' || error.message === '学校の所属先が変更されたため解除できません')) {
       throw new HttpsError('failed-precondition', error.message)
     }
     throw error

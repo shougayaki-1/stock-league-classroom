@@ -233,6 +233,7 @@ describe('parent organization hierarchy Callables', () => {
     docGetMock.mockResolvedValueOnce({ exists: true, get: () => 'parent-1' })
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 }); vi.mocked(unlinkSchoolFromParentOrgWithAdminSdk).mockResolvedValueOnce(undefined)
     await expect(unlinkSchoolFromParentOrgCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toBeUndefined()
+    expect(unlinkSchoolFromParentOrgWithAdminSdk).toHaveBeenCalledWith({ schoolOrgId: 'school-1', expectedParentOrgId: 'parent-1' })
   })
   it('returns failed-precondition when a school still has shared-quota reservations', async () => {
     docGetMock.mockResolvedValueOnce({ exists: true, get: () => 'parent-1' })
@@ -240,6 +241,14 @@ describe('parent organization hierarchy Callables', () => {
     vi.mocked(unlinkSchoolFromParentOrgWithAdminSdk).mockRejectedValueOnce(new Error('共有枠の予約が残っているため学校を解除できません'))
     await expect(unlinkSchoolFromParentOrgCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).rejects.toMatchObject({
       code: 'failed-precondition', message: '共有枠の予約が残っているため学校を解除できません',
+    })
+  })
+  it('returns failed-precondition when the school changes parent after authorization', async () => {
+    docGetMock.mockResolvedValueOnce({ exists: true, get: () => 'parent-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(unlinkSchoolFromParentOrgWithAdminSdk).mockRejectedValueOnce(new Error('学校の所属先が変更されたため解除できません'))
+    await expect(unlinkSchoolFromParentOrgCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).rejects.toMatchObject({
+      code: 'failed-precondition', message: '学校の所属先が変更されたため解除できません',
     })
   })
   it('lists child schools for an active parent member', async () => {

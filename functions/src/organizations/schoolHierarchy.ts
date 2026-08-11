@@ -21,7 +21,11 @@ export const linkSchoolToParentOrg = async (
   deps: LinkSchoolToParentOrgDeps,
   input: LinkSchoolToParentOrgInput,
 ): Promise<void> => {
-  const school = await deps.getOrg(input.schoolOrgId)
+  const [parent, school] = await Promise.all([
+    deps.getOrg(input.parentOrgId),
+    deps.getOrg(input.schoolOrgId),
+  ])
+  if (!parent || parent.type !== 'parentOrg') throw new Error('対象は上位組織ではありません')
   if (!school || school.type !== 'school') throw new Error('対象は学校組織ではありません')
   if (school.parentOrgId) throw new Error('この学校は既に別の上位組織に所属しています')
 
@@ -35,8 +39,8 @@ export const linkSchoolToParentOrgWithAdminSdk = async (input: LinkSchoolToParen
   const allocationRef = db.doc(`organizations/${input.parentOrgId}/schoolAllocations/${input.schoolOrgId}`)
 
   await db.runTransaction(async (transaction) => linkSchoolToParentOrg({
-    getOrg: async () => {
-      const snapshot = await transaction.get(schoolRef)
+    getOrg: async (orgId) => {
+      const snapshot = await transaction.get(orgId === input.parentOrgId ? db.doc(`organizations/${orgId}`) : schoolRef)
       return snapshot.exists
         ? {
             type: snapshot.get('type') as string,
@@ -66,19 +70,22 @@ export interface UnlinkSchoolFromParentOrgDeps {
 
 export const unlinkSchoolFromParentOrg = async (
   deps: UnlinkSchoolFromParentOrgDeps,
-  input: { schoolOrgId: string },
+  input: { schoolOrgId: string; expectedParentOrgId: string },
 ): Promise<void> => {
   const school = await deps.getOrg(input.schoolOrgId)
   if (!school?.parentOrgId) throw new Error('この学校はどの上位組織にも所属していません')
+  if (school.parentOrgId !== input.expectedParentOrgId) throw new Error('学校の所属先が変更されたため解除できません')
 
-  const reservationCount = await deps.getReservationCount(school.parentOrgId, input.schoolOrgId)
+  const reservationCount = await deps.getReservationCount(input.expectedParentOrgId, input.schoolOrgId)
   if (reservationCount > 0) throw new Error('共有枠の予約が残っているため学校を解除できません')
 
   await deps.clearParentOrgId(input.schoolOrgId)
-  await deps.deleteAllocation(school.parentOrgId, input.schoolOrgId)
+  await deps.deleteAllocation(input.expectedParentOrgId, input.schoolOrgId)
 }
 
-export const unlinkSchoolFromParentOrgWithAdminSdk = async (input: { schoolOrgId: string }): Promise<void> => {
+export const unlinkSchoolFromParentOrgWithAdminSdk = async (
+  input: { schoolOrgId: string; expectedParentOrgId: string },
+): Promise<void> => {
   const db = getFirestore()
   const schoolRef = db.doc(`organizations/${input.schoolOrgId}`)
 

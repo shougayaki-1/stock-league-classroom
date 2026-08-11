@@ -181,16 +181,44 @@ const readParentQuotaState = async (transaction: Transaction, db: Firestore, par
   if (!parentSnapshot.exists || parentSnapshot.get('type') !== 'parentOrg') throw new Error('上位組織が見つかりません')
   const allocationsQuery = db.collection(`organizations/${parentOrgId}/schoolAllocations`)
   const reservationsQuery = db.collection(`organizations/${parentOrgId}/quotaReservations`)
-  const [limits, allocationsSnapshot, reservationsSnapshot] = await Promise.all([
+  const childSchoolsQuery = db.collection('organizations')
+    .where('parentOrgId', '==', parentOrgId)
+    .where('type', '==', 'school')
+  const [limits, allocationsSnapshot, reservationsSnapshot, childSchoolsSnapshot] = await Promise.all([
     loadPlanLimits(transaction, db, parentSnapshot.data()),
     transaction.get(allocationsQuery),
     transaction.get(reservationsQuery),
+    transaction.get(childSchoolsQuery),
   ])
-  const allocations = allocationsSnapshot.docs.map((document) => allocationFrom(document.id, document.data()))
+  const persistedAllocations = new Map(
+    allocationsSnapshot.docs.map((document) => [document.id, allocationFrom(document.id, document.data())]),
+  )
+  const childSchoolOrgIds = childSchoolsSnapshot.docs.map((document) => document.id)
+  const missingAllocationSchoolOrgIds = childSchoolOrgIds.filter((schoolOrgId) => !persistedAllocations.has(schoolOrgId))
+  const allocations = childSchoolOrgIds.map((schoolOrgId) => persistedAllocations.get(schoolOrgId) ?? {
+    schoolOrgId,
+    guaranteedConcurrentLessonsAndMarkets: 0,
+    guaranteedTeacherSeats: 0,
+  })
   const reservations = reservationsSnapshot.docs
     .map((document) => reservationFrom(document.id, document.data()))
     .filter((reservation): reservation is QuotaReservation => reservation !== null)
-  return { limits, allocations, reservations }
+  return { limits, allocations, reservations, missingAllocationSchoolOrgIds }
+}
+
+const backfillMissingAllocations = (
+  transaction: Transaction,
+  db: Firestore,
+  parentOrgId: string,
+  schoolOrgIds: string[],
+): void => {
+  for (const schoolOrgId of schoolOrgIds) {
+    transaction.set(db.doc(`organizations/${parentOrgId}/schoolAllocations/${schoolOrgId}`), {
+      guaranteedConcurrentLessonsAndMarkets: 0,
+      guaranteedTeacherSeats: 0,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+  }
 }
 
 export const getParentOrgQuotaUsageCallable = onCall(callableOptions, async (request) => {
@@ -202,7 +230,7 @@ export const getParentOrgQuotaUsageCallable = onCall(callableOptions, async (req
 
   try {
     return await db.runTransaction(async (transaction) => {
-      const { limits, allocations, reservations } = await readParentQuotaState(transaction, db, data.parentOrgId as string)
+      const { limits, allocations, reservations, missingAllocationSchoolOrgIds } = await readParentQuotaState(transaction, db, data.parentOrgId as string)
       const usage = await Promise.all(allocations.map(async (allocation) => ({
         allocation,
         usage: await readSchoolUsage(transaction, db, allocation.schoolOrgId),
@@ -211,6 +239,7 @@ export const getParentOrgQuotaUsageCallable = onCall(callableOptions, async (req
       const guaranteedTeachers = allocations.reduce((sum, item) => sum + item.guaranteedTeacherSeats, 0)
       const reservedConcurrent = reservations.filter(({ resourceKey }) => resourceKey === 'concurrentLessonsAndMarkets').length
       const reservedTeachers = reservations.filter(({ resourceKey }) => resourceKey === 'teacherSeats').length
+      backfillMissingAllocations(transaction, db, data.parentOrgId as string, missingAllocationSchoolOrgIds)
 
       return {
         parentOrgId: data.parentOrgId,
@@ -262,7 +291,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
       }
       const parentOrgId = schoolSnapshot.get('parentOrgId') as string | undefined
       if (!parentOrgId) throw new Error('この学校はどの上位組織にも所属していません')
-      const { limits, allocations, reservations } = await readParentQuotaState(transaction, db, parentOrgId)
+      const { limits, allocations, reservations, missingAllocationSchoolOrgIds } = await readParentQuotaState(transaction, db, parentOrgId)
       const allocation = allocations.find((item) => item.schoolOrgId === schoolOrgId)
       if (!allocation) throw new Error('この学校の配分が見つかりません')
       const usage = await readSchoolUsage(transaction, db, schoolOrgId)
@@ -272,6 +301,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
       const totalReservedTeachers = reservations.filter(({ resourceKey }) => resourceKey === 'teacherSeats').length
       const ownReservedConcurrent = reservations.filter(({ resourceKey, schoolOrgId: reservedSchoolOrgId }) => resourceKey === 'concurrentLessonsAndMarkets' && reservedSchoolOrgId === schoolOrgId).length
       const ownReservedTeachers = reservations.filter(({ resourceKey, schoolOrgId: reservedSchoolOrgId }) => resourceKey === 'teacherSeats' && reservedSchoolOrgId === schoolOrgId).length
+      backfillMissingAllocations(transaction, db, parentOrgId, missingAllocationSchoolOrgIds)
 
       return {
         schoolOrgId,
@@ -281,6 +311,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
           usage: usage.concurrentLessonsAndMarkets,
           sharedReserved: ownReservedConcurrent,
           effectiveAvailable: allocation.guaranteedConcurrentLessonsAndMarkets
+            + ownReservedConcurrent
             + Math.max(0, limits.concurrentLessonsAndMarkets - guaranteedConcurrent - totalReservedConcurrent),
         },
         teacherSeats: {
@@ -288,6 +319,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
           usage: usage.teacherSeats,
           sharedReserved: ownReservedTeachers,
           effectiveAvailable: allocation.guaranteedTeacherSeats
+            + ownReservedTeachers
             + Math.max(0, limits.teacherSeats - guaranteedTeachers - totalReservedTeachers),
         },
       }

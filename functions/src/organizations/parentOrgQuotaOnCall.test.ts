@@ -10,6 +10,7 @@ type QueryFilter = { field: string; operator: '==' | 'in'; value: unknown }
 type FirestoreRef = { path: string; id?: string; filters?: QueryFilter[]; where?: (field: string, operator: '==' | 'in', value: unknown) => FirestoreRef }
 
 const documents = new Map<string, DocumentData>()
+const transactionOperations: string[][] = []
 const doc = (path: string) => ({ path, id: path.split('/').at(-1) as string })
 const collection = (path: string, filters: QueryFilter[] = []): FirestoreRef => ({
   path,
@@ -35,7 +36,28 @@ vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
     doc,
     collection,
-    runTransaction: async (operation: (transaction: { get: typeof getMock; set: typeof setMock; update: typeof setMock }) => Promise<unknown>) => operation({ get: getMock, set: setMock, update: setMock }),
+    runTransaction: async (operation: (transaction: { get: typeof getMock; set: typeof setMock; update: typeof setMock }) => Promise<unknown>) => {
+      let written = false
+      const operations: string[] = []
+      transactionOperations.push(operations)
+      return operation({
+        get: vi.fn(async (ref: FirestoreRef) => {
+          if (written) throw new Error('Firestore transactions require all reads before writes')
+          operations.push(`get:${ref.path}`)
+          return getMock(ref)
+        }) as typeof getMock,
+        set: vi.fn((ref: { path: string }, data: DocumentData) => {
+          written = true
+          operations.push(`set:${ref.path}`)
+          return setMock(ref, data)
+        }) as typeof setMock,
+        update: vi.fn((ref: { path: string }, data: DocumentData) => {
+          written = true
+          operations.push(`update:${ref.path}`)
+          return setMock(ref, data)
+        }) as typeof setMock,
+      })
+    },
   }),
 }))
 
@@ -49,7 +71,7 @@ const seedParent = () => {
 }
 
 describe('parent organization quota Callables', () => {
-  beforeEach(() => { vi.clearAllMocks(); documents.clear(); seedParent() })
+  beforeEach(() => { vi.clearAllMocks(); documents.clear(); transactionOperations.length = 0; seedParent() })
 
   it('allows only a parent owner or admin to change a child-school allocation', async () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
@@ -96,7 +118,38 @@ describe('parent organization quota Callables', () => {
     await expect(getSchoolEffectiveQuotaCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toEqual({
       schoolOrgId: 'school-1', parentOrgId: 'parent-1',
       concurrentLessonsAndMarkets: { guaranteed: 1, usage: 1, sharedReserved: 0, effectiveAvailable: 4 },
-      teacherSeats: { guaranteed: 1, usage: 1, sharedReserved: 1, effectiveAvailable: 2 },
+      teacherSeats: { guaranteed: 1, usage: 1, sharedReserved: 1, effectiveAvailable: 3 },
     })
+  })
+
+  it('includes and initializes a linked school whose allocation document is missing', async () => {
+    documents.delete('organizations/parent-1/schoolAllocations/school-1')
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+
+    await expect(getParentOrgQuotaUsageCallable.run({ auth: teacher, data: { parentOrgId: 'parent-1' } } as unknown as CallableRequest)).resolves.toEqual({
+      parentOrgId: 'parent-1',
+      concurrentLessonsAndMarkets: { limit: 4, guaranteed: 0, sharedAvailable: 4, reserved: 0 },
+      teacherSeats: { limit: 3, guaranteed: 0, sharedAvailable: 3, reserved: 0 },
+      schools: [{ schoolOrgId: 'school-1', concurrentLessonsAndMarkets: { guaranteed: 0, usage: 0, reserved: 0 }, teacherSeats: { guaranteed: 0, usage: 0, reserved: 0 } }],
+    })
+    expect(documents.get('organizations/parent-1/schoolAllocations/school-1')).toMatchObject({
+      guaranteedConcurrentLessonsAndMarkets: 0,
+      guaranteedTeacherSeats: 0,
+    })
+    const operations = transactionOperations[0]
+    expect(operations.slice(0, operations.findIndex((operation) => operation.startsWith('set:'))).every((operation) => operation.startsWith('get:'))).toBe(true)
+    expect(operations.at(-1)).toBe('set:organizations/parent-1/schoolAllocations/school-1')
+  })
+
+  it('initializes a missing allocation before returning the linked school effective quota', async () => {
+    documents.delete('organizations/parent-1/schoolAllocations/school-1')
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+
+    await expect(getSchoolEffectiveQuotaCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toEqual({
+      schoolOrgId: 'school-1', parentOrgId: 'parent-1',
+      concurrentLessonsAndMarkets: { guaranteed: 0, usage: 0, sharedReserved: 0, effectiveAvailable: 4 },
+      teacherSeats: { guaranteed: 0, usage: 0, sharedReserved: 0, effectiveAvailable: 3 },
+    })
+    expect(documents.has('organizations/parent-1/schoolAllocations/school-1')).toBe(true)
   })
 })
