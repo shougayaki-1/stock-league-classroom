@@ -2,7 +2,10 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PlanLimitsPage } from './PlanLimitsPage'
 
-const limits = { concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0 }
+const limits = {
+  concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+  downgradeStatus: { state: 'NORMAL' as const, violations: [] },
+}
 
 describe('PlanLimitsPage', () => {
   it('shows a loading state when data is undefined', () => {
@@ -37,6 +40,27 @@ describe('PlanLimitsPage', () => {
   it('hides the manage-billing button when onManageBilling is not provided', () => {
     render(<PlanLimitsPage data={limits} error={undefined} onManageBilling={undefined} managingBilling={false} />)
     expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+  })
+
+  it('shows a scheduled plan change and its effective date', () => {
+    render(<PlanLimitsPage data={{ ...limits, downgradeStatus: {
+      state: 'SCHEDULED', pendingPlanChange: { planId: 'SCHOOL', effectiveAtMillis: Date.UTC(2026, 7, 31) }, violations: [],
+    } }} error={undefined} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(/変更予定/)
+    expect(screen.getByRole('alert')).toHaveTextContent('SCHOOL')
+  })
+
+  it('shows each restricted violation and explains that new creation is stopped', () => {
+    render(<PlanLimitsPage data={{ ...limits, downgradeStatus: {
+      state: 'RESTRICTED',
+      violations: [
+        { key: 'concurrentLessonsAndMarkets', label: '同時授業・市場数', used: 2, limit: 1 },
+        { key: 'teacherSeats', label: '教師席', used: 3, limit: 1 },
+      ],
+    } }} error={undefined} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('同時授業・市場数: 2 / 1')
+    expect(screen.getByRole('alert')).toHaveTextContent('教師席: 3 / 1')
+    expect(screen.getByRole('alert')).toHaveTextContent(/新規作成を停止中/)
   })
 })
 

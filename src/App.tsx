@@ -32,7 +32,7 @@ import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPag
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
-import { getOrgPlanLimits, type PlanLimits } from './lib/organizations/planLimits'
+import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/planLimits'
 import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
 import { createStripeCustomerPortalSession } from './lib/billing/stripeCustomerPortal'
 import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
@@ -441,7 +441,7 @@ function ParentOrgSettingsRoute({ services }: { services: FirebaseServices }) {
 
 function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
-  const [data, setData] = useState<PlanLimits>()
+  const [data, setData] = useState<PlanLimitsResult>()
   const [error, setError] = useState<string>()
   const [checkingOut, setCheckingOut] = useState(false)
   const [managingBilling, setManagingBilling] = useState(false)
