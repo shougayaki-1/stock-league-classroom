@@ -156,7 +156,14 @@ export const unlinkSchoolFromParentOrgCallable = onCall({ region: 'asia-northeas
   const parentOrgId = school.get('parentOrgId') as string | undefined
   if (!parentOrgId) throw new HttpsError('failed-precondition', 'この学校はどの上位組織にも所属していません。')
   requireManager(await requireActiveOrgMember(db, parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
-  await unlinkSchoolFromParentOrgWithAdminSdk({ schoolOrgId: data.schoolOrgId })
+  try {
+    await unlinkSchoolFromParentOrgWithAdminSdk({ schoolOrgId: data.schoolOrgId })
+  } catch (error) {
+    if (error instanceof Error && error.message === '共有枠の予約が残っているため学校を解除できません') {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
 })
 export const listChildSchoolsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
