@@ -228,3 +228,39 @@ cd .. && git diff --check
 ```
 
 結果はfocused tests `2 files / 29 tests passed`、Functions全体 `128 files / 1122 tests passed`、typecheck/lint/diff checkはエラーなし。
+
+---
+
+# Task 3 Fix Round 2
+
+## 対象範囲
+
+- `functions/src/organizations/invitations.ts`
+- `functions/src/organizations/invitations.test.ts`
+
+レビュー指摘のうち、quota transaction 後の RTDB membership mirror 同期失敗で、PENDING 招待の再試行が同期を永続的に省略する問題だけを修正した。UI、LessonRun、`suspendMember`、未追跡の`.claude/`には変更を加えていない。
+
+## 修正内容
+
+- `reserveTeacherSeatForInvitation` が実際に teacher membership を active 化する transaction で、対象 invitation ID を `pendingMembershipSyncInvitationId` として同じ membership document に merge setするようにした。quota 枯渇、downgrade restriction、validation error、transaction 内の既存 active memberではこの admission markerを書かない。
+- `acceptInvitation` は active membership の marker が現在の PENDING invitation IDと一致する場合だけ `syncMembership` を再実行し、同期成功後に招待を accepted として `ACCEPTED` で返す。markerのない genuinely pre-existing active memberは従来どおり `ALREADY_MEMBER` とし、quota exhaustion/downgrade の判定順序も維持した。
+- Admin SDK adapter は markerを読み取り、teacher quota reservationへ invitation IDを渡すようにした。
+
+## TDD・検証
+
+production code変更前に再現テストを実行し、`Test Files 1 failed`、`Tests 1 failed | 18 passed`となった。失敗は2回目の受諾が`ALREADY_MEMBER`を返し、RTDB syncを省略するレビュー症状と一致した。
+
+修正後、次を実行した。
+
+```bash
+cd functions && npm exec vitest run src/organizations/invitations.test.ts
+cd functions && npm exec vitest run src/organizations/invitations.test.ts src/organizations/onCall.test.ts src/lessonRuns/onCall.test.ts
+cd functions && npm run typecheck
+cd functions && npm run lint
+```
+
+結果は invitation tests `1 file / 19 tests passed`、focused invitations/onCall tests `3 files / 72 tests passed`、Functions typecheck/lint はすべて exit code 0だった。
+
+## Context7確認
+
+実装前に Context7 で `/firebase/firebase-admin-node` の Firestore transaction API と `/vitest-dev/vitest` の async mock／`resolves`・`rejects`／focused test 実行仕様を確認した。

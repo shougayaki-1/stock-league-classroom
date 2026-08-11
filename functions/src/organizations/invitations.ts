@@ -119,9 +119,12 @@ export const createInvitationWithAdminSdk = (
 
 export interface AcceptInvitationDeps {
   getInvitation: (orgId: string, invitationId: string) => Promise<Invitation | null>
-  getMembership: (orgId: string, uid: string) => Promise<{ status: string } | null>
+  getMembership: (orgId: string, uid: string) => Promise<{
+    status: string
+    pendingMembershipSyncInvitationId?: string
+  } | null>
   getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
-  reserveTeacherSeat?: (orgId: string, uid: string) => Promise<{ alreadyActive: boolean }>
+  reserveTeacherSeat?: (orgId: string, uid: string, invitationId: string) => Promise<{ alreadyActive: boolean }>
   syncMembership: (change: MembershipChange) => Promise<void>
   markInvitationAccepted: (orgId: string, invitationId: string) => Promise<void>
 }
@@ -152,6 +155,10 @@ export const acceptInvitation = async (
 
   const membership = await deps.getMembership(input.orgId, input.callerUid)
   let alreadyActive = membership?.status === 'active'
+  const admissionNeedsSync = membership?.status === 'active'
+    && invitation.role === 'teacher'
+    && membership.pendingMembershipSyncInvitationId === input.invitationId
+  let shouldSync = admissionNeedsSync
   if (!alreadyActive) {
     if (invitation.role === 'teacher' && deps.getDowngradeStatus) {
       const status = await deps.getDowngradeStatus(input.orgId)
@@ -160,21 +167,28 @@ export const acceptInvitation = async (
       }
     }
     if (invitation.role === 'teacher' && deps.reserveTeacherSeat) {
-      alreadyActive = (await deps.reserveTeacherSeat(input.orgId, input.callerUid)).alreadyActive
+      alreadyActive = (await deps.reserveTeacherSeat(
+        input.orgId,
+        input.callerUid,
+        input.invitationId,
+      )).alreadyActive
     }
     if (!alreadyActive) {
-      await deps.syncMembership({
-        orgId: input.orgId,
-        uid: input.callerUid,
-        role: invitation.role,
-        status: 'active',
-        membershipVersion: 1,
-        revokedAtSeconds: 0,
-      })
+      shouldSync = true
     }
   }
+  if (shouldSync) {
+    await deps.syncMembership({
+      orgId: input.orgId,
+      uid: input.callerUid,
+      role: invitation.role,
+      status: 'active',
+      membershipVersion: 1,
+      revokedAtSeconds: 0,
+    })
+  }
   await deps.markInvitationAccepted(input.orgId, input.invitationId)
-  return { status: alreadyActive ? 'ALREADY_MEMBER' : 'ACCEPTED' }
+  return { status: alreadyActive && !admissionNeedsSync ? 'ALREADY_MEMBER' : 'ACCEPTED' }
 }
 
 export interface TeacherSeatQuotaTransaction {
@@ -196,6 +210,7 @@ export interface ReserveTeacherSeatForInvitationDeps {
 export interface ReserveTeacherSeatForInvitationInput {
   schoolOrgId: string
   teacherUid: string
+  pendingMembershipSyncInvitationId?: string
 }
 
 export const reserveTeacherSeatForInvitation = (
@@ -234,6 +249,9 @@ export const reserveTeacherSeatForInvitation = (
       role: 'teacher',
       status: 'active',
       membershipVersion: 1,
+      ...(input.pendingMembershipSyncInvitationId
+        ? { pendingMembershipSyncInvitationId: input.pendingMembershipSyncInvitationId }
+        : {}),
     }, { merge: true })
     if (currentUsage <= allocation.guaranteedTeacherSeats) {
       activateTeacher()
@@ -296,10 +314,15 @@ export const acceptInvitationWithAdminSdk = (
     },
     getMembership: async (orgId, uid) => {
       const snap = await db.doc(`organizations/${orgId}/members/${uid}`).get()
-      return snap.exists ? { status: snap.get('status') as string } : null
+      if (!snap.exists) return null
+      const data = snap.data() ?? {}
+      return {
+        status: data.status as string,
+        pendingMembershipSyncInvitationId: data.pendingMembershipSyncInvitationId as string | undefined,
+      }
     },
     getDowngradeStatus: getDowngradeStatusWithAdminSdk,
-    reserveTeacherSeat: (orgId, uid) => reserveTeacherSeatForInvitation({
+    reserveTeacherSeat: (orgId, uid, invitationId) => reserveTeacherSeatForInvitation({
       firestore: {
         runTransaction: (operation) => db.runTransaction((transaction) => operation({
           get: async (path) => {
@@ -325,7 +348,11 @@ export const acceptInvitationWithAdminSdk = (
         })),
       },
       now: FieldValue.serverTimestamp,
-    }, { schoolOrgId: orgId, teacherUid: uid }),
+    }, {
+      schoolOrgId: orgId,
+      teacherUid: uid,
+      pendingMembershipSyncInvitationId: invitationId,
+    }),
     syncMembership: (change) => syncOrganizationMembershipChange({
       markMirrorPending: async (orgId, membershipVersion) => {
         await getDatabase().ref(`orgAccessMeta/${orgId}/${change.uid}`).set({

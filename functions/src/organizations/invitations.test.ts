@@ -270,6 +270,34 @@ describe('acceptInvitation', () => {
     expect(markInvitationAccepted).toHaveBeenCalledWith('org-1', 'invitation-1')
   })
 
+  it('retries RTDB sync when the quota transaction admitted this invitation but the first sync failed', async () => {
+    let membership: { status: string; pendingMembershipSyncInvitationId?: string } | null = null
+    const reserveTeacherSeat = vi.fn(async (_orgId: string, _uid: string, pendingInvitationId?: string) => {
+      membership = { status: 'active', pendingMembershipSyncInvitationId: pendingInvitationId }
+      return { alreadyActive: false }
+    })
+    const syncMembership = vi.fn(async () => {
+      if (syncMembership.mock.calls.length === 1) throw new Error('RTDB sync failed')
+      membership = { status: 'active' }
+    })
+    const markInvitationAccepted = vi.fn()
+    const deps = {
+      getInvitation: async () => pending,
+      getMembership: async () => membership,
+      reserveTeacherSeat,
+      syncMembership,
+      markInvitationAccepted,
+    }
+    const input = { orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'teacher@example.com' }
+
+    await expect(acceptInvitation(deps, input)).rejects.toThrow('RTDB sync failed')
+    await expect(acceptInvitation(deps, input)).resolves.toEqual({ status: 'ACCEPTED' })
+
+    expect(reserveTeacherSeat).toHaveBeenCalledWith('org-1', 'uid-2', 'invitation-1')
+    expect(syncMembership).toHaveBeenCalledTimes(2)
+    expect(markInvitationAccepted).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects a new teacher when the teacher-seat resource is restricted', async () => {
     const syncMembership = vi.fn()
     const reserveTeacherSeat = vi.fn()
