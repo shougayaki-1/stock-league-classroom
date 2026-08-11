@@ -40,10 +40,11 @@ const renderDowngradeStatus = (status: DowngradeStatus) => {
 export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
+  const downgradeStatus = data.downgradeStatus ?? { state: 'NORMAL' as const, violations: [] }
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="h5">この組織の利用枠</Typography>
-      {renderDowngradeStatus(data.downgradeStatus)}
+      {renderDowngradeStatus(downgradeStatus)}
       <Table size="small">
         <TableHead><TableRow><TableCell>項目</TableCell><TableCell>上限</TableCell></TableRow></TableHead>
         <TableBody>
