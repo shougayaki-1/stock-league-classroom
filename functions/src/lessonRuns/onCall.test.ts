@@ -140,6 +140,17 @@ describe('createLessonRunCallable', () => {
     await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'resource-exhausted' })
   })
 
+  it('translates parent shared-quota exhaustion into resource-exhausted', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('共有枠が不足しています'))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'resource-exhausted',
+      message: '共有枠が不足しています',
+    })
+  })
+
   it('translates a downgrade restriction into resource-exhausted', async () => {
     templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })

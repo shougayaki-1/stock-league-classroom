@@ -126,3 +126,69 @@ cd functions && npm run lint
 
 - `acceptInvitationCallable`で`共有枠が不足しています`を`resource-exhausted`へ変換する実変更は、指定write scopeで`organizations/onCall.ts`が除外されているためTask 3Bでも行っていない。今回の純粋`Error`は既存Callable境界で明示的に変換可能な契約になっている。
 - membership sync成功後のreservation delete自体が失敗した場合、memberはsuspendedでもCallableは失敗する。現在の既存suspend契約はalready-suspended retryを拒否するため、その稀な部分失敗を自動修復するにはwrite scope外の再試行設計またはreconciliationが必要になる。
+
+---
+
+# Task 3C 実装レポート
+
+## 対象範囲
+
+- `functions/src/lessonRuns/phases/transitionPhase.ts`
+- `functions/src/lessonRuns/phases/transitionPhase.test.ts`
+- `functions/src/lessonRuns/appendLessonEvent.ts`
+- `functions/src/lessonRuns/onCall.ts`
+- `functions/src/lessonRuns/onCall.test.ts`
+- `functions/src/organizations/onCall.ts`
+- `functions/src/organizations/onCall.test.ts`
+
+Task 3CとしてLessonRunのterminal遷移時の親共有枠返却と、Task 3A/3Bで保留されていたCallableの共有枯渇エラー変換を実装した。`createLessonRun`、招待受諾の純粋ロジック、`suspendMember`、UI、未追跡の`.claude/`には触れていない。
+
+## 実装内容
+
+- `targetStatus`が`ABORTED`または`COMPLETED`の非dedupe遷移だけで、LessonRunの`orgId`から組織文書をreadする。
+- 組織が`type: 'school'`かつ空でない`parentOrgId`を持つ場合、Task 3Bで共通化された`quotaReservationDocumentPath`を使い、`concurrentLessonsAndMarkets:schoolOrgId:lessonRunId`のdeterministic reservation文書をreadする。
+- reservationが存在する場合だけ、ステータスイベントに必要な全readが完了した後のwrite phaseで`tx.delete`する。run更新、イベント、transition idempotency文書と同じFirestore transactionに含めた。
+- `FirestoreTx`にはoptionalな`delete`を追加し、`transitionPhaseWithAdminSdk`だけがAdmin SDKの`transaction.delete`を提供する。他の既存adapterの変更は不要にした。
+- `REFLECTION`は`ACTIVE_LESSON_RUN_STATUSES`に残るため、組織・reservationをreadせず、予約も返却しない。
+- transition idempotency文書が存在するreplayは従来どおり最初のreadでreturnし、組織・reservationの再read、再delete、イベント再追加を行わない。
+- `createLessonRunCallable`と`acceptInvitationCallable`で`Error('共有枠が不足しています')`を`HttpsError('resource-exhausted', ...)`へ変換する。
+- transitionテストfakeの`delete`もwriteとして記録し、最初のset/delete後にgetすると失敗するwrite-after-read guardを維持した。
+
+## TDD RED
+
+変更前baselineとして次を実行し、`Test Files 3 passed`、`Tests 63 passed`を確認した。
+
+```bash
+cd functions && npx vitest run src/lessonRuns/phases/transitionPhase.test.ts src/lessonRuns/onCall.test.ts src/organizations/onCall.test.ts
+```
+
+production codeより先にterminal返却、REFLECTION維持、reservation不在、terminal replay、2つのCallable mappingのテストを追加し、同じcommandを実行した。exit code 1、`Test Files 3 failed`、`Tests 6 failed | 64 passed`だった。失敗はreservationが未読・未削除であることと、共有枯渇Errorが生のまま返ることに一致した。
+
+## GREEN・検証
+
+最小実装後、対象テストは`Test Files 3 passed`、`Tests 70 passed`となった。続けて次を実行した。
+
+```bash
+cd functions && npm run typecheck
+cd functions && npm run lint
+cd functions && npm test
+```
+
+すべてexit code 0。Functions全体は`Test Files 128 passed`、`Tests 1117 passed`だった。`git diff --check`もexit code 0。
+
+## Firestore・Callable仕様確認
+
+実装前にcontext7で`/googleapis/nodejs-firestore`と`/firebase/firebase-functions`の現行ドキュメントを確認した。read-write transactionでは全readをwriteより先に完了し、競合時はtransaction callback全体が再実行されること、`Transaction.delete(DocumentReference)`を同じtransactionのwriteとして利用できることを確認した。またCallableでは`HttpsError('resource-exhausted', message)`が正式なエラーコードであることを確認した。
+
+## 要件対応テスト
+
+- `RUNNING -> ABORTED`: deterministicな親共有予約を同一transactionで返却する。
+- `REFLECTION -> COMPLETED`: deterministicな親共有予約を同一transactionで返却する。
+- `RUNNING -> REFLECTION`: 予約を維持し、quota用組織文書もreadしない。
+- reservation不在: deterministic pathはreadするがdeleteをenqueueしない。
+- terminal replay: transition idempotencyで収束し、組織・reservationを再readせず、再delete・再event追加もしない。
+- Callable mapping: LessonRun作成と教師招待受諾の共有枯渇をどちらも`resource-exhausted`へ変換する。
+
+## 懸念事項
+
+Task 3Cの指定範囲に既知の未解決事項はない。reservation削除はLessonRunのterminal更新と同一transactionのため、Task 3Bの教師suspend返却で報告されたsync後deleteの部分失敗問題はこの経路には存在しない。

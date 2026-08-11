@@ -4,6 +4,7 @@ import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '..
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
   set: (path: string, data: Record<string, unknown>) => void
+  delete?: (path: string) => void
 }
 export interface AppendLessonEventDeps {
   firestore: { runTransaction: <T>(fn: (tx: FirestoreTx) => Promise<T>) => Promise<T> }

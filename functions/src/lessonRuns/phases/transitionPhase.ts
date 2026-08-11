@@ -2,6 +2,7 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../../lib/idempotency'
 import { appendLessonEventInTransaction, type FirestoreTx } from '../appendLessonEvent'
 import { writeCheckpointWithAdminSdk } from '../checkpoint'
+import { quotaReservationDocumentPath } from '../../organizations/parentOrgQuotaFirestore'
 import { canTransitionRun, type LessonRunStatus } from './stateMachine'
 import { validateLessonForStart, type LessonForStartValidation } from './validation'
 
@@ -71,6 +72,9 @@ export interface TransitionPhaseDeps {
  */
 const isMajorPhaseBoundary = (targetStatus: LessonRunStatus | undefined): boolean =>
   targetStatus === 'RUNNING' || targetStatus === 'REFLECTION'
+
+const isTerminalQuotaRelease = (targetStatus: LessonRunStatus | undefined): boolean =>
+  targetStatus === 'ABORTED' || targetStatus === 'COMPLETED'
 
 interface StoredTransition {
   requestDigest: string
@@ -209,6 +213,22 @@ export const transitionPhase = async (
       }
     }
 
+    let quotaReservationPathToDelete: string | null = null
+    if (isTerminalQuotaRelease(input.targetStatus)) {
+      const orgSnap = await tx.get(`organizations/${run.orgId}`)
+      const org = orgSnap.data() as { type?: unknown; parentOrgId?: unknown } | undefined
+      if (orgSnap.exists && org?.type === 'school' && typeof org.parentOrgId === 'string' && org.parentOrgId.length > 0) {
+        const reservationPath = quotaReservationDocumentPath(
+          org.parentOrgId,
+          'concurrentLessonsAndMarkets',
+          run.orgId,
+          input.lessonRunId,
+        )
+        const reservationSnap = await tx.get(reservationPath)
+        if (reservationSnap.exists) quotaReservationPathToDelete = reservationPath
+      }
+    }
+
     const newStatus = input.targetStatus ?? run.status
     const newPhaseId = input.targetPhaseId ?? run.currentPhaseId
 
@@ -239,6 +259,10 @@ export const transitionPhase = async (
       lastSequence = event.sequence
     }
 
+    if (quotaReservationPathToDelete) {
+      if (!tx.delete) throw new Error('Firestore transaction delete is required for terminal quota release')
+      tx.delete(quotaReservationPathToDelete)
+    }
     tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId })
     const stored: StoredTransition = { requestDigest, status: newStatus, currentPhaseId: newPhaseId, sequence: lastSequence }
     tx.set(idempotencyPath, stored as unknown as Record<string, unknown>)
@@ -275,6 +299,7 @@ export const transitionPhaseWithAdminSdk = (
       runTransaction: (fn) => db.runTransaction((tx) => fn({
         get: async (path) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
         set: (path, data) => { tx.set(db.doc(path), data) },
+        delete: (path) => { tx.delete(db.doc(path)) },
       })),
     },
     actorId,

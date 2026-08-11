@@ -115,6 +115,19 @@ describe('acceptInvitationCallable', () => {
       message: '教師席を整理する必要があります',
     })
   })
+
+  it('translates parent shared-quota exhaustion into resource-exhausted', async () => {
+    vi.mocked(acceptInvitationWithAdminSdk).mockRejectedValueOnce(new Error('共有枠が不足しています'))
+    const request = {
+      auth: { uid: 'uid-2', token: { email_verified: true, email: 'x@example.com', firebase: { sign_in_provider: 'google.com' } } },
+      data: { orgId: 'org-1', invitationId: 'invitation-1' },
+    } as unknown as CallableRequest
+
+    await expect(acceptInvitationCallable.run(request)).rejects.toMatchObject({
+      code: 'resource-exhausted',
+      message: '共有枠が不足しています',
+    })
+  })
 })
 
 describe('listMyInvitationsCallable', () => {

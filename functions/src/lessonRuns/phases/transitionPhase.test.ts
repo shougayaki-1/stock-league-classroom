@@ -7,19 +7,26 @@ import { transitionPhase } from './transitionPhase'
 // instead of only failing in production.
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
+  const reads: string[] = []
+  const deletes: string[] = []
   return {
     docs,
+    reads,
+    deletes,
     runTransaction: async <T>(fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
       set: (path: string, data: Record<string, unknown>) => void
+      delete: (path: string) => void
     }) => Promise<T>) => {
       let written = false
       return fn({
         get: async (path: string) => {
           if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
+          reads.push(path)
           return { exists: docs.has(path), data: () => docs.get(path) }
         },
         set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
+        delete: (path: string) => { written = true; deletes.push(path); docs.delete(path) },
       })
     },
   }
@@ -158,6 +165,87 @@ describe('transitionPhase', () => {
     const events = [...fake.docs.entries()].filter(([path]) => path.includes('/events/'))
     expect(events).toHaveLength(1)
     expect(writeCheckpoint).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['RUNNING', 'ABORTED'],
+    ['REFLECTION', 'COMPLETED'],
+  ] as const)('releases an existing parent shared reservation in the same transaction for %s -> %s', async (status, targetStatus) => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { orgId: 'school-1', status })
+    fake.docs.set('organizations/school-1', { type: 'school', parentOrgId: 'parent-1' })
+    const reservationPath = 'organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-1'
+    fake.docs.set(reservationPath, {
+      reservationId: 'concurrentLessonsAndMarkets:school-1:run-1',
+      resourceKey: 'concurrentLessonsAndMarkets', schoolOrgId: 'school-1', targetId: 'run-1',
+    })
+
+    const result = await transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+    }, { lessonRunId: 'run-1', targetStatus, reason: '終了', idempotencyKey: `terminal-${targetStatus}` })
+
+    expect(result.status).toBe(targetStatus)
+    expect(fake.docs.has(reservationPath)).toBe(false)
+    expect(fake.deletes).toEqual([reservationPath])
+  })
+
+  it('does not release the shared reservation when entering REFLECTION because it remains active quota usage', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { orgId: 'school-1', status: 'RUNNING' })
+    fake.docs.set('organizations/school-1', { type: 'school', parentOrgId: 'parent-1' })
+    const reservationPath = 'organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-1'
+    fake.docs.set(reservationPath, {
+      reservationId: 'concurrentLessonsAndMarkets:school-1:run-1',
+      resourceKey: 'concurrentLessonsAndMarkets', schoolOrgId: 'school-1', targetId: 'run-1',
+    })
+
+    await transitionPhase({
+      firestore: fake as never,
+      actorId: 'teacher-1',
+      writeCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false }),
+    }, { lessonRunId: 'run-1', targetStatus: 'REFLECTION', reason: '振り返り', idempotencyKey: 'reflection-active' })
+
+    expect(fake.docs.has(reservationPath)).toBe(true)
+    expect(fake.deletes).toHaveLength(0)
+    expect(fake.reads).not.toContain('organizations/school-1')
+  })
+
+  it('does not enqueue a delete when the deterministic terminal reservation is absent', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { orgId: 'school-1', status: 'RUNNING' })
+    fake.docs.set('organizations/school-1', { type: 'school', parentOrgId: 'parent-1' })
+    const reservationPath = 'organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-1'
+
+    await transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+    }, { lessonRunId: 'run-1', targetStatus: 'ABORTED', reason: '中止', idempotencyKey: 'terminal-no-reservation' })
+
+    expect(fake.reads).toContain(reservationPath)
+    expect(fake.deletes).toHaveLength(0)
+  })
+
+  it('replays a terminal transition from its idempotency document without re-reading or re-deleting the reservation', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { orgId: 'school-1', status: 'RUNNING' })
+    fake.docs.set('organizations/school-1', { type: 'school', parentOrgId: 'parent-1' })
+    const reservationPath = 'organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-1'
+    fake.docs.set(reservationPath, {
+      reservationId: 'concurrentLessonsAndMarkets:school-1:run-1',
+      resourceKey: 'concurrentLessonsAndMarkets', schoolOrgId: 'school-1', targetId: 'run-1',
+    })
+    const deps = { firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn() }
+    const input = { lessonRunId: 'run-1', targetStatus: 'ABORTED' as const, reason: '中止', idempotencyKey: 'terminal-replay' }
+
+    const first = await transitionPhase(deps, input)
+    const second = await transitionPhase(deps, input)
+
+    expect(first.deduplicated).toBe(false)
+    expect(second.deduplicated).toBe(true)
+    expect(fake.reads.filter((path) => path === 'organizations/school-1')).toHaveLength(1)
+    expect(fake.reads.filter((path) => path === reservationPath)).toHaveLength(1)
+    expect(fake.deletes).toEqual([reservationPath])
+    const events = [...fake.docs.keys()].filter((path) => path.includes('/events/'))
+    expect(events).toHaveLength(1)
   })
 
   it('throws when neither targetStatus nor targetPhaseId is given', async () => {
