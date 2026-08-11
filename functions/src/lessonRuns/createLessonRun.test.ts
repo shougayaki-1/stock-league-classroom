@@ -1,24 +1,79 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createLessonRun } from './createLessonRun'
 
-const makeFakeFirestore = () => {
+const makeFakeFirestore = (options: { transactionAttempts?: number } = {}) => {
   const docs = new Map<string, Record<string, unknown>>()
   const activeLessonRunCounts = new Map<string, number>()
+  const collectionReads: string[] = []
   docs.set('organizations/personal_teacher-a', { planId: 'FREE' })
   docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 100 } })
   return {
     docs,
     activeLessonRunCounts,
+    collectionReads,
     runTransaction: async (fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      getCollection: (path: string) => Promise<Array<{ id: string; data: () => Record<string, unknown> }>>
       countActiveLessonRuns: (orgId: string) => Promise<number>
       set: (path: string, data: Record<string, unknown>) => void
-    }) => Promise<string>) => fn({
-      get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
-      countActiveLessonRuns: async (orgId: string) => activeLessonRunCounts.get(orgId) ?? 0,
-      set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
-    }),
+    }) => Promise<string>) => {
+      const attempts = options.transactionAttempts ?? 1
+      let result = ''
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const pendingWrites = new Map<string, Record<string, unknown>>()
+        let hasWritten = false
+        const assertReadBeforeWrite = () => {
+          if (hasWritten) throw new Error('Firestore transactions require all reads before writes')
+        }
+        result = await fn({
+          get: async (path: string) => {
+            assertReadBeforeWrite()
+            return { exists: docs.has(path), data: () => docs.get(path) }
+          },
+          getCollection: async (path: string) => {
+            assertReadBeforeWrite()
+            collectionReads.push(path)
+            const collectionDocuments = [...docs.entries()]
+              .filter(([documentPath]) => documentPath.startsWith(`${path}/`))
+              .filter(([documentPath]) => !documentPath.slice(path.length + 1).includes('/'))
+              .map(([documentPath, data]) => ({ id: documentPath.slice(path.length + 1), data: () => data }))
+            return collectionDocuments
+          },
+          countActiveLessonRuns: async (orgId: string) => {
+            assertReadBeforeWrite()
+            return activeLessonRunCounts.get(orgId) ?? 0
+          },
+          set: (path: string, data: Record<string, unknown>) => {
+            hasWritten = true
+            pendingWrites.set(path, data)
+          },
+        })
+        if (attempt === attempts - 1) {
+          for (const [path, data] of pendingWrites) docs.set(path, data)
+        }
+      }
+      return result
+    },
   }
+}
+
+const seedLinkedSchoolQuota = (
+  fake: ReturnType<typeof makeFakeFirestore>,
+  input: { guarantee: number; parentLimit: number; activeCount: number },
+) => {
+  fake.docs.set('organizations/school-1', { type: 'school', planId: 'SCHOOL', parentOrgId: 'parent-1' })
+  fake.docs.set('organizations/parent-1', { type: 'parentOrg', planId: 'PARENT_ORG' })
+  fake.docs.set('planDefinitions/SCHOOL', { limits: { concurrentLessonsAndMarkets: 100 } })
+  fake.docs.set('planDefinitions/PARENT_ORG', { limits: { concurrentLessonsAndMarkets: input.parentLimit } })
+  fake.docs.set('organizations/parent-1/schoolAllocations/school-1', {
+    guaranteedConcurrentLessonsAndMarkets: input.guarantee,
+    guaranteedTeacherSeats: 0,
+  })
+  fake.docs.set('lessonTemplates/tpl-school', { orgId: 'school-1', currentPublishedVersionId: 'v1' })
+  fake.docs.set('lessonTemplates/tpl-school/versions/v1', {
+    templateId: 'tpl-school', orgId: 'school-1', content: { subject: 'SOCIAL_STUDIES' },
+  })
+  fake.activeLessonRunCounts.set('school-1', input.activeCount)
 }
 
 describe('createLessonRun', () => {
@@ -221,5 +276,139 @@ describe('createLessonRun quota enforcement', () => {
       generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-restricted', lessonRunIdempotencyKey: 'idem-restricted',
       orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
     })).rejects.toThrow('同時授業・市場数を整理する必要があります')
+  })
+
+  it('keeps the existing organization plan limit for a school without a parent organization', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('organizations/school-standalone', { type: 'school', planId: 'SCHOOL' })
+    fake.docs.set('planDefinitions/SCHOOL', { limits: { concurrentLessonsAndMarkets: 1 } })
+    fake.docs.set('lessonTemplates/tpl-standalone', {
+      orgId: 'school-standalone', currentPublishedVersionId: 'v1',
+    })
+    fake.docs.set('lessonTemplates/tpl-standalone/versions/v1', {
+      templateId: 'tpl-standalone', orgId: 'school-standalone', content: { subject: 'SOCIAL_STUDIES' },
+    })
+    fake.activeLessonRunCounts.set('school-standalone', 1)
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-standalone',
+      generateLessonRunId: () => 'run-standalone',
+      lessonRunIdempotencyKey: 'idem-standalone',
+      orgId: 'school-standalone', templateId: 'tpl-standalone', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('この組織の同時授業・市場数の上限に達しています')
+
+    expect(fake.collectionReads).toEqual([])
+  })
+
+  it('creates a linked-school run within its guarantee without reserving parent shared quota', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 2, parentLimit: 3, activeCount: 1 })
+
+    const result = await createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-within-guarantee',
+      generateLessonRunId: () => 'run-within-guarantee',
+      lessonRunIdempotencyKey: 'idem-within-guarantee',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    })
+
+    expect(result).toEqual({ lessonRunId: 'run-within-guarantee', created: true })
+    expect([...fake.docs.keys()].filter((path) => path.includes('/quotaReservations/'))).toEqual([])
+    expect(fake.collectionReads).toEqual([])
+  })
+
+  it('reserves parent shared quota when the new linked-school run exceeds its guarantee', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 3, activeCount: 1 })
+
+    await createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-shared',
+      generateLessonRunId: () => 'run-shared',
+      lessonRunIdempotencyKey: 'idem-shared',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+      now: () => 'NOW',
+    })
+
+    expect(fake.docs.get('organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-shared')).toEqual({
+      reservationId: 'concurrentLessonsAndMarkets:school-1:run-shared',
+      resourceKey: 'concurrentLessonsAndMarkets',
+      schoolOrgId: 'school-1',
+      targetId: 'run-shared',
+      createdAt: 'NOW',
+    })
+    expect(fake.docs.has('lessonRuns/run-shared')).toBe(true)
+  })
+
+  it('throws a pure shared-quota Error and writes nothing when the parent shared remainder is exhausted', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 2, activeCount: 1 })
+    fake.docs.set('organizations/parent-1/schoolAllocations/school-2', {
+      guaranteedConcurrentLessonsAndMarkets: 1,
+      guaranteedTeacherSeats: 0,
+    })
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-exhausted',
+      generateLessonRunId: () => 'run-exhausted',
+      lessonRunIdempotencyKey: 'idem-exhausted',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow(new Error('共有枠が不足しています'))
+
+    expect(fake.docs.has('lessonRuns/run-exhausted')).toBe(false)
+    expect([...fake.docs.keys()].some((path) => path.includes('/quotaReservations/'))).toBe(false)
+  })
+
+  it('prioritizes a matching RESTRICTED downgrade violation over parent shared-quota exhaustion', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 1, activeCount: 1 })
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      getDowngradeStatus: async () => ({
+        state: 'RESTRICTED',
+        graceEndsAtMillis: 2_000,
+        violations: [{ key: 'concurrentLessonsAndMarkets', label: '同時授業・市場数', used: 1, limit: 1 }],
+      }),
+      generateRandomSeed: () => 'seed-restricted-shared',
+      generateLessonRunId: () => 'run-restricted-shared',
+      lessonRunIdempotencyKey: 'idem-restricted-shared',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('同時授業・市場数を整理する必要があります')
+
+    expect(fake.collectionReads).toEqual([])
+  })
+
+  it('uses one lessonRunId and one reservation across transaction and idempotent retries', async () => {
+    const fake = makeFakeFirestore({ transactionAttempts: 2 })
+    seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 2, activeCount: 1 })
+    const generateLessonRunId = vi.fn()
+      .mockReturnValueOnce('run-stable')
+      .mockReturnValueOnce('run-must-not-be-used')
+    const generateRandomSeed = vi.fn()
+      .mockReturnValueOnce('seed-stable')
+      .mockReturnValueOnce('seed-must-not-be-used')
+    const input = {
+      firestore: fake as never,
+      generateRandomSeed,
+      generateLessonRunId,
+      lessonRunIdempotencyKey: 'idem-stable',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    }
+
+    const first = await createLessonRun(input)
+    const second = await createLessonRun(input)
+
+    expect(first).toEqual({ lessonRunId: 'run-stable', created: true })
+    expect(second).toEqual({ lessonRunId: 'run-stable', created: false })
+    expect(generateLessonRunId).toHaveBeenCalledTimes(2)
+    expect(generateRandomSeed).toHaveBeenCalledTimes(2)
+    expect([...fake.docs.keys()].filter((path) => path.startsWith('lessonRuns/'))).toEqual(['lessonRuns/run-stable'])
+    expect([...fake.docs.keys()].filter((path) => path.includes('/quotaReservations/'))).toEqual([
+      'organizations/parent-1/quotaReservations/concurrentLessonsAndMarkets:school-1:run-stable',
+    ])
+    expect(fake.docs.get('lessonRuns/run-stable')).toMatchObject({ randomSeed: 'seed-stable' })
   })
 })

@@ -4,10 +4,16 @@ import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '..
 import { validateSocialStudiesMarketContent } from '../market/templateValidation'
 import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
 import { canIncreaseLimitedResource, type DowngradeStatus } from '../organizations/downgradeEnforcement'
+import {
+  reserveSharedQuota,
+  type QuotaReservation,
+  type SchoolQuotaAllocation,
+} from '../organizations/parentOrgQuota'
 import { ACTIVE_LESSON_RUN_STATUSES, getDowngradeStatusWithAdminSdk } from '../organizations/planLimits'
 
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+  getCollection: (path: string) => Promise<Array<{ id: string; data: () => Record<string, unknown> }>>
   countActiveLessonRuns: (orgId: string) => Promise<number>
   set: (path: string, data: Record<string, unknown>) => void
 }
@@ -25,6 +31,19 @@ export interface CreateLessonRunDeps {
 }
 export interface CreateLessonRunResult { lessonRunId: string; created: boolean }
 
+const allocationFrom = (schoolOrgId: string, data: Record<string, unknown>): SchoolQuotaAllocation => ({
+  schoolOrgId,
+  guaranteedConcurrentLessonsAndMarkets: Number(data.guaranteedConcurrentLessonsAndMarkets ?? 0),
+  guaranteedTeacherSeats: Number(data.guaranteedTeacherSeats ?? 0),
+})
+
+const reservationFrom = (reservationId: string, data: Record<string, unknown>): QuotaReservation | null => {
+  const resourceKey = data.resourceKey
+  if (resourceKey !== 'concurrentLessonsAndMarkets' && resourceKey !== 'teacherSeats') return null
+  if (typeof data.schoolOrgId !== 'string' || typeof data.targetId !== 'string') return null
+  return { reservationId, resourceKey, schoolOrgId: data.schoolOrgId, targetId: data.targetId }
+}
+
 /**
  * Idempotent per (orgId, lessonRunIdempotencyKey): a lookup document at
  * `lessonRunIdempotency/{sha256(orgId + '\0' + key)}` records which lessonRunId a
@@ -41,6 +60,8 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     primaryTeacherUid: deps.primaryTeacherUid,
   })
   const nowValue = deps.now ? deps.now() : new Date().toISOString()
+  const lessonRunId = deps.generateLessonRunId()
+  const randomSeed = deps.generateRandomSeed()
 
   return deps.firestore.runTransaction(async (tx) => {
     const existing = await tx.get(idempotencyPath)
@@ -78,7 +99,9 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     }
 
     const orgSnap = await tx.get(`organizations/${deps.orgId}`)
-    const org = orgSnap.exists ? (orgSnap.data() as { planId?: string }) : undefined
+    const org = orgSnap.exists
+      ? (orgSnap.data() as { type?: string; planId?: string; parentOrgId?: string })
+      : undefined
     if (!org?.planId) throw new Error('この組織にはプランが設定されていません')
     const planSnap = await tx.get(`planDefinitions/${org.planId}`)
     if (!planSnap.exists) throw new Error('この組織にはプランが設定されていません')
@@ -93,12 +116,59 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
       throw new Error('この組織の同時授業・市場数の上限に達しています')
     }
 
-    const lessonRunId = deps.generateLessonRunId()
+    let quotaReservation: QuotaReservation | null = null
+    if (org.type === 'school' && typeof org.parentOrgId === 'string' && org.parentOrgId.length > 0) {
+      const allocationPath = `organizations/${org.parentOrgId}/schoolAllocations/${deps.orgId}`
+      const allocationSnap = await tx.get(allocationPath)
+      if (!allocationSnap.exists) throw new Error('この学校の配分が見つかりません')
+      const allocation = allocationFrom(deps.orgId, allocationSnap.data() ?? {})
+
+      if (activeCount + 1 > allocation.guaranteedConcurrentLessonsAndMarkets) {
+        const parentSnap = await tx.get(`organizations/${org.parentOrgId}`)
+        const parentOrg = parentSnap.exists
+          ? (parentSnap.data() as { type?: string; planId?: string })
+          : undefined
+        if (parentOrg?.type !== 'parentOrg') throw new Error('上位組織が見つかりません')
+        if (!parentOrg.planId) throw new Error('上位組織のプランが設定されていません')
+
+        const parentPlanSnap = await tx.get(`planDefinitions/${parentOrg.planId}`)
+        if (!parentPlanSnap.exists) throw new Error('上位組織のプランが設定されていません')
+        const parentPlan = parentPlanSnap.data() as {
+          limits?: { concurrentLessonsAndMarkets?: unknown }
+        }
+        const parentLimit = parentPlan.limits?.concurrentLessonsAndMarkets
+        if (typeof parentLimit !== 'number') throw new Error('上位組織の利用上限が見つかりません')
+
+        const allocationDocuments = await tx.getCollection(`organizations/${org.parentOrgId}/schoolAllocations`)
+        const reservationDocuments = await tx.getCollection(`organizations/${org.parentOrgId}/quotaReservations`)
+        const allocations = allocationDocuments.map((document) => allocationFrom(document.id, document.data()))
+        const reservations = reservationDocuments
+          .map((document) => reservationFrom(document.id, document.data()))
+          .filter((reservation): reservation is QuotaReservation => reservation !== null)
+
+        quotaReservation = reserveSharedQuota({
+          resourceKey: 'concurrentLessonsAndMarkets',
+          parentLimit,
+          allocations,
+          reservations,
+          schoolOrgId: deps.orgId,
+          targetId: lessonRunId,
+          currentUsage: activeCount + 1,
+        })
+      }
+    }
+
+    if (quotaReservation && org.parentOrgId) {
+      tx.set(`organizations/${org.parentOrgId}/quotaReservations/${quotaReservation.reservationId}`, {
+        ...quotaReservation,
+        createdAt: nowValue,
+      })
+    }
     tx.set(`lessonRuns/${lessonRunId}`, {
       orgId: deps.orgId, templateId: deps.templateId, templateVersionId: template.currentPublishedVersionId,
       templateSnapshot: version.content, subject: (version.content as { subject: string }).subject,
       status: 'DRAFT', primaryTeacherUid: deps.primaryTeacherUid, teacherRoles: { [deps.primaryTeacherUid]: 'PRIMARY' },
-      currentPhaseId: null, randomSeed: deps.generateRandomSeed(), restoreGeneration: 0,
+      currentPhaseId: null, randomSeed, restoreGeneration: 0,
       startedAt: null, endedAt: null, createdAt: nowValue,
     })
     tx.set(idempotencyPath, { lessonRunId, requestDigest, createdAt: nowValue })
@@ -118,6 +188,10 @@ export const createLessonRunWithAdminSdk = (input: {
     firestore: {
       runTransaction: (fn) => db.runTransaction((tx) => fn({
         get: async (path) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
+        getCollection: async (path) => {
+          const snap = await tx.get(db.collection(path))
+          return snap.docs.map((document) => ({ id: document.id, data: () => document.data() }))
+        },
         countActiveLessonRuns: async (orgId) => {
           const snap = await tx.get(
             db.collection('lessonRuns').where('orgId', '==', orgId).where('status', 'in', ACTIVE_LESSON_RUN_STATUSES),
