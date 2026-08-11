@@ -13,7 +13,7 @@ export interface SuspendOrgMemberDeps {
   getMember: (orgId: string, uid: string) => Promise<MemberSnapshot | null>
   countActiveOwners: (orgId: string) => Promise<number>
   syncMembership: (change: MembershipChange) => Promise<void>
-  releaseTeacherSeat?: (orgId: string, uid: string) => Promise<void>
+  releaseTeacherSeat?: (orgId: string, uid: string, expectedMembershipVersion: number) => Promise<void>
   nowSeconds: () => number
 }
 
@@ -25,7 +25,13 @@ export const suspendOrgMember = async (
   input: SuspendOrgMemberInput,
 ): Promise<void> => {
   const member = await deps.getMember(input.orgId, input.uid)
-  if (!member || member.status !== 'active') throw new Error('このメンバーは既に解除されています')
+  if (!member) throw new Error('このメンバーは既に解除されています')
+  if (member.status === 'suspended') {
+    if (member.role === 'teacher' && deps.releaseTeacherSeat) {
+      await deps.releaseTeacherSeat(input.orgId, input.uid, member.membershipVersion)
+    }
+    throw new Error('このメンバーは既に解除されています')
+  }
 
   if (member.role === 'owner' && await deps.countActiveOwners(input.orgId) <= 1) {
     throw new Error('組織には少なくとも1人のownerが必要です')
@@ -40,32 +46,55 @@ export const suspendOrgMember = async (
     revokedAtSeconds: deps.nowSeconds(),
   })
   if (member.role === 'teacher' && deps.releaseTeacherSeat) {
-    await deps.releaseTeacherSeat(input.orgId, input.uid)
+    await deps.releaseTeacherSeat(input.orgId, input.uid, member.membershipVersion + 1)
   }
 }
 
+export interface ReleaseTeacherSeatTransaction {
+  get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+  delete: (path: string) => void
+}
+
 export interface ReleaseTeacherSeatReservationDeps {
-  getParentOrgId: (schoolOrgId: string) => Promise<string | null>
-  deleteReservation: (path: string) => Promise<void>
+  firestore: {
+    runTransaction: (operation: (transaction: ReleaseTeacherSeatTransaction) => Promise<void>) => Promise<void>
+  }
 }
 
 export interface ReleaseTeacherSeatReservationInput {
   schoolOrgId: string
   teacherUid: string
+  expectedMembershipVersion: number
 }
 
 export const releaseTeacherSeatReservation = async (
   deps: ReleaseTeacherSeatReservationDeps,
   input: ReleaseTeacherSeatReservationInput,
 ): Promise<void> => {
-  const parentOrgId = await deps.getParentOrgId(input.schoolOrgId)
-  if (!parentOrgId) return
-  await deps.deleteReservation(quotaReservationDocumentPath(
-    parentOrgId,
-    'teacherSeats',
-    input.schoolOrgId,
-    input.teacherUid,
-  ))
+  await deps.firestore.runTransaction(async (transaction) => {
+    const memberPath = `organizations/${input.schoolOrgId}/members/${input.teacherUid}`
+    const schoolPath = `organizations/${input.schoolOrgId}`
+    const memberSnapshot = await transaction.get(memberPath)
+    const member = memberSnapshot.data()
+    if (!memberSnapshot.exists
+      || member?.role !== 'teacher'
+      || member.status !== 'suspended'
+      || member.membershipVersion !== input.expectedMembershipVersion) return
+
+    const schoolSnapshot = await transaction.get(schoolPath)
+    const parentOrgId = schoolSnapshot.data()?.parentOrgId
+    if (!schoolSnapshot.exists || schoolSnapshot.data()?.type !== 'school'
+      || typeof parentOrgId !== 'string' || parentOrgId.length === 0) return
+
+    const reservationPath = quotaReservationDocumentPath(
+      parentOrgId,
+      'teacherSeats',
+      input.schoolOrgId,
+      input.teacherUid,
+    )
+    const reservationSnapshot = await transaction.get(reservationPath)
+    if (reservationSnapshot.exists) transaction.delete(reservationPath)
+  })
 }
 
 /** Production wiring: Firestore Admin SDK and the RTDB membership mirror. */
@@ -107,14 +136,17 @@ export const suspendOrgMemberWithAdminSdk = (input: SuspendOrgMemberInput): Prom
         })
       },
     }, change),
-    releaseTeacherSeat: (orgId, uid) => releaseTeacherSeatReservation({
-      getParentOrgId: async (schoolOrgId) => {
-        const snapshot = await db.doc(`organizations/${schoolOrgId}`).get()
-        const parentOrgId = snapshot.get('parentOrgId') as unknown
-        return typeof parentOrgId === 'string' && parentOrgId.length > 0 ? parentOrgId : null
+    releaseTeacherSeat: (orgId, uid, expectedMembershipVersion) => releaseTeacherSeatReservation({
+      firestore: {
+        runTransaction: (operation) => db.runTransaction((transaction) => operation({
+          get: async (path) => {
+            const snapshot = await transaction.get(db.doc(path))
+            return { exists: snapshot.exists, data: () => snapshot.data() }
+          },
+          delete: (path) => { transaction.delete(db.doc(path)) },
+        })),
       },
-      deleteReservation: async (path) => { await db.doc(path).delete() },
-    }, { schoolOrgId: orgId, teacherUid: uid }),
+    }, { schoolOrgId: orgId, teacherUid: uid, expectedMembershipVersion }),
     nowSeconds: () => Math.floor(Date.now() / 1000),
   }, input)
 }

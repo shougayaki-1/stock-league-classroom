@@ -181,7 +181,7 @@ export interface TeacherSeatQuotaTransaction {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
   getCollection: (path: string) => Promise<QuotaDocument[]>
   countActiveTeachers: (orgId: string) => Promise<number>
-  set: (path: string, data: Record<string, unknown>) => void
+  set: (path: string, data: Record<string, unknown>, options?: { merge: boolean }) => void
 }
 
 export interface ReserveTeacherSeatForInvitationDeps {
@@ -230,7 +230,15 @@ export const reserveTeacherSeatForInvitation = (
       data: () => allocationSnapshot.data() ?? {},
     })
     const currentUsage = activeTeachers + 1
-    if (currentUsage <= allocation.guaranteedTeacherSeats) return { alreadyActive: false }
+    const activateTeacher = () => transaction.set(memberPath, {
+      role: 'teacher',
+      status: 'active',
+      membershipVersion: 1,
+    }, { merge: true })
+    if (currentUsage <= allocation.guaranteedTeacherSeats) {
+      activateTeacher()
+      return { alreadyActive: false }
+    }
 
     const parentSnapshot = await transaction.get(`organizations/${parentOrgId}`)
     const parent = parentSnapshot.data()
@@ -270,6 +278,7 @@ export const reserveTeacherSeatForInvitation = (
         createdAt: nowValue,
       })
     }
+    activateTeacher()
     return { alreadyActive: false }
   })
 }
@@ -309,7 +318,10 @@ export const acceptInvitationWithAdminSdk = (
             )
             return snapshot.size
           },
-          set: (path, data) => { transaction.set(db.doc(path), data) },
+          set: (path, data, options) => {
+            if (options) transaction.set(db.doc(path), data, options)
+            else transaction.set(db.doc(path), data)
+          },
         })),
       },
       now: FieldValue.serverTimestamp,

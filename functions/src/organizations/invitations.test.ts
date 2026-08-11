@@ -24,6 +24,7 @@ const makeQuotaFirestore = () => {
   const documentReads: string[] = []
   const collectionReads: string[] = []
   const writes: string[] = []
+  let revision = 0
 
   return {
     documents,
@@ -35,36 +36,48 @@ const makeQuotaFirestore = () => {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
       getCollection: (path: string) => Promise<Array<{ id: string; data: () => Record<string, unknown> }>>
       countActiveTeachers: (orgId: string) => Promise<number>
-      set: (path: string, data: Record<string, unknown>) => void
+      set: (path: string, data: Record<string, unknown>, options?: { merge?: boolean }) => void
     }) => Promise<{ alreadyActive: boolean }>) => {
-      let hasWritten = false
-      const assertReadBeforeWrite = () => {
-        if (hasWritten) throw new Error('Firestore transactions require all reads before writes')
+      for (;;) {
+        const transactionRevision = revision
+        const snapshot = new Map([...documents.entries()].map(([path, data]) => [path, { ...data }]))
+        const pendingWrites: Array<{ path: string; data: Record<string, unknown>; merge: boolean }> = []
+        let hasWritten = false
+        const assertReadBeforeWrite = () => {
+          if (hasWritten) throw new Error('Firestore transactions require all reads before writes')
+        }
+        const result = await operation({
+          get: async (path) => {
+            assertReadBeforeWrite()
+            documentReads.push(path)
+            return { exists: snapshot.has(path), data: () => snapshot.get(path) }
+          },
+          getCollection: async (path) => {
+            assertReadBeforeWrite()
+            collectionReads.push(path)
+            return [...snapshot.entries()]
+              .filter(([documentPath]) => documentPath.startsWith(`${path}/`))
+              .filter(([documentPath]) => !documentPath.slice(path.length + 1).includes('/'))
+              .map(([documentPath, data]) => ({ id: documentPath.slice(path.length + 1), data: () => data }))
+          },
+          countActiveTeachers: async (orgId) => {
+            assertReadBeforeWrite()
+            return activeTeacherCounts.get(orgId) ?? 0
+          },
+          set: (path, data, options) => {
+            hasWritten = true
+            pendingWrites.push({ path, data, merge: options?.merge === true })
+          },
+        })
+        if (transactionRevision !== revision) continue
+        for (const write of pendingWrites) {
+          const nextData = write.merge ? { ...(documents.get(write.path) ?? {}), ...write.data } : write.data
+          writes.push(write.path)
+          documents.set(write.path, nextData)
+        }
+        if (pendingWrites.length > 0) revision += 1
+        return result
       }
-      return operation({
-        get: async (path) => {
-          assertReadBeforeWrite()
-          documentReads.push(path)
-          return { exists: documents.has(path), data: () => documents.get(path) }
-        },
-        getCollection: async (path) => {
-          assertReadBeforeWrite()
-          collectionReads.push(path)
-          return [...documents.entries()]
-            .filter(([documentPath]) => documentPath.startsWith(`${path}/`))
-            .filter(([documentPath]) => !documentPath.slice(path.length + 1).includes('/'))
-            .map(([documentPath, data]) => ({ id: documentPath.slice(path.length + 1), data: () => data }))
-        },
-        countActiveTeachers: async (orgId) => {
-          assertReadBeforeWrite()
-          return activeTeacherCounts.get(orgId) ?? 0
-        },
-        set: (path, data) => {
-          hasWritten = true
-          writes.push(path)
-          documents.set(path, data)
-        },
-      })
     },
   }
 }
@@ -320,10 +333,25 @@ describe('reserveTeacherSeatForInvitation', () => {
       now: () => 'NOW',
     }, { schoolOrgId: 'school-1', teacherUid: 'uid-2' })).resolves.toEqual({ alreadyActive: false })
 
-    expect(fake.writes).toEqual([])
+    expect(fake.writes).toEqual(['organizations/school-1/members/uid-2'])
     expect(fake.collectionReads).toEqual([])
     expect(fake.documentReads).not.toContain('organizations/parent-1')
     expect(fake.documentReads).not.toContain('planDefinitions/PARENT')
+  })
+
+  it('activates the new teacher in the quota transaction after all reads, even within guarantee', async () => {
+    const fake = makeQuotaFirestore()
+    seedLinkedSchoolTeacherQuota(fake, { guarantee: 2, parentLimit: 3, activeTeachers: 1 })
+
+    await reserveTeacherSeatForInvitation({
+      firestore: fake,
+      now: () => 'NOW',
+    }, { schoolOrgId: 'school-1', teacherUid: 'uid-2' })
+
+    expect(fake.documents.get('organizations/school-1/members/uid-2')).toMatchObject({
+      role: 'teacher', status: 'active', membershipVersion: 1,
+    })
+    expect(fake.writes).toEqual(['organizations/school-1/members/uid-2'])
   })
 
   it('creates one deterministic reservation when active usage plus the new teacher exceeds guarantee', async () => {
@@ -342,10 +370,11 @@ describe('reserveTeacherSeatForInvitation', () => {
       targetId: 'uid-2',
       createdAt: 'NOW',
     })
-    expect(fake.writes).toEqual([reservationPath])
+    expect(fake.writes).toEqual([
+      reservationPath,
+      'organizations/school-1/members/uid-2',
+    ])
     expect(fake.collectionReads).toEqual([
-      'organizations/parent-1/schoolAllocations',
-      'organizations/parent-1/quotaReservations',
       'organizations/parent-1/schoolAllocations',
       'organizations/parent-1/quotaReservations',
     ])
@@ -378,6 +407,27 @@ describe('reserveTeacherSeatForInvitation', () => {
 
     expect(fake.writes).toEqual([])
     expect(fake.collectionReads).toEqual([])
+  })
+
+  it('converges concurrent admissions so only one transaction activates the teacher and reserves the shared seat', async () => {
+    const fake = makeQuotaFirestore()
+    seedLinkedSchoolTeacherQuota(fake, { guarantee: 1, parentLimit: 2, activeTeachers: 1 })
+    const input = { schoolOrgId: 'school-1', teacherUid: 'uid-2' }
+
+    const results = await Promise.all([
+      reserveTeacherSeatForInvitation({ firestore: fake, now: () => 'FIRST' }, input),
+      reserveTeacherSeatForInvitation({ firestore: fake, now: () => 'SECOND' }, input),
+    ])
+
+    expect(results.sort((left, right) => Number(left.alreadyActive) - Number(right.alreadyActive))).toEqual([
+      { alreadyActive: false },
+      { alreadyActive: true },
+    ])
+    expect(fake.writes).toEqual([
+      'organizations/parent-1/quotaReservations/teacherSeats:school-1:uid-2',
+      'organizations/school-1/members/uid-2',
+    ])
+    expect(fake.documents.get('organizations/school-1/members/uid-2')).toMatchObject({ status: 'active' })
   })
 })
 

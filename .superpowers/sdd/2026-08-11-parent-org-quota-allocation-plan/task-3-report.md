@@ -192,3 +192,39 @@ cd functions && npm test
 ## 懸念事項
 
 Task 3Cの指定範囲に既知の未解決事項はない。reservation削除はLessonRunのterminal更新と同一transactionのため、Task 3Bの教師suspend返却で報告されたsync後deleteの部分失敗問題はこの経路には存在しない。
+
+---
+
+# Task 3 Fix Round
+
+## 対象範囲
+
+- `functions/src/organizations/invitations.ts`
+- `functions/src/organizations/invitations.test.ts`
+- `functions/src/organizations/suspendMember.ts`
+- `functions/src/organizations/suspendMember.test.ts`
+
+レビュー指摘のCritical/Importantの2点だけを修正した。LessonRun、UI、未追跡の`.claude/`には変更を加えていない。
+
+## 修正内容
+
+- parent-school pathの`reserveTeacherSeatForInvitation`で、学校memberを再readした後、保証内でも保証超過でも、quota判定に必要な全read完了後に同一Firestore transaction内で`organizations/{schoolOrgId}/members/{teacherUid}`を`role: teacher`・`status: active`・`membershipVersion: 1`へmerge setするようにした。共有枯渇や各種validation errorではこのwriteに到達しない。既存active memberはtransaction冒頭で`alreadyActive: true`として収束し、後段のRTDB mirror syncは従来どおり呼び出される。
+- invitation quota fakeにread-before-write guardとoptimistic transaction retryを追加し、保証内のmembership write、保証超過のreservation+membership同時write、同時受諾の片方だけのadmission/もう片方の`alreadyActive`を検証した。
+- teacher suspend cleanupをFirestore transaction化し、member status・membershipVersionを再readして期待versionのsuspended teacherである場合だけ学校→deterministic reservationをreadし、全read後にdeleteするようにした。active化・version変更との競合では削除しない。
+- suspend成功時はsuspend後の期待versionをcleanupへ渡し、既にsuspendedのteacherの再試行もcleanupを先に試みてから既存の`このメンバーは既に解除されています`を返す。cleanup失敗時は失敗を返して次回再試行可能にした。
+
+## TDD・検証
+
+Context7で`/googleapis/nodejs-firestore`のread-before-write transaction、競合時callback retry、merge set、transaction deleteの現行仕様と、`/vitest-dev/vitest`のasync/concurrent assertion仕様を確認した。
+
+失敗テスト追加後のREDでは、membership write不在、同時admissionの二重成功、already-suspended retry未実装、guarded cleanup未実装を確認した。修正後は次のすべてがexit code 0だった。
+
+```bash
+cd functions && npx vitest run src/organizations/invitations.test.ts src/organizations/suspendMember.test.ts
+cd functions && npm run typecheck
+cd functions && npm run lint
+cd functions && npm test
+cd .. && git diff --check
+```
+
+結果はfocused tests `2 files / 29 tests passed`、Functions全体 `128 files / 1122 tests passed`、typecheck/lint/diff checkはエラーなし。
