@@ -40,6 +40,7 @@ import { ParentOrgSettingsPage } from './components/teacher/organizations/Parent
 import { createParentOrg } from './lib/organizations/parentOrg'
 import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, type ChildSchool } from './lib/organizations/schoolHierarchy'
 import { listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
+import { migrateSchoolFromEndedParent } from './lib/organizations/parentContractMigration'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -483,6 +484,12 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const [checkingOut, setCheckingOut] = useState(false)
   const [managingBilling, setManagingBilling] = useState(false)
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null)
+  const [parentContractState, setParentContractState] = useState<'ACTIVE' | 'ENDED'>()
+  const [schoolSubscriptionState, setSchoolSubscriptionState] = useState<{ status: string } | null>()
+  const [canManageContract, setCanManageContract] = useState(false)
+  const [migratingFromEndedParent, setMigratingFromEndedParent] = useState(false)
+  const [migrationMessage, setMigrationMessage] = useState<string>()
+  const [organizationReload, setOrganizationReload] = useState(0)
   useEffect(() => {
     let cancelled = false
     if (!orgId) return
@@ -496,6 +503,9 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
     setStripeCustomerId(null)
     setSchoolEffectiveQuota(undefined)
     setOrgType(undefined)
+    setParentContractState(undefined)
+    setSchoolSubscriptionState(undefined)
+    setCanManageContract(false)
     if (!orgId) return () => { cancelled = true }
     void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => {
       if (cancelled || !snapshot.exists()) return
@@ -506,9 +516,22 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
         setStripeCustomerId((organization.stripeCustomerId as string | undefined) ?? null)
       }
       if (type === 'school') {
+        const subscription = organization.stripeSubscriptionState
+        setSchoolSubscriptionState(subscription && typeof subscription === 'object' && typeof (subscription as { status?: unknown }).status === 'string'
+          ? { status: (subscription as { status: string }).status }
+          : null)
+        void listOrgMembers(services.functions, { orgId }).then((members) => {
+          if (!cancelled) {
+            const membership = members.find((member) => member.uid === services.auth.currentUser?.uid)
+            setCanManageContract(membership?.role === 'owner' || membership?.role === 'admin')
+          }
+        }).catch(() => { if (!cancelled) setCanManageContract(false) })
         if (typeof organization.parentOrgId === 'string' && organization.parentOrgId.length > 0) {
           void getSchoolEffectiveQuota(services.functions, { schoolOrgId: orgId }).then((quota) => {
-            if (!cancelled) setSchoolEffectiveQuota(quota)
+            if (!cancelled) {
+              setSchoolEffectiveQuota(quota)
+              setParentContractState(quota.parentContractState)
+            }
           }).catch(() => {
             if (!cancelled) setSchoolEffectiveQuota(undefined)
           })
@@ -518,10 +541,22 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       if (!cancelled) setStripeCustomerId(null)
     })
     return () => { cancelled = true }
-  }, [services, orgId])
+  }, [services, orgId, organizationReload])
   const onCheckout = (orgId && orgType !== 'parentOrg') ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
   const onManageBilling = (orgId && orgType !== 'parentOrg' && stripeCustomerId) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
-  return <PlanLimitsPage data={data} error={error} schoolEffectiveQuota={schoolEffectiveQuota} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
+  const onMigrateFromEndedParent = (orgId && orgType === 'school' && parentContractState === 'ENDED') ? () => {
+    setMigratingFromEndedParent(true)
+    setMigrationMessage(undefined)
+    void migrateSchoolFromEndedParent(services.functions, { schoolOrgId: orgId }).then((result) => {
+      if (result.status === 'RETRY_REQUIRED') setMigrationMessage(`共有枠の予約を${result.deletedReservationCount}件整理しました。もう一度実行してください。`)
+      else {
+        setSchoolEffectiveQuota(undefined)
+        setMigrationMessage('学校を単独契約へ移行しました。')
+        setOrganizationReload((value) => value + 1)
+      }
+    }).catch(() => setMigrationMessage('移行に失敗しました。状態を確認してもう一度実行してください。')).finally(() => setMigratingFromEndedParent(false))
+  } : undefined
+  return <PlanLimitsPage data={data} error={error} schoolEffectiveQuota={schoolEffectiveQuota} parentContractState={parentContractState} schoolSubscriptionState={schoolSubscriptionState} canManageContract={canManageContract} onMigrateFromEndedParent={onMigrateFromEndedParent} migratingFromEndedParent={migratingFromEndedParent} migrationMessage={migrationMessage} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {

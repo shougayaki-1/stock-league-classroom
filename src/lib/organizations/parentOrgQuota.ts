@@ -25,6 +25,7 @@ export interface ParentOrgQuotaSchoolUsage {
 
 export interface ParentOrgQuotaUsageResult {
   parentOrgId: string
+  parentContractState: 'ACTIVE' | 'ENDED'
   concurrentLessonsAndMarkets: ParentQuotaSummary
   teacherSeats: ParentQuotaSummary
   schools: ParentOrgQuotaSchoolUsage[]
@@ -44,6 +45,7 @@ export interface SchoolEffectiveQuotaAxis {
 export interface SchoolEffectiveQuotaResult {
   schoolOrgId: string
   parentOrgId: string
+  parentContractState: 'ACTIVE' | 'ENDED'
   concurrentLessonsAndMarkets: SchoolEffectiveQuotaAxis
   teacherSeats: SchoolEffectiveQuotaAxis
 }

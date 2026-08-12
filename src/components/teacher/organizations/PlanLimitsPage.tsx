@@ -10,6 +10,12 @@ export interface PlanLimitsPageProps {
   onManageBilling?: () => void
   managingBilling?: boolean
   schoolEffectiveQuota?: SchoolEffectiveQuotaResult
+  parentContractState?: 'ACTIVE' | 'ENDED'
+  schoolSubscriptionState?: { status: string } | null
+  canManageContract?: boolean
+  onMigrateFromEndedParent?: () => void
+  migratingFromEndedParent?: boolean
+  migrationMessage?: string
 }
 
 const rows: { label: string; key: keyof PlanLimits }[] = [
@@ -46,7 +52,7 @@ const renderDowngradeStatus = (status: DowngradeStatus) => {
   return null
 }
 
-export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling, schoolEffectiveQuota }: PlanLimitsPageProps) {
+export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling, schoolEffectiveQuota, parentContractState, schoolSubscriptionState, canManageContract = false, onMigrateFromEndedParent, migratingFromEndedParent, migrationMessage }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   const downgradeStatus = data.downgradeStatus ?? { state: 'NORMAL' as const, violations: [] }
@@ -54,6 +60,13 @@ export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageB
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="h5">この組織の利用枠</Typography>
       {renderDowngradeStatus(downgradeStatus)}
+      {parentContractState === 'ENDED' && <Alert severity="warning">上位組織の契約は終了しています。学校データは保持されます。単独契約を有効にした後、ownerまたはadminが移行できます。</Alert>}
+      {migrationMessage && <Alert severity="info">{migrationMessage}</Alert>}
+      {parentContractState === 'ENDED' && canManageContract && onMigrateFromEndedParent && (
+        <Button variant="contained" disabled={schoolSubscriptionState?.status !== 'active' || migratingFromEndedParent} onClick={onMigrateFromEndedParent} sx={{ alignSelf: 'flex-start' }}>
+          学校を単独契約へ移行する
+        </Button>
+      )}
       {schoolEffectiveQuota && (
         <Stack spacing={1}>
           <Typography variant="subtitle1">学校の実効利用枠</Typography>

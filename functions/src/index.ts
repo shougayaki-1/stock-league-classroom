@@ -25,6 +25,7 @@ export {
   getSchoolEffectiveQuotaCallable,
   setSchoolQuotaAllocationCallable,
 } from './organizations/parentOrgQuotaOnCall'
+export { migrateSchoolFromEndedParentCallable } from './organizations/parentContractMigrationOnCall'
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export { duplicateLessonTemplateCallable, publishLessonVersionCallable } from './lessonTemplates/onCall'

@@ -6,6 +6,7 @@ vi.mock('firebase/functions', () => ({ httpsCallable: vi.fn() }))
 
 const usage: ParentOrgQuotaUsageResult = {
   parentOrgId: 'parent-1',
+  parentContractState: 'ACTIVE',
   concurrentLessonsAndMarkets: { limit: 10, guaranteed: 6, sharedAvailable: 3, reserved: 1 },
   teacherSeats: { limit: 8, guaranteed: 5, sharedAvailable: 2, reserved: 1 },
   schools: [],
@@ -14,6 +15,7 @@ const usage: ParentOrgQuotaUsageResult = {
 const effective: SchoolEffectiveQuotaResult = {
   schoolOrgId: 'school-1',
   parentOrgId: 'parent-1',
+  parentContractState: 'ACTIVE',
   concurrentLessonsAndMarkets: { guaranteed: 2, usage: 3, sharedReserved: 1, effectiveAvailable: 4 },
   teacherSeats: { guaranteed: 2, usage: 1, sharedReserved: 0, effectiveAvailable: 3 },
 }

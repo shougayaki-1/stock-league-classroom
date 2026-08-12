@@ -14,6 +14,7 @@ export interface ParentOrgSettingsPageProps {
   canEditAllocations?: boolean
   onSetSchoolQuotaAllocation?: (input: SetSchoolQuotaAllocationInput) => void
   settingAllocation?: boolean
+  parentContractState?: 'ACTIVE' | 'ENDED'
 }
 
 type AllocationDraft = { concurrentLessonsAndMarkets: string; teacherSeats: string }
@@ -35,9 +36,11 @@ export function ParentOrgSettingsPage({
   canEditAllocations = false,
   onSetSchoolQuotaAllocation,
   settingAllocation = false,
+  parentContractState = quotaUsage?.parentContractState,
 }: ParentOrgSettingsPageProps) {
   const [schoolOrgId, setSchoolOrgId] = useState('')
   const [drafts, setDrafts] = useState<Record<string, AllocationDraft>>({})
+  const contractEnded = parentContractState === 'ENDED'
   const canEdit = canEditAllocations && onSetSchoolQuotaAllocation !== undefined
 
   useEffect(() => {
@@ -90,11 +93,12 @@ export function ParentOrgSettingsPage({
           {!canEdit && <Typography variant="body2" color="text.secondary">配分の変更はownerまたはadminのみ可能です。</Typography>}
         </Stack>
       )}
+      {contractEnded && <Typography color="warning.main">上位組織の契約は終了しています。学校の追加と共有枠の配分変更はできません。</Typography>}
 
       <Stack spacing={2}>
         <Typography variant="subtitle1">学校を追加</Typography>
         <TextField label="学校の組織ID" value={schoolOrgId} onChange={(e) => setSchoolOrgId(e.target.value)} />
-        <Button variant="contained" disabled={linking || !schoolOrgId} onClick={() => { onLinkSchool(schoolOrgId); setSchoolOrgId('') }} sx={{ alignSelf: 'flex-start' }}>追加</Button>
+        <Button variant="contained" disabled={contractEnded || linking || !schoolOrgId} onClick={() => { onLinkSchool(schoolOrgId); setSchoolOrgId('') }} sx={{ alignSelf: 'flex-start' }}>追加</Button>
       </Stack>
 
       <Stack spacing={1}>
@@ -139,7 +143,7 @@ export function ParentOrgSettingsPage({
                               onChange={(event) => updateDraft(school.orgId, 'teacherSeats', event.target.value)}
                               slotProps={{ htmlInput: { min: 0, step: 1 } }}
                             />
-                            <Button size="small" variant="outlined" disabled={settingAllocation} onClick={() => submitAllocation(school.orgId)}>配分を保存</Button>
+                            <Button size="small" variant="outlined" disabled={contractEnded || settingAllocation} onClick={() => submitAllocation(school.orgId)}>配分を保存</Button>
                           </Stack>
                         )}
                       </Stack>

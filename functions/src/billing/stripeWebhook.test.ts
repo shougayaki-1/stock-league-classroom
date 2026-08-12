@@ -245,13 +245,15 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     ])
   })
 
-  it('marks the subscription CANCELED on customer.subscription.deleted', async () => {
+  it('does not bypass ordered subscription-state synchronization on customer.subscription.deleted', async () => {
     const setSubscriptionStatus = vi.fn()
+    const syncStripeSubscriptionState = vi.fn()
     await handleStripeWebhookEvent({
       getBillingRecord: vi.fn(), markBillingRecordPaid: vi.fn(), linkStripeCustomer: vi.fn(),
-      getOrgIdForStripeCustomer: async () => 'org-1', setSubscriptionStatus, applyInvoiceLifecycle: vi.fn(),
-    }, { type: 'customer.subscription.deleted', stripeCustomerId: 'cus_1' })
-    expect(setSubscriptionStatus).toHaveBeenCalledWith('org-1', 'CANCELED')
+      getOrgIdForStripeCustomer: async () => 'org-1', setSubscriptionStatus, syncStripeSubscriptionState, applyInvoiceLifecycle: vi.fn(),
+    }, { type: 'customer.subscription.deleted', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', eventCreatedAtMillis: 200 })
+    expect(syncStripeSubscriptionState).toHaveBeenCalled()
+    expect(setSubscriptionStatus).not.toHaveBeenCalled()
   })
 
   it('does nothing when the Stripe customer id cannot be resolved to an organization', async () => {
@@ -519,6 +521,7 @@ describe('Firestore subscription-state wiring', () => {
     expect(documents.get('organizations/org-1')).toEqual({
       type: 'parentOrg',
       childSchoolCount: 3,
+      subscriptionStatus: 'ACTIVE',
       stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'active', eventCreatedAtMillis: 201 },
       parentContractState: 'ACTIVE',
       parentContractSubscriptionId: 'sub_1',
@@ -569,6 +572,7 @@ describe('Firestore subscription-state wiring', () => {
     expect(documents.get('organizations/school-1')).toEqual({
       type: 'school',
       parentOrgId: 'parent-1',
+      subscriptionStatus: 'CANCELED',
       stripeSubscriptionState: { subscriptionId: 'sub_2', status: 'canceled', eventCreatedAtMillis: 300 },
     })
   })

@@ -185,6 +185,8 @@ export const createFirestoreStripeSubscriptionStateSynchronizer = (db: Firestore
 
     transaction.update(organizationRef, {
       stripeSubscriptionState: incoming,
+      ...(incoming.status === 'canceled' ? { subscriptionStatus: 'CANCELED' } : {}),
+      ...(incoming.status === 'active' ? { subscriptionStatus: 'ACTIVE' } : {}),
       ...(parentState === undefined ? {} : {
         parentContractState: parentState,
         parentContractSubscriptionId: incoming.subscriptionId,
@@ -256,7 +258,6 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
           eventCreatedAtMillis: event.eventCreatedAtMillis,
         }, 'ENDED')
       }
-      if (deps.setSubscriptionStatus) await deps.setSubscriptionStatus(orgId, 'CANCELED')
       return { status: 'ok' }
     }
     case 'customer.subscription.updated': {
@@ -410,7 +411,6 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     logStripeCustomerLookupError: (stripeCustomerId, error) => {
       logger.error('Stripe customer reverse lookup failed', { stripeCustomerId, error })
     },
-    setSubscriptionStatus: async (orgId, status) => { await db.doc(`organizations/${orgId}`).update({ subscriptionStatus: status }) },
     applyInvoiceLifecycle,
     getPlanIdForStripePrice: async (stripePriceId) => {
       const snap = await db.collection('planDefinitions').where('stripePriceId', '==', stripePriceId).get()

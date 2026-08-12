@@ -11,6 +11,7 @@ const limits = {
 const effectiveQuota: SchoolEffectiveQuotaResult = {
   schoolOrgId: 'school-1',
   parentOrgId: 'parent-1',
+  parentContractState: 'ACTIVE',
   concurrentLessonsAndMarkets: { guaranteed: 2, usage: 3, sharedReserved: 1, effectiveAvailable: 4 },
   teacherSeats: { guaranteed: 2, usage: 1, sharedReserved: 0, effectiveAvailable: 3 },
 }
@@ -78,6 +79,16 @@ describe('PlanLimitsPage', () => {
     expect(screen.getByText('同時授業・市場数: 保証 2 / 使用中 3 / 共有予約 1 / 実効利用可能 4')).toBeInTheDocument()
     expect(screen.getByText('教師席: 保証 2 / 使用中 1 / 共有予約 0 / 実効利用可能 3')).toBeInTheDocument()
     expect(screen.queryByText('上位組織の利用枠')).not.toBeInTheDocument()
+  })
+
+  it('only enables ended-parent migration for a manager with an active school subscription', () => {
+    const onMigrateFromEndedParent = vi.fn()
+    const { rerender } = render(<PlanLimitsPage data={limits} error={undefined} parentContractState="ENDED" canManageContract onMigrateFromEndedParent={onMigrateFromEndedParent} schoolSubscriptionState={{ status: 'canceled' }} />)
+    expect(screen.getByText(/学校データは保持されます/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '学校を単独契約へ移行する' })).toBeDisabled()
+    rerender(<PlanLimitsPage data={limits} error={undefined} parentContractState="ENDED" canManageContract onMigrateFromEndedParent={onMigrateFromEndedParent} schoolSubscriptionState={{ status: 'active' }} />)
+    fireEvent.click(screen.getByRole('button', { name: '学校を単独契約へ移行する' }))
+    expect(onMigrateFromEndedParent).toHaveBeenCalled()
   })
 })
 

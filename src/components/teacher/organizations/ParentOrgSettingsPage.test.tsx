@@ -6,6 +6,7 @@ import type { ParentOrgQuotaUsageResult } from '../../../lib/organizations/paren
 const schools = [{ orgId: 'school-1', name: 'A高校', verificationStatus: 'PENDING' }]
 const quotaUsage: ParentOrgQuotaUsageResult = {
   parentOrgId: 'parent-1',
+  parentContractState: 'ACTIVE',
   concurrentLessonsAndMarkets: { limit: 10, guaranteed: 6, sharedAvailable: 3, reserved: 1 },
   teacherSeats: { limit: 8, guaranteed: 5, sharedAvailable: 2, reserved: 1 },
   schools: [{
