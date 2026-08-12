@@ -3,6 +3,8 @@ import { logger } from 'firebase-functions/v2'
 import { onRequest } from 'firebase-functions/v2/https'
 import { defineSecret } from 'firebase-functions/params'
 import Stripe from 'stripe'
+import type { ParentContractState } from '../organizations/parentContract'
+import { parentContractStateFor, shouldApplySubscriptionState, type StripeSubscriptionState } from './subscriptionState'
 import { stripeSecretKey } from './stripeCheckout'
 
 export const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET')
@@ -10,9 +12,9 @@ export const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET')
 export type StripeWebhookEvent =
   | { type: 'checkout.session.completed'; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string }
   | { type: 'invoice.paid' | 'invoice.payment_failed'; invoiceId?: string; stripeCustomerId?: string }
-  | { type: 'customer.subscription.deleted'; stripeCustomerId?: string }
-  | { type: 'customer.subscription.updated'; stripeCustomerId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string }
-  | { type: string; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string; invoiceId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string }
+  | { type: 'customer.subscription.deleted'; stripeCustomerId?: string; stripeSubscriptionId?: string; eventCreatedAtMillis?: number }
+  | { type: 'customer.subscription.updated'; stripeCustomerId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string; status?: string; eventCreatedAtMillis?: number }
+  | { type: string; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string; invoiceId?: string; stripeSubscriptionId?: string; currentPriceId?: string; stripeScheduleId?: string; status?: string; eventCreatedAtMillis?: number }
 
 export interface ScheduledPlanChange {
   planId: string
@@ -43,6 +45,11 @@ export interface HandleStripeWebhookEventDeps {
   getScheduledPlanChange?: (stripeScheduleId: string) => Promise<ScheduledPlanChange | null>
   getPendingPlanChange?: (orgId: string) => Promise<PendingPlanChangeSummary | null>
   syncSubscriptionPlanChange?: (orgId: string, input: SubscriptionPlanChangeSyncInput) => Promise<void>
+  syncStripeSubscriptionState?: (
+    orgId: string,
+    state: StripeSubscriptionState,
+    parentContractState: ParentContractState | undefined,
+  ) => Promise<void>
   clearPendingPlanChange?: (orgId: string) => Promise<void>
   logSubscriptionPlanChangeIssue?: (details: Record<string, unknown>) => void
   logUnresolvedStripeCustomer?: (stripeCustomerId: string) => void
@@ -160,6 +167,36 @@ export const createFirestorePendingPlanChangeClearer = (db: Firestore) => async 
   })
 }
 
+export const createFirestoreStripeSubscriptionStateSynchronizer = (db: Firestore) => async (
+  orgId: string,
+  incoming: StripeSubscriptionState,
+  parentContractState: ParentContractState | undefined,
+): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    if (!organization.exists) return
+
+    const existing = organization.get('stripeSubscriptionState') as StripeSubscriptionState | undefined
+    if (!shouldApplySubscriptionState(existing, incoming)) return
+
+    const parentState = parentContractStateFor(organization.get('type') as string | undefined, incoming.status)
+      ?? (organization.get('type') === 'parentOrg' ? parentContractState : undefined)
+
+    transaction.update(organizationRef, {
+      stripeSubscriptionState: incoming,
+      ...(parentState === undefined ? {} : {
+        parentContractState: parentState,
+        parentContractSubscriptionId: incoming.subscriptionId,
+        parentContractEventCreatedAtMillis: incoming.eventCreatedAtMillis,
+        ...(parentState === 'ENDED'
+          ? { parentContractEndedAt: FieldValue.serverTimestamp() }
+          : { parentContractEndedAt: FieldValue.delete() }),
+      }),
+    })
+  })
+}
+
 export type StripeWebhookOutcome = { status: 'ok' } | { status: 'retry' }
 
 export const sendStripeWebhookOutcome = (
@@ -209,16 +246,31 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
       return { status: 'ok' }
     }
     case 'customer.subscription.deleted': {
-      if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer || !deps.setSubscriptionStatus) return { status: 'ok' }
+      if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer) return { status: 'ok' }
       const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
       if (!orgId) return { status: 'retry' }
-      await deps.setSubscriptionStatus(orgId, 'CANCELED')
+      if (event.stripeSubscriptionId && typeof event.eventCreatedAtMillis === 'number' && deps.syncStripeSubscriptionState) {
+        await deps.syncStripeSubscriptionState(orgId, {
+          subscriptionId: event.stripeSubscriptionId,
+          status: 'canceled',
+          eventCreatedAtMillis: event.eventCreatedAtMillis,
+        }, 'ENDED')
+      }
+      if (deps.setSubscriptionStatus) await deps.setSubscriptionStatus(orgId, 'CANCELED')
       return { status: 'ok' }
     }
     case 'customer.subscription.updated': {
-      if (!event.stripeCustomerId || !event.currentPriceId || !deps.getOrgIdForStripeCustomer) return { status: 'ok' }
+      if (!event.stripeCustomerId || !deps.getOrgIdForStripeCustomer) return { status: 'ok' }
       const orgId = await resolveOrgIdForStripeCustomer(deps, event.stripeCustomerId)
       if (!orgId) return { status: 'retry' }
+      if (event.stripeSubscriptionId && typeof event.status === 'string' && typeof event.eventCreatedAtMillis === 'number' && deps.syncStripeSubscriptionState) {
+        await deps.syncStripeSubscriptionState(orgId, {
+          subscriptionId: event.stripeSubscriptionId,
+          status: event.status,
+          eventCreatedAtMillis: event.eventCreatedAtMillis,
+        }, parentContractStateFor('parentOrg', event.status))
+      }
+      if (!event.currentPriceId) return { status: 'ok' }
       if (!deps.getPlanIdForStripePrice) return { status: 'ok' }
 
       const currentPlanId = await deps.getPlanIdForStripePrice(event.currentPriceId)
@@ -296,6 +348,8 @@ const extractEvent = (stripeEvent: Stripe.Event): StripeWebhookEvent => {
       return {
         type: 'customer.subscription.deleted',
         stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
+        stripeSubscriptionId: subscription.id,
+        eventCreatedAtMillis: stripeEvent.created * 1_000,
       }
     }
     case 'customer.subscription.updated': {
@@ -308,6 +362,8 @@ const extractEvent = (stripeEvent: Stripe.Event): StripeWebhookEvent => {
         stripeSubscriptionId: subscription.id,
         currentPriceId: itemPriceIds.length === 1 ? itemPriceIds[0] : undefined,
         stripeScheduleId: typeof schedule === 'string' ? schedule : schedule?.id,
+        status: subscription.status,
+        eventCreatedAtMillis: stripeEvent.created * 1_000,
       }
     }
     default:
@@ -331,6 +387,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
   const db = getFirestore()
   const stripe = new Stripe(stripeSecretKey.value())
   const applyInvoiceLifecycle = createFirestoreInvoiceLifecycleApplier(db)
+  const syncStripeSubscriptionState = createFirestoreStripeSubscriptionStateSynchronizer(db)
   const outcome = await handleStripeWebhookEvent({
     getBillingRecord: async (orgId, recordId) => {
       const snap = await db.doc(`organizations/${orgId}/billingRecords/${recordId}`).get()
@@ -377,6 +434,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     },
     getPendingPlanChange: createFirestorePendingPlanChangeReader(db),
     syncSubscriptionPlanChange: createFirestoreSubscriptionPlanChangeSynchronizer(db),
+    syncStripeSubscriptionState,
     clearPendingPlanChange: createFirestorePendingPlanChangeClearer(db),
     logSubscriptionPlanChangeIssue: (details) => { logger.warn('Stripe subscription plan change was not synchronized', details) },
   }, extractEvent(stripeEvent))

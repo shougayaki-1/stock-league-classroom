@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Firestore as AdminFirestore } from 'firebase-admin/firestore'
-import { createFirestoreInvoiceLifecycleApplier, createFirestoreSubscriptionPlanChangeSynchronizer, handleStripeWebhookEvent, sendStripeWebhookOutcome } from './stripeWebhook'
+import {
+  createFirestoreInvoiceLifecycleApplier,
+  createFirestoreStripeSubscriptionStateSynchronizer,
+  createFirestoreSubscriptionPlanChangeSynchronizer,
+  handleStripeWebhookEvent,
+  sendStripeWebhookOutcome,
+} from './stripeWebhook'
 describe('handleStripeWebhookEvent', () => {
   it('ignores unrelated and malformed events', async () => { const markBillingRecordPaid = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'invoice.payment_failed' }); await handleStripeWebhookEvent({ getBillingRecord: vi.fn(), markBillingRecordPaid }, { type: 'checkout.session.completed', clientReferenceId: 'bad', stripeSessionId: 's' }); expect(markBillingRecordPaid).not.toHaveBeenCalled() })
   it('marks a pending record paid and is idempotent', async () => { const mark = vi.fn(); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PENDING' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledWith('org-1', 'record-1', 's'); await handleStripeWebhookEvent({ getBillingRecord: async () => ({ status: 'PAID' }), markBillingRecordPaid: mark }, { type: 'checkout.session.completed', clientReferenceId: 'org-1:record-1', stripeSessionId: 's' }); expect(mark).toHaveBeenCalledTimes(1) })
@@ -76,6 +82,56 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     })).resolves.toEqual({ status: 'retry' })
   })
 
+  it('synchronizes a parent subscription deletion as ENDED', async () => {
+    const syncStripeSubscriptionState = vi.fn()
+
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      syncStripeSubscriptionState,
+    }, {
+      type: 'customer.subscription.deleted',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+      eventCreatedAtMillis: 200,
+    })).resolves.toEqual({ status: 'ok' })
+
+    expect(syncStripeSubscriptionState).toHaveBeenCalledWith('org-1', {
+      subscriptionId: 'sub_1',
+      status: 'canceled',
+      eventCreatedAtMillis: 200,
+    }, 'ENDED')
+  })
+
+  it('synchronizes a newer parent active event before unknown current-price handling', async () => {
+    const syncStripeSubscriptionState = vi.fn()
+    const logSubscriptionPlanChangeIssue = vi.fn()
+
+    await expect(handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      getPlanIdForStripePrice: async () => null,
+      syncStripeSubscriptionState,
+      logSubscriptionPlanChangeIssue,
+    }, {
+      type: 'customer.subscription.updated',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+      currentPriceId: 'price_unknown',
+      status: 'active',
+      eventCreatedAtMillis: 201,
+    })).resolves.toEqual({ status: 'ok' })
+
+    expect(syncStripeSubscriptionState).toHaveBeenCalledWith('org-1', {
+      subscriptionId: 'sub_1',
+      status: 'active',
+      eventCreatedAtMillis: 201,
+    }, 'ACTIVE')
+    expect(logSubscriptionPlanChangeIssue).toHaveBeenCalled()
+  })
+
   it('returns ok and does not mutate state for an unknown current price', async () => {
     const syncSubscriptionPlanChange = vi.fn()
     const logSubscriptionPlanChangeIssue = vi.fn()
@@ -90,6 +146,24 @@ describe('handleStripeWebhookEvent — subscription lifecycle', () => {
     })).resolves.toEqual({ status: 'ok' })
     expect(syncSubscriptionPlanChange).not.toHaveBeenCalled()
     expect(logSubscriptionPlanChangeIssue).toHaveBeenCalled()
+  })
+
+  it('never invokes subscription-state sync for invoice lifecycle events', async () => {
+    const syncStripeSubscriptionState = vi.fn()
+
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      applyInvoiceLifecycle: vi.fn(),
+      syncStripeSubscriptionState,
+    }, {
+      type: 'invoice.paid',
+      invoiceId: 'in_1',
+      stripeCustomerId: 'cus_1',
+    })
+
+    expect(syncStripeSubscriptionState).not.toHaveBeenCalled()
   })
 
   it('clears a pending plan change when Stripe removes its schedule without applying the plan', async () => {
@@ -307,6 +381,196 @@ describe('Firestore subscription plan-change wiring', () => {
     })
     expect((updates[0].downgradeGrace as { startedAt: { toMillis: () => number }; endsAt: { toMillis: () => number } }).startedAt.toMillis()).toBe(1_000)
     expect((updates[0].downgradeGrace as { startedAt: { toMillis: () => number }; endsAt: { toMillis: () => number } }).endsAt.toMillis()).toBe(1_000 + 30 * 24 * 60 * 60 * 1_000)
+  })
+})
+
+describe('Firestore subscription-state wiring', () => {
+  it('ignores an older event and keeps the saved state unchanged', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    type Transaction = {
+      get: (ref: DocumentRef) => Promise<Snapshot>
+      update: (ref: DocumentRef, data: Record<string, unknown>) => void
+    }
+    type FakeFirestore = {
+      doc: (path: string) => DocumentRef
+      runTransaction: <T>(operation: (transaction: Transaction) => Promise<T>) => Promise<T>
+    }
+
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/org-1', {
+        type: 'parentOrg',
+        stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 200 },
+        parentContractState: 'ENDED',
+        parentContractSubscriptionId: 'sub_1',
+        parentContractEventCreatedAtMillis: 200,
+        parentContractEndedAt: 'OLD_END',
+      }],
+    ])
+    const transactionOperations: string[][] = []
+    const firestore: FakeFirestore = {
+      doc: (path) => ({ path }),
+      runTransaction: async (operation) => {
+        const operations: string[] = []
+        transactionOperations.push(operations)
+        let wrote = false
+        return operation({
+          get: async (ref) => {
+            if (wrote) throw new Error('Firestore transactions require all reads before writes')
+            operations.push(`get:${ref.path}`)
+            const data = documents.get(ref.path)
+            return { exists: Boolean(data), get: (field) => data?.[field] }
+          },
+          update: (ref, data) => {
+            wrote = true
+            operations.push(`update:${ref.path}`)
+            const next = { ...documents.get(ref.path) }
+            for (const [key, value] of Object.entries(data)) {
+              if (value?.constructor?.name === 'DeleteTransform') delete next[key]
+              else if (value?.constructor?.name === 'ServerTimestampTransform') next[key] = 'SERVER_TIMESTAMP'
+              else next[key] = value
+            }
+            documents.set(ref.path, next)
+          },
+        })
+      },
+    }
+
+    const synchronize = createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)
+
+    await synchronize('org-1', {
+      subscriptionId: 'sub_1',
+      status: 'active',
+      eventCreatedAtMillis: 199,
+    }, 'ACTIVE')
+
+    expect(transactionOperations).toEqual([['get:organizations/org-1']])
+    expect(documents.get('organizations/org-1')).toEqual({
+      type: 'parentOrg',
+      stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 200 },
+      parentContractState: 'ENDED',
+      parentContractSubscriptionId: 'sub_1',
+      parentContractEventCreatedAtMillis: 200,
+      parentContractEndedAt: 'OLD_END',
+    })
+  })
+
+  it('removes parentContractEndedAt on a newer parent ACTIVE event without touching child-school fields', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    type Transaction = {
+      get: (ref: DocumentRef) => Promise<Snapshot>
+      update: (ref: DocumentRef, data: Record<string, unknown>) => void
+    }
+    type FakeFirestore = {
+      doc: (path: string) => DocumentRef
+      runTransaction: <T>(operation: (transaction: Transaction) => Promise<T>) => Promise<T>
+    }
+
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/org-1', {
+        type: 'parentOrg',
+        childSchoolCount: 3,
+        stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 200 },
+        parentContractState: 'ENDED',
+        parentContractSubscriptionId: 'sub_1',
+        parentContractEventCreatedAtMillis: 200,
+        parentContractEndedAt: 'OLD_END',
+      }],
+    ])
+    const transactionOperations: string[][] = []
+    const firestore: FakeFirestore = {
+      doc: (path) => ({ path }),
+      runTransaction: async (operation) => {
+        const operations: string[] = []
+        transactionOperations.push(operations)
+        let wrote = false
+        return operation({
+          get: async (ref) => {
+            if (wrote) throw new Error('Firestore transactions require all reads before writes')
+            operations.push(`get:${ref.path}`)
+            const data = documents.get(ref.path)
+            return { exists: Boolean(data), get: (field) => data?.[field] }
+          },
+          update: (ref, data) => {
+            wrote = true
+            operations.push(`update:${ref.path}`)
+            const next = { ...documents.get(ref.path) }
+            for (const [key, value] of Object.entries(data)) {
+              if (value?.constructor?.name === 'DeleteTransform') delete next[key]
+              else if (value?.constructor?.name === 'ServerTimestampTransform') next[key] = 'SERVER_TIMESTAMP'
+              else next[key] = value
+            }
+            documents.set(ref.path, next)
+          },
+        })
+      },
+    }
+
+    const synchronize = createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)
+
+    await synchronize('org-1', {
+      subscriptionId: 'sub_1',
+      status: 'active',
+      eventCreatedAtMillis: 201,
+    }, 'ACTIVE')
+
+    expect(transactionOperations).toEqual([['get:organizations/org-1', 'update:organizations/org-1']])
+    expect(documents.get('organizations/org-1')).toEqual({
+      type: 'parentOrg',
+      childSchoolCount: 3,
+      stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'active', eventCreatedAtMillis: 201 },
+      parentContractState: 'ACTIVE',
+      parentContractSubscriptionId: 'sub_1',
+      parentContractEventCreatedAtMillis: 201,
+    })
+  })
+
+  it('stores the subscription state for a school without writing parent-contract fields', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    type Transaction = {
+      get: (ref: DocumentRef) => Promise<Snapshot>
+      update: (ref: DocumentRef, data: Record<string, unknown>) => void
+    }
+    type FakeFirestore = {
+      doc: (path: string) => DocumentRef
+      runTransaction: <T>(operation: (transaction: Transaction) => Promise<T>) => Promise<T>
+    }
+
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/school-1', {
+        type: 'school',
+        parentOrgId: 'parent-1',
+      }],
+    ])
+    const firestore: FakeFirestore = {
+      doc: (path) => ({ path }),
+      runTransaction: async (operation) => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => {
+          const next = { ...documents.get(ref.path), ...data }
+          documents.set(ref.path, next)
+        },
+      }),
+    }
+
+    const synchronize = createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)
+
+    await synchronize('school-1', {
+      subscriptionId: 'sub_2',
+      status: 'canceled',
+      eventCreatedAtMillis: 300,
+    }, 'ENDED')
+
+    expect(documents.get('organizations/school-1')).toEqual({
+      type: 'school',
+      parentOrgId: 'parent-1',
+      stripeSubscriptionState: { subscriptionId: 'sub_2', status: 'canceled', eventCreatedAtMillis: 300 },
+    })
   })
 })
 
