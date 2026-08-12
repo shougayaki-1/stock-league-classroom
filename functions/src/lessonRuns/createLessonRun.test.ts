@@ -318,6 +318,36 @@ describe('createLessonRun quota enforcement', () => {
     expect(fake.collectionReads).toEqual([])
   })
 
+  it('allows a linked-school run within its guarantee even when the parent contract has ended', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 2, parentLimit: 3, activeCount: 1 })
+    fake.docs.set('organizations/parent-1', { type: 'parentOrg', planId: 'PARENT_ORG', parentContractState: 'ENDED' })
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-ended-guarantee',
+      generateLessonRunId: () => 'run-ended-guarantee',
+      lessonRunIdempotencyKey: 'idem-ended-guarantee',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    })).resolves.toEqual({ lessonRunId: 'run-ended-guarantee', created: true })
+  })
+
+  it('rejects a linked-school run requiring a shared reservation when the parent contract has ended', async () => {
+    const fake = makeFakeFirestore()
+    seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 3, activeCount: 1 })
+    fake.docs.set('organizations/parent-1', { type: 'parentOrg', planId: 'PARENT_ORG', parentContractState: 'ENDED' })
+
+    await expect(createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'seed-ended-shared',
+      generateLessonRunId: () => 'run-ended-shared',
+      lessonRunIdempotencyKey: 'idem-ended-shared',
+      orgId: 'school-1', templateId: 'tpl-school', primaryTeacherUid: 'teacher-a',
+    })).rejects.toThrow('親組織の契約が終了しているため共有枠を利用できません')
+
+    expect(fake.docs.has('lessonRuns/run-ended-shared')).toBe(false)
+  })
+
   it('reserves parent shared quota when the new linked-school run exceeds its guarantee', async () => {
     const fake = makeFakeFirestore()
     seedLinkedSchoolQuota(fake, { guarantee: 1, parentLimit: 3, activeCount: 1 })

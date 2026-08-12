@@ -1,4 +1,5 @@
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
+import { assertParentContractAllowsSharedQuota, parentContractStateFrom } from './parentContract'
 
 export interface ChildSchool {
   orgId: string
@@ -7,7 +8,7 @@ export interface ChildSchool {
 }
 
 export interface LinkSchoolToParentOrgDeps {
-  getOrg: (orgId: string) => Promise<{ type: string; parentOrgId: string | null } | null>
+  getOrg: (orgId: string) => Promise<{ type: string; parentOrgId: string | null; parentContractState?: unknown } | null>
   setParentOrgId: (schoolOrgId: string, parentOrgId: string) => Promise<void>
   createZeroAllocation: (parentOrgId: string, schoolOrgId: string) => Promise<void>
 }
@@ -26,6 +27,7 @@ export const linkSchoolToParentOrg = async (
     deps.getOrg(input.schoolOrgId),
   ])
   if (!parent || parent.type !== 'parentOrg') throw new Error('対象は上位組織ではありません')
+  assertParentContractAllowsSharedQuota(parentContractStateFrom(parent))
   if (!school || school.type !== 'school') throw new Error('対象は学校組織ではありません')
   if (school.parentOrgId) throw new Error('この学校は既に別の上位組織に所属しています')
 
@@ -43,8 +45,9 @@ export const linkSchoolToParentOrgWithAdminSdk = async (input: LinkSchoolToParen
       const snapshot = await transaction.get(orgId === input.parentOrgId ? db.doc(`organizations/${orgId}`) : schoolRef)
       return snapshot.exists
         ? {
-            type: snapshot.get('type') as string,
-            parentOrgId: (snapshot.get('parentOrgId') as string | undefined) ?? null,
+          type: snapshot.get('type') as string,
+          parentOrgId: (snapshot.get('parentOrgId') as string | undefined) ?? null,
+          parentContractState: snapshot.get('parentContractState'),
           }
         : null
     },

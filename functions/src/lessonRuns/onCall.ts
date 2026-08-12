@@ -44,6 +44,7 @@ const translateCreateLessonRunError = (error: unknown): unknown => {
     if (error.message === 'この組織の同時授業・市場数の上限に達しています') return new HttpsError('resource-exhausted', error.message)
     if (error.message === '同時授業・市場数を整理する必要があります') return new HttpsError('resource-exhausted', error.message)
     if (error.message === '共有枠が不足しています') return new HttpsError('resource-exhausted', error.message)
+    if (error.message === '親組織の契約が終了しているため共有枠を利用できません') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'この組織にはプランが設定されていません') return new HttpsError('failed-precondition', error.message)
   }
   return error

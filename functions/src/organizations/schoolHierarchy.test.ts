@@ -100,6 +100,20 @@ describe('school hierarchy', () => {
       .rejects.toThrow('この学校は既に別の上位組織に所属しています')
   })
 
+  it('rejects linking to a parent whose contract already ended', async () => {
+    const setParentOrgId = vi.fn()
+    const createZeroAllocation = vi.fn()
+    const getOrg = async (orgId: string) => orgId === 'p'
+      ? { type: 'parentOrg', parentOrgId: null, parentContractState: 'ENDED' }
+      : { type: 'school', parentOrgId: null }
+
+    await expect(linkSchoolToParentOrg({ getOrg, setParentOrgId, createZeroAllocation }, { parentOrgId: 'p', schoolOrgId: 's' }))
+      .rejects.toThrow('親組織の契約が終了しているため共有枠を利用できません')
+
+    expect(setParentOrgId).not.toHaveBeenCalled()
+    expect(createZeroAllocation).not.toHaveBeenCalled()
+  })
+
   it('links a school and creates its zero-guarantee allocation', async () => {
     const setParentOrgId = vi.fn()
     const createZeroAllocation = vi.fn()
@@ -141,6 +155,21 @@ describe('school hierarchy', () => {
       'get:organizations/school-1',
     ])
     expect(firestoreState.documents.get('organizations/school-1')?.parentOrgId).toBeNull()
+  })
+
+  it('rejects an ended parent contract before linking writes', async () => {
+    firestoreState.documents.set('organizations/parent-1', { type: 'parentOrg', parentContractState: 'ENDED' })
+    firestoreState.documents.set('organizations/school-1', { type: 'school', parentOrgId: null })
+
+    await expect(linkSchoolToParentOrgWithAdminSdk({ parentOrgId: 'parent-1', schoolOrgId: 'school-1' }))
+      .rejects.toThrow('親組織の契約が終了しているため共有枠を利用できません')
+
+    expect(firestoreState.transactions[0]).toEqual([
+      'get:organizations/parent-1',
+      'get:organizations/school-1',
+    ])
+    expect(firestoreState.documents.get('organizations/school-1')?.parentOrgId).toBeNull()
+    expect(firestoreState.documents.has('organizations/parent-1/schoolAllocations/school-1')).toBe(false)
   })
 
   it('unlinks a school only when it still belongs to the authorized parent and has no reservations', async () => {

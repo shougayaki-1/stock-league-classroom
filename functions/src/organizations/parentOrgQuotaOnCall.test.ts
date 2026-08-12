@@ -103,6 +103,26 @@ describe('parent organization quota Callables', () => {
     expect(setMock).not.toHaveBeenCalled()
   })
 
+  it('rejects an allocation update when the parent contract already ended', async () => {
+    documents.set('organizations/parent-1', { type: 'parentOrg', planId: 'PARENT_ORG', parentContractState: 'ENDED' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+
+    await expect(setSchoolQuotaAllocationCallable.run({
+      auth: teacher,
+      data: {
+        parentOrgId: 'parent-1',
+        schoolOrgId: 'school-1',
+        guaranteedConcurrentLessonsAndMarkets: 1,
+        guaranteedTeacherSeats: 1,
+      },
+    } as unknown as CallableRequest)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '親組織の契約が終了しているため共有枠を利用できません',
+    })
+
+    expect(setMock).not.toHaveBeenCalled()
+  })
+
   it('returns only aggregate quota DTOs to active members', async () => {
     documents.set('organizations/parent-1/quotaReservations/teacherSeats:school-1:teacher-2', { resourceKey: 'teacherSeats', schoolOrgId: 'school-1', targetId: 'teacher-2', email: 'private@example.com' })
     documents.set('lessonRuns/run-1', { orgId: 'school-1', status: 'RUNNING', participant: { name: '生徒A' }, secret: 'lesson-content' })
@@ -110,13 +130,14 @@ describe('parent organization quota Callables', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     await expect(getParentOrgQuotaUsageCallable.run({ auth: teacher, data: { parentOrgId: 'parent-1' } } as unknown as CallableRequest)).resolves.toEqual({
       parentOrgId: 'parent-1',
+      parentContractState: 'ACTIVE',
       concurrentLessonsAndMarkets: { limit: 4, guaranteed: 1, sharedAvailable: 3, reserved: 0 },
       teacherSeats: { limit: 3, guaranteed: 1, sharedAvailable: 1, reserved: 1 },
       schools: [{ schoolOrgId: 'school-1', concurrentLessonsAndMarkets: { guaranteed: 1, usage: 1, reserved: 0 }, teacherSeats: { guaranteed: 1, usage: 1, reserved: 1 } }],
     })
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     await expect(getSchoolEffectiveQuotaCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toEqual({
-      schoolOrgId: 'school-1', parentOrgId: 'parent-1',
+      schoolOrgId: 'school-1', parentOrgId: 'parent-1', parentContractState: 'ACTIVE',
       concurrentLessonsAndMarkets: { guaranteed: 1, usage: 1, sharedReserved: 0, effectiveAvailable: 4 },
       teacherSeats: { guaranteed: 1, usage: 1, sharedReserved: 1, effectiveAvailable: 3 },
     })
@@ -128,6 +149,7 @@ describe('parent organization quota Callables', () => {
 
     await expect(getParentOrgQuotaUsageCallable.run({ auth: teacher, data: { parentOrgId: 'parent-1' } } as unknown as CallableRequest)).resolves.toEqual({
       parentOrgId: 'parent-1',
+      parentContractState: 'ACTIVE',
       concurrentLessonsAndMarkets: { limit: 4, guaranteed: 0, sharedAvailable: 4, reserved: 0 },
       teacherSeats: { limit: 3, guaranteed: 0, sharedAvailable: 3, reserved: 0 },
       schools: [{ schoolOrgId: 'school-1', concurrentLessonsAndMarkets: { guaranteed: 0, usage: 0, reserved: 0 }, teacherSeats: { guaranteed: 0, usage: 0, reserved: 0 } }],
@@ -146,7 +168,7 @@ describe('parent organization quota Callables', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
 
     await expect(getSchoolEffectiveQuotaCallable.run({ auth: teacher, data: { schoolOrgId: 'school-1' } } as unknown as CallableRequest)).resolves.toEqual({
-      schoolOrgId: 'school-1', parentOrgId: 'parent-1',
+      schoolOrgId: 'school-1', parentOrgId: 'parent-1', parentContractState: 'ACTIVE',
       concurrentLessonsAndMarkets: { guaranteed: 0, usage: 0, sharedReserved: 0, effectiveAvailable: 4 },
       teacherSeats: { guaranteed: 0, usage: 0, sharedReserved: 0, effectiveAvailable: 3 },
     })

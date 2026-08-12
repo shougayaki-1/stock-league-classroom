@@ -7,6 +7,7 @@ import {
   validateAllocationChange,
 } from './parentOrgQuota'
 import { ACTIVE_LESSON_RUN_STATUSES } from './planLimits'
+import { assertParentContractAllowsSharedQuota, parentContractStateFrom } from './parentContract'
 
 const callableOptions = { region: 'asia-northeast1' as const }
 
@@ -103,6 +104,7 @@ export const setSchoolQuotaAllocationCallable = onCall(callableOptions, async (r
         transaction.get(schoolRef),
       ])
       if (!parentSnapshot.exists || parentSnapshot.get('type') !== 'parentOrg') throw new Error('上位組織が見つかりません')
+      assertParentContractAllowsSharedQuota(parentContractStateFrom(parentSnapshot.data()))
       if (
         !schoolSnapshot.exists
         || schoolSnapshot.get('type') !== 'school'
@@ -203,7 +205,13 @@ const readParentQuotaState = async (transaction: Transaction, db: Firestore, par
   const reservations = reservationsSnapshot.docs
     .map((document) => reservationFrom(document.id, document.data()))
     .filter((reservation): reservation is QuotaReservation => reservation !== null)
-  return { limits, allocations, reservations, missingAllocationSchoolOrgIds }
+  return {
+    limits,
+    allocations,
+    reservations,
+    missingAllocationSchoolOrgIds,
+    parentContractState: parentContractStateFrom(parentSnapshot.data()),
+  }
 }
 
 const backfillMissingAllocations = (
@@ -230,7 +238,7 @@ export const getParentOrgQuotaUsageCallable = onCall(callableOptions, async (req
 
   try {
     return await db.runTransaction(async (transaction) => {
-      const { limits, allocations, reservations, missingAllocationSchoolOrgIds } = await readParentQuotaState(transaction, db, data.parentOrgId as string)
+      const { limits, allocations, reservations, missingAllocationSchoolOrgIds, parentContractState } = await readParentQuotaState(transaction, db, data.parentOrgId as string)
       const usage = await Promise.all(allocations.map(async (allocation) => ({
         allocation,
         usage: await readSchoolUsage(transaction, db, allocation.schoolOrgId),
@@ -243,6 +251,7 @@ export const getParentOrgQuotaUsageCallable = onCall(callableOptions, async (req
 
       return {
         parentOrgId: data.parentOrgId,
+        parentContractState,
         concurrentLessonsAndMarkets: {
           limit: limits.concurrentLessonsAndMarkets,
           guaranteed: guaranteedConcurrent,
@@ -291,7 +300,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
       }
       const parentOrgId = schoolSnapshot.get('parentOrgId') as string | undefined
       if (!parentOrgId) throw new Error('この学校はどの上位組織にも所属していません')
-      const { limits, allocations, reservations, missingAllocationSchoolOrgIds } = await readParentQuotaState(transaction, db, parentOrgId)
+      const { limits, allocations, reservations, missingAllocationSchoolOrgIds, parentContractState } = await readParentQuotaState(transaction, db, parentOrgId)
       const allocation = allocations.find((item) => item.schoolOrgId === schoolOrgId)
       if (!allocation) throw new Error('この学校の配分が見つかりません')
       const usage = await readSchoolUsage(transaction, db, schoolOrgId)
@@ -306,6 +315,7 @@ export const getSchoolEffectiveQuotaCallable = onCall(callableOptions, async (re
       return {
         schoolOrgId,
         parentOrgId,
+        parentContractState,
         concurrentLessonsAndMarkets: {
           guaranteed: allocation.guaranteedConcurrentLessonsAndMarkets,
           usage: usage.concurrentLessonsAndMarkets,

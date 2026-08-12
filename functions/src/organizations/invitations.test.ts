@@ -363,6 +363,23 @@ describe('acceptInvitation', () => {
     expect(markInvitationAccepted).not.toHaveBeenCalled()
   })
 
+  it('does not sync or accept a teacher invitation when the parent contract has ended', async () => {
+    const syncMembership = vi.fn()
+    const markInvitationAccepted = vi.fn()
+    await expect(acceptInvitation({
+      getInvitation: async () => pending,
+      getMembership: async () => null,
+      getDowngradeStatus: async () => ({ state: 'NORMAL', violations: [] }),
+      reserveTeacherSeat: async () => { throw new Error('親組織の契約が終了しているため共有枠を利用できません') },
+      syncMembership,
+      markInvitationAccepted,
+    }, { orgId: 'org-1', invitationId: 'invitation-1', callerUid: 'uid-2', callerEmail: 'teacher@example.com' }))
+      .rejects.toThrow('親組織の契約が終了しているため共有枠を利用できません')
+
+    expect(syncMembership).not.toHaveBeenCalled()
+    expect(markInvitationAccepted).not.toHaveBeenCalled()
+  })
+
   it('allows an admin invitation even when teacher seats are restricted', async () => {
     const adminInvitation = { ...pending, role: 'admin' as const }
     const result = await acceptInvitation({
@@ -394,6 +411,18 @@ describe('reserveTeacherSeatForInvitation', () => {
     expect(fake.collectionReads).toEqual([])
     expect(fake.documentReads).not.toContain('organizations/parent-1')
     expect(fake.documentReads).not.toContain('planDefinitions/PARENT')
+  })
+
+  it('rejects a new teacher needing shared quota when the parent contract has ended', async () => {
+    const fake = makeQuotaFirestore()
+    seedLinkedSchoolTeacherQuota(fake, { guarantee: 1, parentLimit: 3, activeTeachers: 1 })
+    fake.documents.set('organizations/parent-1', { type: 'parentOrg', planId: 'PARENT', parentContractState: 'ENDED' })
+
+    await expect(reserveTeacherSeatForInvitation({ firestore: fake }, {
+      schoolOrgId: 'school-1', teacherUid: 'uid-2',
+    })).rejects.toThrow('親組織の契約が終了しているため共有枠を利用できません')
+
+    expect(fake.writes).toEqual([])
   })
 
   it('activates the new teacher in the quota transaction after all reads, even within guarantee', async () => {

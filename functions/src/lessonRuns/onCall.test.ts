@@ -151,6 +151,17 @@ describe('createLessonRunCallable', () => {
     })
   })
 
+  it('translates an ended parent contract into failed-precondition', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('親組織の契約が終了しているため共有枠を利用できません'))
+
+    await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '親組織の契約が終了しているため共有枠を利用できません',
+    })
+  })
+
   it('translates a downgrade restriction into resource-exhausted', async () => {
     templateGetMock.mockResolvedValueOnce({ exists: true, get: () => 'org-1' })
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })

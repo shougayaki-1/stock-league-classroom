@@ -10,6 +10,7 @@ import {
   type QuotaDocument,
 } from './parentOrgQuotaFirestore'
 import { getDowngradeStatusWithAdminSdk } from './planLimits'
+import { assertParentContractAllowsSharedQuota, parentContractStateFrom } from './parentContract'
 
 export interface Invitation {
   id: string
@@ -275,6 +276,7 @@ export const reserveTeacherSeatForInvitation = (
     const parentSnapshot = await transaction.get(`organizations/${parentOrgId}`)
     const parent = parentSnapshot.data()
     if (!parentSnapshot.exists || parent?.type !== 'parentOrg') throw new Error('上位組織が見つかりません')
+    assertParentContractAllowsSharedQuota(parentContractStateFrom(parent))
     if (typeof parent.planId !== 'string') throw new Error('上位組織のプランが設定されていません')
 
     const [parentPlanSnapshot, allocationDocuments, reservationDocuments] = await Promise.all([

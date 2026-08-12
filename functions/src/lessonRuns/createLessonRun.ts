@@ -10,6 +10,7 @@ import {
   type SchoolQuotaAllocation,
 } from '../organizations/parentOrgQuota'
 import { ACTIVE_LESSON_RUN_STATUSES, getDowngradeStatusWithAdminSdk } from '../organizations/planLimits'
+import { assertParentContractAllowsSharedQuota, parentContractStateFrom } from '../organizations/parentContract'
 
 export interface FirestoreTx {
   get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
@@ -126,9 +127,10 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
       if (activeCount + 1 > allocation.guaranteedConcurrentLessonsAndMarkets) {
         const parentSnap = await tx.get(`organizations/${org.parentOrgId}`)
         const parentOrg = parentSnap.exists
-          ? (parentSnap.data() as { type?: string; planId?: string })
+          ? (parentSnap.data() as { type?: string; planId?: string; parentContractState?: unknown })
           : undefined
         if (parentOrg?.type !== 'parentOrg') throw new Error('上位組織が見つかりません')
+        assertParentContractAllowsSharedQuota(parentContractStateFrom(parentOrg))
         if (!parentOrg.planId) throw new Error('上位組織のプランが設定されていません')
 
         const parentPlanSnap = await tx.get(`planDefinitions/${parentOrg.planId}`)

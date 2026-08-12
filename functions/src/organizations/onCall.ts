@@ -62,6 +62,7 @@ export const acceptInvitationCallable = onCall({ region: 'asia-northeast1' }, as
     if (error instanceof Error && error.message === 'この招待は既に処理されています') throw new HttpsError('failed-precondition', error.message)
     if (error instanceof Error && error.message === '教師席を整理する必要があります') throw new HttpsError('resource-exhausted', error.message)
     if (error instanceof Error && error.message === '共有枠が不足しています') throw new HttpsError('resource-exhausted', error.message)
+    if (error instanceof Error && error.message === '親組織の契約が終了しているため共有枠を利用できません') throw new HttpsError('failed-precondition', error.message)
     throw error
   }
 })
@@ -143,7 +144,7 @@ export const linkSchoolToParentOrgCallable = onCall({ region: 'asia-northeast1' 
   requireManager(await requireActiveOrgMember(db, data.parentOrgId, request.auth.uid), '上位組織のowner または admin である必要があります。')
   requireManager(await requireActiveOrgMember(db, data.schoolOrgId, request.auth.uid), '学校組織のowner または admin である必要があります。')
   try { await linkSchoolToParentOrgWithAdminSdk({ parentOrgId: data.parentOrgId, schoolOrgId: data.schoolOrgId }) } catch (error) {
-    if (error instanceof Error && (error.message === '対象は上位組織ではありません' || error.message === '対象は学校組織ではありません' || error.message === 'この学校は既に別の上位組織に所属しています')) throw new HttpsError('failed-precondition', error.message)
+    if (error instanceof Error && (error.message === '対象は上位組織ではありません' || error.message === '対象は学校組織ではありません' || error.message === 'この学校は既に別の上位組織に所属しています' || error.message === '親組織の契約が終了しているため共有枠を利用できません')) throw new HttpsError('failed-precondition', error.message)
     throw error
   }
 })

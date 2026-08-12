@@ -128,6 +128,38 @@ describe('acceptInvitationCallable', () => {
       message: '共有枠が不足しています',
     })
   })
+
+  it('translates an ended parent contract into failed-precondition', async () => {
+    vi.mocked(acceptInvitationWithAdminSdk).mockRejectedValueOnce(new Error('親組織の契約が終了しているため共有枠を利用できません'))
+    const request = {
+      auth: { uid: 'uid-2', token: { email_verified: true, email: 'x@example.com', firebase: { sign_in_provider: 'google.com' } } },
+      data: { orgId: 'org-1', invitationId: 'invitation-1' },
+    } as unknown as CallableRequest
+
+    await expect(acceptInvitationCallable.run(request)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '親組織の契約が終了しているため共有枠を利用できません',
+    })
+  })
+})
+
+describe('linkSchoolToParentOrgCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('translates an ended parent contract into failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember)
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(linkSchoolToParentOrgWithAdminSdk).mockRejectedValueOnce(new Error('親組織の契約が終了しているため共有枠を利用できません'))
+
+    await expect(linkSchoolToParentOrgCallable.run({
+      auth: teacher,
+      data: { parentOrgId: 'parent-1', schoolOrgId: 'school-1' },
+    } as unknown as CallableRequest)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '親組織の契約が終了しているため共有枠を利用できません',
+    })
+  })
 })
 
 describe('listMyInvitationsCallable', () => {
