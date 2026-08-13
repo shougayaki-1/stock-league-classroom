@@ -63,4 +63,15 @@ describe('saveBillingProfileWithAdminSdk', () => {
     }, { idempotencyKey: 'billing-profile:school-1' })
     expect(stripeCustomers.update).not.toHaveBeenCalled()
   })
+
+  it('rejects a non-school organization before calling Stripe or writing', async () => {
+    docs.set('organizations/personal-1', { type: 'personal' })
+
+    await expect(saveBillingProfileWithAdminSdk({ orgId: 'personal-1', profile, actorUid: 'uid-1' }))
+      .rejects.toThrow('請求書払いは学校組織のみ利用できます')
+
+    expect(stripeCustomers.create).not.toHaveBeenCalled()
+    expect(stripeCustomers.update).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
+  })
 })
