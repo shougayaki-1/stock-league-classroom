@@ -10,6 +10,133 @@ import {
 import { stripeSecretKey } from './stripeCheckout'
 
 type StoredInvoiceSubscriptionRequest = InvoiceSubscriptionRequest & { requestedAt?: unknown }
+type SchedulePhase = Stripe.SubscriptionSchedule['phases'][number]
+type SchedulePhaseParams = NonNullable<Stripe.SubscriptionScheduleUpdateParams['phases']>[number]
+
+type ExpandableId = string | { id: string } | null | undefined
+type ScheduleDiscount = {
+  coupon?: ExpandableId
+  discount?: ExpandableId
+  promotion_code?: ExpandableId
+}
+
+const idFrom = (value: ExpandableId): string | undefined => (
+  typeof value === 'string' ? value : value?.id
+)
+
+const discountParamsFrom = (discount: ScheduleDiscount):
+  { coupon: string } | { discount: string } | { promotion_code: string } | null => {
+  const discountId = idFrom(discount.discount)
+  if (discountId) return { discount: discountId }
+  const promotionCodeId = idFrom(discount.promotion_code)
+  if (promotionCodeId) return { promotion_code: promotionCodeId }
+  const couponId = idFrom(discount.coupon)
+  return couponId ? { coupon: couponId } : null
+}
+
+const discountsParamsFrom = (discounts: ScheduleDiscount[]) => discounts
+  .map(discountParamsFrom)
+  .filter((discount): discount is NonNullable<typeof discount> => discount !== null)
+
+const currentPhaseParamsFrom = (phase: SchedulePhase): SchedulePhaseParams => ({
+  start_date: phase.start_date,
+  end_date: phase.end_date,
+  add_invoice_items: phase.add_invoice_items.map((item) => ({
+    price: idFrom(item.price),
+    ...(typeof item.quantity === 'number' ? { quantity: item.quantity } : {}),
+    discounts: discountsParamsFrom(item.discounts),
+    ...(item.tax_rates ? { tax_rates: item.tax_rates.map((taxRate) => taxRate.id) } : {}),
+  })),
+  ...(typeof phase.application_fee_percent === 'number'
+    ? { application_fee_percent: phase.application_fee_percent }
+    : {}),
+  ...(phase.automatic_tax
+    ? {
+      automatic_tax: {
+        enabled: phase.automatic_tax.enabled,
+        ...(phase.automatic_tax.liability
+          ? {
+            liability: {
+              type: phase.automatic_tax.liability.type,
+              ...(idFrom(phase.automatic_tax.liability.account)
+                ? { account: idFrom(phase.automatic_tax.liability.account) }
+                : {}),
+            },
+          }
+          : {}),
+      },
+    }
+    : {}),
+  ...(phase.billing_cycle_anchor ? { billing_cycle_anchor: phase.billing_cycle_anchor } : {}),
+  ...(phase.billing_thresholds
+    ? {
+      billing_thresholds: {
+        ...(typeof phase.billing_thresholds.amount_gte === 'number'
+          ? { amount_gte: phase.billing_thresholds.amount_gte }
+          : {}),
+        ...(typeof phase.billing_thresholds.reset_billing_cycle_anchor === 'boolean'
+          ? { reset_billing_cycle_anchor: phase.billing_thresholds.reset_billing_cycle_anchor }
+          : {}),
+      },
+    }
+    : {}),
+  ...(phase.collection_method ? { collection_method: phase.collection_method } : {}),
+  currency: phase.currency,
+  ...(idFrom(phase.default_payment_method)
+    ? { default_payment_method: idFrom(phase.default_payment_method) }
+    : {}),
+  ...(phase.default_tax_rates
+    ? { default_tax_rates: phase.default_tax_rates.map((taxRate) => taxRate.id) }
+    : {}),
+  ...(phase.description !== null ? { description: phase.description } : {}),
+  discounts: discountsParamsFrom(phase.discounts),
+  ...(phase.invoice_settings
+    ? {
+      invoice_settings: {
+        ...(phase.invoice_settings.account_tax_ids
+          ? { account_tax_ids: phase.invoice_settings.account_tax_ids.map((taxId) => idFrom(taxId) as string) }
+          : {}),
+        ...(typeof phase.invoice_settings.days_until_due === 'number'
+          ? { days_until_due: phase.invoice_settings.days_until_due }
+          : {}),
+        ...(phase.invoice_settings.issuer
+          ? {
+            issuer: {
+              type: phase.invoice_settings.issuer.type,
+              ...(idFrom(phase.invoice_settings.issuer.account)
+                ? { account: idFrom(phase.invoice_settings.issuer.account) }
+                : {}),
+            },
+          }
+          : {}),
+      },
+    }
+    : {}),
+  items: phase.items.map((item) => ({
+    price: idFrom(item.price),
+    ...(typeof item.quantity === 'number' ? { quantity: item.quantity } : {}),
+    ...(item.billing_thresholds && typeof item.billing_thresholds.usage_gte === 'number'
+      ? { billing_thresholds: { usage_gte: item.billing_thresholds.usage_gte } }
+      : {}),
+    discounts: discountsParamsFrom(item.discounts),
+    ...(item.metadata ? { metadata: item.metadata } : {}),
+    ...(item.tax_rates ? { tax_rates: item.tax_rates.map((taxRate) => taxRate.id) } : {}),
+  })),
+  ...(phase.metadata ? { metadata: phase.metadata } : {}),
+  ...(idFrom(phase.on_behalf_of) ? { on_behalf_of: idFrom(phase.on_behalf_of) } : {}),
+  proration_behavior: phase.proration_behavior,
+  ...(phase.transfer_data
+    ? {
+      transfer_data: {
+        destination: idFrom(phase.transfer_data.destination) as string,
+        ...(typeof phase.transfer_data.amount_percent === 'number'
+          ? { amount_percent: phase.transfer_data.amount_percent }
+          : {}),
+      },
+    }
+    : {}),
+  ...(typeof phase.trial_end === 'number' ? { trial_end: phase.trial_end } : {}),
+})
 
 type ReservedRequest =
   | { kind: 'EXISTING'; request: InvoiceSubscriptionRequest }
@@ -97,6 +224,9 @@ const reserveInvoiceSubscriptionRequest = async (
   if (reserved.kind === 'EXISTING' || !reserved.currentCardSubscriptionId) return reserved
 
   const subscription = await stripe.subscriptions.retrieve(reserved.currentCardSubscriptionId)
+  if (idFrom(subscription.customer) !== reserved.customerId) {
+    throw new Error('カード契約のCustomerが請求先と一致しません')
+  }
   if (
     subscription.status !== 'active'
     || subscription.collection_method !== 'charge_automatically'
@@ -185,22 +315,16 @@ export const startInvoiceSubscriptionWithAdminSdk = (
       if (!currentPhase) throw new Error('有効なカード契約の現在期間を確認できません')
       const updated = await stripe.subscriptionSchedules.update(schedule.id, {
         end_behavior: 'release',
+        proration_behavior: 'none',
         phases: [
-          {
-            start_date: currentPhase.start_date,
-            end_date: currentPhase.end_date,
-            items: currentPhase.items.map((item) => ({
-              price: typeof item.price === 'string' ? item.price : item.price.id,
-              ...(typeof item.quantity === 'number' ? { quantity: item.quantity } : {}),
-            })),
-            ...(currentPhase.collection_method ? { collection_method: currentPhase.collection_method } : {}),
-          },
+          currentPhaseParamsFrom(currentPhase),
           {
             start_date: startDateSeconds,
             items: [{ price: priceId, quantity: 1 }],
             collection_method: collectionMethod,
             invoice_settings: { days_until_due: daysUntilDue },
             metadata: { orgId: input.orgId, billingMode: 'invoice' },
+            proration_behavior: 'none',
           },
         ],
         metadata: {

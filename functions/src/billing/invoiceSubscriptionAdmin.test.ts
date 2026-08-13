@@ -165,8 +165,44 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
       phases: [{
         start_date: 1_700_000_000,
         end_date: 1_800_000_000,
-        items: [{ price: 'price_school', quantity: 1 }],
+        add_invoice_items: [{
+          price: { id: 'price_setup' },
+          quantity: 2,
+          discounts: [{ coupon: { id: 'coupon_setup' } }],
+          tax_rates: [{ id: 'txr_setup' }],
+        }],
+        application_fee_percent: 12.5,
+        automatic_tax: {
+          enabled: true,
+          disabled_reason: null,
+          liability: { type: 'account', account: { id: 'acct_tax' } },
+        },
+        billing_cycle_anchor: 'automatic',
+        billing_thresholds: { amount_gte: 5_000, reset_billing_cycle_anchor: false },
         collection_method: 'charge_automatically',
+        currency: 'jpy',
+        default_payment_method: { id: 'pm_card' },
+        default_tax_rates: [{ id: 'txr_default' }],
+        description: 'Existing card term',
+        discounts: [{ discount: { id: 'di_phase' } }],
+        invoice_settings: {
+          account_tax_ids: [{ id: 'txi_issuer' }],
+          days_until_due: null,
+          issuer: { type: 'account', account: { id: 'acct_issuer' } },
+        },
+        items: [{
+          price: { id: 'price_school' },
+          quantity: 1,
+          billing_thresholds: { usage_gte: 10 },
+          discounts: [{ promotion_code: { id: 'promo_item' } }],
+          metadata: { existingItem: 'kept' },
+          tax_rates: [{ id: 'txr_item' }],
+        }],
+        metadata: { existingPhase: 'kept' },
+        on_behalf_of: { id: 'acct_on_behalf' },
+        proration_behavior: 'create_prorations',
+        transfer_data: { destination: { id: 'acct_destination' }, amount_percent: 75 },
+        trial_end: 1_750_000_000,
       }],
     })
     stripeApi.subscriptionSchedules.update.mockResolvedValue({ id: 'sub_sched_invoice' })
@@ -184,12 +220,47 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
     }, { idempotencyKey: 'invoice-subscription:school-1:request-1:schedule-create' })
     expect(stripeApi.subscriptionSchedules.update).toHaveBeenCalledWith('sub_sched_invoice', {
       end_behavior: 'release',
+      proration_behavior: 'none',
       phases: [
         {
           start_date: 1_700_000_000,
           end_date: 1_800_000_000,
-          items: [{ price: 'price_school', quantity: 1 }],
+          add_invoice_items: [{
+            price: 'price_setup',
+            quantity: 2,
+            discounts: [{ coupon: 'coupon_setup' }],
+            tax_rates: ['txr_setup'],
+          }],
+          application_fee_percent: 12.5,
+          automatic_tax: {
+            enabled: true,
+            liability: { type: 'account', account: 'acct_tax' },
+          },
+          billing_cycle_anchor: 'automatic',
+          billing_thresholds: { amount_gte: 5_000, reset_billing_cycle_anchor: false },
           collection_method: 'charge_automatically',
+          currency: 'jpy',
+          default_payment_method: 'pm_card',
+          default_tax_rates: ['txr_default'],
+          description: 'Existing card term',
+          discounts: [{ discount: 'di_phase' }],
+          invoice_settings: {
+            account_tax_ids: ['txi_issuer'],
+            issuer: { type: 'account', account: 'acct_issuer' },
+          },
+          items: [{
+            price: 'price_school',
+            quantity: 1,
+            billing_thresholds: { usage_gte: 10 },
+            discounts: [{ promotion_code: 'promo_item' }],
+            metadata: { existingItem: 'kept' },
+            tax_rates: ['txr_item'],
+          }],
+          metadata: { existingPhase: 'kept' },
+          on_behalf_of: 'acct_on_behalf',
+          proration_behavior: 'create_prorations',
+          transfer_data: { destination: 'acct_destination', amount_percent: 75 },
+          trial_end: 1_750_000_000,
         },
         {
           start_date: 1_800_000_000,
@@ -197,6 +268,7 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
           collection_method: 'send_invoice',
           invoice_settings: { days_until_due: 30 },
           metadata: { orgId: 'school-1', billingMode: 'invoice' },
+          proration_behavior: 'none',
         },
       ],
       metadata: { orgId: 'school-1', billingMode: 'invoice', previousSubscriptionId: 'sub_card' },
@@ -215,6 +287,29 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
     expect(stripeApi.subscriptions.cancel).not.toHaveBeenCalled()
     expect(stripeApi.subscriptionSchedules.cancel).not.toHaveBeenCalled()
     expect(stripeApi.refunds.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects a retrieved card subscription owned by another customer before creating a schedule', async () => {
+    seedReadyOrganization({
+      stripeSubscriptionState: {
+        subscriptionId: 'sub_card',
+        status: 'active',
+        eventCreatedAtMillis: 1_700_000_000_000,
+      },
+    })
+    stripeApi.subscriptions.retrieve.mockResolvedValue({
+      id: 'sub_card',
+      customer: { id: 'cus_other' },
+      status: 'active',
+      current_period_end: 1_800_000_000,
+      collection_method: 'charge_automatically',
+    })
+
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))
+      .rejects.toThrow('カード契約のCustomerが請求先と一致しません')
+
+    expect(stripeApi.subscriptionSchedules.create).not.toHaveBeenCalled()
+    expect(stripeApi.subscriptionSchedules.update).not.toHaveBeenCalled()
   })
 
   it('returns a finalized marker on retry without another Stripe write', async () => {
