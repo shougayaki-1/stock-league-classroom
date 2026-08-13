@@ -38,7 +38,9 @@ const discountsParamsFrom = (discounts: ScheduleDiscount[]) => discounts
   .map(discountParamsFrom)
   .filter((discount): discount is NonNullable<typeof discount> => discount !== null)
 
-const currentPhaseParamsFrom = (phase: SchedulePhase): SchedulePhaseParams => ({
+const currentPhaseParamsFrom = (phase: SchedulePhase): SchedulePhaseParams => {
+  const couponId = idFrom(phase.coupon)
+  return {
   start_date: phase.start_date,
   end_date: phase.end_date,
   add_invoice_items: phase.add_invoice_items.map((item) => ({
@@ -81,6 +83,7 @@ const currentPhaseParamsFrom = (phase: SchedulePhase): SchedulePhaseParams => ({
     }
     : {}),
   ...(phase.collection_method ? { collection_method: phase.collection_method } : {}),
+  ...(couponId ? { coupon: couponId } : {}),
   currency: phase.currency,
   ...(idFrom(phase.default_payment_method)
     ? { default_payment_method: idFrom(phase.default_payment_method) }
@@ -136,7 +139,8 @@ const currentPhaseParamsFrom = (phase: SchedulePhase): SchedulePhaseParams => ({
     }
     : {}),
   ...(typeof phase.trial_end === 'number' ? { trial_end: phase.trial_end } : {}),
-})
+  }
+}
 
 type ReservedRequest =
   | { kind: 'EXISTING'; request: InvoiceSubscriptionRequest }
