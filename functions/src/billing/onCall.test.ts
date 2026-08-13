@@ -303,7 +303,7 @@ describe('getBillingOverviewWithAdminSdk', () => {
     billingRecordDocs.clear()
   })
 
-  it('reads one organization and returns a sanitized DTO with live Invoice URLs', async () => {
+  it('returns only Stripe Invoice records owned by the organization', async () => {
     organizationDocs.set('organizations/school-1', {
       type: 'school',
       stripeCustomerId: 'cus_school',
@@ -321,10 +321,19 @@ describe('getBillingOverviewWithAdminSdk', () => {
     })
     billingRecordDocs.set('organizations/school-1/billingRecords', [
       {
+        id: 'in_other_customer',
+        data: {
+          status: 'PAID',
+          paymentMethod: 'BANK_TRANSFER',
+          dueDateMillis: 1_700_000_000_000,
+          stripeInvoiceId: 'in_other_customer',
+        },
+      },
+      {
         id: 'in_1',
         data: {
           status: 'PENDING',
-          paymentMethod: 'BANK_TRANSFER',
+          paymentMethod: 'INVOICE',
           dueDateMillis: 1_800_000_000_000,
           stripeInvoiceId: 'in_1',
           hostedInvoiceUrl: 'https://stored.example/never-return-this',
@@ -340,50 +349,36 @@ describe('getBillingOverviewWithAdminSdk', () => {
           createdAt: 'earlier',
         },
       },
-      {
-        id: 'in_other_customer',
-        data: {
-          status: 'PAID',
-          paymentMethod: 'INVOICE',
-          dueDateMillis: 1_700_000_000_000,
-          stripeInvoiceId: 'in_other_customer',
-        },
-      },
     ])
     stripeApi.invoices.retrieve.mockResolvedValueOnce({
-      id: 'in_1',
-      hosted_invoice_url: 'https://invoice.stripe.com/i/in_1',
-      customer: 'cus_school',
-    }).mockResolvedValueOnce({
       id: 'in_other_customer',
       hosted_invoice_url: 'https://invoice.stripe.com/i/in_other_customer',
       customer: 'cus_other',
+    }).mockResolvedValueOnce({
+      id: 'in_1',
+      hosted_invoice_url: 'https://invoice.stripe.com/i/in_1',
+      customer: 'cus_school',
     })
 
     const actual = await vi.importActual<typeof import('./invoiceSubscriptionAdmin')>('./invoiceSubscriptionAdmin')
     await expect(actual.getBillingOverviewWithAdminSdk({ orgId: 'school-1' })).resolves.toEqual({
       profile,
-      paymentMethod: 'BANK_TRANSFER',
+      paymentMethod: 'INVOICE',
       invoiceSubscription: { status: 'ACTIVE' },
       invoices: [{
         id: 'in_1',
         status: 'PENDING',
-        paymentMethod: 'BANK_TRANSFER',
+        paymentMethod: 'INVOICE',
         dueDateMillis: 1_800_000_000_000,
         hostedInvoiceUrl: 'https://invoice.stripe.com/i/in_1',
-      }, {
-        id: 'in_other_customer',
-        status: 'PAID',
-        paymentMethod: 'INVOICE',
-        dueDateMillis: 1_700_000_000_000,
       }],
     })
     expect(firestoreReads).toEqual([
       'organizations/school-1',
       'organizations/school-1/billingRecords',
     ])
-    expect(stripeApi.invoices.retrieve).toHaveBeenNthCalledWith(1, 'in_1')
-    expect(stripeApi.invoices.retrieve).toHaveBeenNthCalledWith(2, 'in_other_customer')
+    expect(stripeApi.invoices.retrieve).toHaveBeenNthCalledWith(1, 'in_other_customer')
+    expect(stripeApi.invoices.retrieve).toHaveBeenNthCalledWith(2, 'in_1')
   })
 
   it('rejects a non-school organization before retrieving Stripe Invoices', async () => {

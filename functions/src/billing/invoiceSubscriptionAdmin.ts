@@ -466,25 +466,38 @@ export const getBillingOverviewWithAdminSdk = async (
     .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== null)
 
   const stripe = new Stripe(stripeSecretKey.value())
-  const invoices = await Promise.all(invoicesWithStripeIds.map(async ({ invoice, stripeInvoiceId }) => {
+  const stripeInvoices = await Promise.all(invoicesWithStripeIds.map(async ({ stripeInvoiceId }) => {
     const stripeInvoice = await stripe.invoices.retrieve(stripeInvoiceId)
-    const belongsToOrganization = (
-      typeof organization.stripeCustomerId === 'string'
-      && idFrom(stripeInvoice.customer) === organization.stripeCustomerId
-    )
     return {
-      ...invoice,
-      ...(belongsToOrganization
-        && typeof stripeInvoice.hosted_invoice_url === 'string'
-        && stripeInvoice.hosted_invoice_url
-        ? { hostedInvoiceUrl: stripeInvoice.hosted_invoice_url }
-        : {}),
+      stripeInvoiceId,
+      stripeInvoice,
     }
   }))
+  const ownedStripeInvoiceIds = new Set(stripeInvoices
+    .filter(({ stripeInvoice }) => (
+      typeof organization.stripeCustomerId === 'string'
+      && idFrom(stripeInvoice.customer) === organization.stripeCustomerId
+    ))
+    .map(({ stripeInvoiceId }) => stripeInvoiceId))
+  const ownedRecords = records.filter((record) => (
+    typeof record.stripeInvoiceId !== 'string'
+    || ownedStripeInvoiceIds.has(record.stripeInvoiceId)
+  ))
+  const invoices = invoicesWithStripeIds
+    .filter(({ stripeInvoiceId }) => ownedStripeInvoiceIds.has(stripeInvoiceId))
+    .map(({ invoice, stripeInvoiceId }) => {
+      const stripeInvoice = stripeInvoices.find((item) => item.stripeInvoiceId === stripeInvoiceId)?.stripeInvoice
+      return {
+        ...invoice,
+        ...(typeof stripeInvoice?.hosted_invoice_url === 'string' && stripeInvoice.hosted_invoice_url
+          ? { hostedInvoiceUrl: stripeInvoice.hosted_invoice_url }
+          : {}),
+      }
+    })
 
   return {
     profile: sanitizedProfileFrom(organization.billingProfile),
-    paymentMethod: currentPaymentMethodFrom(organization, records, invoiceSubscription),
+    paymentMethod: currentPaymentMethodFrom(organization, ownedRecords, invoiceSubscription),
     ...(invoiceSubscription ? { invoiceSubscription } : {}),
     invoices: invoices.sort((left, right) => right.dueDateMillis - left.dueDateMillis),
   }
