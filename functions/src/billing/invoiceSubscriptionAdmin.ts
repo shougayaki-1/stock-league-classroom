@@ -1,8 +1,9 @@
 import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firestore'
 import Stripe from 'stripe'
-import { validateBillingProfile } from './billingProfile'
+import { validateBillingProfile, type BillingProfileInput } from './billingProfile'
 import {
   startInvoiceSubscription,
+  type BillingOverview,
   type InvoiceSubscriptionRequest,
   type InvoiceSubscriptionReservation,
   type StartInvoiceSubscriptionResult,
@@ -352,4 +353,139 @@ export const startInvoiceSubscriptionWithAdminSdk = (
       { status: 'SCHEDULED', stripeScheduleId, currentPeriodEndMillis },
     ),
   }, input)
+}
+
+type BillingRecordData = Record<string, unknown>
+type BillingOverviewInvoice = BillingOverview['invoices'][number]
+type BillingPaymentMethod = BillingOverview['paymentMethod']
+
+const billingStatuses = new Set<BillingOverviewInvoice['status']>([
+  'DRAFT',
+  'PENDING',
+  'PAID',
+  'OVERDUE',
+  'CANCELLED',
+])
+const invoicePaymentMethods = new Set<BillingOverviewInvoice['paymentMethod']>([
+  'INVOICE',
+  'BANK_TRANSFER',
+])
+const billingPaymentMethods = new Set<NonNullable<BillingPaymentMethod>>([
+  'CARD',
+  'INVOICE',
+  'BANK_TRANSFER',
+  'MANUAL',
+])
+
+const sanitizedProfileFrom = (value: unknown): BillingProfileInput | null => {
+  try {
+    return validateBillingProfile(value)
+  } catch {
+    return null
+  }
+}
+
+const invoiceSubscriptionFrom = (
+  value: unknown,
+): BillingOverview['invoiceSubscription'] | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const request = value as Record<string, unknown>
+  if (request.status === 'ACTIVE') return { status: 'ACTIVE' }
+  if (request.status !== 'SCHEDULED') return undefined
+  return {
+    status: 'SCHEDULED',
+    ...(typeof request.currentPeriodEndMillis === 'number' && Number.isFinite(request.currentPeriodEndMillis)
+      ? { currentPeriodEndMillis: request.currentPeriodEndMillis }
+      : {}),
+  }
+}
+
+const sanitizedInvoiceFrom = (
+  id: string,
+  data: BillingRecordData,
+): { invoice: BillingOverviewInvoice; stripeInvoiceId: string } | null => {
+  if (
+    !billingStatuses.has(data.status as BillingOverviewInvoice['status'])
+    || !invoicePaymentMethods.has(data.paymentMethod as BillingOverviewInvoice['paymentMethod'])
+    || typeof data.dueDateMillis !== 'number'
+    || !Number.isFinite(data.dueDateMillis)
+    || typeof data.stripeInvoiceId !== 'string'
+    || !data.stripeInvoiceId
+  ) return null
+
+  return {
+    invoice: {
+      id,
+      status: data.status as BillingOverviewInvoice['status'],
+      paymentMethod: data.paymentMethod as BillingOverviewInvoice['paymentMethod'],
+      dueDateMillis: data.dueDateMillis,
+    },
+    stripeInvoiceId: data.stripeInvoiceId,
+  }
+}
+
+const currentPaymentMethodFrom = (
+  organization: BillingRecordData,
+  records: BillingRecordData[],
+  invoiceSubscription: BillingOverview['invoiceSubscription'],
+): BillingPaymentMethod => {
+  if (billingPaymentMethods.has(organization.paymentMethod as NonNullable<BillingPaymentMethod>)) {
+    return organization.paymentMethod as NonNullable<BillingPaymentMethod>
+  }
+  if (invoiceSubscription?.status === 'ACTIVE') {
+    const invoiceMethod = records.find((record) => (
+      invoicePaymentMethods.has(record.paymentMethod as BillingOverviewInvoice['paymentMethod'])
+    ))?.paymentMethod
+    return invoiceMethod === 'BANK_TRANSFER' ? 'BANK_TRANSFER' : 'INVOICE'
+  }
+  if (invoiceSubscription?.status === 'SCHEDULED') return 'CARD'
+  const storedMethod = records.find((record) => (
+    billingPaymentMethods.has(record.paymentMethod as NonNullable<BillingPaymentMethod>)
+  ))?.paymentMethod
+  if (billingPaymentMethods.has(storedMethod as NonNullable<BillingPaymentMethod>)) {
+    return storedMethod as NonNullable<BillingPaymentMethod>
+  }
+  return null
+}
+
+export const getBillingOverviewWithAdminSdk = async (
+  input: { orgId: string },
+): Promise<BillingOverview> => {
+  const db = getFirestore()
+  const organizationSnapshot = await db.doc(`organizations/${input.orgId}`).get()
+  const organization = organizationSnapshot.exists
+    ? (organizationSnapshot.data() as BillingRecordData | undefined) ?? {}
+    : {}
+  if (organization.type !== 'school') throw new Error('請求書払いは学校組織のみ利用できます')
+
+  const billingRecordsSnapshot = await db.collection(`organizations/${input.orgId}/billingRecords`).get()
+  const records = billingRecordsSnapshot.docs.map((document) => document.data() as BillingRecordData)
+  const invoiceSubscription = invoiceSubscriptionFrom(organization.invoiceSubscriptionRequest)
+  const invoicesWithStripeIds = billingRecordsSnapshot.docs
+    .map((document) => sanitizedInvoiceFrom(document.id, document.data() as BillingRecordData))
+    .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== null)
+
+  const stripe = new Stripe(stripeSecretKey.value())
+  const invoices = await Promise.all(invoicesWithStripeIds.map(async ({ invoice, stripeInvoiceId }) => {
+    const stripeInvoice = await stripe.invoices.retrieve(stripeInvoiceId)
+    const belongsToOrganization = (
+      typeof organization.stripeCustomerId === 'string'
+      && idFrom(stripeInvoice.customer) === organization.stripeCustomerId
+    )
+    return {
+      ...invoice,
+      ...(belongsToOrganization
+        && typeof stripeInvoice.hosted_invoice_url === 'string'
+        && stripeInvoice.hosted_invoice_url
+        ? { hostedInvoiceUrl: stripeInvoice.hosted_invoice_url }
+        : {}),
+    }
+  }))
+
+  return {
+    profile: sanitizedProfileFrom(organization.billingProfile),
+    paymentMethod: currentPaymentMethodFrom(organization, records, invoiceSubscription),
+    ...(invoiceSubscription ? { invoiceSubscription } : {}),
+    invoices: invoices.sort((left, right) => right.dueDateMillis - left.dueDateMillis),
+  }
 }
