@@ -579,6 +579,41 @@ describe('Firestore subscription-state wiring', () => {
       stripeSubscriptionState: { subscriptionId: 'sub_2', status: 'canceled', eventCreatedAtMillis: 300 },
     })
   })
+
+  it('preserves a newer Invoice-derived subscription status while accepting an older raw Subscription state', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/school-1', {
+        type: 'school', planId: 'SCHOOL', parentOrgId: 'parent-1', subscriptionStatus: 'ACTIVE',
+        invoiceSubscriptionStatusEventCreatedAtMillis: 900,
+        stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'active', eventCreatedAtMillis: 700 },
+      }],
+    ])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)('school-1', {
+      subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 800,
+    }, undefined)
+
+    expect(documents.get('organizations/school-1')).toEqual({
+      type: 'school', planId: 'SCHOOL', parentOrgId: 'parent-1', subscriptionStatus: 'ACTIVE',
+      invoiceSubscriptionStatusEventCreatedAtMillis: 900,
+      stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 800 },
+    })
+  })
 })
 
 describe('Firestore invoice lifecycle wiring', () => {

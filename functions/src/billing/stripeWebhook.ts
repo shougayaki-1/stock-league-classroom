@@ -271,13 +271,17 @@ export const createFirestoreStripeSubscriptionStateSynchronizer = (db: Firestore
     const existing = organization.get('stripeSubscriptionState') as StripeSubscriptionState | undefined
     if (!shouldApplySubscriptionState(existing, incoming)) return
 
+    const invoiceStatusEventCreatedAtMillis = organization.get('invoiceSubscriptionStatusEventCreatedAtMillis')
+    const shouldApplySubscriptionStatus = typeof invoiceStatusEventCreatedAtMillis !== 'number'
+      || incoming.eventCreatedAtMillis > invoiceStatusEventCreatedAtMillis
+
     const parentState = parentContractStateFor(organization.get('type') as string | undefined, incoming.status)
       ?? (organization.get('type') === 'parentOrg' ? parentContractState : undefined)
 
     transaction.update(organizationRef, {
       stripeSubscriptionState: incoming,
-      ...(incoming.status === 'canceled' ? { subscriptionStatus: 'CANCELED' } : {}),
-      ...(incoming.status === 'active' ? { subscriptionStatus: 'ACTIVE' } : {}),
+      ...(shouldApplySubscriptionStatus && incoming.status === 'canceled' ? { subscriptionStatus: 'CANCELED' } : {}),
+      ...(shouldApplySubscriptionStatus && incoming.status === 'active' ? { subscriptionStatus: 'ACTIVE' } : {}),
       ...(parentState === undefined ? {} : {
         parentContractState: parentState,
         parentContractSubscriptionId: incoming.subscriptionId,
