@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AiKillSwitchEnabledError, AiQuotaExceededError, checkAiQuota, consumeAiQuota, type AiUsageQuotaDeps } from './usageQuota'
+import { AiKillSwitchEnabledError, AiQuotaExceededError, checkAiQuota, consumeAiQuota, dailyKey, monthlyKey, type AiUsageQuotaDeps } from './usageQuota'
 
 const baseDeps = (overrides: Partial<AiUsageQuotaDeps> = {}): AiUsageQuotaDeps => ({
   isKillSwitchEnabled: async () => false,
@@ -44,5 +44,22 @@ describe('consumeAiQuota', () => {
     await consumeAiQuota(baseDeps({ incrementDailyCount, incrementMonthlyCount }), { orgId: 'org-1' })
     expect(incrementDailyCount).toHaveBeenCalledWith('org-1')
     expect(incrementMonthlyCount).toHaveBeenCalledWith('org-1')
+  })
+})
+
+describe('dailyKey', () => {
+  it('formats a UTC instant as its JST calendar date', () => {
+    // 2026-01-01T15:30:00Z は JST で 2026-01-02T00:30:00
+    expect(dailyKey(Date.parse('2026-01-01T15:30:00Z'))).toBe('2026-01-02')
+  })
+  it('stays on the same JST day for a morning UTC instant', () => {
+    // 2026-01-01T02:00:00Z は JST で 2026-01-01T11:00:00
+    expect(dailyKey(Date.parse('2026-01-01T02:00:00Z'))).toBe('2026-01-01')
+  })
+})
+
+describe('monthlyKey', () => {
+  it('formats a UTC instant as its JST calendar month', () => {
+    expect(monthlyKey(Date.parse('2026-01-31T15:30:00Z'))).toBe('2026-02')
   })
 })

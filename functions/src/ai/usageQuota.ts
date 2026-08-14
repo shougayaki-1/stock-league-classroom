@@ -34,3 +34,11 @@ export const checkAiQuota = async (deps: AiUsageQuotaDeps, input: { orgId: strin
 export const consumeAiQuota = async (deps: AiUsageQuotaDeps, input: { orgId: string }): Promise<void> => {
   await Promise.all([deps.incrementDailyCount(input.orgId), deps.incrementMonthlyCount(input.orgId)])
 }
+
+const jstDateFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' })
+
+/** JST基準の日付キー(YYYY-MM-DD)。organizations/{orgId}/aiUsageCounters のドキュメントIDに使う。 */
+export const dailyKey = (millis: number): string => jstDateFormatter.format(new Date(millis))
+
+/** JST基準の月キー(YYYY-MM)。dailyKeyの先頭7文字と一致する。 */
+export const monthlyKey = (millis: number): string => dailyKey(millis).slice(0, 7)
