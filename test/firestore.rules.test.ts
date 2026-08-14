@@ -155,6 +155,22 @@ describe('organizations/{orgId}/aiUsageCounters/{counterId}', () => {
   })
 })
 
+describe('templateShares/{shareId}', () => {
+  it('declares an explicit deny rule for the template shares collection', () => {
+    const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
+    expect(rules).toMatch(
+      /match \/templateShares\/\{shareId\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+    )
+  })
+
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const share = doc(context.firestore(), 'templateShares/some-hash')
+    await assertFails(getDoc(share))
+    await assertFails(setDoc(share, { templateId: 't1' }))
+  })
+})
+
 describe('systemConfig/{documentId}', () => {
   it('denies reads and non-operator writes, but allows an operator to write', async () => {
     const teacherFirestore = environment.authenticatedContext('teacher-a', teacherToken).firestore()

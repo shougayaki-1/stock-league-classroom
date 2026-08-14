@@ -75,6 +75,8 @@ service cloud.firestore {
 
     match /organizations/{orgId}/aiUsageCounters/{counterId} { allow read, write: if false; }
 
+    match /templateShares/{shareId} { allow read, write: if false; }
+
     match /systemConfig/{documentId} {
       allow get: if false;
       allow list: if false;

@@ -33,7 +33,10 @@ export {
 export { migrateSchoolFromEndedParentCallable } from './organizations/parentContractMigrationOnCall'
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
-export { duplicateLessonTemplateCallable, publishLessonVersionCallable } from './lessonTemplates/onCall'
+export {
+  createTemplateShareCallable, duplicateLessonTemplateCallable, publishLessonVersionCallable,
+  resolveTemplateShareCallable, revokeTemplateShareCallable,
+} from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
 export {
   assignParticipantToTeamCallable,

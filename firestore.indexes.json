@@ -7,6 +7,15 @@
         { "fieldPath": "orgId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "templateShares",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "templateId", "order": "ASCENDING" },
+        { "fieldPath": "versionId", "order": "ASCENDING" },
+        { "fieldPath": "createdByUid", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
