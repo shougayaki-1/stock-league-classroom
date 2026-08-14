@@ -61,7 +61,12 @@ export const getAiUsageQuotaDepsWithAdminSdk = (nowMillis: () => number = Date.n
     },
     getLimits: async (orgId) => {
       const limits = await getOrgPlanLimitsWithAdminSdk(orgId)
-      return { daily: limits.aiCreditsPerDay, monthly: limits.aiCredits }
+      // Firestore の planDefinitions ドキュメントに aiCreditsPerDay/aiCredits が
+      // 欠落している場合(型だけ更新されデータ未整備等)、undefined を「上限なし」と
+      // 誤解釈して不正に無制限化しないよう、フェイルクローズドで 0 にフォールバックする。
+      const daily = Number.isFinite(limits.aiCreditsPerDay) ? limits.aiCreditsPerDay : 0
+      const monthly = Number.isFinite(limits.aiCredits) ? limits.aiCredits : 0
+      return { daily, monthly }
     },
     getDailyCount: (orgId) => readCount(orgId, dailyKey(nowMillis())),
     getMonthlyCount: (orgId) => readCount(orgId, monthlyKey(nowMillis())),

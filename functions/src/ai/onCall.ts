@@ -11,11 +11,29 @@ import { AiKillSwitchEnabledError, AiQuotaExceededError, checkAiQuota, consumeAi
 interface GenerateLessonDraftRequest { theme?: unknown; mainObjective?: unknown; subject?: unknown; difficulty?: unknown; materialTexts?: unknown }
 const isValidRequest = (data: GenerateLessonDraftRequest): data is LessonDraftPromptInput => typeof data.theme === 'string' && typeof data.mainObjective === 'string' && (data.subject === 'SOCIAL_STUDIES' || data.subject === 'HOME_ECONOMICS') && (data.difficulty === 'BASIC' || data.difficulty === 'STANDARD' || data.difficulty === 'ADVANCED') && (data.materialTexts === undefined || (Array.isArray(data.materialTexts) && data.materialTexts.every((item) => typeof item === 'string')))
 
-/** キルスイッチ・利用枠超過は HttpsError へ変換し、成功呼び出し時のみ枠を消費する。 */
-const asQuotaHttpsError = (error: unknown): HttpsError => {
+/**
+ * キルスイッチ・利用枠超過エラーを HttpsError に変換して返す。
+ * それ以外の未知のエラーは変換できないため、呼び出し元に向けてそのまま再 throw する
+ * (関数名・戻り値型が示す「HttpsError を返す」は既知エラーの場合のみ)。
+ */
+const toQuotaHttpsErrorOrRethrow = (error: unknown): HttpsError => {
   if (error instanceof AiKillSwitchEnabledError) return new HttpsError('unavailable', error.message)
   if (error instanceof AiQuotaExceededError) return new HttpsError('resource-exhausted', error.message)
   throw error
+}
+
+/**
+ * 枠消費(consumeAiQuota)と成功ログ書き込みをまとめて実行する。
+ * これらはあくまで付随的な記帳処理であり、失敗しても既に生成済みの結果を
+ * クライアントへ返す判断には影響させない(呼び出し元は catch しない)。
+ * 失敗時はエラーログに記録するのみとする。
+ */
+const recordSuccessAndConsumeQuota = async (params: { quotaDeps: ReturnType<typeof getAiUsageQuotaDepsWithAdminSdk>; orgId: string; logUsage: (succeeded: boolean) => Promise<unknown> }): Promise<void> => {
+  try {
+    await Promise.all([params.logUsage(true), consumeAiQuota(params.quotaDeps, { orgId: params.orgId })])
+  } catch (error) {
+    console.error('AI usage quota bookkeeping failed after a successful generation', error)
+  }
 }
 
 /** Returns an unpersisted draft suggestion; the existing overview confirmation is the only template write path. */
@@ -31,17 +49,18 @@ export const generateLessonDraftCallable = onCall({ region: 'asia-northeast1' },
   if (!org.exists || org.get('aiEnabled') !== true) throw new HttpsError('failed-precondition', 'AI機能はこの組織では有効化されていません。')
   if (data.materialTexts?.length && org.get('materialsUploadEnabled') !== true) throw new HttpsError('failed-precondition', '資料アップロード機能はこの組織では有効化されていません。')
   const quotaDeps = getAiUsageQuotaDepsWithAdminSdk()
-  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw asQuotaHttpsError(error) }
+  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw toQuotaHttpsErrorOrRethrow(error) }
   const logUsage = (succeeded: boolean) => db.collection(`organizations/${orgId}/aiUsageLog`).add({ orgId, teacherUid, feature: 'LESSON_DRAFT', succeeded, createdAt: new Date() })
+  let draft
   try {
     assertNoForbiddenFields(data as unknown as Record<string, unknown>)
-    const draft = parseLessonDraftResponse(await unconfiguredLlmProvider.generateText(buildLessonDraftPrompt(data)))
-    await Promise.all([logUsage(true), consumeAiQuota(quotaDeps, { orgId })])
-    return draft
+    draft = parseLessonDraftResponse(await unconfiguredLlmProvider.generateText(buildLessonDraftPrompt(data)))
   } catch {
     await logUsage(false)
     throw new HttpsError('unavailable', 'AI提案の生成に失敗しました。固定の案をご利用ください。')
   }
+  await recordSuccessAndConsumeQuota({ quotaDeps, orgId, logUsage })
+  return draft
 })
 
 export const generateTeacherGuidanceCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
@@ -52,7 +71,16 @@ export const generateTeacherGuidanceCallable = onCall({ region: 'asia-northeast1
   const teacherUid = request.auth.uid; const orgId = personalOrgId(teacherUid); const db = getFirestore(); const org = await db.doc(`organizations/${orgId}`).get()
   if (!org.exists || org.get('aiEnabled') !== true) throw new HttpsError('failed-precondition', 'AI機能はこの組織では有効化されていません。')
   const quotaDeps = getAiUsageQuotaDepsWithAdminSdk()
-  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw asQuotaHttpsError(error) }
+  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw toQuotaHttpsErrorOrRethrow(error) }
   const logUsage = (succeeded: boolean) => db.collection(`organizations/${orgId}/aiUsageLog`).add({ orgId, teacherUid, feature: 'TEACHER_GUIDANCE', succeeded, createdAt: new Date() })
-  try { assertNoForbiddenFields(data as Record<string, unknown>); const result = parseTeacherGuidanceResponse(await unconfiguredLlmProvider.generateText(buildTeacherGuidancePrompt(data as TeacherGuidancePromptInput))); await Promise.all([logUsage(true), consumeAiQuota(quotaDeps, { orgId })]); return result } catch { await logUsage(false); throw new HttpsError('unavailable', 'AI下書きの生成に失敗しました。手動で入力してください。') }
+  let result
+  try {
+    assertNoForbiddenFields(data as Record<string, unknown>)
+    result = parseTeacherGuidanceResponse(await unconfiguredLlmProvider.generateText(buildTeacherGuidancePrompt(data as TeacherGuidancePromptInput)))
+  } catch {
+    await logUsage(false)
+    throw new HttpsError('unavailable', 'AI下書きの生成に失敗しました。手動で入力してください。')
+  }
+  await recordSuccessAndConsumeQuota({ quotaDeps, orgId, logUsage })
+  return result
 })

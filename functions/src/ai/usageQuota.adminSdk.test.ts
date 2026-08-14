@@ -58,6 +58,17 @@ describe('getAiUsageQuotaDepsWithAdminSdk', () => {
     await expect(deps.getLimits('org-1')).resolves.toEqual({ daily: 10, monthly: 100 })
   })
 
+  it('falls back to a daily limit of 0 (fail-closed) when aiCreditsPerDay is missing from the plan-limits doc', async () => {
+    vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
+      concurrentLessonsAndMarkets: 1, participants: 1, teacherSeats: 1, aiCredits: 100,
+      aiCreditsPerDay: undefined as unknown as number,
+      templateStorage: 1, resultRetentionDays: 1, eventExtraCapacity: 0,
+      downgradeStatus: { state: 'NORMAL', violations: [] },
+    })
+    const deps = getAiUsageQuotaDepsWithAdminSdk(nowMillis)
+    await expect(deps.getLimits('org-1')).resolves.toEqual({ daily: 0, monthly: 100 })
+  })
+
   it('returns 0 counts when no counter document exists yet, then increments them', async () => {
     const deps = getAiUsageQuotaDepsWithAdminSdk(nowMillis)
     await expect(deps.getDailyCount('org-1')).resolves.toBe(0)
