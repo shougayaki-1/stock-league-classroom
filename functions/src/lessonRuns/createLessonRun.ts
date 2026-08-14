@@ -29,7 +29,12 @@ export interface CreateLessonRunDeps {
   primaryTeacherUid: string
   getDowngradeStatus?: (orgId: string) => Promise<DowngradeStatus>
   now?: () => unknown
+  expectedParticipants?: number
 }
+
+/** 全プラン共通のサービス上限。プランで変えるのは同時開催数(concurrentLessonsAndMarkets)であり、これではない。 */
+export const MAX_PARTICIPANTS = 80
+
 export interface CreateLessonRunResult { lessonRunId: string; created: boolean }
 
 const allocationFrom = (schoolOrgId: string, data: Record<string, unknown>): SchoolQuotaAllocation => ({
@@ -172,6 +177,7 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
       status: 'DRAFT', primaryTeacherUid: deps.primaryTeacherUid, teacherRoles: { [deps.primaryTeacherUid]: 'PRIMARY' },
       currentPhaseId: null, randomSeed, restoreGeneration: 0,
       startedAt: null, endedAt: null, createdAt: nowValue,
+      maxParticipants: MAX_PARTICIPANTS, expectedParticipants: deps.expectedParticipants ?? null,
     })
     tx.set(idempotencyPath, { lessonRunId, requestDigest, createdAt: nowValue })
     return JSON.stringify({ lessonRunId, created: true })

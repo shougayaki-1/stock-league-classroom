@@ -97,6 +97,22 @@ describe('createLessonRun', () => {
     })
   })
 
+  it('writes the fixed service-wide maxParticipants alongside the caller-provided expectedParticipants', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
+    const result = await createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'fixed-test-seed',
+      generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-2',
+      orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+      expectedParticipants: 42,
+    })
+    const run = fake.docs.get(`lessonRuns/${result.lessonRunId}`)
+    expect(run).toMatchObject({ maxParticipants: 80, expectedParticipants: 42 })
+  })
+
   it('is idempotent per idempotencyKey: a retried call returns the same lessonRunId without creating a second run', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
