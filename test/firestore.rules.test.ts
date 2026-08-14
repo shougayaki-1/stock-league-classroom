@@ -139,6 +139,32 @@ describe('planDefinitions/{planId}', () => {
   })
 })
 
+describe('organizations/{orgId}/aiUsageCounters/{counterId}', () => {
+  it('declares an explicit deny rule for the AI usage counters subcollection', () => {
+    const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
+    expect(rules).toMatch(
+      /match \/organizations\/\{orgId\}\/aiUsageCounters\/\{counterId\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+    )
+  })
+
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const counter = doc(context.firestore(), 'organizations/org-1/aiUsageCounters/2026-01-01')
+    await assertFails(getDoc(counter))
+    await assertFails(setDoc(counter, { count: 1 }))
+  })
+})
+
+describe('systemConfig/{documentId}', () => {
+  it('denies reads and non-operator writes, but allows an operator to write', async () => {
+    const teacherFirestore = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const operatorFirestore = environment.authenticatedContext('operator-a', operatorToken).firestore()
+    await assertFails(getDoc(doc(teacherFirestore, 'systemConfig/aiKillSwitch')))
+    await assertFails(setDoc(doc(teacherFirestore, 'systemConfig/aiKillSwitch'), { enabled: true }))
+    await assertSucceeds(setDoc(doc(operatorFirestore, 'systemConfig/aiKillSwitch'), { enabled: true }))
+  })
+})
+
 describe('organizations/{orgId}/invitations/{invitationId}', () => {
   it('declares an explicit deny rule for the invitation subcollection', () => {
     const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
