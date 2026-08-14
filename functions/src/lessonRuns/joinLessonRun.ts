@@ -91,9 +91,10 @@ export interface JoinLessonRunDeps {
  *      instead of creating a second participant or a second event.
  *  (b) join-code lookup + ACTIVE check, then the target LessonRun's
  *      READY/WAITING status check.
- *  (c) maxParticipants check — LessonRun.maxParticipants is optional; no
- *      LessonRun schema in this codebase defines it yet (see
- *      task-3-report.md), so when absent the run is treated as unlimited.
+ *  (c) maxParticipants check — LessonRun.maxParticipants is written by
+ *      createLessonRun (fixed at MAX_PARTICIPANTS) for all newly created
+ *      runs, but the field is typed optional here since runs created before
+ *      that change lack it; when absent the run is treated as unlimited.
  *      Only a *new* participant consumes a slot; a reconnecting authUid
  *      does not.
  *  (d) same-authUid same-lessonRun lookup via a
