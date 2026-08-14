@@ -89,8 +89,8 @@ service cloud.firestore {
     }
 
     match /lessonTemplates/{templateId} {
-      allow get: if teacher() && activeMember(resource.data.orgId);
-      allow list: if teacher() && activeMember(resource.data.orgId);
+      allow get: if teacher() && (activeMember(resource.data.orgId) || resource.data.visibility == 'COMMUNITY');
+      allow list: if teacher() && (activeMember(resource.data.orgId) || resource.data.visibility == 'COMMUNITY');
       allow create: if teacher()
         && request.resource.data.createdByUid == request.auth.uid
         && request.resource.data.currentPublishedVersionId == null
@@ -109,7 +109,13 @@ service cloud.firestore {
 
       match /versions/{versionId} {
         allow get, list: if teacher()
-          && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId);
+          && (
+            activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
+            || (
+              get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.visibility == 'COMMUNITY'
+              && versionId == get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.currentPublishedVersionId
+            )
+          );
         // Publish is a server transaction so version creation and pointer
         // update cannot split or duplicate. Clients never write versions.
         allow create, update, delete: if false;

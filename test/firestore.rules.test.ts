@@ -171,6 +171,37 @@ describe('templateShares/{shareId}', () => {
   })
 })
 
+describe('lessonTemplates COMMUNITY visibility', () => {
+  beforeEach(async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const firestore = context.firestore()
+      await setDoc(doc(firestore, 'organizations/personal_teacher-a/members/teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(firestore, 'lessonTemplates/community-template'), {
+        orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
+        visibility: 'COMMUNITY', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
+      })
+      await setDoc(doc(firestore, 'lessonTemplates/private-template'), {
+        orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
+        visibility: 'PRIVATE', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
+      })
+      await setDoc(doc(firestore, 'lessonTemplates/community-template/versions/v-current'), { templateId: 'community-template', orgId: 'personal_teacher-a', content: {} })
+      await setDoc(doc(firestore, 'lessonTemplates/community-template/versions/v-old'), { templateId: 'community-template', orgId: 'personal_teacher-a', content: {} })
+    })
+  })
+
+  it('lets a non-member teacher read a COMMUNITY template but not a PRIVATE one', async () => {
+    const outsider = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/community-template')))
+    await assertFails(getDoc(doc(outsider, 'lessonTemplates/private-template')))
+  })
+
+  it('lets a non-member teacher read only the currently published version of a COMMUNITY template', async () => {
+    const outsider = environment.authenticatedContext('teacher-b', teacherToken).firestore()
+    await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/community-template/versions/v-current')))
+    await assertFails(getDoc(doc(outsider, 'lessonTemplates/community-template/versions/v-old')))
+  })
+})
+
 describe('systemConfig/{documentId}', () => {
   it('denies reads and non-operator writes, but allows an operator to write', async () => {
     const teacherFirestore = environment.authenticatedContext('teacher-a', teacherToken).firestore()
