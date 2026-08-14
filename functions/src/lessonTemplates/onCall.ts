@@ -208,3 +208,35 @@ export const revokeTemplateShareCallable = onCall({ region: 'asia-northeast1' },
   await revokeTemplateSharesWithAdminSdk({ templateId: data.templateId, versionId: data.versionId, createdByUid: request.auth.uid })
   return { revoked: true }
 })
+
+interface CommunityVisibilityCallableInput { templateId?: unknown }
+const isValidTemplateIdInput = (data: unknown): data is { templateId: string } =>
+  typeof data === 'object' && data !== null && typeof (data as CommunityVisibilityCallableInput).templateId === 'string'
+
+export const publishTemplateToCommunityCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  if (!isValidTemplateIdInput(request.data)) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  const templateSnap = await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).get()
+  if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('createdByUid') !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ公開できます。')
+  if (!templateSnap.get('currentPublishedVersionId')) throw new HttpsError('failed-precondition', '公開済みの版がまだありません。')
+
+  await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'COMMUNITY' })
+  return { published: true }
+})
+
+export const unpublishTemplateFromCommunityCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  if (!isValidTemplateIdInput(request.data)) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  const templateSnap = await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).get()
+  if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('createdByUid') !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ非公開にできます。')
+
+  await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'PRIVATE' })
+  return { published: false }
+})
+

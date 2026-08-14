@@ -7,8 +7,10 @@ import {
   isValidDuplicateLessonTemplateInput,
   isValidPublishLessonVersionInput,
   publishLessonVersionCallable,
+  publishTemplateToCommunityCallable,
   resolveTemplateShareCallable,
   revokeTemplateShareCallable,
+  unpublishTemplateFromCommunityCallable,
   type DuplicateLessonTemplateCallableInput,
   type PublishLessonVersionCallableInput,
 } from './onCall'
@@ -22,6 +24,7 @@ import {
 } from './templateShares'
 
 const templateGetMock = vi.fn()
+const templateUpdateMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./publishLessonVersion', () => ({ publishLessonVersionWithAdminSdk: vi.fn() }))
@@ -32,7 +35,7 @@ vi.mock('./templateShares', () => ({
   revokeTemplateSharesWithAdminSdk: vi.fn(),
 }))
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ doc: () => ({ get: templateGetMock }) }),
+  getFirestore: () => ({ doc: () => ({ get: templateGetMock, update: templateUpdateMock }) }),
 }))
 
 describe('isValidPublishLessonVersionInput', () => {
@@ -343,5 +346,58 @@ describe('revokeTemplateShareCallable', () => {
     vi.mocked(revokeTemplateSharesWithAdminSdk).mockResolvedValue(undefined)
     await expect(revokeTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).resolves.toEqual({ revoked: true })
     expect(revokeTemplateSharesWithAdminSdk).toHaveBeenCalledWith({ templateId: 't1', versionId: 'v1', createdByUid: 'teacher-a' })
+  })
+})
+
+describe('publishTemplateToCommunityCallable', () => {
+  const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks(); templateUpdateMock.mockResolvedValue(undefined) })
+
+  it('rejects a caller who is not the template author', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'createdByUid' ? 'someone-else' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+    })
+    await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a template with no published version', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? null : undefined),
+    })
+    await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'failed-precondition' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('publishes for the template author when a published version exists', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+    })
+    await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: true })
+    expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'COMMUNITY' })
+  })
+})
+
+describe('unpublishTemplateFromCommunityCallable', () => {
+  const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks(); templateUpdateMock.mockResolvedValue(undefined) })
+
+  it('rejects a caller who is not the template author', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'createdByUid' ? 'someone-else' : undefined) })
+    await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('unpublishes for the template author', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : undefined) })
+    await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: false })
+    expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'PRIVATE' })
   })
 })

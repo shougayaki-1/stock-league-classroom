@@ -35,7 +35,8 @@ export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export {
   createTemplateShareCallable, duplicateLessonTemplateCallable, publishLessonVersionCallable,
-  resolveTemplateShareCallable, revokeTemplateShareCallable,
+  publishTemplateToCommunityCallable, resolveTemplateShareCallable, revokeTemplateShareCallable,
+  unpublishTemplateFromCommunityCallable,
 } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
 export {
