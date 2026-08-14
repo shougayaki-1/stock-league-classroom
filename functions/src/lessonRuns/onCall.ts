@@ -2,16 +2,19 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
-import { createLessonRunWithAdminSdk } from './createLessonRun'
+import { createLessonRunWithAdminSdk, MAX_PARTICIPANTS } from './createLessonRun'
 import { restoreCheckpointWithAdminSdk } from './checkpoint'
 
-interface CreateLessonRunRequest { templateId: string; lessonRunIdempotencyKey: string }
+interface CreateLessonRunRequest { templateId: string; lessonRunIdempotencyKey: string; expectedParticipants?: unknown }
+const isValidExpectedParticipants = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PARTICIPANTS
 
 export const createLessonRunCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
   const data = request.data as CreateLessonRunRequest
   if (!data.templateId || !data.lessonRunIdempotencyKey) throw new HttpsError('invalid-argument', 'templateId と lessonRunIdempotencyKey は必須です。')
+  if (!isValidExpectedParticipants(data.expectedParticipants)) throw new HttpsError('invalid-argument', '想定人数は1〜80の範囲で指定してください。')
   const templateSnap = await getFirestore().doc(`lessonTemplates/${data.templateId}`).get()
   if (!templateSnap.exists) throw new HttpsError('not-found', '教材が見つかりません。')
   const orgId = templateSnap.get('orgId') as string
@@ -20,6 +23,7 @@ export const createLessonRunCallable = onCall({ region: 'asia-northeast1' }, asy
     return await createLessonRunWithAdminSdk({
       orgId, templateId: data.templateId,
       primaryTeacherUid: request.auth.uid, lessonRunIdempotencyKey: data.lessonRunIdempotencyKey,
+      expectedParticipants: data.expectedParticipants,
     })
   } catch (error) {
     throw translateCreateLessonRunError(error)

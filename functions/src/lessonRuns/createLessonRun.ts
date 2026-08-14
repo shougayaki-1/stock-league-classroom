@@ -189,7 +189,7 @@ export const generateRandomSeed = (): string => randomBytes(16).toString('hex')
 
 /** Production wiring: Firestore Admin SDK transaction + Node's crypto. */
 export const createLessonRunWithAdminSdk = (input: {
-  orgId: string; templateId: string; primaryTeacherUid: string; lessonRunIdempotencyKey: string
+  orgId: string; templateId: string; primaryTeacherUid: string; lessonRunIdempotencyKey: string; expectedParticipants: number
 }): Promise<CreateLessonRunResult> => {
   const db = getFirestore()
   return createLessonRun({
