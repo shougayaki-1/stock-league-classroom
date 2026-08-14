@@ -6,9 +6,17 @@ import { unconfiguredLlmProvider } from './llmProvider'
 import { assertNoForbiddenFields } from './piiFilter'
 import { buildLessonDraftPrompt, parseLessonDraftResponse, type LessonDraftPromptInput } from './lessonDraftPrompt'
 import { buildTeacherGuidancePrompt, parseTeacherGuidanceResponse, type TeacherGuidancePromptInput } from './teacherGuidancePrompt'
+import { AiKillSwitchEnabledError, AiQuotaExceededError, checkAiQuota, consumeAiQuota, getAiUsageQuotaDepsWithAdminSdk } from './usageQuota'
 
 interface GenerateLessonDraftRequest { theme?: unknown; mainObjective?: unknown; subject?: unknown; difficulty?: unknown; materialTexts?: unknown }
 const isValidRequest = (data: GenerateLessonDraftRequest): data is LessonDraftPromptInput => typeof data.theme === 'string' && typeof data.mainObjective === 'string' && (data.subject === 'SOCIAL_STUDIES' || data.subject === 'HOME_ECONOMICS') && (data.difficulty === 'BASIC' || data.difficulty === 'STANDARD' || data.difficulty === 'ADVANCED') && (data.materialTexts === undefined || (Array.isArray(data.materialTexts) && data.materialTexts.every((item) => typeof item === 'string')))
+
+/** キルスイッチ・利用枠超過は HttpsError へ変換し、成功呼び出し時のみ枠を消費する。 */
+const asQuotaHttpsError = (error: unknown): HttpsError => {
+  if (error instanceof AiKillSwitchEnabledError) return new HttpsError('unavailable', error.message)
+  if (error instanceof AiQuotaExceededError) return new HttpsError('resource-exhausted', error.message)
+  throw error
+}
 
 /** Returns an unpersisted draft suggestion; the existing overview confirmation is the only template write path. */
 export const generateLessonDraftCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
@@ -22,11 +30,13 @@ export const generateLessonDraftCallable = onCall({ region: 'asia-northeast1' },
   const org = await db.doc(`organizations/${orgId}`).get()
   if (!org.exists || org.get('aiEnabled') !== true) throw new HttpsError('failed-precondition', 'AI機能はこの組織では有効化されていません。')
   if (data.materialTexts?.length && org.get('materialsUploadEnabled') !== true) throw new HttpsError('failed-precondition', '資料アップロード機能はこの組織では有効化されていません。')
+  const quotaDeps = getAiUsageQuotaDepsWithAdminSdk()
+  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw asQuotaHttpsError(error) }
   const logUsage = (succeeded: boolean) => db.collection(`organizations/${orgId}/aiUsageLog`).add({ orgId, teacherUid, feature: 'LESSON_DRAFT', succeeded, createdAt: new Date() })
   try {
     assertNoForbiddenFields(data as unknown as Record<string, unknown>)
     const draft = parseLessonDraftResponse(await unconfiguredLlmProvider.generateText(buildLessonDraftPrompt(data)))
-    await logUsage(true)
+    await Promise.all([logUsage(true), consumeAiQuota(quotaDeps, { orgId })])
     return draft
   } catch {
     await logUsage(false)
@@ -41,6 +51,8 @@ export const generateTeacherGuidanceCallable = onCall({ region: 'asia-northeast1
   if (typeof data.topic !== 'string' || !data.topic) throw new HttpsError('invalid-argument', '入力内容が不正です。')
   const teacherUid = request.auth.uid; const orgId = personalOrgId(teacherUid); const db = getFirestore(); const org = await db.doc(`organizations/${orgId}`).get()
   if (!org.exists || org.get('aiEnabled') !== true) throw new HttpsError('failed-precondition', 'AI機能はこの組織では有効化されていません。')
+  const quotaDeps = getAiUsageQuotaDepsWithAdminSdk()
+  try { await checkAiQuota(quotaDeps, { orgId }) } catch (error) { throw asQuotaHttpsError(error) }
   const logUsage = (succeeded: boolean) => db.collection(`organizations/${orgId}/aiUsageLog`).add({ orgId, teacherUid, feature: 'TEACHER_GUIDANCE', succeeded, createdAt: new Date() })
-  try { assertNoForbiddenFields(data as Record<string, unknown>); const result = parseTeacherGuidanceResponse(await unconfiguredLlmProvider.generateText(buildTeacherGuidancePrompt(data as TeacherGuidancePromptInput))); await logUsage(true); return result } catch { await logUsage(false); throw new HttpsError('unavailable', 'AI下書きの生成に失敗しました。手動で入力してください。') }
+  try { assertNoForbiddenFields(data as Record<string, unknown>); const result = parseTeacherGuidanceResponse(await unconfiguredLlmProvider.generateText(buildTeacherGuidancePrompt(data as TeacherGuidancePromptInput))); await Promise.all([logUsage(true), consumeAiQuota(quotaDeps, { orgId })]); return result } catch { await logUsage(false); throw new HttpsError('unavailable', 'AI下書きの生成に失敗しました。手動で入力してください。') }
 })
