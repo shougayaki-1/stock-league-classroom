@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Firestore as AdminFirestore } from 'firebase-admin/firestore'
+import { Timestamp, type Firestore as AdminFirestore } from 'firebase-admin/firestore'
+import type Stripe from 'stripe'
 import {
   createFirestoreInvoiceLifecycleApplier,
+  createFirestoreInvoiceBillingRecordSynchronizer,
   createFirestoreStripeSubscriptionStateSynchronizer,
   createFirestoreSubscriptionPlanChangeSynchronizer,
+  extractStripeWebhookEvent,
   handleStripeWebhookEvent,
   sendStripeWebhookOutcome,
 } from './stripeWebhook'
@@ -638,6 +641,158 @@ describe('Firestore invoice lifecycle wiring', () => {
       [`get:${billingRecordPath}`, `update:${organizationPath}`, `set:${billingRecordPath}`],
       [`get:${billingRecordPath}`, `update:${organizationPath}`, `update:${billingRecordPath}`],
       [`get:${billingRecordPath}`],
+    ])
+  })
+})
+
+describe('Stripe Invoicing invoice lifecycle', () => {
+  it('forwards every invoice lifecycle event to the invoice synchronizer without invoking subscription-state sync', async () => {
+    const syncInvoiceBillingRecord = vi.fn()
+    const syncStripeSubscriptionState = vi.fn()
+    const deps = {
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'org-1',
+      syncInvoiceBillingRecord,
+      syncStripeSubscriptionState,
+    }
+    const events = [
+      { type: 'invoice.finalized' as const, eventCreatedAtMillis: 100 },
+      { type: 'invoice.sent' as const, eventCreatedAtMillis: 200 },
+      { type: 'invoice.paid' as const, eventCreatedAtMillis: 300 },
+      { type: 'invoice.payment_failed' as const, eventCreatedAtMillis: 400 },
+      { type: 'invoice.voided' as const, eventCreatedAtMillis: 500 },
+    ]
+
+    for (const event of events) {
+      await expect(handleStripeWebhookEvent(deps, {
+        ...event,
+        invoiceId: 'in_1',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        dueDateMillis: 9_999,
+        paymentMethod: 'INVOICE',
+      })).resolves.toEqual({ status: 'ok' })
+    }
+
+    expect(syncInvoiceBillingRecord).toHaveBeenCalledTimes(5)
+    expect(syncInvoiceBillingRecord).toHaveBeenLastCalledWith('org-1', {
+      type: 'invoice.voided', invoiceId: 'in_1', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      dueDateMillis: 9_999, paymentMethod: 'INVOICE', eventCreatedAtMillis: 500,
+    })
+    expect(syncStripeSubscriptionState).not.toHaveBeenCalled()
+  })
+
+  it('extracts BANK_TRANSFER only from paid invoices with a bank-transfer payment detail', () => {
+    const bankTransfer = extractStripeWebhookEvent({
+      type: 'invoice.paid',
+      created: 123,
+      data: { object: {
+        id: 'in_bank', customer: 'cus_1', subscription: 'sub_1', due_date: 456, collection_method: 'send_invoice',
+        payment_settings: {
+          payment_method_options: { customer_balance: { bank_transfer: { type: 'jp_bank_transfer' } } },
+        },
+      } },
+    } as unknown as Stripe.Event)
+    const configuredButUnpaid = extractStripeWebhookEvent({
+      type: 'invoice.finalized',
+      created: 124,
+      data: { object: {
+        id: 'in_pending', customer: 'cus_1', subscription: 'sub_1', due_date: 457, collection_method: 'send_invoice',
+        payment_settings: {
+          payment_method_options: { customer_balance: { bank_transfer: { type: 'jp_bank_transfer' } } },
+        },
+      } },
+    } as unknown as Stripe.Event)
+    const paidWithoutBankDetail = extractStripeWebhookEvent({
+      type: 'invoice.paid',
+      created: 125,
+      data: { object: {
+        id: 'in_invoice', customer: 'cus_1', subscription: 'sub_1', due_date: 458, collection_method: 'send_invoice',
+        payment_settings: { payment_method_options: { customer_balance: { funding_type: 'bank_transfer' } } },
+      } },
+    } as unknown as Stripe.Event)
+
+    expect(bankTransfer).toMatchObject({ type: 'invoice.paid', paymentMethod: 'BANK_TRANSFER', eventCreatedAtMillis: 123_000 })
+    expect(configuredButUnpaid).toMatchObject({ type: 'invoice.finalized', paymentMethod: 'INVOICE' })
+    expect(paidWithoutBankDetail).toMatchObject({ type: 'invoice.paid', paymentMethod: 'INVOICE' })
+  })
+
+  it('creates ordered Invoice records without changing plan or parent-contract fields', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    type Transaction = {
+      get: (ref: DocumentRef) => Promise<Snapshot>
+      set: (ref: DocumentRef, data: Record<string, unknown>) => void
+      update: (ref: DocumentRef, data: Record<string, unknown>) => void
+    }
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/org-1', {
+        planId: 'SCHOOL', parentContractState: 'ACTIVE', parentContractSubscriptionId: 'sub_parent',
+      }],
+    ])
+    const transactionOperations: string[][] = []
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: Transaction) => Promise<T>): Promise<T> => {
+        const operations: string[] = []
+        transactionOperations.push(operations)
+        return operation({
+          get: async (ref) => {
+            operations.push(`get:${ref.path}`)
+            const data = documents.get(ref.path)
+            return { exists: Boolean(data), get: (field) => data?.[field] }
+          },
+          set: (ref, data) => {
+            operations.push(`set:${ref.path}`)
+            documents.set(ref.path, { ...data })
+          },
+          update: (ref, data) => {
+            operations.push(`update:${ref.path}`)
+            documents.set(ref.path, { ...documents.get(ref.path), ...data })
+          },
+        })
+      },
+    }
+    const syncInvoiceBillingRecord = createFirestoreInvoiceBillingRecordSynchronizer(firestore as unknown as AdminFirestore)
+    const invoice = {
+      invoiceId: 'in_1', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', dueDateMillis: 9_999,
+      paymentMethod: 'INVOICE' as const,
+    }
+
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.finalized', eventCreatedAtMillis: 100 })
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.sent', eventCreatedAtMillis: 200 })
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.payment_failed', eventCreatedAtMillis: 300 })
+    expect(documents.get('organizations/org-1/billingRecords/in_1')?.status).toBe('OVERDUE')
+    expect(documents.get('organizations/org-1')?.subscriptionStatus).toBe('PAST_DUE')
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.paid', eventCreatedAtMillis: 400, paymentMethod: 'BANK_TRANSFER' })
+    expect(documents.get('organizations/org-1/billingRecords/in_1')?.status).toBe('PAID')
+    expect(documents.get('organizations/org-1/billingRecords/in_1')?.paymentMethod).toBe('BANK_TRANSFER')
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.payment_failed', eventCreatedAtMillis: 399 })
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.voided', eventCreatedAtMillis: 500 })
+    await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.sent', eventCreatedAtMillis: 500 })
+
+    expect(documents.get('organizations/org-1')).toEqual({
+      planId: 'SCHOOL', parentContractState: 'ACTIVE', parentContractSubscriptionId: 'sub_parent', subscriptionStatus: 'ACTIVE',
+    })
+    const billingRecord = documents.get('organizations/org-1/billingRecords/in_1')
+    expect(billingRecord).toMatchObject({
+      status: 'CANCELLED', paymentMethod: 'INVOICE', stripeInvoiceId: 'in_1', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', dueDateMillis: 9_999, lastStripeEventCreatedAtMillis: 500,
+    })
+    expect(billingRecord?.finalizedAt).toEqual(Timestamp.fromMillis(100))
+    expect(billingRecord?.sentAt).toEqual(Timestamp.fromMillis(200))
+    expect(billingRecord?.overdueAt).toEqual(Timestamp.fromMillis(300))
+    expect(billingRecord?.paidAt).toEqual(Timestamp.fromMillis(400))
+    expect(billingRecord?.cancelledAt).toEqual(Timestamp.fromMillis(500))
+    expect(transactionOperations).toEqual([
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'set:organizations/org-1/billingRecords/in_1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1/billingRecords/in_1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1/billingRecords/in_1'],
+      ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1'],
     ])
   })
 })
