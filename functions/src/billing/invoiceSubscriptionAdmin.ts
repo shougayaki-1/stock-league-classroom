@@ -151,6 +151,9 @@ type ReservedRequest =
     customerId: string
     priceId: string
     currentCardSubscriptionId?: string
+    currentPeriodEndMillis?: number
+    stripeSubscriptionId?: string
+    stripeScheduleId?: string
   }
 
 const requestFrom = (value: unknown): InvoiceSubscriptionRequest | null => {
@@ -165,6 +168,12 @@ const requestFrom = (value: unknown): InvoiceSubscriptionRequest | null => {
     idempotencyKey: request.idempotencyKey,
     status: request.status,
     requestedByUid: request.requestedByUid,
+    ...(request.operation === 'CREATE' || request.operation === 'SCHEDULE'
+      ? { operation: request.operation }
+      : {}),
+    ...(typeof request.sourceStripeSubscriptionId === 'string'
+      ? { sourceStripeSubscriptionId: request.sourceStripeSubscriptionId }
+      : {}),
     ...(typeof request.stripeSubscriptionId === 'string'
       ? { stripeSubscriptionId: request.stripeSubscriptionId }
       : {}),
@@ -215,30 +224,74 @@ const reserveInvoiceSubscriptionRequest = async (
     if (existing) {
       const requestId = requestIdFromCreatingRequest(orgId, existing)
       if (!requestId) return { kind: 'EXISTING', request: existing }
+      if (existing.operation === 'CREATE') {
+        return {
+          kind: 'CREATE',
+          requestId,
+          customerId: organizationData.stripeCustomerId,
+          priceId: planData.stripePriceId,
+          ...(existing.stripeSubscriptionId ? { stripeSubscriptionId: existing.stripeSubscriptionId } : {}),
+        }
+      }
+      if (existing.operation === 'SCHEDULE' && existing.sourceStripeSubscriptionId) {
+        return {
+          kind: 'CREATE',
+          requestId,
+          customerId: organizationData.stripeCustomerId,
+          priceId: planData.stripePriceId,
+          currentCardSubscriptionId: existing.sourceStripeSubscriptionId,
+          ...(typeof existing.currentPeriodEndMillis === 'number'
+            ? { currentPeriodEndMillis: existing.currentPeriodEndMillis }
+            : {}),
+          ...(existing.stripeScheduleId ? { stripeScheduleId: existing.stripeScheduleId } : {}),
+        }
+      }
       const subscriptionState = organizationData.stripeSubscriptionState as Record<string, unknown> | undefined
+      const sourceStripeSubscriptionId = subscriptionState?.status === 'active'
+        && typeof subscriptionState.subscriptionId === 'string'
+        ? subscriptionState.subscriptionId
+        : undefined
+      transaction.update(organizationRef, {
+        invoiceSubscriptionRequest: {
+          ...existing,
+          operation: sourceStripeSubscriptionId ? 'SCHEDULE' : 'CREATE',
+          ...(sourceStripeSubscriptionId ? { sourceStripeSubscriptionId } : {}),
+        },
+      })
       return {
         kind: 'CREATE',
         requestId,
         customerId: organizationData.stripeCustomerId,
         priceId: planData.stripePriceId,
-        ...(subscriptionState?.status === 'active' && typeof subscriptionState.subscriptionId === 'string'
-          ? { currentCardSubscriptionId: subscriptionState.subscriptionId }
-          : {}),
+        ...(sourceStripeSubscriptionId ? { currentCardSubscriptionId: sourceStripeSubscriptionId } : {}),
       }
     }
 
+    const cardCheckout = organizationData.cardCheckoutReservation as Record<string, unknown> | undefined
+    if (
+      (cardCheckout?.status === 'CREATING' || cardCheckout?.status === 'PENDING' || cardCheckout?.status === 'COMPLETED')
+      && typeof cardCheckout.expiresAtMillis === 'number'
+      && cardCheckout.expiresAtMillis > Date.now()
+    ) throw new Error('カード申込の処理中は請求書払いを開始できません')
+
     const requestId = db.collection(`organizations/${orgId}/invoiceSubscriptionRequests`).doc().id
     const idempotencyKey = `invoice-subscription:${orgId}:${requestId}`
+    const subscriptionState = organizationData.stripeSubscriptionState as Record<string, unknown> | undefined
+    const sourceStripeSubscriptionId = subscriptionState?.status === 'active'
+      && typeof subscriptionState.subscriptionId === 'string'
+      ? subscriptionState.subscriptionId
+      : undefined
     transaction.update(organizationRef, {
       invoiceSubscriptionRequest: {
         idempotencyKey,
         status: 'CREATING',
         requestedByUid: actorUid,
         requestedAt: FieldValue.serverTimestamp(),
+        operation: sourceStripeSubscriptionId ? 'SCHEDULE' : 'CREATE',
+        ...(sourceStripeSubscriptionId ? { sourceStripeSubscriptionId } : {}),
       },
     })
 
-    const subscriptionState = organizationData.stripeSubscriptionState as Record<string, unknown> | undefined
     return {
       kind: 'CREATE',
       requestId,
@@ -252,6 +305,20 @@ const reserveInvoiceSubscriptionRequest = async (
 
   if (reserved.kind === 'EXISTING' || !reserved.currentCardSubscriptionId) return reserved
 
+  if (typeof reserved.currentPeriodEndMillis === 'number') {
+    return {
+      kind: 'CREATE',
+      requestId: reserved.requestId,
+      customerId: reserved.customerId,
+      priceId: reserved.priceId,
+      currentCardSubscription: {
+        stripeSubscriptionId: reserved.currentCardSubscriptionId,
+        currentPeriodEndMillis: reserved.currentPeriodEndMillis,
+      },
+      ...(reserved.stripeScheduleId ? { stripeScheduleId: reserved.stripeScheduleId } : {}),
+    }
+  }
+
   const subscription = await stripe.subscriptions.retrieve(reserved.currentCardSubscriptionId)
   if (idFrom(subscription.customer) !== reserved.customerId) {
     throw new Error('カード契約のCustomerが請求先と一致しません')
@@ -263,6 +330,22 @@ const reserveInvoiceSubscriptionRequest = async (
   ) {
     throw new Error('有効なカード契約の更新日を確認できません')
   }
+  const currentPeriodEndMillis = subscription.current_period_end * 1_000
+  const expectedKey = `invoice-subscription:${orgId}:${reserved.requestId}`
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    const stored = organization.get('invoiceSubscriptionRequest') as StoredInvoiceSubscriptionRequest | undefined
+    if (
+      !stored
+      || stored.status !== 'CREATING'
+      || stored.idempotencyKey !== expectedKey
+      || stored.operation !== 'SCHEDULE'
+      || stored.sourceStripeSubscriptionId !== subscription.id
+    ) throw new Error('請求書払いの申込状態が変更されました')
+    transaction.update(organizationRef, {
+      invoiceSubscriptionRequest: { ...stored, currentPeriodEndMillis },
+    })
+  })
   return {
     kind: 'CREATE',
     requestId: reserved.requestId,
@@ -270,9 +353,41 @@ const reserveInvoiceSubscriptionRequest = async (
     priceId: reserved.priceId,
     currentCardSubscription: {
       stripeSubscriptionId: subscription.id,
-      currentPeriodEndMillis: subscription.current_period_end * 1_000,
+      currentPeriodEndMillis,
     },
   }
+}
+
+const recordStripeResult = async (
+  db: Firestore,
+  orgId: string,
+  requestId: string,
+  result: { stripeSubscriptionId: string } | { stripeScheduleId: string },
+): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  const expectedKey = `invoice-subscription:${orgId}:${requestId}`
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    const stored = organization.get('invoiceSubscriptionRequest') as StoredInvoiceSubscriptionRequest | undefined
+    if (
+      stored?.idempotencyKey === expectedKey
+      && 'stripeSubscriptionId' in result
+      && stored.status === 'ACTIVE'
+      && stored.stripeSubscriptionId === result.stripeSubscriptionId
+    ) return
+    if (
+      stored?.idempotencyKey === expectedKey
+      && 'stripeScheduleId' in result
+      && stored.status === 'SCHEDULED'
+      && stored.stripeScheduleId === result.stripeScheduleId
+    ) return
+    if (!stored || stored.idempotencyKey !== expectedKey || stored.status !== 'CREATING') {
+      throw new Error('請求書払いの申込状態が変更されました')
+    }
+    transaction.update(organizationRef, {
+      invoiceSubscriptionRequest: { ...stored, ...result },
+    })
+  })
 }
 
 const finalizeRequest = async (
@@ -370,6 +485,18 @@ export const startInvoiceSubscriptionWithAdminSdk = (
       requestId,
       { status: 'ACTIVE', stripeSubscriptionId },
     ),
+    recordActiveResult: (orgId, requestId, stripeSubscriptionId) => recordStripeResult(
+      db,
+      orgId,
+      requestId,
+      { stripeSubscriptionId },
+    ),
+    recordScheduledResult: (orgId, requestId, stripeScheduleId) => recordStripeResult(
+      db,
+      orgId,
+      requestId,
+      { stripeScheduleId },
+    ),
     finalizeScheduled: (orgId, requestId, stripeScheduleId, currentPeriodEndMillis) => finalizeRequest(
       db,
       orgId,
@@ -414,6 +541,7 @@ const invoiceSubscriptionFrom = (
 ): BillingOverview['invoiceSubscription'] | undefined => {
   if (!value || typeof value !== 'object') return undefined
   const request = value as Record<string, unknown>
+  if (request.status === 'CREATING') return { status: 'CREATING' }
   if (request.status === 'ACTIVE') return { status: 'ACTIVE' }
   if (request.status !== 'SCHEDULED') return undefined
   return {

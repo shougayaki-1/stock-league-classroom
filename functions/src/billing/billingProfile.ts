@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 export type BillingProfileInput = {
   legalName: string
   contactName: string
@@ -45,14 +43,9 @@ export const validateBillingProfile = (input: unknown): BillingProfileInput => {
   }
 }
 
-const profileUpdateIdempotencyKey = (orgId: string, profile: BillingProfileInput): string => {
-  const fingerprint = createHash('sha256').update(JSON.stringify(profile)).digest('hex')
-  return `billing-profile:update:${orgId}:${fingerprint}`
-}
-
 export const saveBillingProfile = async (
   deps: BillingProfileDeps,
-  input: { orgId: string; profile: BillingProfileInput; actorUid: string },
+  input: { orgId: string; profile: BillingProfileInput; actorUid: string; updateOperationId?: string },
 ): Promise<{ stripeCustomerId: string }> => {
   const organization = await deps.getOrganization(input.orgId)
   if (organization?.type !== 'school') throw new Error('請求書払いは学校組織のみ利用できます')
@@ -60,11 +53,14 @@ export const saveBillingProfile = async (
   const existingCustomerId = typeof organization.stripeCustomerId === 'string'
     ? organization.stripeCustomerId
     : null
+  if (existingCustomerId && !input.updateOperationId) {
+    throw new Error('請求先プロフィールの保存操作が予約されていません')
+  }
   const customer = await deps.syncStripeCustomer({
     existingCustomerId,
     profile,
     idempotencyKey: existingCustomerId
-      ? profileUpdateIdempotencyKey(input.orgId, profile)
+      ? `billing-profile:update:${input.orgId}:${input.updateOperationId}`
       : `billing-profile:${input.orgId}`,
   })
   await deps.saveBillingProfile(input.orgId, {

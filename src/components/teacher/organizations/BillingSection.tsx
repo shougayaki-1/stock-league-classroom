@@ -102,6 +102,9 @@ export function BillingSection({
       {overview?.invoiceSubscription?.status === 'SCHEDULED' && overview.invoiceSubscription.currentPeriodEndMillis != null && (
         <Alert severity="info">次回更新日（{formatDate(overview.invoiceSubscription.currentPeriodEndMillis)}）から請求書払いへ切替予定です。</Alert>
       )}
+      {overview?.invoiceSubscription?.status === 'CREATING' && (
+        <Alert severity="info">請求書払いの申込を処理しています。完了までカード申込は利用できません。</Alert>
+      )}
       {overview?.profile == null && (
         <Typography variant="body2">請求書払いを申し込むには、先に請求先プロフィールを保存してください。</Typography>
       )}

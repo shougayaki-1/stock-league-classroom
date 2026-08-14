@@ -12,11 +12,12 @@ const profile = {
   },
 }
 
-const { docs, reads, writes, stripeApi, fakeDb, resetTransaction } = vi.hoisted(() => {
+const { docs, reads, writes, stripeApi, fakeDb, failNextInvoiceFinalization, resetTransaction } = vi.hoisted(() => {
   const docs = new Map<string, Record<string, unknown>>()
   const reads: string[] = []
   const writes: Array<{ path: string; data: Record<string, unknown> }> = []
   let hasWritten = false
+  let shouldFailNextInvoiceFinalization = false
   const stripeApi = {
     subscriptions: {
       create: vi.fn(),
@@ -53,6 +54,13 @@ const { docs, reads, writes, stripeApi, fakeDb, resetTransaction } = vi.hoisted(
           }
         },
         update: (ref, data) => {
+          if (
+            shouldFailNextInvoiceFinalization
+            && (data.invoiceSubscriptionRequest as { status?: unknown } | undefined)?.status === 'ACTIVE'
+          ) {
+            shouldFailNextInvoiceFinalization = false
+            throw new Error('Firestore finalize unavailable')
+          }
           hasWritten = true
           writes.push({ path: ref.path, data })
           docs.set(ref.path, { ...(docs.get(ref.path) ?? {}), ...data })
@@ -66,6 +74,7 @@ const { docs, reads, writes, stripeApi, fakeDb, resetTransaction } = vi.hoisted(
     writes,
     stripeApi,
     fakeDb,
+    failNextInvoiceFinalization: () => { shouldFailNextInvoiceFinalization = true },
     resetTransaction: () => { hasWritten = false },
   }
 })
@@ -124,6 +133,7 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
           status: 'CREATING',
           requestedByUid: 'uid-1',
           requestedAt: 'server-ts',
+          operation: 'CREATE',
         },
       },
     })
@@ -142,6 +152,7 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
           status: 'ACTIVE',
           requestedByUid: 'uid-1',
           requestedAt: 'server-ts',
+          operation: 'CREATE',
           stripeSubscriptionId: 'sub_invoice',
         },
       },
@@ -285,6 +296,8 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
         status: 'SCHEDULED',
         requestedByUid: 'uid-1',
         requestedAt: 'server-ts',
+        operation: 'SCHEDULE',
+        sourceStripeSubscriptionId: 'sub_card',
         stripeScheduleId: 'sub_sched_invoice',
         currentPeriodEndMillis: 1_800_000_000_000,
       },
@@ -358,8 +371,54 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
       status: 'ACTIVE',
       requestedByUid: 'uid-1',
       requestedAt: 'server-ts',
+      operation: 'CREATE',
       stripeSubscriptionId: 'sub_invoice',
     })
+  })
+
+  it('keeps a CREATE reservation immutable when a webhook arrives between Stripe success and finalization retry', async () => {
+    seedReadyOrganization()
+    stripeApi.subscriptions.create.mockResolvedValue({ id: 'sub_invoice' })
+    failNextInvoiceFinalization()
+
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))
+      .rejects.toThrow('Firestore finalize unavailable')
+
+    docs.set('organizations/school-1', {
+      ...docs.get('organizations/school-1'),
+      stripeSubscriptionState: {
+        subscriptionId: 'sub_invoice',
+        status: 'active',
+        eventCreatedAtMillis: 1_900_000_000_000,
+      },
+    })
+
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-2' }))
+      .resolves.toEqual({ status: 'ACTIVE', stripeSubscriptionId: 'sub_invoice' })
+
+    expect(stripeApi.subscriptions.retrieve).not.toHaveBeenCalled()
+    expect(stripeApi.subscriptionSchedules.create).not.toHaveBeenCalled()
+    expect(docs.get('organizations/school-1')?.invoiceSubscriptionRequest).toMatchObject({
+      operation: 'CREATE',
+      status: 'ACTIVE',
+      requestedByUid: 'uid-1',
+      stripeSubscriptionId: 'sub_invoice',
+    })
+  })
+
+  it.each(['CREATING', 'PENDING'] as const)('rejects invoice reservation while card Checkout is %s', async (status) => {
+    seedReadyOrganization({
+      cardCheckoutReservation: {
+        status,
+        billingRecordId: 'record-card',
+        expiresAtMillis: 2_000_000_000_000,
+      },
+    })
+
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))
+      .rejects.toThrow('カード申込の処理中は請求書払いを開始できません')
+    expect(stripeApi.subscriptions.create).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
   })
 
   it('does not rewrite finalization when a retry already saved the same Stripe subscription id', async () => {
@@ -387,6 +446,7 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
         status: 'CREATING',
         requestedByUid: 'uid-1',
         requestedAt: 'server-ts',
+        operation: 'CREATE',
       },
     })
   })

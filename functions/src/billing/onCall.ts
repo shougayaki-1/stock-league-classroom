@@ -9,7 +9,7 @@ import {
 } from './invoiceSubscriptionAdmin'
 import { createStripeCheckoutSessionWithAdminSdk, stripeSecretKey } from './stripeCheckout'
 import { createStripeCustomerPortalSessionWithAdminSdk } from './stripeCustomerPortal'
-export const createStripeCheckoutSessionCallable = onCall({ region: 'asia-northeast1', secrets: [stripeSecretKey] }, async (request) => { if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。'); if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。'); const d = request.data as { orgId?: unknown; planId?: unknown; successUrl?: unknown; cancelUrl?: unknown }; if (typeof d.orgId !== 'string' || typeof d.planId !== 'string' || typeof d.successUrl !== 'string' || typeof d.cancelUrl !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。'); const m = await requireActiveOrgMember(getFirestore(), d.orgId, request.auth.uid); if (m.role !== 'owner' && m.role !== 'admin') throw new HttpsError('permission-denied', 'owner または admin のみ決済を開始できます。'); try { return await createStripeCheckoutSessionWithAdminSdk({ orgId: d.orgId, planId: d.planId, successUrl: d.successUrl, cancelUrl: d.cancelUrl }) } catch (e) { if (e instanceof Error && (e.message === 'このプランはまだ決済に対応していません' || e.message === '請求書払いの契約または切替予約があるためカード申込はできません')) throw new HttpsError('failed-precondition', e.message); throw new HttpsError('unavailable', '決済セッションの作成に失敗しました。時間をおいて再試行してください。') } })
+export const createStripeCheckoutSessionCallable = onCall({ region: 'asia-northeast1', secrets: [stripeSecretKey] }, async (request) => { if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。'); if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。'); const d = request.data as { orgId?: unknown; planId?: unknown; successUrl?: unknown; cancelUrl?: unknown }; if (typeof d.orgId !== 'string' || typeof d.planId !== 'string' || typeof d.successUrl !== 'string' || typeof d.cancelUrl !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。'); const m = await requireActiveOrgMember(getFirestore(), d.orgId, request.auth.uid); if (m.role !== 'owner' && m.role !== 'admin') throw new HttpsError('permission-denied', 'owner または admin のみ決済を開始できます。'); try { return await createStripeCheckoutSessionWithAdminSdk({ orgId: d.orgId, planId: d.planId, successUrl: d.successUrl, cancelUrl: d.cancelUrl }) } catch (e) { if (e instanceof Error && (e.message === 'このプランはまだ決済に対応していません' || e.message === '請求書払いの契約または切替予約があるためカード申込はできません' || e.message === 'カード申込を処理中です')) throw new HttpsError('failed-precondition', e.message); throw new HttpsError('unavailable', '決済セッションの作成に失敗しました。時間をおいて再試行してください。') } })
 
 interface CreateStripeCustomerPortalSessionRequest { orgId?: unknown; returnUrl?: unknown }
 
@@ -67,6 +67,7 @@ const invoiceSubscriptionPreconditionErrors = new Set([
   'カード契約のCustomerが請求先と一致しません',
   '有効なカード契約の更新日を確認できません',
   '有効なカード契約の現在期間を確認できません',
+  'カード申込の処理中は請求書払いを開始できません',
 ])
 
 export const saveBillingProfileCallable = onCall(billingCallableOptions, async (request) => {

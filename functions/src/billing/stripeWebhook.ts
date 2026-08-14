@@ -20,7 +20,7 @@ export type StripeInvoiceLifecycleEvent = {
 }
 
 export type StripeWebhookEvent =
-  | { type: 'checkout.session.completed'; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string }
+  | { type: 'checkout.session.completed'; clientReferenceId?: string; stripeSessionId?: string; stripeCustomerId?: string; stripeSubscriptionId?: string }
   | { type: 'invoice.paid' | 'invoice.payment_failed'; invoiceId?: string; stripeCustomerId?: string }
   | { type: 'invoice.finalized' | 'invoice.sent' | 'invoice.paid' | 'invoice.payment_failed' | 'invoice.voided'; invoiceId?: string; stripeCustomerId?: string; stripeSubscriptionId?: string; dueDateMillis?: number; paymentMethod?: 'INVOICE' | 'BANK_TRANSFER'; eventCreatedAtMillis?: number }
   | { type: 'customer.subscription.deleted'; stripeCustomerId?: string; stripeSubscriptionId?: string; eventCreatedAtMillis?: number }
@@ -51,10 +51,17 @@ export interface InvoiceSubscriptionActivationSyncInput {
   eventCreatedAtMillis: number
 }
 
+export interface CardCheckoutCompletionSyncInput {
+  billingRecordId: string
+  stripeSessionId: string
+  stripeSubscriptionId: string
+}
+
 export interface HandleStripeWebhookEventDeps {
   getBillingRecord: (orgId: string, recordId: string) => Promise<{ status: string } | null>
   markBillingRecordPaid: (orgId: string, recordId: string, stripeSessionId: string) => Promise<void>
   linkStripeCustomer?: (orgId: string, stripeCustomerId: string) => Promise<void>
+  completeCardCheckoutReservation?: (orgId: string, input: CardCheckoutCompletionSyncInput) => Promise<void>
   getOrgIdForStripeCustomer?: (stripeCustomerId: string) => Promise<string | null>
   setSubscriptionStatus?: (orgId: string, status: 'ACTIVE' | 'PAST_DUE' | 'CANCELED') => Promise<void>
   applyInvoiceLifecycle?: (orgId: string, invoiceId: string, subscriptionStatus: 'ACTIVE' | 'PAST_DUE', billingRecordStatus: 'PAID' | 'OVERDUE') => Promise<void>
@@ -150,6 +157,73 @@ const invoiceBillingStatusFor = (type: StripeInvoiceLifecycleEvent['type']): {
   }
 }
 
+type OrganizationSnapshotFields = { get: (field: string) => unknown }
+type SubscriptionIdentity =
+  | { kind: 'UNBOUND' }
+  | { kind: 'BLOCKED' }
+  | { kind: 'BOUND'; subscriptionId: string }
+
+const authoritativeSubscriptionIdentity = (organization: OrganizationSnapshotFields): SubscriptionIdentity => {
+  const cardCheckout = organization.get('cardCheckoutReservation') as { stripeSubscriptionId?: unknown } | undefined
+  if (typeof cardCheckout?.stripeSubscriptionId === 'string') {
+    return { kind: 'BOUND', subscriptionId: cardCheckout.stripeSubscriptionId }
+  }
+
+  const invoiceRequest = organization.get('invoiceSubscriptionRequest') as {
+    status?: unknown
+    operation?: unknown
+    stripeSubscriptionId?: unknown
+    sourceStripeSubscriptionId?: unknown
+  } | undefined
+  if (typeof invoiceRequest?.stripeSubscriptionId === 'string') {
+    return { kind: 'BOUND', subscriptionId: invoiceRequest.stripeSubscriptionId }
+  }
+  if (
+    invoiceRequest?.operation === 'SCHEDULE'
+    && typeof invoiceRequest.sourceStripeSubscriptionId === 'string'
+  ) {
+    return { kind: 'BOUND', subscriptionId: invoiceRequest.sourceStripeSubscriptionId }
+  }
+  if (invoiceRequest?.status === 'CREATING' && invoiceRequest.operation === 'CREATE') {
+    return { kind: 'BLOCKED' }
+  }
+
+  const subscriptionState = organization.get('stripeSubscriptionState') as { subscriptionId?: unknown } | undefined
+  return typeof subscriptionState?.subscriptionId === 'string'
+    ? { kind: 'BOUND', subscriptionId: subscriptionState.subscriptionId }
+    : { kind: 'UNBOUND' }
+}
+
+const eventMatchesSubscriptionIdentity = (
+  identity: SubscriptionIdentity,
+  eventSubscriptionId: string | undefined,
+): boolean => identity.kind === 'UNBOUND'
+  || (identity.kind === 'BOUND' && eventSubscriptionId === identity.subscriptionId)
+
+export const createFirestoreCardCheckoutCompletionSynchronizer = (db: Firestore) => async (
+  orgId: string,
+  input: CardCheckoutCompletionSyncInput,
+): Promise<void> => {
+  const organizationRef = db.doc(`organizations/${orgId}`)
+  await db.runTransaction(async (transaction) => {
+    const organization = await transaction.get(organizationRef)
+    if (!organization.exists) return
+    const reservation = organization.get('cardCheckoutReservation') as Record<string, unknown> | undefined
+    if (
+      reservation?.billingRecordId !== input.billingRecordId
+      || reservation.stripeSessionId !== input.stripeSessionId
+      || (reservation.status !== 'PENDING' && reservation.status !== 'COMPLETED')
+    ) return
+    transaction.update(organizationRef, {
+      cardCheckoutReservation: {
+        ...reservation,
+        status: 'COMPLETED',
+        stripeSubscriptionId: input.stripeSubscriptionId,
+      },
+    })
+  })
+}
+
 /** Synchronizes Stripe Invoicing records independently of subscription events. */
 export const createFirestoreInvoiceBillingRecordSynchronizer = (db: Firestore) => async (
   orgId: string,
@@ -184,15 +258,10 @@ export const createFirestoreInvoiceBillingRecordSynchronizer = (db: Firestore) =
     if (!existingRecord.exists) transaction.set(billingRecordRef, { ...recordUpdate, createdAt: eventTime })
     else transaction.update(billingRecordRef, recordUpdate)
     const subscriptionEventCreatedAtMillis = organization.get('stripeSubscriptionState') as { eventCreatedAtMillis?: unknown } | undefined
-    const subscriptionState = organization.get('stripeSubscriptionState') as { subscriptionId?: unknown } | undefined
-    const invoiceRequest = organization.get('invoiceSubscriptionRequest') as { status?: unknown; stripeSubscriptionId?: unknown } | undefined
-    const currentSubscriptionId = invoiceRequest?.status === 'ACTIVE' && typeof invoiceRequest.stripeSubscriptionId === 'string'
-      ? invoiceRequest.stripeSubscriptionId
-      : typeof subscriptionState?.subscriptionId === 'string'
-        ? subscriptionState.subscriptionId
-        : undefined
-    const eventBelongsToCurrentSubscription = currentSubscriptionId === undefined
-      || event.stripeSubscriptionId === currentSubscriptionId
+    const eventBelongsToCurrentSubscription = eventMatchesSubscriptionIdentity(
+      authoritativeSubscriptionIdentity(organization),
+      event.stripeSubscriptionId,
+    )
     const invoiceStatusEventCreatedAtMillis = organization.get('invoiceSubscriptionStatusEventCreatedAtMillis')
     const newestStatusEventCreatedAtMillis = Math.max(
       typeof subscriptionEventCreatedAtMillis?.eventCreatedAtMillis === 'number'
@@ -321,12 +390,7 @@ export const createFirestoreStripeSubscriptionStateSynchronizer = (db: Firestore
     if (!organization.exists) return
 
     const existing = organization.get('stripeSubscriptionState') as StripeSubscriptionState | undefined
-    const invoiceRequest = organization.get('invoiceSubscriptionRequest') as { status?: unknown; stripeSubscriptionId?: unknown } | undefined
-    const currentInvoiceSubscriptionId = invoiceRequest?.status === 'ACTIVE'
-      && typeof invoiceRequest.stripeSubscriptionId === 'string'
-      ? invoiceRequest.stripeSubscriptionId
-      : undefined
-    if (currentInvoiceSubscriptionId && incoming.subscriptionId !== currentInvoiceSubscriptionId) return
+    if (!eventMatchesSubscriptionIdentity(authoritativeSubscriptionIdentity(organization), incoming.subscriptionId)) return
     if (!shouldApplySubscriptionState(existing, incoming)) return
 
     const invoiceStatusEventCreatedAtMillis = organization.get('invoiceSubscriptionStatusEventCreatedAtMillis')
@@ -336,8 +400,11 @@ export const createFirestoreStripeSubscriptionStateSynchronizer = (db: Firestore
     const parentState = parentContractStateFor(organization.get('type') as string | undefined, incoming.status)
       ?? (organization.get('type') === 'parentOrg' ? parentContractState : undefined)
 
+    const cardCheckout = organization.get('cardCheckoutReservation') as { stripeSubscriptionId?: unknown } | undefined
+    const completesCardCheckout = cardCheckout?.stripeSubscriptionId === incoming.subscriptionId
     transaction.update(organizationRef, {
       stripeSubscriptionState: incoming,
+      ...(completesCardCheckout ? { cardCheckoutReservation: FieldValue.delete() } : {}),
       ...(shouldApplySubscriptionStatus && incoming.status === 'canceled' ? { subscriptionStatus: 'CANCELED' } : {}),
       ...(shouldApplySubscriptionStatus && incoming.status === 'active' ? { subscriptionStatus: 'ACTIVE' } : {}),
       ...(shouldApplySubscriptionStatus && incoming.status === 'past_due' ? { subscriptionStatus: 'PAST_DUE' } : {}),
@@ -389,6 +456,13 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
       const record = await deps.getBillingRecord(parsed.orgId, parsed.recordId)
       if (record && record.status !== 'PAID') await deps.markBillingRecordPaid(parsed.orgId, parsed.recordId, event.stripeSessionId)
       if (event.stripeCustomerId && deps.linkStripeCustomer) await deps.linkStripeCustomer(parsed.orgId, event.stripeCustomerId)
+      if (event.stripeSubscriptionId && deps.completeCardCheckoutReservation) {
+        await deps.completeCardCheckoutReservation(parsed.orgId, {
+          billingRecordId: parsed.recordId,
+          stripeSessionId: event.stripeSessionId,
+          stripeSubscriptionId: event.stripeSubscriptionId,
+        })
+      }
       return { status: 'ok' }
     }
     case 'invoice.finalized':
@@ -554,6 +628,9 @@ export const extractStripeWebhookEvent = async (
         clientReferenceId: session.client_reference_id ?? undefined,
         stripeSessionId: session.id,
         stripeCustomerId: typeof session.customer === 'string' ? session.customer : session.customer?.id,
+        stripeSubscriptionId: typeof session.subscription === 'string'
+          ? session.subscription
+          : session.subscription?.id,
       }
     }
     case 'invoice.finalized':
@@ -654,6 +731,7 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
       await db.doc(`organizations/${orgId}`).update({ stripeCustomerId })
       await db.doc(`stripeCustomers/${stripeCustomerId}`).set({ orgId })
     },
+    completeCardCheckoutReservation: createFirestoreCardCheckoutCompletionSynchronizer(db),
     getOrgIdForStripeCustomer: async (stripeCustomerId) => {
       const snap = await db.doc(`stripeCustomers/${stripeCustomerId}`).get()
       return snap.exists ? (snap.get('orgId') as string) : null

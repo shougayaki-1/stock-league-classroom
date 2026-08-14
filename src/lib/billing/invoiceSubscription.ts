@@ -21,7 +21,7 @@ export type BillingOverview = {
   profile: BillingProfileInput | null
   paymentMethod: 'CARD' | 'INVOICE' | 'BANK_TRANSFER' | 'MANUAL' | null
   invoiceSubscription?: {
-    status: 'ACTIVE' | 'SCHEDULED'
+    status: 'CREATING' | 'ACTIVE' | 'SCHEDULED'
     currentPeriodEndMillis?: number
   }
   invoices: Array<{

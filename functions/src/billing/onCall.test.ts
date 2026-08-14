@@ -404,4 +404,25 @@ describe('getBillingOverviewWithAdminSdk', () => {
       .rejects.toThrow('請求書払いは学校組織のみ利用できます')
     expect(stripeApi.invoices.retrieve).not.toHaveBeenCalled()
   })
+
+  it('returns CREATING so the client keeps card Checkout hidden during invoice reservation', async () => {
+    organizationDocs.set('organizations/school-1', {
+      type: 'school',
+      paymentMethod: 'CARD',
+      invoiceSubscriptionRequest: {
+        status: 'CREATING',
+        idempotencyKey: 'invoice-subscription:school-1:request-1',
+        requestedByUid: 'uid-owner',
+        operation: 'SCHEDULE',
+        sourceStripeSubscriptionId: 'sub_card',
+      },
+    })
+    billingRecordDocs.set('organizations/school-1/billingRecords', [])
+
+    const actual = await vi.importActual<typeof import('./invoiceSubscriptionAdmin')>('./invoiceSubscriptionAdmin')
+    await expect(actual.getBillingOverviewWithAdminSdk({ orgId: 'school-1' })).resolves.toMatchObject({
+      paymentMethod: 'CARD',
+      invoiceSubscription: { status: 'CREATING' },
+    })
+  })
 })

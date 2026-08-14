@@ -4,6 +4,8 @@ export type InvoiceSubscriptionRequest = {
   idempotencyKey: string
   status: 'CREATING' | 'ACTIVE' | 'SCHEDULED'
   requestedByUid: string
+  operation?: 'CREATE' | 'SCHEDULE'
+  sourceStripeSubscriptionId?: string
   stripeSubscriptionId?: string
   stripeScheduleId?: string
   currentPeriodEndMillis?: number
@@ -21,6 +23,8 @@ export type InvoiceSubscriptionReservation =
     customerId: string
     priceId: string
     currentCardSubscription?: { stripeSubscriptionId: string; currentPeriodEndMillis: number }
+    stripeSubscriptionId?: string
+    stripeScheduleId?: string
   }
 
 export interface InvoiceSubscriptionDeps {
@@ -42,6 +46,8 @@ export interface InvoiceSubscriptionDeps {
     idempotencyKey: string
   }) => Promise<{ stripeScheduleId: string }>
   finalizeActive: (orgId: string, requestId: string, stripeSubscriptionId: string) => Promise<void>
+  recordActiveResult?: (orgId: string, requestId: string, stripeSubscriptionId: string) => Promise<void>
+  recordScheduledResult?: (orgId: string, requestId: string, stripeScheduleId: string) => Promise<void>
   finalizeScheduled: (
     orgId: string,
     requestId: string,
@@ -53,7 +59,7 @@ export interface InvoiceSubscriptionDeps {
 export type BillingOverview = {
   profile: BillingProfileInput | null
   paymentMethod: 'CARD' | 'INVOICE' | 'BANK_TRANSFER' | 'MANUAL' | null
-  invoiceSubscription?: { status: 'ACTIVE' | 'SCHEDULED'; currentPeriodEndMillis?: number }
+  invoiceSubscription?: { status: 'CREATING' | 'ACTIVE' | 'SCHEDULED'; currentPeriodEndMillis?: number }
   invoices: Array<{
     id: string
     status: 'DRAFT' | 'PENDING' | 'PAID' | 'OVERDUE' | 'CANCELLED'
@@ -90,7 +96,7 @@ export const startInvoiceSubscription = async (
 
   const idempotencyKey = `invoice-subscription:${input.orgId}:${reservation.requestId}`
   if (reservation.currentCardSubscription) {
-    const { stripeScheduleId } = await deps.scheduleSendInvoiceAtPeriodEnd({
+    const stripeScheduleId = reservation.stripeScheduleId ?? (await deps.scheduleSendInvoiceAtPeriodEnd({
       stripeSubscriptionId: reservation.currentCardSubscription.stripeSubscriptionId,
       customerId: reservation.customerId,
       priceId: reservation.priceId,
@@ -98,7 +104,10 @@ export const startInvoiceSubscription = async (
       collectionMethod: 'send_invoice',
       daysUntilDue: 30,
       idempotencyKey,
-    })
+    })).stripeScheduleId
+    if (!reservation.stripeScheduleId) {
+      await deps.recordScheduledResult?.(input.orgId, reservation.requestId, stripeScheduleId)
+    }
     await deps.finalizeScheduled(
       input.orgId,
       reservation.requestId,
@@ -112,13 +121,16 @@ export const startInvoiceSubscription = async (
     }
   }
 
-  const { stripeSubscriptionId } = await deps.createSendInvoiceSubscription({
+  const stripeSubscriptionId = reservation.stripeSubscriptionId ?? (await deps.createSendInvoiceSubscription({
     customerId: reservation.customerId,
     priceId: reservation.priceId,
     collectionMethod: 'send_invoice',
     daysUntilDue: 30,
     idempotencyKey,
-  })
+  })).stripeSubscriptionId
+  if (!reservation.stripeSubscriptionId) {
+    await deps.recordActiveResult?.(input.orgId, reservation.requestId, stripeSubscriptionId)
+  }
   await deps.finalizeActive(input.orgId, reservation.requestId, stripeSubscriptionId)
   return { status: 'ACTIVE', stripeSubscriptionId }
 }

@@ -41,13 +41,15 @@ describe('saveBillingProfile', () => {
     await expect(saveBillingProfile({
       getOrganization: vi.fn().mockResolvedValue({ type: 'school', stripeCustomerId: 'cus_existing' }),
       syncStripeCustomer, saveBillingProfile: save, now: () => 'server-time',
-    }, { orgId: 'school-1', profile: validProfile, actorUid: 'uid-1' })).resolves.toEqual({ stripeCustomerId: 'cus_school' })
+    }, {
+      orgId: 'school-1', profile: validProfile, actorUid: 'uid-1', updateOperationId: 'operation-1',
+    })).resolves.toEqual({ stripeCustomerId: 'cus_school' })
 
     expect(syncStripeCustomer).toHaveBeenCalledWith({
       existingCustomerId: 'cus_existing', profile: {
         legalName: '学校法人テスト', contactName: '担当 太郎', email: 'billing@example.test',
         address: { postalCode: '100-0001', prefecture: '東京都', city: '千代田区', line1: '千代田1-1' },
-      }, idempotencyKey: expect.stringMatching(/^billing-profile:update:school-1:[a-f0-9]{64}$/),
+      }, idempotencyKey: 'billing-profile:update:school-1:operation-1',
     })
     expect(save).toHaveBeenCalledWith('school-1', {
       billingProfile: {
@@ -58,7 +60,7 @@ describe('saveBillingProfile', () => {
     })
   })
 
-  it('keeps identical updates idempotent while allowing a changed profile to reach Stripe', async () => {
+  it('uses the reserved operation id so A to B to A saves remain distinct', async () => {
     const syncStripeCustomer = vi.fn().mockResolvedValue({ id: 'cus_existing' })
     const deps = {
       getOrganization: vi.fn().mockResolvedValue({ type: 'school', stripeCustomerId: 'cus_existing' }),
@@ -66,18 +68,25 @@ describe('saveBillingProfile', () => {
       saveBillingProfile: vi.fn().mockResolvedValue(undefined),
     }
 
-    await saveBillingProfile(deps, { orgId: 'school-1', profile: validProfile, actorUid: 'uid-1' })
-    await saveBillingProfile(deps, { orgId: 'school-1', profile: validProfile, actorUid: 'uid-1' })
+    await saveBillingProfile(deps, {
+      orgId: 'school-1', profile: validProfile, actorUid: 'uid-1', updateOperationId: 'operation-a-1',
+    })
     await saveBillingProfile(deps, {
       orgId: 'school-1',
       profile: { ...validProfile, contactName: ' 別の担当者 ' },
       actorUid: 'uid-1',
+      updateOperationId: 'operation-b',
+    })
+    await saveBillingProfile(deps, {
+      orgId: 'school-1', profile: validProfile, actorUid: 'uid-1', updateOperationId: 'operation-a-2',
     })
 
     const keys = syncStripeCustomer.mock.calls.map(([input]) => input.idempotencyKey)
-    expect(keys[0]).toMatch(/^billing-profile:update:school-1:[a-f0-9]{64}$/)
-    expect(keys[1]).toBe(keys[0])
-    expect(keys[2]).not.toBe(keys[0])
+    expect(keys).toEqual([
+      'billing-profile:update:school-1:operation-a-1',
+      'billing-profile:update:school-1:operation-b',
+      'billing-profile:update:school-1:operation-a-2',
+    ])
   })
 
   it('keeps the fixed organization key for Customer creation recovery', async () => {

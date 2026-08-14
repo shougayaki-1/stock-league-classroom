@@ -750,6 +750,41 @@ describe('Firestore subscription-state wiring', () => {
 
     expect(documents.get('organizations/school-1')).toEqual(current)
   })
+
+  it.each([
+    ['CARD', undefined],
+    ['SCHEDULED', { status: 'SCHEDULED', operation: 'SCHEDULE', sourceStripeSubscriptionId: 'sub_current' }],
+    ['CREATING', { status: 'CREATING', operation: 'SCHEDULE', sourceStripeSubscriptionId: 'sub_current' }],
+  ])('rejects a late old-subscription event while the current contract is %s', async (_label, invoiceSubscriptionRequest) => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const current = {
+      type: 'school',
+      ...(invoiceSubscriptionRequest ? { invoiceSubscriptionRequest } : {}),
+      stripeSubscriptionState: { subscriptionId: 'sub_current', status: 'active', eventCreatedAtMillis: 900 },
+      subscriptionStatus: 'ACTIVE',
+    }
+    const documents = new Map<string, Record<string, unknown>>([['organizations/school-1', current]])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)('school-1', {
+      subscriptionId: 'sub_old', status: 'past_due', eventCreatedAtMillis: 1_000,
+    }, undefined)
+
+    expect(documents.get('organizations/school-1')).toEqual(current)
+  })
 })
 
 describe('Firestore invoice lifecycle wiring', () => {
