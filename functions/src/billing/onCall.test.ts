@@ -115,6 +115,17 @@ describe('createStripeCheckoutSessionCallable', () => {
     vi.mocked(createStripeCheckoutSessionWithAdminSdk).mockResolvedValueOnce({ url: 'https://checkout.stripe.com/x' })
     await expect(createStripeCheckoutSessionCallable.run(request)).resolves.toEqual({ url: 'https://checkout.stripe.com/x' })
   })
+
+  it('maps an invoice-billing conflict to failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(createStripeCheckoutSessionWithAdminSdk).mockRejectedValueOnce(
+      new Error('請求書払いの契約または切替予約があるためカード申込はできません'),
+    )
+
+    await expect(createStripeCheckoutSessionCallable.run(request)).rejects.toMatchObject({
+      code: 'failed-precondition',
+    })
+  })
 })
 
 describe('createStripeCustomerPortalSessionCallable', () => {
@@ -307,16 +318,18 @@ describe('getBillingOverviewWithAdminSdk', () => {
     organizationDocs.set('organizations/school-1', {
       type: 'school',
       stripeCustomerId: 'cus_school',
-      billingProfile: {
-        ...profile,
-        updatedAt: 'server-time',
-        updatedByUid: 'uid-owner',
-      },
       invoiceSubscriptionRequest: {
         status: 'ACTIVE',
         idempotencyKey: 'secret-idempotency-key',
         requestedByUid: 'uid-owner',
         stripeSubscriptionId: 'sub_invoice',
+      },
+    })
+    organizationDocs.set('organizations/school-1/billingPrivate/profile', {
+      billingProfile: {
+        ...profile,
+        updatedAt: 'server-time',
+        updatedByUid: 'uid-owner',
       },
     })
     billingRecordDocs.set('organizations/school-1/billingRecords', [
@@ -375,6 +388,7 @@ describe('getBillingOverviewWithAdminSdk', () => {
     })
     expect(firestoreReads).toEqual([
       'organizations/school-1',
+      'organizations/school-1/billingPrivate/profile',
       'organizations/school-1/billingRecords',
     ])
     expect(stripeApi.invoices.retrieve).toHaveBeenNthCalledWith(1, 'in_other_customer')

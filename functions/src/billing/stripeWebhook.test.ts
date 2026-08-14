@@ -16,6 +16,67 @@ describe('handleStripeWebhookEvent', () => {
 })
 
 describe('handleStripeWebhookEvent — subscription lifecycle', () => {
+  it('maps an expired send-invoice subscription to PAST_DUE and marks its latest Invoice OVERDUE', async () => {
+    const syncStripeSubscriptionState = vi.fn()
+    const syncInvoiceBillingRecord = vi.fn()
+
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'school-1',
+      syncStripeSubscriptionState,
+      syncInvoiceBillingRecord,
+    }, {
+      type: 'customer.subscription.updated',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_invoice',
+      status: 'past_due',
+      collectionMethod: 'send_invoice',
+      latestInvoiceId: 'in_overdue',
+      latestInvoiceDueDateMillis: 1_800_000_000_000,
+      eventCreatedAtMillis: 900,
+    } as unknown as Parameters<typeof handleStripeWebhookEvent>[1])
+
+    expect(syncStripeSubscriptionState).toHaveBeenCalledWith('school-1', {
+      subscriptionId: 'sub_invoice',
+      status: 'past_due',
+      eventCreatedAtMillis: 900,
+    }, undefined)
+    expect(syncInvoiceBillingRecord).toHaveBeenCalledWith('school-1', {
+      type: 'invoice.payment_failed',
+      invoiceId: 'in_overdue',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_invoice',
+      dueDateMillis: 1_800_000_000_000,
+      paymentMethod: 'INVOICE',
+      eventCreatedAtMillis: 900,
+    })
+  })
+
+  it('asks the invoice-request synchronizer to activate a scheduled card-to-invoice switch', async () => {
+    const syncInvoiceSubscriptionActivation = vi.fn()
+    await handleStripeWebhookEvent({
+      getBillingRecord: vi.fn(),
+      markBillingRecordPaid: vi.fn(),
+      getOrgIdForStripeCustomer: async () => 'school-1',
+      syncInvoiceSubscriptionActivation,
+    } as unknown as Parameters<typeof handleStripeWebhookEvent>[0], {
+      type: 'customer.subscription.updated',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_card_becomes_invoice',
+      stripeScheduleId: 'sub_sched_invoice',
+      collectionMethod: 'send_invoice',
+      status: 'active',
+      eventCreatedAtMillis: 1_000,
+    } as unknown as Parameters<typeof handleStripeWebhookEvent>[1])
+
+    expect(syncInvoiceSubscriptionActivation).toHaveBeenCalledWith('school-1', {
+      stripeSubscriptionId: 'sub_card_becomes_invoice',
+      stripeScheduleId: 'sub_sched_invoice',
+      eventCreatedAtMillis: 1_000,
+    })
+  })
+
   it('applies a pending downgrade when Stripe releases its schedule after the target price becomes current', async () => {
     const syncSubscriptionPlanChange = vi.fn()
     await expect(handleStripeWebhookEvent({
@@ -614,6 +675,81 @@ describe('Firestore subscription-state wiring', () => {
       stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'canceled', eventCreatedAtMillis: 800 },
     })
   })
+
+  it('maps a newer raw past_due state to the app PAST_DUE status', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/school-1', {
+        type: 'school',
+        invoiceSubscriptionRequest: {
+          status: 'ACTIVE',
+          stripeSubscriptionId: 'sub_invoice',
+        },
+        stripeSubscriptionState: {
+          subscriptionId: 'sub_invoice',
+          status: 'active',
+          eventCreatedAtMillis: 700,
+        },
+        subscriptionStatus: 'ACTIVE',
+      }],
+    ])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)('school-1', {
+      subscriptionId: 'sub_invoice', status: 'past_due', eventCreatedAtMillis: 800,
+    }, undefined)
+
+    expect(documents.get('organizations/school-1')).toMatchObject({
+      subscriptionStatus: 'PAST_DUE',
+      stripeSubscriptionState: {
+        subscriptionId: 'sub_invoice', status: 'past_due', eventCreatedAtMillis: 800,
+      },
+    })
+  })
+
+  it('rejects a newer event for an older subscription once the current invoice contract identity is known', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const current = {
+      type: 'school',
+      invoiceSubscriptionRequest: { status: 'ACTIVE', stripeSubscriptionId: 'sub_new' },
+      stripeSubscriptionState: { subscriptionId: 'sub_new', status: 'active', eventCreatedAtMillis: 900 },
+      subscriptionStatus: 'ACTIVE',
+    }
+    const documents = new Map<string, Record<string, unknown>>([['organizations/school-1', current]])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreStripeSubscriptionStateSynchronizer(firestore as unknown as AdminFirestore)('school-1', {
+      subscriptionId: 'sub_old', status: 'past_due', eventCreatedAtMillis: 1_000,
+    }, undefined)
+
+    expect(documents.get('organizations/school-1')).toEqual(current)
+  })
 })
 
 describe('Firestore invoice lifecycle wiring', () => {
@@ -757,6 +893,102 @@ describe('Stripe Invoicing invoice lifecycle', () => {
     expect(paidOutOfBand).toMatchObject({ type: 'invoice.paid', paymentMethod: 'INVOICE' })
   })
 
+  it('retrieves latest Invoice details for a past_due send-invoice subscription event', async () => {
+    const retrieveInvoice = vi.fn().mockResolvedValue({
+      id: 'in_overdue',
+      customer: 'cus_1',
+      subscription: 'sub_invoice',
+      collection_method: 'send_invoice',
+      due_date: 1_800_000_000,
+    })
+    const extract = extractStripeWebhookEvent as unknown as (
+      event: Stripe.Event,
+      retrievePaymentIntent?: unknown,
+      retrieveInvoice?: (invoiceId: string) => Promise<Stripe.Invoice>,
+    ) => Promise<Record<string, unknown>>
+
+    const event = await extract({
+      type: 'customer.subscription.updated',
+      created: 900,
+      data: { object: {
+        id: 'sub_invoice',
+        customer: 'cus_1',
+        status: 'past_due',
+        collection_method: 'send_invoice',
+        latest_invoice: 'in_overdue',
+        schedule: 'sub_sched_invoice',
+        items: { data: [{ price: { id: 'price_school' } }] },
+      } },
+    } as unknown as Stripe.Event, undefined, retrieveInvoice)
+
+    expect(retrieveInvoice).toHaveBeenCalledWith('in_overdue')
+    expect(event).toMatchObject({
+      type: 'customer.subscription.updated',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_invoice',
+      stripeScheduleId: 'sub_sched_invoice',
+      collectionMethod: 'send_invoice',
+      status: 'past_due',
+      latestInvoiceId: 'in_overdue',
+      latestInvoiceDueDateMillis: 1_800_000_000_000,
+      eventCreatedAtMillis: 900_000,
+    })
+  })
+
+  it('transitions a matching scheduled request and payment method when Stripe activates invoice collection', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const module = await import('./stripeWebhook') as unknown as {
+      createFirestoreInvoiceSubscriptionActivationSynchronizer?: (db: AdminFirestore) => (
+        orgId: string,
+        input: { stripeSubscriptionId: string; stripeScheduleId: string; eventCreatedAtMillis: number },
+      ) => Promise<void>
+    }
+    expect(module.createFirestoreInvoiceSubscriptionActivationSynchronizer).toBeTypeOf('function')
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/school-1', {
+        paymentMethod: 'CARD',
+        invoiceSubscriptionRequest: {
+          idempotencyKey: 'invoice-subscription:school-1:request-1',
+          status: 'SCHEDULED',
+          requestedByUid: 'uid-1',
+          stripeScheduleId: 'sub_sched_invoice',
+          currentPeriodEndMillis: 999,
+        },
+      }],
+    ])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await module.createFirestoreInvoiceSubscriptionActivationSynchronizer!(firestore as unknown as AdminFirestore)(
+      'school-1',
+      { stripeSubscriptionId: 'sub_card_becomes_invoice', stripeScheduleId: 'sub_sched_invoice', eventCreatedAtMillis: 1_000 },
+    )
+
+    expect(documents.get('organizations/school-1')).toEqual({
+      paymentMethod: 'INVOICE',
+      invoiceSubscriptionActivationEventCreatedAtMillis: 1_000,
+      invoiceSubscriptionRequest: {
+        idempotencyKey: 'invoice-subscription:school-1:request-1',
+        status: 'ACTIVE',
+        requestedByUid: 'uid-1',
+        stripeScheduleId: 'sub_sched_invoice',
+        stripeSubscriptionId: 'sub_card_becomes_invoice',
+      },
+    })
+  })
+
   it('creates ordered Invoice records without changing plan or parent-contract fields', async () => {
     type DocumentRef = { path: string }
     type Snapshot = { exists: boolean; get: (field: string) => unknown }
@@ -870,5 +1102,53 @@ describe('Stripe Invoicing invoice lifecycle', () => {
       planId: 'SCHOOL', parentContractState: 'ACTIVE', subscriptionStatus: 'ACTIVE',
     })
     expect(documents.get('organizations/org-1/billingRecords/in_late')).toMatchObject({ status: 'OVERDUE' })
+  })
+
+  it('does not let a later event from an old subscription override the newer current contract', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/org-1', {
+        planId: 'SCHOOL',
+        subscriptionStatus: 'ACTIVE',
+        invoiceSubscriptionRequest: { status: 'ACTIVE', stripeSubscriptionId: 'sub_new' },
+        stripeSubscriptionState: { subscriptionId: 'sub_new', status: 'active', eventCreatedAtMillis: 900 },
+      }],
+    ])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        set: (ref: DocumentRef, data: Record<string, unknown>) => void
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        set: (ref, data) => { documents.set(ref.path, { ...data }) },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreInvoiceBillingRecordSynchronizer(firestore as unknown as AdminFirestore)('org-1', {
+      type: 'invoice.payment_failed',
+      invoiceId: 'in_old_subscription',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_old',
+      dueDateMillis: 9_999,
+      paymentMethod: 'INVOICE',
+      eventCreatedAtMillis: 1_000,
+    })
+
+    expect(documents.get('organizations/org-1')).toMatchObject({
+      planId: 'SCHOOL',
+      subscriptionStatus: 'ACTIVE',
+      invoiceSubscriptionRequest: { status: 'ACTIVE', stripeSubscriptionId: 'sub_new' },
+    })
+    expect(documents.get('organizations/org-1/billingRecords/in_old_subscription')).toMatchObject({
+      status: 'OVERDUE',
+      stripeSubscriptionId: 'sub_old',
+    })
   })
 })

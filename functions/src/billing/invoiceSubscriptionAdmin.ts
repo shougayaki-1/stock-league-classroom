@@ -175,6 +175,14 @@ const requestFrom = (value: unknown): InvoiceSubscriptionRequest | null => {
   }
 }
 
+const requestIdFromCreatingRequest = (orgId: string, request: InvoiceSubscriptionRequest): string | null => {
+  if (request.status !== 'CREATING') return null
+  const prefix = `invoice-subscription:${orgId}:`
+  if (!request.idempotencyKey.startsWith(prefix)) return null
+  const requestId = request.idempotencyKey.slice(prefix.length)
+  return requestId ? requestId : null
+}
+
 const reserveInvoiceSubscriptionRequest = async (
   db: Firestore,
   stripe: Stripe,
@@ -182,17 +190,20 @@ const reserveInvoiceSubscriptionRequest = async (
   actorUid: string,
 ): Promise<InvoiceSubscriptionReservation> => {
   const organizationRef = db.doc(`organizations/${orgId}`)
+  const billingProfileRef = db.doc(`organizations/${orgId}/billingPrivate/profile`)
   const planRef = db.doc('planDefinitions/SCHOOL')
   const reserved = await db.runTransaction<ReservedRequest>(async (transaction) => {
-    const [organization, plan] = await Promise.all([
+    const [organization, billingProfile, plan] = await Promise.all([
       transaction.get(organizationRef),
+      transaction.get(billingProfileRef),
       transaction.get(planRef),
     ])
     const organizationData = organization.exists ? organization.data() : undefined
+    const billingProfileData = billingProfile.exists ? billingProfile.data() : undefined
     const planData = plan.exists ? plan.data() : undefined
 
     if (organizationData?.type !== 'school') throw new Error('請求書払いは学校組織のみ利用できます')
-    validateBillingProfile(organizationData.billingProfile)
+    validateBillingProfile(billingProfileData?.billingProfile)
     if (typeof organizationData.stripeCustomerId !== 'string' || !organizationData.stripeCustomerId) {
       throw new Error('Stripe Customerが登録されていません')
     }
@@ -201,7 +212,20 @@ const reserveInvoiceSubscriptionRequest = async (
     }
 
     const existing = requestFrom(organizationData.invoiceSubscriptionRequest)
-    if (existing) return { kind: 'EXISTING', request: existing }
+    if (existing) {
+      const requestId = requestIdFromCreatingRequest(orgId, existing)
+      if (!requestId) return { kind: 'EXISTING', request: existing }
+      const subscriptionState = organizationData.stripeSubscriptionState as Record<string, unknown> | undefined
+      return {
+        kind: 'CREATE',
+        requestId,
+        customerId: organizationData.stripeCustomerId,
+        priceId: planData.stripePriceId,
+        ...(subscriptionState?.status === 'active' && typeof subscriptionState.subscriptionId === 'string'
+          ? { currentCardSubscriptionId: subscriptionState.subscriptionId }
+          : {}),
+      }
+    }
 
     const requestId = db.collection(`organizations/${orgId}/invoiceSubscriptionRequests`).doc().id
     const idempotencyKey = `invoice-subscription:${orgId}:${requestId}`
@@ -458,7 +482,11 @@ export const getBillingOverviewWithAdminSdk = async (
     : {}
   if (organization.type !== 'school') throw new Error('請求書払いは学校組織のみ利用できます')
 
+  const billingProfileSnapshot = await db.doc(`organizations/${input.orgId}/billingPrivate/profile`).get()
   const billingRecordsSnapshot = await db.collection(`organizations/${input.orgId}/billingRecords`).get()
+  const billingProfile = billingProfileSnapshot.exists
+    ? (billingProfileSnapshot.data() as BillingRecordData | undefined) ?? {}
+    : {}
   const records = billingRecordsSnapshot.docs.map((document) => document.data() as BillingRecordData)
   const invoiceSubscription = invoiceSubscriptionFrom(organization.invoiceSubscriptionRequest)
   const invoicesWithStripeIds = billingRecordsSnapshot.docs
@@ -496,7 +524,7 @@ export const getBillingOverviewWithAdminSdk = async (
     })
 
   return {
-    profile: sanitizedProfileFrom(organization.billingProfile),
+    profile: sanitizedProfileFrom(billingProfile.billingProfile),
     paymentMethod: currentPaymentMethodFrom(organization, ownedRecords, invoiceSubscription),
     ...(invoiceSubscription ? { invoiceSubscription } : {}),
     invoices: invoices.sort((left, right) => right.dueDateMillis - left.dueDateMillis),

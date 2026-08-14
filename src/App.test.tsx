@@ -633,6 +633,7 @@ describe('Stripe checkout route', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     await userEvent.click(await screen.findByRole('button', { name: '支払い方法の変更・解約' }))
+    expect(screen.queryByRole('button', { name: 'このプランで申し込む' })).not.toBeInTheDocument()
     await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://billing.stripe.com/p/x'))
     vi.unstubAllGlobals()
     window.history.pushState({}, '', '/')
@@ -698,6 +699,7 @@ describe('Stripe checkout route', () => {
     await screen.findByRole('heading', { name: '請求・支払い' })
 
     expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'このプランで申し込む' })).not.toBeInTheDocument()
     expect(portalCallable).not.toHaveBeenCalled()
     window.history.pushState({}, '', '/')
   })

@@ -607,7 +607,10 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       .catch(() => setBillingError('請求書払いの申込に失敗しました。もう一度お試しください。'))
       .finally(() => setStartingInvoiceBilling(false))
   } : undefined
-  const onCheckout = (orgId && currentOrgType !== 'parentOrg') ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
+  const canStartCardCheckout = currentOrgType === 'school'
+    ? canManageCurrentOrg && billingOverviewLoaded && billingOverview?.invoiceSubscription == null
+    : currentOrgType !== 'parentOrg'
+  const onCheckout = (orgId && canStartCardCheckout) ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
   const hasPersonalCardSubscription = currentOrgType === 'personal'
     && orgId === personalOrgId(services.auth.currentUser?.uid ?? '')
     && schoolSubscriptionState?.status === 'active'

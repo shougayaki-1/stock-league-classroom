@@ -33,7 +33,14 @@ export const saveBillingProfileWithAdminSdk = (
           : stripe.customers.create(customerData, { idempotencyKey })
       },
       saveBillingProfile: async (_orgId, data) => {
-        tx.update(organizationRef, data)
+        tx.update(organizationRef, {
+          stripeCustomerId: data.stripeCustomerId,
+          billingProfile: FieldValue.delete(),
+        })
+        tx.set(db.doc(`organizations/${input.orgId}/billingPrivate/profile`), {
+          billingProfile: data.billingProfile,
+        })
+        tx.set(db.doc(`stripeCustomers/${data.stripeCustomerId}`), { orgId: input.orgId })
       },
       now: () => FieldValue.serverTimestamp(),
     }, input)

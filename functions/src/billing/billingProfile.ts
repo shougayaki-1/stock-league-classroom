@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 export type BillingProfileInput = {
   legalName: string
   contactName: string
@@ -43,6 +45,11 @@ export const validateBillingProfile = (input: unknown): BillingProfileInput => {
   }
 }
 
+const profileUpdateIdempotencyKey = (orgId: string, profile: BillingProfileInput): string => {
+  const fingerprint = createHash('sha256').update(JSON.stringify(profile)).digest('hex')
+  return `billing-profile:update:${orgId}:${fingerprint}`
+}
+
 export const saveBillingProfile = async (
   deps: BillingProfileDeps,
   input: { orgId: string; profile: BillingProfileInput; actorUid: string },
@@ -50,10 +57,15 @@ export const saveBillingProfile = async (
   const organization = await deps.getOrganization(input.orgId)
   if (organization?.type !== 'school') throw new Error('請求書払いは学校組織のみ利用できます')
   const profile = validateBillingProfile(input.profile)
+  const existingCustomerId = typeof organization.stripeCustomerId === 'string'
+    ? organization.stripeCustomerId
+    : null
   const customer = await deps.syncStripeCustomer({
-    existingCustomerId: typeof organization.stripeCustomerId === 'string' ? organization.stripeCustomerId : null,
+    existingCustomerId,
     profile,
-    idempotencyKey: `billing-profile:${input.orgId}`,
+    idempotencyKey: existingCustomerId
+      ? profileUpdateIdempotencyKey(input.orgId, profile)
+      : `billing-profile:${input.orgId}`,
   })
   await deps.saveBillingProfile(input.orgId, {
     billingProfile: { ...profile, updatedAt: deps.now ? deps.now() : new Date().toISOString(), updatedByUid: input.actorUid },

@@ -29,6 +29,11 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid))
         && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
     }
+    function billingManager(orgId) {
+      return teacher()
+        && activeMember(orgId)
+        && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role in ['owner', 'admin'];
+    }
 
     match /users/{uid} {
       // Set only by server-side organization provisioning.
@@ -51,6 +56,11 @@ service cloud.firestore {
       allow get: if teacher() && uid == request.auth.uid;
       allow list: if false;
       allow write: if false;
+    }
+
+    match /organizations/{orgId}/billingPrivate/{documentId} {
+      allow get: if documentId == 'profile' && billingManager(orgId);
+      allow list, write: if false;
     }
 
     match /organizations/{orgId}/invitations/{invitationId} {

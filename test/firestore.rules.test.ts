@@ -88,6 +88,35 @@ describe('organization membership Firestore rules', () => {
 
     await assertSucceeds(getDoc(doc(owner, 'organizations', 'personal_teacher-a', 'members', 'teacher-a')))
   })
+
+  it('limits the private billing profile to active owner/admin members', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore()
+      await setDoc(doc(db, 'organizations', 'school-1'), { type: 'school' })
+      await setDoc(doc(db, 'organizations', 'school-1', 'members', 'owner-a'), { role: 'owner', status: 'active' })
+      await setDoc(doc(db, 'organizations', 'school-1', 'members', 'admin-a'), { role: 'admin', status: 'active' })
+      await setDoc(doc(db, 'organizations', 'school-1', 'members', 'teacher-a'), { role: 'teacher', status: 'active' })
+      await setDoc(doc(db, 'organizations', 'school-1', 'members', 'owner-suspended'), { role: 'owner', status: 'suspended' })
+      await setDoc(doc(db, 'organizations', 'school-1', 'billingPrivate', 'profile'), {
+        billingProfile: { legalName: 'Private School', updatedByUid: 'owner-a' },
+      })
+    })
+
+    const privateProfile = (uid: string) => doc(
+      environment.authenticatedContext(uid, teacherToken).firestore(),
+      'organizations', 'school-1', 'billingPrivate', 'profile',
+    )
+    await assertSucceeds(getDoc(privateProfile('owner-a')))
+    await assertSucceeds(getDoc(privateProfile('admin-a')))
+    await assertFails(getDoc(privateProfile('teacher-a')))
+    await assertFails(getDoc(privateProfile('owner-suspended')))
+    await assertFails(getDoc(privateProfile('other-a')))
+    await assertFails(getDocs(collection(
+      environment.authenticatedContext('owner-a', teacherToken).firestore(),
+      'organizations', 'school-1', 'billingPrivate',
+    )))
+    await assertFails(updateDoc(privateProfile('owner-a'), { billingProfile: { legalName: 'tampered' } }))
+  })
 })
 
 describe('planDefinitions/{planId}', () => {

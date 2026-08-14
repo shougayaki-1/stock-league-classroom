@@ -86,10 +86,10 @@ import { startInvoiceSubscriptionWithAdminSdk } from './invoiceSubscriptionAdmin
 const seedReadyOrganization = (extra: Record<string, unknown> = {}): void => {
   docs.set('organizations/school-1', {
     type: 'school',
-    billingProfile: profile,
     stripeCustomerId: 'cus_1',
     ...extra,
   })
+  docs.set('organizations/school-1/billingPrivate/profile', { billingProfile: profile })
   docs.set('planDefinitions/SCHOOL', { stripePriceId: 'price_school' })
 }
 
@@ -111,7 +111,11 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
     await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))
       .resolves.toEqual({ status: 'ACTIVE', stripeSubscriptionId: 'sub_invoice' })
 
-    expect(reads.slice(0, 2)).toEqual(['organizations/school-1', 'planDefinitions/SCHOOL'])
+    expect(reads.slice(0, 3)).toEqual([
+      'organizations/school-1',
+      'organizations/school-1/billingPrivate/profile',
+      'planDefinitions/SCHOOL',
+    ])
     expect(writes[0]).toEqual({
       path: 'organizations/school-1',
       data: {
@@ -331,6 +335,33 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
     expect(writes).toEqual([])
   })
 
+  it('replays a CREATING reservation after a Stripe failure with the same idempotency key', async () => {
+    seedReadyOrganization()
+    stripeApi.subscriptions.create
+      .mockRejectedValueOnce(new Error('Stripe unavailable'))
+      .mockResolvedValueOnce({ id: 'sub_invoice' })
+
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))
+      .rejects.toThrow('Stripe unavailable')
+    await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-2' }))
+      .resolves.toEqual({ status: 'ACTIVE', stripeSubscriptionId: 'sub_invoice' })
+
+    expect(stripeApi.subscriptions.create).toHaveBeenCalledTimes(2)
+    expect(stripeApi.subscriptions.create.mock.calls[0]?.[1]).toEqual({
+      idempotencyKey: 'invoice-subscription:school-1:request-1',
+    })
+    expect(stripeApi.subscriptions.create.mock.calls[1]?.[1]).toEqual({
+      idempotencyKey: 'invoice-subscription:school-1:request-1',
+    })
+    expect(docs.get('organizations/school-1')?.invoiceSubscriptionRequest).toEqual({
+      idempotencyKey: 'invoice-subscription:school-1:request-1',
+      status: 'ACTIVE',
+      requestedByUid: 'uid-1',
+      requestedAt: 'server-ts',
+      stripeSubscriptionId: 'sub_invoice',
+    })
+  })
+
   it('does not rewrite finalization when a retry already saved the same Stripe subscription id', async () => {
     seedReadyOrganization()
     stripeApi.subscriptions.create.mockImplementation(async () => {
@@ -361,12 +392,13 @@ describe('startInvoiceSubscriptionWithAdminSdk', () => {
   })
 
   it.each([
-    ['a non-school organization', { type: 'personal', billingProfile: profile, stripeCustomerId: 'cus_1' }, { stripePriceId: 'price_school' }, '請求書払いは学校組織のみ利用できます'],
-    ['an incomplete billing profile', { type: 'school', billingProfile: { ...profile, email: '' }, stripeCustomerId: 'cus_1' }, { stripePriceId: 'price_school' }, '請求先プロフィールの入力内容が不正です'],
-    ['a non-string customer id', { type: 'school', billingProfile: profile, stripeCustomerId: 123 }, { stripePriceId: 'price_school' }, 'Stripe Customerが登録されていません'],
-    ['a SCHOOL plan without a Stripe price', { type: 'school', billingProfile: profile, stripeCustomerId: 'cus_1' }, {}, 'このプランはまだ決済に対応していません'],
-  ])('rejects %s before Stripe or Firestore writes', async (_label, organization, plan, message) => {
+    ['a non-school organization', { type: 'personal', stripeCustomerId: 'cus_1' }, { billingProfile: profile }, { stripePriceId: 'price_school' }, '請求書払いは学校組織のみ利用できます'],
+    ['an incomplete billing profile', { type: 'school', stripeCustomerId: 'cus_1' }, { billingProfile: { ...profile, email: '' } }, { stripePriceId: 'price_school' }, '請求先プロフィールの入力内容が不正です'],
+    ['a non-string customer id', { type: 'school', stripeCustomerId: 123 }, { billingProfile: profile }, { stripePriceId: 'price_school' }, 'Stripe Customerが登録されていません'],
+    ['a SCHOOL plan without a Stripe price', { type: 'school', stripeCustomerId: 'cus_1' }, { billingProfile: profile }, {}, 'このプランはまだ決済に対応していません'],
+  ])('rejects %s before Stripe or Firestore writes', async (_label, organization, privateBilling, plan, message) => {
     docs.set('organizations/school-1', organization)
+    docs.set('organizations/school-1/billingPrivate/profile', privateBilling)
     docs.set('planDefinitions/SCHOOL', plan)
 
     await expect(startInvoiceSubscriptionWithAdminSdk({ orgId: 'school-1', actorUid: 'uid-1' }))

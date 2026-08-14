@@ -18,4 +18,21 @@ describe('createStripeCheckoutSession', () => {
     await createStripeCheckoutSession({ getPlanDefinition: async () => ({ stripePriceId: 'price_1' }), createBillingRecord: vi.fn().mockResolvedValue('record-1'), createCheckoutSession: session, getExistingStripeCustomerId: async () => { throw new Error('Firestore unavailable') } }, { orgId: 'org-1', planId: 'SCHOOL', successUrl: 'https://x/s', cancelUrl: 'https://x/c' })
     expect(session).toHaveBeenCalledWith(expect.objectContaining({ customerId: undefined }))
   })
+  it.each(['ACTIVE', 'SCHEDULED'] as const)('rejects card Checkout while invoice billing is %s', async (status) => {
+    const createBillingRecord = vi.fn()
+    const createCheckoutSession = vi.fn()
+    await expect(createStripeCheckoutSession({
+      getPlanDefinition: async () => ({ stripePriceId: 'price_1' }),
+      getInvoiceSubscriptionRequest: async () => ({ status }),
+      createBillingRecord,
+      createCheckoutSession,
+    }, {
+      orgId: 'school-1',
+      planId: 'SCHOOL',
+      successUrl: 'https://x/s',
+      cancelUrl: 'https://x/c',
+    })).rejects.toThrow('請求書払いの契約または切替予約があるためカード申込はできません')
+    expect(createBillingRecord).not.toHaveBeenCalled()
+    expect(createCheckoutSession).not.toHaveBeenCalled()
+  })
 })
