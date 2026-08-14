@@ -93,8 +93,9 @@ consumeAiQuota(deps, { orgId }): Promise<void>
 
 ## 移行・運用上の注意
 
-- 既存の`planDefinitions/{planId}`ドキュメントに`limits.aiCreditsPerDay`を追加するデータ移行が必要。具体的な数値は本設計では決めず、roadmap-design.mdの方針通り「Phase 5の設計時に実際の利用実績を踏まえて決定する」(未設定時は`getOrgPlanLimits`と同じ方針でエラーとし、無制限扱いにはしない)。
+- 既存の`planDefinitions/{planId}`ドキュメントに`limits.aiCreditsPerDay`を追加するデータ移行が必要。具体的な数値は本設計では決めず、roadmap-design.mdの方針通り「Phase 5の設計時に実際の利用実績を踏まえて決定する」。実装(`getAiUsageQuotaDepsWithAdminSdk`)は当初案の「エラーとする」から、レビューを経て**フェイルクローズド(未設定時は0扱い=即座に上限到達)**に変更されている。無制限扱いにしない点は当初の意図と同じ。
 - `systemConfig/aiKillSwitch`ドキュメントは初回デプロイ時に`{ enabled: false }`で作成しておく(未存在の場合の扱いも明記: ドキュメントが無い場合は`enabled: false`とみなし、AI機能は通常通り動作する)。
+- **2026-08-15確認: 本番プロジェクト(`oss-stock-league`)はまだ未デプロイで、`planDefinitions`・`organizations`とも本番Firestoreに1件も存在しない。** したがって現時点でこの機能による実害(全組織がAI利用不可になる等)は無い。`aiCreditsPerDay`を含むプランカタログ全体の投入は、初回本番デプロイ前のデータ投入作業としてまとめて行う(専用の移行タスクとして今すぐ着手する必要はない)。
 
 ## テスト方針
 
