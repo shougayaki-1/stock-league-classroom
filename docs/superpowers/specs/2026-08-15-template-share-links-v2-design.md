@@ -61,7 +61,7 @@ interface TemplateShareDoc {
 
 ### `duplicateLessonTemplateCallable`の変更
 
-`DuplicateLessonTemplateInput`(`functions/src/lessonTemplates/duplicateLessonTemplate.ts:32`)に`shareToken?: string`を追加する。
+認可の判断は`onCall.ts`の中で完結させ、`duplicateLessonTemplate.ts`(純粋なトランザクション本体)には手を入れない — 他のCallable(`orgId`の解決等)と同じく「認可はCallable層で解決してから下位層を呼ぶ」構造を踏襲する。`onCall.ts`の`DuplicateLessonTemplateCallableInput`(クライアント向け入力型)にのみ`shareToken?: string`を追加する。
 
 `onCall.ts`側の認可分岐:
 - `shareToken`が指定されている場合: `sha256Hex(shareToken)`で`templateShares`を検索し、有効(未失効・未期限切れ)かつ`templateId === request.data.sourceTemplateId`かつ`versionId === request.data.sourceVersionId`であることを確認する。一致しなければ`permission-denied`。一致すれば、既存の`requireActiveOrgMember(firestore, sourceOrgId, uid)`チェックをスキップする。
@@ -103,5 +103,5 @@ match /templateShares/{shareId} { allow read, write: if false; }
 - `createTemplateShare.test.ts`: 作成者本人は成功しトークンを返す、非作成者(同組織含む)は`permission-denied`、`expiresInDays`が0・91・小数の場合は`invalid-argument`。
 - `resolveTemplateShare.test.ts`: 有効なトークンは版contentを返す、失効済み・期限切れ・存在しないトークンはいずれも`not-found`。
 - `revokeTemplateShare.test.ts`: 作成者本人は該当ドキュメントの`revokedAt`が設定される、非作成者が呼んでもクエリが0件ヒットで何も変更されない(エラーにもならない)、該当ドキュメントが無い場合も成功。
-- `duplicateLessonTemplate.test.ts`: 有効な`shareToken`があれば非メンバーでも複製できる、`shareToken`のtemplateId/versionIdが要求と食い違えば`permission-denied`、`shareToken`未指定時は既存の自組織メンバーシップ要件が変わらないことを回帰確認。
+- `onCall.test.ts`(`duplicateLessonTemplateCallable`): 有効な`shareToken`があれば非メンバーでも`duplicateLessonTemplateWithAdminSdk`が呼ばれる(`requireActiveOrgMember`の`sourceOrgId`呼び出しをスキップ)、`shareToken`のtemplateId/versionIdが要求と食い違えば`permission-denied`、`shareToken`未指定時は既存の自組織メンバーシップ要件が変わらないことを回帰確認。`duplicateLessonTemplate.ts`自体は無変更のため`duplicateLessonTemplate.test.ts`の変更は不要。
 - Firestoreルール: `templateShares`への直接クライアント読み書きを拒否する明示ルールのテキストマッチ + emulatorでの実拒否確認(既存の`aiUsageCounters`テストと同じ形式)。
