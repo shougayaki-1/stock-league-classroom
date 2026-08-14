@@ -173,7 +173,22 @@ export const createFirestoreInvoiceBillingRecordSynchronizer = (db: Firestore) =
 
     if (!existingRecord.exists) transaction.set(billingRecordRef, { ...recordUpdate, createdAt: eventTime })
     else transaction.update(billingRecordRef, recordUpdate)
-    if (lifecycle.subscriptionStatus) transaction.update(organizationRef, { subscriptionStatus: lifecycle.subscriptionStatus })
+    const subscriptionEventCreatedAtMillis = organization.get('stripeSubscriptionState') as { eventCreatedAtMillis?: unknown } | undefined
+    const invoiceStatusEventCreatedAtMillis = organization.get('invoiceSubscriptionStatusEventCreatedAtMillis')
+    const newestStatusEventCreatedAtMillis = Math.max(
+      typeof subscriptionEventCreatedAtMillis?.eventCreatedAtMillis === 'number'
+        ? subscriptionEventCreatedAtMillis.eventCreatedAtMillis
+        : Number.NEGATIVE_INFINITY,
+      typeof invoiceStatusEventCreatedAtMillis === 'number'
+        ? invoiceStatusEventCreatedAtMillis
+        : Number.NEGATIVE_INFINITY,
+    )
+    if (lifecycle.subscriptionStatus && event.eventCreatedAtMillis > newestStatusEventCreatedAtMillis) {
+      transaction.update(organizationRef, {
+        subscriptionStatus: lifecycle.subscriptionStatus,
+        invoiceSubscriptionStatusEventCreatedAtMillis: event.eventCreatedAtMillis,
+      })
+    }
   })
 }
 
@@ -408,7 +423,31 @@ export const handleStripeWebhookEvent = async (deps: HandleStripeWebhookEventDep
   }
 }
 
-export const extractStripeWebhookEvent = (stripeEvent: Stripe.Event): StripeWebhookEvent => {
+type StripePaymentIntentRetriever = (paymentIntentId: string) => Promise<Stripe.PaymentIntent>
+
+const paymentMethodForPaidInvoice = async (
+  invoice: Stripe.Invoice,
+  retrievePaymentIntent?: StripePaymentIntentRetriever,
+): Promise<'INVOICE' | 'BANK_TRANSFER'> => {
+  if (invoice.paid_out_of_band || !invoice.payment_intent) return 'INVOICE'
+
+  let paymentIntent = typeof invoice.payment_intent === 'string'
+    ? (retrievePaymentIntent ? await retrievePaymentIntent(invoice.payment_intent) : undefined)
+    : invoice.payment_intent
+  if (paymentIntent && typeof paymentIntent.payment_method === 'string' && retrievePaymentIntent) {
+    paymentIntent = await retrievePaymentIntent(paymentIntent.id)
+  }
+  return paymentIntent?.status === 'succeeded'
+    && typeof paymentIntent.payment_method !== 'string'
+    && paymentIntent.payment_method?.type === 'customer_balance'
+    ? 'BANK_TRANSFER'
+    : 'INVOICE'
+}
+
+export const extractStripeWebhookEvent = async (
+  stripeEvent: Stripe.Event,
+  retrievePaymentIntent?: StripePaymentIntentRetriever,
+): Promise<StripeWebhookEvent> => {
   switch (stripeEvent.type) {
     case 'checkout.session.completed': {
       const session = stripeEvent.data.object as Stripe.Checkout.Session
@@ -433,15 +472,15 @@ export const extractStripeWebhookEvent = (stripeEvent: Stripe.Event): StripeWebh
           stripeCustomerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
         }
       }
-      const bankTransfer = stripeEvent.type === 'invoice.paid'
-        && invoice.payment_settings.payment_method_options?.customer_balance?.bank_transfer?.type != null
       return {
         type: stripeEvent.type,
         invoiceId: invoice.id,
         stripeCustomerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
         stripeSubscriptionId: typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id,
         dueDateMillis: invoice.due_date == null ? undefined : invoice.due_date * 1_000,
-        paymentMethod: bankTransfer ? 'BANK_TRANSFER' : 'INVOICE',
+        paymentMethod: stripeEvent.type === 'invoice.paid'
+          ? await paymentMethodForPaidInvoice(invoice, retrievePaymentIntent)
+          : 'INVOICE',
         eventCreatedAtMillis: stripeEvent.created * 1_000,
       }
     }
@@ -539,7 +578,10 @@ export const stripeWebhookCallable = onRequest({ region: 'asia-northeast1', secr
     syncStripeSubscriptionState,
     clearPendingPlanChange: createFirestorePendingPlanChangeClearer(db),
     logSubscriptionPlanChangeIssue: (details) => { logger.warn('Stripe subscription plan change was not synchronized', details) },
-  }, extractStripeWebhookEvent(stripeEvent))
+  }, await extractStripeWebhookEvent(
+    stripeEvent,
+    async (paymentIntentId) => stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['payment_method'] }),
+  ))
 
   sendStripeWebhookOutcome(response, outcome)
 })

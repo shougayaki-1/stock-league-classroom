@@ -683,39 +683,43 @@ describe('Stripe Invoicing invoice lifecycle', () => {
     expect(syncStripeSubscriptionState).not.toHaveBeenCalled()
   })
 
-  it('extracts BANK_TRANSFER only from paid invoices with a bank-transfer payment detail', () => {
-    const bankTransfer = extractStripeWebhookEvent({
+  it('uses actual successful settlement rather than configured payment options for BANK_TRANSFER', async () => {
+    const actualBankTransfer = await extractStripeWebhookEvent({
       type: 'invoice.paid',
       created: 123,
       data: { object: {
         id: 'in_bank', customer: 'cus_1', subscription: 'sub_1', due_date: 456, collection_method: 'send_invoice',
-        payment_settings: {
-          payment_method_options: { customer_balance: { bank_transfer: { type: 'jp_bank_transfer' } } },
-        },
+        payment_intent: 'pi_bank', payment_settings: { payment_method_options: null },
       } },
-    } as unknown as Stripe.Event)
-    const configuredButUnpaid = extractStripeWebhookEvent({
-      type: 'invoice.finalized',
+    } as unknown as Stripe.Event, async () => ({
+      status: 'succeeded', payment_method: { type: 'customer_balance' },
+    } as Stripe.PaymentIntent))
+    const configuredBankButCardPaid = await extractStripeWebhookEvent({
+      type: 'invoice.paid',
       created: 124,
       data: { object: {
-        id: 'in_pending', customer: 'cus_1', subscription: 'sub_1', due_date: 457, collection_method: 'send_invoice',
+        id: 'in_card', customer: 'cus_1', subscription: 'sub_1', due_date: 457, collection_method: 'send_invoice', payment_intent: 'pi_card',
         payment_settings: {
           payment_method_options: { customer_balance: { bank_transfer: { type: 'jp_bank_transfer' } } },
         },
       } },
-    } as unknown as Stripe.Event)
-    const paidWithoutBankDetail = extractStripeWebhookEvent({
+    } as unknown as Stripe.Event, async () => ({
+      status: 'succeeded', payment_method: { type: 'card' },
+    } as Stripe.PaymentIntent))
+    const paidOutOfBand = await extractStripeWebhookEvent({
       type: 'invoice.paid',
       created: 125,
       data: { object: {
-        id: 'in_invoice', customer: 'cus_1', subscription: 'sub_1', due_date: 458, collection_method: 'send_invoice',
-        payment_settings: { payment_method_options: { customer_balance: { funding_type: 'bank_transfer' } } },
+        id: 'in_manual', customer: 'cus_1', subscription: 'sub_1', due_date: 458, collection_method: 'send_invoice', payment_intent: 'pi_manual', paid_out_of_band: true,
+        payment_settings: { payment_method_options: { customer_balance: { bank_transfer: { type: 'jp_bank_transfer' } } } },
       } },
-    } as unknown as Stripe.Event)
+    } as unknown as Stripe.Event, async () => ({
+      status: 'succeeded', payment_method: { type: 'customer_balance' },
+    } as Stripe.PaymentIntent))
 
-    expect(bankTransfer).toMatchObject({ type: 'invoice.paid', paymentMethod: 'BANK_TRANSFER', eventCreatedAtMillis: 123_000 })
-    expect(configuredButUnpaid).toMatchObject({ type: 'invoice.finalized', paymentMethod: 'INVOICE' })
-    expect(paidWithoutBankDetail).toMatchObject({ type: 'invoice.paid', paymentMethod: 'INVOICE' })
+    expect(actualBankTransfer).toMatchObject({ type: 'invoice.paid', paymentMethod: 'BANK_TRANSFER', eventCreatedAtMillis: 123_000 })
+    expect(configuredBankButCardPaid).toMatchObject({ type: 'invoice.paid', paymentMethod: 'INVOICE' })
+    expect(paidOutOfBand).toMatchObject({ type: 'invoice.paid', paymentMethod: 'INVOICE' })
   })
 
   it('creates ordered Invoice records without changing plan or parent-contract fields', async () => {
@@ -772,8 +776,9 @@ describe('Stripe Invoicing invoice lifecycle', () => {
     await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.voided', eventCreatedAtMillis: 500 })
     await syncInvoiceBillingRecord('org-1', { ...invoice, type: 'invoice.sent', eventCreatedAtMillis: 500 })
 
-    expect(documents.get('organizations/org-1')).toEqual({
-      planId: 'SCHOOL', parentContractState: 'ACTIVE', parentContractSubscriptionId: 'sub_parent', subscriptionStatus: 'ACTIVE',
+    expect(documents.get('organizations/org-1')).toMatchObject({
+      planId: 'SCHOOL', parentContractState: 'ACTIVE', parentContractSubscriptionId: 'sub_parent',
+      subscriptionStatus: 'ACTIVE', invoiceSubscriptionStatusEventCreatedAtMillis: 400,
     })
     const billingRecord = documents.get('organizations/org-1/billingRecords/in_1')
     expect(billingRecord).toMatchObject({
@@ -794,5 +799,41 @@ describe('Stripe Invoicing invoice lifecycle', () => {
       ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1', 'update:organizations/org-1/billingRecords/in_1'],
       ['get:organizations/org-1', 'get:organizations/org-1/billingRecords/in_1'],
     ])
+  })
+
+  it('does not let an older unseen invoice failure override a newer organization subscription state', async () => {
+    type DocumentRef = { path: string }
+    type Snapshot = { exists: boolean; get: (field: string) => unknown }
+    const documents = new Map<string, Record<string, unknown>>([
+      ['organizations/org-1', {
+        planId: 'SCHOOL', parentContractState: 'ACTIVE', subscriptionStatus: 'ACTIVE',
+        stripeSubscriptionState: { subscriptionId: 'sub_1', status: 'active', eventCreatedAtMillis: 900 },
+      }],
+    ])
+    const firestore = {
+      doc: (path: string): DocumentRef => ({ path }),
+      runTransaction: async <T>(operation: (transaction: {
+        get: (ref: DocumentRef) => Promise<Snapshot>
+        set: (ref: DocumentRef, data: Record<string, unknown>) => void
+        update: (ref: DocumentRef, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => operation({
+        get: async (ref) => {
+          const data = documents.get(ref.path)
+          return { exists: Boolean(data), get: (field) => data?.[field] }
+        },
+        set: (ref, data) => { documents.set(ref.path, { ...data }) },
+        update: (ref, data) => { documents.set(ref.path, { ...documents.get(ref.path), ...data }) },
+      }),
+    }
+
+    await createFirestoreInvoiceBillingRecordSynchronizer(firestore as unknown as AdminFirestore)('org-1', {
+      type: 'invoice.payment_failed', invoiceId: 'in_late', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      dueDateMillis: 9_999, paymentMethod: 'INVOICE', eventCreatedAtMillis: 800,
+    })
+
+    expect(documents.get('organizations/org-1')).toMatchObject({
+      planId: 'SCHOOL', parentContractState: 'ACTIVE', subscriptionStatus: 'ACTIVE',
+    })
+    expect(documents.get('organizations/org-1/billingRecords/in_late')).toMatchObject({ status: 'OVERDUE' })
   })
 })
