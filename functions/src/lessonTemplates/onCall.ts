@@ -119,6 +119,10 @@ export const duplicateLessonTemplateCallable = onCall({ region: 'asia-northeast1
     // A valid, matching share token substitutes for source-org membership —
     // this is the one intentional way to read/duplicate another org's
     // template, mirroring the comment below for target-org membership.
+  } else if (sourceTemplateSnap.get('visibility') === 'COMMUNITY') {
+    // A COMMUNITY-visible template is readable by any teacher (mirrors the
+    // Firestore rule relaxation), so source-org membership is not required
+    // either — the same intentional bypass as the shareToken branch above.
   } else {
     // Mirrors firestore.rules' `allow get`/`allow list` gate on lessonTemplates
     // (activeMember(resource.data.orgId)): this Callable runs on the Admin SDK

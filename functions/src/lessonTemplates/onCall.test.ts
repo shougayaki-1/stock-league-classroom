@@ -284,6 +284,34 @@ describe('duplicateLessonTemplateCallable', () => {
     await expect(duplicateLessonTemplateCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
     expect(duplicateLessonTemplateWithAdminSdk).not.toHaveBeenCalled()
   })
+
+  it('skips source-org membership and duplicates when the source template is COMMUNITY-visible', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'visibility' ? 'COMMUNITY' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 }) // target org only
+    vi.mocked(duplicateLessonTemplateWithAdminSdk).mockResolvedValue({ templateId: 'template-copy-1', alreadyDuplicated: false })
+
+    await expect(duplicateLessonTemplateCallable.run(makeRequest())).resolves.toEqual({ templateId: 'template-copy-1', alreadyDuplicated: false })
+
+    expect(requireActiveOrgMember).toHaveBeenCalledTimes(1)
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-target', 'teacher-target')
+  })
+
+  it('still requires source-org membership when the source template is PRIVATE and no shareToken is given', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'visibility' ? 'PRIVATE' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(duplicateLessonTemplateWithAdminSdk).mockResolvedValue({ templateId: 'template-copy-1', alreadyDuplicated: false })
+
+    await expect(duplicateLessonTemplateCallable.run(makeRequest())).resolves.toEqual({ templateId: 'template-copy-1', alreadyDuplicated: false })
+
+    expect(requireActiveOrgMember).toHaveBeenCalledTimes(2)
+    expect(requireActiveOrgMember).toHaveBeenNthCalledWith(1, expect.anything(), 'org-source', 'teacher-target')
+  })
 })
 
 describe('createTemplateShareCallable', () => {
