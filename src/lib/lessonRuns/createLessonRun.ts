@@ -3,6 +3,7 @@ import { httpsCallable, type Functions } from 'firebase/functions'
 export interface CreateLessonRunInput {
   templateId: string
   lessonRunIdempotencyKey: string
+  expectedParticipants: number
 }
 
 export interface CreateLessonRunResult {
