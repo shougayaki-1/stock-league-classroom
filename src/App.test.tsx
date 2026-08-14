@@ -638,6 +638,44 @@ describe('Stripe checkout route', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('keeps the Stripe customer portal available for an active card subscription on the current user personal organization', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/personal_teacher-uid/plan-limits')
+    getDocMock.mockImplementation((reference: { __path: string }) => {
+      if (reference.__path === 'organizations/personal_teacher-uid/members/teacher-uid') {
+        return Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) })
+      }
+      if (reference.__path === 'organizations/personal_teacher-uid') {
+        return Promise.resolve({ exists: () => true, data: () => ({
+          type: 'personal',
+          ownerUid: 'teacher-uid',
+          stripeCustomerId: 'cus_personal',
+          stripeSubscriptionState: { subscriptionId: 'sub_personal', status: 'active' },
+        }) })
+      }
+      return Promise.resolve({ exists: () => false, data: () => ({}) })
+    })
+    const portalCallable = vi.fn().mockResolvedValue({ data: { url: 'https://billing.stripe.com/p/personal' } })
+    const getBillingOverviewCallable = vi.fn()
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'getBillingOverviewCallable') return getBillingOverviewCallable
+      if (name === 'createStripeCustomerPortalSessionCallable') return portalCallable
+      return callableMock
+    })
+    const assignMock = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign: assignMock })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await userEvent.click(await screen.findByRole('button', { name: '支払い方法の変更・解約' }))
+
+    await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://billing.stripe.com/p/personal'))
+    expect(portalCallable).toHaveBeenCalledWith({ orgId: 'personal_teacher-uid', returnUrl: `${window.location.origin}/teacher/organizations/personal_teacher-uid/plan-limits` })
+    expect(getBillingOverviewCallable).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    window.history.pushState({}, '', '/')
+  })
+
   it('hides the Stripe customer portal for an active invoice subscription even when a Customer exists', async () => {
     window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
     mockPlanRouteDocuments({ type: 'school', status: 'active', stripeCustomerId: 'cus_invoice' })

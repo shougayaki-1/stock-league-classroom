@@ -529,12 +529,12 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       setOrganizationStateOrgId(orgId)
       if (type !== 'parentOrg') {
         setStripeCustomerId((organization.stripeCustomerId as string | undefined) ?? null)
-      }
-      if (type === 'school') {
         const subscription = organization.stripeSubscriptionState
         setSchoolSubscriptionState(subscription && typeof subscription === 'object' && typeof (subscription as { status?: unknown }).status === 'string'
           ? { status: (subscription as { status: string }).status }
           : null)
+      }
+      if (type === 'school') {
         void listOrgMembers(services.functions, { orgId }).then((members) => {
           if (!cancelled) {
             const membership = members.find((member) => member.uid === services.auth.currentUser?.uid)
@@ -608,7 +608,13 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setStartingInvoiceBilling(false))
   } : undefined
   const onCheckout = (orgId && currentOrgType !== 'parentOrg') ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
-  const onManageBilling = (orgId && currentOrgType === 'school' && canManageCurrentOrg && stripeCustomerId && billingOverview?.paymentMethod === 'CARD') ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
+  const hasPersonalCardSubscription = currentOrgType === 'personal'
+    && orgId === personalOrgId(services.auth.currentUser?.uid ?? '')
+    && schoolSubscriptionState?.status === 'active'
+  const hasSchoolCardSubscription = currentOrgType === 'school'
+    && canManageCurrentOrg
+    && billingOverview?.paymentMethod === 'CARD'
+  const onManageBilling = (orgId && stripeCustomerId && (hasPersonalCardSubscription || hasSchoolCardSubscription)) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
   const onMigrateFromEndedParent = (orgId && currentOrgType === 'school' && parentContractState === 'ENDED') ? () => {
     setMigratingFromEndedParent(true)
     setMigrationMessage(undefined)
