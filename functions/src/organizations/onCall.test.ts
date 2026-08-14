@@ -188,7 +188,7 @@ describe('getOrgPlanLimitsCallable', () => {
   it('returns the resolved plan limits for an active member', async () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
-      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, aiCreditsPerDay: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
       downgradeStatus: { state: 'NORMAL', violations: [] },
     })
     const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
@@ -199,7 +199,7 @@ describe('getOrgPlanLimitsCallable', () => {
   it('returns downgrade status alongside the plan limits', async () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     vi.mocked(getOrgPlanLimitsWithAdminSdk).mockResolvedValueOnce({
-      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+      concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, aiCreditsPerDay: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
       downgradeStatus: { state: 'RESTRICTED', violations: [{ key: 'teacherSeats', label: '教師席', used: 2, limit: 1 }] },
     })
 

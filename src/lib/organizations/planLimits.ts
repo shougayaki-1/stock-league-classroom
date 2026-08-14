@@ -5,6 +5,7 @@ export interface PlanLimits {
   participants: number
   teacherSeats: number
   aiCredits: number
+  aiCreditsPerDay: number
   templateStorage: number
   resultRetentionDays: number
   eventExtraCapacity: number
