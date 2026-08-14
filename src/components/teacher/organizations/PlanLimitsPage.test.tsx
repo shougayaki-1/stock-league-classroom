@@ -81,6 +81,18 @@ describe('PlanLimitsPage', () => {
     expect(screen.queryByText('上位組織の利用枠')).not.toBeInTheDocument()
   })
 
+  it('renders the optional billing section after the plan-limit status', () => {
+    render(<PlanLimitsPage
+      data={{ ...limits, downgradeStatus: { state: 'GRACE', graceEndsAtMillis: Date.now() + 86_400_000, violations: [] } }}
+      error={undefined}
+      billingSection={<section aria-label="billing-section">billing</section>}
+    />)
+
+    const status = screen.getByRole('alert')
+    const billingSection = screen.getByRole('region', { name: 'billing-section' })
+    expect(status.compareDocumentPosition(billingSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('only enables ended-parent migration for a manager with an active school subscription', () => {
     const onMigrateFromEndedParent = vi.fn()
     const { rerender } = render(<PlanLimitsPage data={limits} error={undefined} parentContractState="ENDED" canManageContract onMigrateFromEndedParent={onMigrateFromEndedParent} schoolSubscriptionState={{ status: 'canceled' }} />)

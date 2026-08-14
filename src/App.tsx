@@ -29,6 +29,7 @@ import { getTuningConstants, type TuningConstantsResponse } from './lib/platform
 import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboardPage'
 import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
+import { BillingSection } from './components/teacher/organizations/BillingSection'
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
@@ -36,6 +37,7 @@ import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/pla
 import { getParentOrgQuotaUsage, getSchoolEffectiveQuota, setSchoolQuotaAllocation, type ParentOrgQuotaUsageResult, type SchoolEffectiveQuotaResult } from './lib/organizations/parentOrgQuota'
 import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
 import { createStripeCustomerPortalSession } from './lib/billing/stripeCustomerPortal'
+import { getBillingOverview, saveBillingProfile, startInvoiceSubscription, type BillingOverview, type BillingProfileInput } from './lib/billing/invoiceSubscription'
 import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
 import { createParentOrg } from './lib/organizations/parentOrg'
 import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, type ChildSchool } from './lib/organizations/schoolHierarchy'
@@ -490,14 +492,22 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const [migratingFromEndedParent, setMigratingFromEndedParent] = useState(false)
   const [migrationMessage, setMigrationMessage] = useState<string>()
   const [organizationReload, setOrganizationReload] = useState(0)
+  const [planReload, setPlanReload] = useState(0)
+  const [billingReload, setBillingReload] = useState(0)
+  const [billingOverview, setBillingOverview] = useState<BillingOverview>()
+  const [billingOverviewLoaded, setBillingOverviewLoaded] = useState(false)
+  const [billingError, setBillingError] = useState<string>()
+  const [savingBillingProfile, setSavingBillingProfile] = useState(false)
+  const [startingInvoiceBilling, setStartingInvoiceBilling] = useState(false)
   useEffect(() => {
     let cancelled = false
     if (!orgId) return
+    setError(undefined)
     getOrgPlanLimits(services.functions, { orgId })
       .then((limits) => { if (!cancelled) setData(limits) })
       .catch(() => { if (!cancelled) setError('failed') })
     return () => { cancelled = true }
-  }, [services, orgId])
+  }, [services, orgId, planReload])
   useEffect(() => {
     let cancelled = false
     setStripeCustomerId(null)
@@ -523,7 +533,7 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
         void listOrgMembers(services.functions, { orgId }).then((members) => {
           if (!cancelled) {
             const membership = members.find((member) => member.uid === services.auth.currentUser?.uid)
-            setCanManageContract(membership?.role === 'owner' || membership?.role === 'admin')
+            setCanManageContract(membership?.status === 'active' && (membership.role === 'owner' || membership.role === 'admin'))
           }
         }).catch(() => { if (!cancelled) setCanManageContract(false) })
         if (typeof organization.parentOrgId === 'string' && organization.parentOrgId.length > 0) {
@@ -542,6 +552,47 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
     })
     return () => { cancelled = true }
   }, [services, orgId, organizationReload])
+  useEffect(() => {
+    let cancelled = false
+    setBillingOverview(undefined)
+    setBillingOverviewLoaded(false)
+    setBillingError(undefined)
+    if (!orgId || orgType !== 'school' || !canManageContract) return () => { cancelled = true }
+    void getBillingOverview(services.functions, { orgId }).then((overview) => {
+      if (!cancelled) {
+        setBillingOverview(overview)
+        setBillingOverviewLoaded(true)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setBillingError('請求情報を読み込めませんでした。もう一度お試しください。')
+        setBillingOverviewLoaded(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [services, orgId, orgType, canManageContract, billingReload])
+  const refreshBillingAndPlan = () => {
+    setBillingReload((value) => value + 1)
+    setPlanReload((value) => value + 1)
+  }
+  const onSaveBillingProfile = (orgId && orgType === 'school' && canManageContract) ? (profile: BillingProfileInput) => {
+    if (savingBillingProfile) return
+    setSavingBillingProfile(true)
+    setBillingError(undefined)
+    void saveBillingProfile(services.functions, { orgId, profile })
+      .then(refreshBillingAndPlan)
+      .catch(() => setBillingError('請求先プロフィールの保存に失敗しました。もう一度お試しください。'))
+      .finally(() => setSavingBillingProfile(false))
+  } : undefined
+  const onStartInvoiceBilling = (orgId && orgType === 'school' && canManageContract) ? () => {
+    if (startingInvoiceBilling) return
+    setStartingInvoiceBilling(true)
+    setBillingError(undefined)
+    void startInvoiceSubscription(services.functions, { orgId })
+      .then(refreshBillingAndPlan)
+      .catch(() => setBillingError('請求書払いの申込に失敗しました。もう一度お試しください。'))
+      .finally(() => setStartingInvoiceBilling(false))
+  } : undefined
   const onCheckout = (orgId && orgType !== 'parentOrg') ? () => { setCheckingOut(true); void createStripeCheckoutSession(services.functions, { orgId, planId: 'SCHOOL', successUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits`, cancelUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setCheckingOut(false)) } : undefined
   const onManageBilling = (orgId && orgType !== 'parentOrg' && stripeCustomerId) ? () => { setManagingBilling(true); void createStripeCustomerPortalSession(services.functions, { orgId, returnUrl: `${window.location.origin}/teacher/organizations/${orgId}/plan-limits` }).then(({ url }) => window.location.assign(url)).finally(() => setManagingBilling(false)) } : undefined
   const onMigrateFromEndedParent = (orgId && orgType === 'school' && parentContractState === 'ENDED') ? () => {
@@ -556,7 +607,18 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
       }
     }).catch(() => setMigrationMessage('移行に失敗しました。状態を確認してもう一度実行してください。')).finally(() => setMigratingFromEndedParent(false))
   } : undefined
-  return <PlanLimitsPage data={data} error={error} schoolEffectiveQuota={schoolEffectiveQuota} parentContractState={parentContractState} schoolSubscriptionState={schoolSubscriptionState} canManageContract={canManageContract} onMigrateFromEndedParent={onMigrateFromEndedParent} migratingFromEndedParent={migratingFromEndedParent} migrationMessage={migrationMessage} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
+  const billingSection = orgType === 'school' && canManageContract && billingOverviewLoaded && onSaveBillingProfile && onStartInvoiceBilling
+    ? <BillingSection
+      canManageBilling
+      overview={billingOverview}
+      onSaveProfile={onSaveBillingProfile}
+      onStartInvoiceSubscription={onStartInvoiceBilling}
+      savingProfile={savingBillingProfile}
+      startingInvoiceSubscription={startingInvoiceBilling}
+      error={billingError}
+    />
+    : undefined
+  return <PlanLimitsPage data={data} error={error} billingSection={billingSection} schoolEffectiveQuota={schoolEffectiveQuota} parentContractState={parentContractState} schoolSubscriptionState={schoolSubscriptionState} canManageContract={canManageContract} onMigrateFromEndedParent={onMigrateFromEndedParent} migratingFromEndedParent={migratingFromEndedParent} migrationMessage={migrationMessage} onCheckout={onCheckout} checkingOut={checkingOut} onManageBilling={onManageBilling} managingBilling={managingBilling} />
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {

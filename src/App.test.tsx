@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { FirebaseApp } from 'firebase/app'
@@ -408,6 +408,154 @@ describe('Parent org hierarchy routes', () => {
 })
 
 describe('Stripe checkout route', () => {
+  const planLimits = { concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0 }
+  const billingProfile = {
+    legalName: '学校法人テスト学園',
+    contactName: '山田花子',
+    email: 'billing@example.com',
+    address: { postalCode: '100-0001', prefecture: '東京都', city: '千代田区', line1: '千代田1-1' },
+  }
+
+  const mockPlanRouteDocuments = (organization: Record<string, unknown>) => {
+    getDocMock.mockImplementation((reference: { __path: string }) => {
+      if (reference.__path === 'organizations/personal_teacher-uid/members/teacher-uid') {
+        return Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) })
+      }
+      if (reference.__path === 'organizations/school-1') {
+        return Promise.resolve({ exists: () => true, data: () => organization })
+      }
+      return Promise.resolve({ exists: () => false, data: () => ({}) })
+    })
+  }
+
+  it('loads billing data only after the current school owner is authorized', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active' })
+    const getBillingOverviewCallable = vi.fn().mockResolvedValue({ data: {
+      profile: billingProfile,
+      paymentMethod: 'INVOICE',
+      invoices: [{ id: 'in_1', status: 'PENDING', paymentMethod: 'INVOICE', dueDateMillis: Date.UTC(2027, 1, 14), hostedInvoiceUrl: 'https://invoice.stripe.com/private-owner-link' }],
+    } })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'owner@example.com', role: 'owner', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return getBillingOverviewCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    expect(await screen.findByRole('heading', { name: '請求・支払い' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '請求書を確認' })).toHaveAttribute('href', 'https://invoice.stripe.com/private-owner-link')
+    expect(getBillingOverviewCallable).toHaveBeenCalledWith({ orgId: 'school-1' })
+    window.history.pushState({}, '', '/')
+  })
+
+  it('does not fetch or render billing data for a general school teacher', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active' })
+    const getBillingOverviewCallable = vi.fn().mockResolvedValue({ data: { profile: billingProfile, paymentMethod: 'INVOICE', invoices: [] } })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'teacher@example.com', role: 'teacher', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return getBillingOverviewCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    await screen.findByText('参加人数')
+    await waitFor(() => expect(httpsCallableMock).toHaveBeenCalledWith(fakeServices.functions, 'listOrgMembersCallable'))
+    expect(getBillingOverviewCallable).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: '請求・支払い' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '請求書を確認' })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('does not fetch billing data for a parent organization', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'parentOrg', status: 'active' })
+    const getBillingOverviewCallable = vi.fn()
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'getBillingOverviewCallable') return getBillingOverviewCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    await screen.findByText('参加人数')
+    await waitFor(() => expect(getDocMock).toHaveBeenCalledWith(expect.objectContaining({ __path: 'organizations/school-1' })))
+    expect(getBillingOverviewCallable).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: '請求・支払い' })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('saves a profile and refreshes both billing overview and plan data', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active' })
+    const planCallable = vi.fn().mockResolvedValue({ data: planLimits })
+    const overviewCallable = vi.fn()
+      .mockResolvedValueOnce({ data: { profile: null, paymentMethod: null, invoices: [] } })
+      .mockResolvedValue({ data: { profile: billingProfile, paymentMethod: null, invoices: [] } })
+    const saveCallable = vi.fn().mockResolvedValue({ data: { stripeCustomerId: 'cus_1' } })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return planCallable
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'admin@example.com', role: 'admin', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return overviewCallable
+      if (name === 'saveBillingProfileCallable') return saveCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await userEvent.type(await screen.findByRole('textbox', { name: '法人名・学校名' }), billingProfile.legalName)
+    await userEvent.type(screen.getByRole('textbox', { name: '担当者名' }), billingProfile.contactName)
+    await userEvent.type(screen.getByRole('textbox', { name: '請求先メールアドレス' }), billingProfile.email)
+    await userEvent.type(screen.getByRole('textbox', { name: '郵便番号' }), billingProfile.address.postalCode)
+    await userEvent.type(screen.getByRole('textbox', { name: '都道府県' }), billingProfile.address.prefecture)
+    await userEvent.type(screen.getByRole('textbox', { name: '市区町村' }), billingProfile.address.city)
+    await userEvent.type(screen.getByRole('textbox', { name: '住所1' }), billingProfile.address.line1)
+    await userEvent.click(screen.getByRole('button', { name: '請求先プロフィールを保存' }))
+
+    await waitFor(() => expect(saveCallable).toHaveBeenCalledWith({ orgId: 'school-1', profile: billingProfile }))
+    await waitFor(() => expect(overviewCallable).toHaveBeenCalledTimes(2))
+    expect(planCallable).toHaveBeenCalledTimes(2)
+    window.history.pushState({}, '', '/')
+  })
+
+  it('prevents duplicate invoice signup while pending and refreshes after success', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active' })
+    let resolveStart: ((value: { data: { status: 'ACTIVE'; stripeSubscriptionId: string } }) => void) | undefined
+    const startCallable = vi.fn(() => new Promise<{ data: { status: 'ACTIVE'; stripeSubscriptionId: string } }>((resolve) => { resolveStart = resolve }))
+    const planCallable = vi.fn().mockResolvedValue({ data: planLimits })
+    const overviewCallable = vi.fn().mockResolvedValue({ data: { profile: billingProfile, paymentMethod: null, invoices: [] } })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return planCallable
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'owner@example.com', role: 'owner', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return overviewCallable
+      if (name === 'startInvoiceSubscriptionCallable') return startCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    const button = await screen.findByRole('button', { name: '請求書払いで申し込む' })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(startCallable).toHaveBeenCalledTimes(1)
+
+    await act(async () => resolveStart?.({ data: { status: 'ACTIVE', stripeSubscriptionId: 'sub_1' } }))
+    await waitFor(() => expect(overviewCallable).toHaveBeenCalledTimes(2))
+    expect(planCallable).toHaveBeenCalledTimes(2)
+    window.history.pushState({}, '', '/')
+  })
+
   it('starts checkout and redirects to its returned URL', async () => {
     window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })

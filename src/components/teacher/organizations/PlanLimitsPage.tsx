@@ -16,6 +16,7 @@ export interface PlanLimitsPageProps {
   onMigrateFromEndedParent?: () => void
   migratingFromEndedParent?: boolean
   migrationMessage?: string
+  billingSection?: React.ReactNode
 }
 
 const rows: { label: string; key: keyof PlanLimits }[] = [
@@ -52,7 +53,7 @@ const renderDowngradeStatus = (status: DowngradeStatus) => {
   return null
 }
 
-export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling, schoolEffectiveQuota, parentContractState, schoolSubscriptionState, canManageContract = false, onMigrateFromEndedParent, migratingFromEndedParent, migrationMessage }: PlanLimitsPageProps) {
+export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageBilling, managingBilling, schoolEffectiveQuota, parentContractState, schoolSubscriptionState, canManageContract = false, onMigrateFromEndedParent, migratingFromEndedParent, migrationMessage, billingSection }: PlanLimitsPageProps) {
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   const downgradeStatus = data.downgradeStatus ?? { state: 'NORMAL' as const, violations: [] }
@@ -60,6 +61,7 @@ export function PlanLimitsPage({ data, error, onCheckout, checkingOut, onManageB
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="h5">この組織の利用枠</Typography>
       {renderDowngradeStatus(downgradeStatus)}
+      {billingSection}
       {parentContractState === 'ENDED' && <Alert severity="warning">上位組織の契約は終了しています。学校データは保持されます。単独契約を有効にした後、ownerまたはadminが移行できます。</Alert>}
       {migrationMessage && <Alert severity="info">{migrationMessage}</Alert>}
       {parentContractState === 'ENDED' && canManageContract && onMigrateFromEndedParent && (
