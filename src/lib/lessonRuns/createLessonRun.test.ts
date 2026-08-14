@@ -11,11 +11,11 @@ const { httpsCallable } = await import('firebase/functions')
 const { createLessonRun } = await import('./createLessonRun')
 
 describe('createLessonRun (client)', () => {
-  it('calls the createLessonRunCallable callable with only templateId/lessonRunIdempotencyKey', async () => {
+  it('calls the createLessonRunCallable callable with templateId/lessonRunIdempotencyKey/expectedParticipants', async () => {
     const functions = {} as Functions
-    const result = await createLessonRun(functions, { templateId: 't1', lessonRunIdempotencyKey: 'key-1' })
+    const result = await createLessonRun(functions, { templateId: 't1', lessonRunIdempotencyKey: 'key-1', expectedParticipants: 30 })
     expect(result).toEqual({ lessonRunId: 'run-1', created: true })
     expect(httpsCallable).toHaveBeenCalledWith(functions, 'createLessonRunCallable')
-    expect(callable).toHaveBeenCalledWith({ templateId: 't1', lessonRunIdempotencyKey: 'key-1' })
+    expect(callable).toHaveBeenCalledWith({ templateId: 't1', lessonRunIdempotencyKey: 'key-1', expectedParticipants: 30 })
   })
 })

@@ -10,7 +10,7 @@ const templateGetMock = vi.fn()
 const docGetMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
-vi.mock('./createLessonRun', () => ({ createLessonRunWithAdminSdk: vi.fn() }))
+vi.mock('./createLessonRun', () => ({ createLessonRunWithAdminSdk: vi.fn(), MAX_PARTICIPANTS: 80 }))
 vi.mock('./checkpoint', () => ({ restoreCheckpointWithAdminSdk: vi.fn() }))
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({ doc: (path: string) => ({ get: path.startsWith('lessonTemplates/') ? templateGetMock : docGetMock }) }),
@@ -23,7 +23,7 @@ const makeRequest = (uid = 'teacher-a'): CallableRequest<CreateLessonRunRequest>
     uid,
     token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } },
   },
-  data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1' },
+  data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1', expectedParticipants: 30 },
   rawRequest: {},
 } as unknown as CallableRequest<CreateLessonRunRequest>)
 
@@ -74,7 +74,7 @@ describe('createLessonRunCallable', () => {
 
     expect(createLessonRunWithAdminSdk).toHaveBeenCalledWith({
       orgId: 'personal_teacher-a', templateId: 'template-1',
-      primaryTeacherUid: 'teacher-a', lessonRunIdempotencyKey: 'key-1',
+      primaryTeacherUid: 'teacher-a', lessonRunIdempotencyKey: 'key-1', expectedParticipants: 30,
     })
   })
 
@@ -91,7 +91,7 @@ describe('createLessonRunCallable', () => {
     expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'school-1', 'teacher-b')
     expect(createLessonRunWithAdminSdk).toHaveBeenCalledWith({
       orgId: 'school-1', templateId: 'template-1',
-      primaryTeacherUid: 'teacher-b', lessonRunIdempotencyKey: 'key-1',
+      primaryTeacherUid: 'teacher-b', lessonRunIdempotencyKey: 'key-1', expectedParticipants: 30,
     })
   })
 
@@ -105,7 +105,7 @@ describe('createLessonRunCallable', () => {
 
     const request = {
       auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
-      data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1', orgId: 'attacker-supplied-org' },
+      data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1', orgId: 'attacker-supplied-org', expectedParticipants: 30 },
       rawRequest: {},
     } as unknown as CallableRequest<CreateLessonRunRequest>
 
@@ -176,6 +176,44 @@ describe('createLessonRunCallable', () => {
     vi.mocked(createLessonRunWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
 
     await expect(createLessonRunCallable.run(makeRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('rejects expectedParticipants that is missing, non-integer, below 1, or above the 80-seat service cap', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'personal_teacher-a' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+
+    const withParticipants = (expectedParticipants: unknown): CallableRequest<CreateLessonRunRequest> => ({
+      auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+      data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1', expectedParticipants },
+      rawRequest: {},
+    } as unknown as CallableRequest<CreateLessonRunRequest>)
+
+    await expect(createLessonRunCallable.run(withParticipants(undefined))).rejects.toMatchObject({ code: 'invalid-argument' })
+    await expect(createLessonRunCallable.run(withParticipants(0))).rejects.toMatchObject({ code: 'invalid-argument' })
+    await expect(createLessonRunCallable.run(withParticipants(81))).rejects.toMatchObject({ code: 'invalid-argument' })
+    await expect(createLessonRunCallable.run(withParticipants(1.5))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(createLessonRunWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('accepts boundary values 1 and 80 for expectedParticipants', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'personal_teacher-a' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(createLessonRunWithAdminSdk).mockResolvedValue({ lessonRunId: 'run-1', created: true })
+
+    const withParticipants = (expectedParticipants: unknown): CallableRequest<CreateLessonRunRequest> => ({
+      auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+      data: { templateId: 'template-1', lessonRunIdempotencyKey: 'key-1', expectedParticipants },
+      rawRequest: {},
+    } as unknown as CallableRequest<CreateLessonRunRequest>)
+
+    await expect(createLessonRunCallable.run(withParticipants(1))).resolves.toEqual({ lessonRunId: 'run-1', created: true })
+    await expect(createLessonRunCallable.run(withParticipants(80))).resolves.toEqual({ lessonRunId: 'run-1', created: true })
   })
 })
 
