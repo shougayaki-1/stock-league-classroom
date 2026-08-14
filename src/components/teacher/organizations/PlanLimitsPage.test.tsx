@@ -4,7 +4,7 @@ import { PlanLimitsPage } from './PlanLimitsPage'
 import type { SchoolEffectiveQuotaResult } from '../../../lib/organizations/parentOrgQuota'
 
 const limits = {
-  concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
+  concurrentLessonsAndMarkets: 1, participants: 40, teacherSeats: 1, aiCredits: 0, aiCreditsPerDay: 0, templateStorage: 5, resultRetentionDays: 30, eventExtraCapacity: 0,
   downgradeStatus: { state: 'NORMAL' as const, violations: [] },
 }
 
