@@ -494,6 +494,52 @@ describe('Stripe checkout route', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('clears owner billing data before authorizing the next school route', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-a/plan-limits')
+    getDocMock.mockImplementation((reference: { __path: string }) => {
+      if (reference.__path === 'organizations/personal_teacher-uid/members/teacher-uid') {
+        return Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) })
+      }
+      if (reference.__path === 'organizations/school-a' || reference.__path === 'organizations/school-b') {
+        return Promise.resolve({ exists: () => true, data: () => ({ type: 'school', status: 'active' }) })
+      }
+      return Promise.resolve({ exists: () => false, data: () => ({}) })
+    })
+    const listMembersCallable = vi.fn(({ orgId }: { orgId: string }) => Promise.resolve({ data: [{
+      uid: 'teacher-uid',
+      email: 'teacher@example.com',
+      role: orgId === 'school-a' ? 'owner' : 'teacher',
+      status: 'active',
+      membershipVersion: 1,
+    }] }))
+    const getBillingOverviewCallable = vi.fn(({ orgId }: { orgId: string }) => Promise.resolve({ data: {
+      profile: billingProfile,
+      paymentMethod: 'INVOICE',
+      invoices: [{ id: `in-${orgId}`, status: 'PENDING', paymentMethod: 'INVOICE', dueDateMillis: Date.UTC(2027, 1, 14), hostedInvoiceUrl: `https://invoice.stripe.com/${orgId}` }],
+    } }))
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'listOrgMembersCallable') return listMembersCallable
+      if (name === 'getBillingOverviewCallable') return getBillingOverviewCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('link', { name: '請求書を確認' })).toHaveAttribute('href', 'https://invoice.stripe.com/school-a')
+
+    await act(async () => {
+      window.history.pushState({}, '', '/teacher/organizations/school-b/plan-limits')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(listMembersCallable).toHaveBeenCalledWith({ orgId: 'school-b' }))
+
+    expect(getBillingOverviewCallable).not.toHaveBeenCalledWith({ orgId: 'school-b' })
+    expect(screen.queryByRole('heading', { name: '請求・支払い' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '請求書を確認' })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
   it('saves a profile and refreshes both billing overview and plan data', async () => {
     window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
     mockPlanRouteDocuments({ type: 'school', status: 'active' })
@@ -568,12 +614,20 @@ describe('Stripe checkout route', () => {
   })
 
   it('opens the Stripe customer portal and redirects the browser to the returned url', async () => {
-    window.history.pushState({}, '', '/teacher/organizations/org-1/plan-limits')
-    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active', stripeCustomerId: 'cus_1' }) })
-    httpsCallableMock.mockImplementation((_functions: unknown, name: string) =>
-      name === 'createStripeCustomerPortalSessionCallable'
-        ? vi.fn().mockResolvedValue({ data: { url: 'https://billing.stripe.com/p/x' } })
-        : callableMock)
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active', stripeCustomerId: 'cus_1' })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'owner@example.com', role: 'owner', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return vi.fn().mockResolvedValue({ data: {
+        profile: billingProfile,
+        paymentMethod: 'CARD',
+        invoiceSubscription: { status: 'SCHEDULED', currentPeriodEndMillis: Date.UTC(2027, 0, 15) },
+        invoices: [],
+      } })
+      if (name === 'createStripeCustomerPortalSessionCallable') return vi.fn().mockResolvedValue({ data: { url: 'https://billing.stripe.com/p/x' } })
+      return callableMock
+    })
     const assignMock = vi.fn()
     vi.stubGlobal('location', { ...window.location, assign: assignMock })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
@@ -581,6 +635,32 @@ describe('Stripe checkout route', () => {
     await userEvent.click(await screen.findByRole('button', { name: '支払い方法の変更・解約' }))
     await waitFor(() => expect(assignMock).toHaveBeenCalledWith('https://billing.stripe.com/p/x'))
     vi.unstubAllGlobals()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('hides the Stripe customer portal for an active invoice subscription even when a Customer exists', async () => {
+    window.history.pushState({}, '', '/teacher/organizations/school-1/plan-limits')
+    mockPlanRouteDocuments({ type: 'school', status: 'active', stripeCustomerId: 'cus_invoice' })
+    const portalCallable = vi.fn()
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getOrgPlanLimitsCallable') return vi.fn().mockResolvedValue({ data: planLimits })
+      if (name === 'listOrgMembersCallable') return vi.fn().mockResolvedValue({ data: [{ uid: 'teacher-uid', email: 'owner@example.com', role: 'owner', status: 'active', membershipVersion: 1 }] })
+      if (name === 'getBillingOverviewCallable') return vi.fn().mockResolvedValue({ data: {
+        profile: billingProfile,
+        paymentMethod: 'INVOICE',
+        invoiceSubscription: { status: 'ACTIVE' },
+        invoices: [],
+      } })
+      if (name === 'createStripeCustomerPortalSessionCallable') return portalCallable
+      return callableMock
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    await screen.findByRole('heading', { name: '請求・支払い' })
+
+    expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
+    expect(portalCallable).not.toHaveBeenCalled()
     window.history.pushState({}, '', '/')
   })
 
