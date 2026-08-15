@@ -27,6 +27,13 @@ import { TemplateEditorPage } from './components/teacher/templates/TemplateEdito
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
 import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
 import { OperatorTemplateCertificationsPage } from './components/operator/OperatorTemplateCertificationsPage'
+import { OperatorAiBetaAccessPage } from './components/operator/OperatorAiBetaAccessPage'
+import {
+  grantAiBetaAccess,
+  listAiBetaAccess,
+  revokeAiBetaAccess,
+  type AiBetaAccessListItem,
+} from './lib/ai/betaAccess'
 import { CommunityTemplateDetailPage, type CommunityTemplateDetailPageProps } from './components/teacher/templates/CommunityTemplateDetailPage'
 import { canReviewTemplate, listTemplateReviews as listTemplateReviewsClient, submitTemplateReview as submitTemplateReviewClient, type TemplateReview } from './lib/lessonTemplates/templateReviews'
 import { listPendingTemplateReports, resolveTemplateReport, type PendingTemplateReport } from './lib/lessonTemplates/moderationQueue'
@@ -423,6 +430,7 @@ function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
     onUnpublish={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'UNPUBLISH' }).then(load) }}
     onDismiss={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'DISMISS' }).then(load) }}
     onNavigateToCertifications={() => navigate('/operator/certifications')}
+    onNavigateToAiBeta={() => navigate('/operator/ai-beta')}
   />
 }
 
@@ -469,6 +477,84 @@ function OperatorCertificationsRoute({ services }: { services: FirebaseServices 
       accessDenied={accessDenied}
       onSetCertification={handleSetCertification}
       onNavigateToReports={() => navigate('/operator/reports')}
+      onNavigateToAiBeta={() => navigate('/operator/ai-beta')}
+    />
+  )
+}
+
+function OperatorAiBetaAccessRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
+  const [items, setItems] = useState<AiBetaAccessListItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [mutating, setMutating] = useState(false)
+  const [accessDenied, setAccessDenied] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const load = () => {
+    setLoading(true)
+    setError(undefined)
+    listAiBetaAccess(services.functions)
+      .then((result) => {
+        setItems(result)
+        setAccessDenied(false)
+      })
+      .catch((err: any) => {
+        if (
+          err?.code === 'permission-denied' ||
+          err?.message?.includes('permission-denied') ||
+          err?.message?.includes('運営者')
+        ) {
+          setAccessDenied(true)
+        } else {
+          setError(err instanceof Error ? err.message : 'アクセス情報の取得に失敗しました。')
+        }
+      })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+  }, [services])
+
+  const handleGrant = async (email: string, reason: string) => {
+    setMutating(true)
+    try {
+      await grantAiBetaAccess(services.functions, {
+        email,
+        reason,
+        idempotencyKey: crypto.randomUUID(),
+      })
+      load()
+    } finally {
+      setMutating(false)
+    }
+  }
+
+  const handleRevoke = async (teacherUid: string, reason: string) => {
+    setMutating(true)
+    try {
+      await revokeAiBetaAccess(services.functions, {
+        teacherUid,
+        reason,
+        idempotencyKey: crypto.randomUUID(),
+      })
+      load()
+    } finally {
+      setMutating(false)
+    }
+  }
+
+  return (
+    <OperatorAiBetaAccessPage
+      items={items}
+      loading={loading}
+      mutating={mutating}
+      accessDenied={accessDenied}
+      error={error}
+      onGrant={handleGrant}
+      onRevoke={handleRevoke}
+      onNavigateToReports={() => navigate('/operator/reports')}
+      onNavigateToCertifications={() => navigate('/operator/certifications')}
     />
   )
 }
@@ -1190,6 +1276,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/operator/certifications" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorCertificationsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/operator/ai-beta" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorAiBetaAccessRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />

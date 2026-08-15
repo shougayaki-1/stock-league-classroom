@@ -885,4 +885,26 @@ describe('Stripe checkout route', () => {
     expect(screen.queryByRole('button', { name: '支払い方法の変更・解約' })).not.toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
+
+  it('routes /operator/ai-beta through TemplateRouteGuard and manages beta access', async () => {
+    window.history.pushState({}, '', '/operator/ai-beta')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    callableMock.mockResolvedValue({
+      data: [
+        {
+          teacherUid: 't-123',
+          email: 'teacher@school.jp',
+          approvedByUid: 'operator-1',
+          approvedAtMillis: 1700000000000,
+        },
+      ],
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    expect(await screen.findByRole('heading', { name: 'AI Lesson Studio 限定ベータアクセス管理' })).toBeInTheDocument()
+    expect(await screen.findByText('teacher@school.jp')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
 })

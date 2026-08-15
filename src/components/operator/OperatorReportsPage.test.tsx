@@ -28,8 +28,8 @@ describe('OperatorReportsPage', () => {
     expect(screen.getByText('未対応の通報はありません。')).toBeInTheDocument()
   })
 
-  it('triggers onNavigateToCertifications when navigation button is clicked', () => {
-    const onNavigateToCertifications = vi.fn()
+  it('triggers onNavigateToAiBeta when navigation button is clicked', () => {
+    const onNavigateToAiBeta = vi.fn()
     render(
       <OperatorReportsPage
         reports={[]}
@@ -37,10 +37,10 @@ describe('OperatorReportsPage', () => {
         accessDenied={false}
         onUnpublish={vi.fn()}
         onDismiss={vi.fn()}
-        onNavigateToCertifications={onNavigateToCertifications}
+        onNavigateToAiBeta={onNavigateToAiBeta}
       />,
     )
-    fireEvent.click(screen.getByRole('button', { name: '教材認定へ' }))
-    expect(onNavigateToCertifications).toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'AIベータ管理へ' }))
+    expect(onNavigateToAiBeta).toHaveBeenCalled()
   })
 })

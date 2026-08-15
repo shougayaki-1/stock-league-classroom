@@ -26,9 +26,9 @@
 
 コントロールルーム(08-04系2件)・Guided Builder・試運転モード・Research Desk(生徒側、授業フェーズに応じた画面出し分け)は実装済み。Research Desk は `docs/superpowers/plans/2026-08-15-research-desk-plan.md` に基づき実装(2026-08-15)。企業・ニュース・統計・チームノート・注文の5画面をサーバー投影(`buildResearchDeskPublicView`)と server-authoritative な `submitOrderCallable` で構成。
 
-## Phase 3: AI Lesson Studio ベータ — 一部未着手
+## Phase 3: AI Lesson Studio ベータ — 実装済み(2026-08-15更新)
 
-コアインフラ・授業案作成・資料アップロード・スライド生成・利用枠は実装済み。
+コアインフラ・授業案作成・資料アップロード・スライド生成・利用枠、および運営者許可制の限定ベータアクセス制御(`functions/src/ai/betaAccess.ts`、`migrateLegacyBetaAccess.ts`、Cloud Functions / Security Rules / fail-closed UI / `/operator/ai-beta` 管理画面)がすべて実装完了。
 
 **実装済みサブプロジェクトのスコープ外項目:**
 
@@ -46,9 +46,13 @@
   - 教師ごとの個別上限 — 学校組織向けは将来拡張
   - 緊急停止(キルスイッチ)の更新UI — Firestoreコンソール手動操作のまま
 
+**実装済み(2026-08-15):**
+
+- 利用者を運営者許可アカウントに限定するアクセス制御(限定ベータのアクセスゲート) — `functions/src/ai/betaAccess.ts`, `migrateLegacyBetaAccess.ts`, `getMyAiBetaAccessCallable`, `listAiBetaAccessCallable`, `grantAiBetaAccessCallable`, `revokeAiBetaAccessCallable`, Security Rules(`aiBetaApproved()` on Firestore/Storage), `useAiBetaAccess` hook, fail-closed UI (`TemplateOverviewPage`, `TemplateEditorPage`, `MaterialUploadPanel`), `/operator/ai-beta` 管理画面 (`OperatorAiBetaAccessPage.tsx`)。
+
 **未着手項目:**
 
-- 利用者を運営者許可アカウントに限定するアクセス制御(ベータの「限定公開」そのもの)
+- なし
 
 ## Phase 4: 家庭科モード — 実装済み(バックエンド・共通条件教師ダッシュボード・生徒UI)(2026-08-15更新)
 

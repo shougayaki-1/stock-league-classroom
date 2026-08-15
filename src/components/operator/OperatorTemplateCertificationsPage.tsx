@@ -24,6 +24,7 @@ export interface OperatorTemplateCertificationsPageProps {
     reason: string,
   ) => Promise<void>
   onNavigateToReports?: () => void
+  onNavigateToAiBeta?: () => void
 }
 
 const VISIBILITY_LABELS: Record<string, string> = {
@@ -44,6 +45,7 @@ export function OperatorTemplateCertificationsPage({
   accessDenied,
   onSetCertification,
   onNavigateToReports,
+  onNavigateToAiBeta,
 }: OperatorTemplateCertificationsPageProps) {
   const [reasons, setReasons] = useState<Record<string, string>>({})
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
@@ -85,13 +87,20 @@ export function OperatorTemplateCertificationsPage({
 
   return (
     <Stack spacing={2} sx={{ p: 2, maxWidth: 900 }}>
-      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="h5">公開教材の認定管理</Typography>
-        {onNavigateToReports && (
-          <Button variant="outlined" onClick={onNavigateToReports}>
-            通報の審査へ
-          </Button>
-        )}
+        <Stack direction="row" spacing={1}>
+          {onNavigateToReports && (
+            <Button variant="outlined" onClick={onNavigateToReports}>
+              通報の審査へ
+            </Button>
+          )}
+          {onNavigateToAiBeta && (
+            <Button variant="outlined" onClick={onNavigateToAiBeta}>
+              AIベータ管理へ
+            </Button>
+          )}
+        </Stack>
       </Stack>
 
       {loading ? (

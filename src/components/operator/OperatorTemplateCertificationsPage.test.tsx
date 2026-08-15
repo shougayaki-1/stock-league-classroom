@@ -144,4 +144,20 @@ describe('OperatorTemplateCertificationsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '通報の審査へ' }))
     expect(onNavigateToReports).toHaveBeenCalled()
   })
+
+  it('navigates to AI beta page when navigation button is clicked', () => {
+    const onNavigateToAiBeta = vi.fn()
+    render(
+      <OperatorTemplateCertificationsPage
+        candidates={candidates}
+        loading={false}
+        accessDenied={false}
+        onSetCertification={vi.fn()}
+        onNavigateToAiBeta={onNavigateToAiBeta}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'AIベータ管理へ' }))
+    expect(onNavigateToAiBeta).toHaveBeenCalled()
+  })
 })
