@@ -60,6 +60,22 @@ export interface StockPublicState {
   displayedVolumeShares: number
 }
 
+import type {
+  CompanyPublicView,
+  EconomicIndicatorPublicView,
+  InformationPublicView,
+  ResearchDeskPanelId,
+  ResearchDeskPublicView,
+} from '@stock-league/market-public-content'
+
+export type {
+  CompanyPublicView,
+  EconomicIndicatorPublicView,
+  InformationPublicView,
+  ResearchDeskPanelId,
+  ResearchDeskPublicView,
+}
+
 export interface LessonRunPublicState {
   status: string
   currentPhaseId: string | null
@@ -90,6 +106,8 @@ export interface LessonRunPublicState {
    * `LessonRunPrivateState.householdComputationLog` instead).
    */
   economicFactors?: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
+  /** Student Research Desk projection (Phase 2). */
+  researchDesk?: ResearchDeskPublicView
 }
 
 /** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */
