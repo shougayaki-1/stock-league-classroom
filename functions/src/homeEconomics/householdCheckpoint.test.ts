@@ -176,7 +176,7 @@ describe('writeHouseholdCheckpointV2 idempotency & persistence', () => {
     expect(cpDoc).toBeDefined()
     expect(cpDoc?.sequence).toBe(5)
     expect(cpDoc?.phaseId).toBe('phase-1')
-    expect((cpDoc?.snapshot as HouseholdCheckpointSnapshotV2).schemaVersion).toBe(2)
+    expect((cpDoc!.snapshot as HouseholdCheckpointSnapshotV2).schemaVersion).toBe(2)
   })
 
   it('replays same key with same payload even if sequence or household changes, returning original checkpointId', async () => {

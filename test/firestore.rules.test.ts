@@ -637,3 +637,27 @@ describe('lessonRuns response idempotency subcollections are server-internal onl
     })
   }
 })
+
+describe('household bulk settlement operations and checkpoint v2 idempotency collections are server-internal only', () => {
+  it('denies all client read/write of householdBulkSettlementOperations', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'householdBulkSettlementOperations', 'op-1')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { status: 'RUNNING' }))
+  })
+
+  it('denies all client read/write of householdCheckpointV2Idempotency', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'householdCheckpointV2Idempotency', 'key-1')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { checkpointId: 'cp-1' }))
+  })
+
+  it('denies all client read/write of householdCheckpointRestoreIdempotency', async () => {
+    const db = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const reference = doc(db, 'lessonRuns', 'run-1', 'householdCheckpointRestoreIdempotency', 'key-1')
+    await assertFails(getDoc(reference))
+    await assertFails(setDoc(reference, { newRestoreGeneration: 1 }))
+  })
+})
+

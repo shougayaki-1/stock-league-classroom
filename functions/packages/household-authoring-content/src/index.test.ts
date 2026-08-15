@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HouseholdProfile, HomeEconomicsContent, LifeEventDefinition } from './index'
+import type { HouseholdProfile, LifeEventDefinition } from './index'
 
 describe('HouseholdProfile (authoring)', () => {
   it('carries the internal fields the public view must never receive', () => {

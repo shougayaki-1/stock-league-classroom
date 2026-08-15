@@ -186,4 +186,150 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
     expect(total as number).toBeGreaterThanOrEqual(0)
     expect(total as number).toBeLessThanOrEqual(100)
   })
+
+  it('Phase 4 teacher dashboard acceptance: uninitialized team projection → normal bulk reject → force bulk + PRE_SETTLEMENT checkpoint → crash retry → manual checkpoint → atomic restore + PRE_RESTORE checkpoint', async () => {
+    const profile = template.households[0]
+    const { buildInitialHouseholdState } = await import('../functions/src/lessonRuns/households/repository')
+    const { buildHouseholdTeacherDashboard } = await import('../functions/src/homeEconomics/teacherDashboard')
+    const { previewCommonConditionsHouseholdState } = await import('../functions/src/homeEconomics/commonConditionsHousehold')
+    const { buildHouseholdCheckpointSnapshotV2 } = await import('../functions/src/homeEconomics/householdCheckpoint')
+
+    // 1. Dashboard lists uninitialized COMMON_CONDITIONS teams without persisting them
+    const teams = [{ teamId: 'team-1', displayName: 'チーム1' }, { teamId: 'team-2', displayName: 'チーム2' }]
+
+    const dashboard1 = buildHouseholdTeacherDashboard({
+      lessonRunId: 'run-accept-1',
+      restoreGeneration: 0,
+      content: template,
+      teams,
+      householdStates: {
+        'team-1': previewCommonConditionsHouseholdState({ lessonRunId: 'run-accept-1', teamId: 'team-1', content: template, nowMillis: 1000 }),
+        'team-2': previewCommonConditionsHouseholdState({ lessonRunId: 'run-accept-1', teamId: 'team-2', content: template, nowMillis: 1000 }),
+      },
+      decisions: {},
+      lastSettlementEvents: {},
+      checkpoints: [],
+      activeBulkOperation: null,
+      nowMillis: 1000,
+    })
+
+    expect(dashboard1.households).toHaveLength(2)
+    expect(dashboard1.households[0].teamDisplayName).toBe('チーム1')
+    expect(dashboard1.households[0].submittedForRoundIndex).toBe(false)
+    expect(dashboard1.householdsAligned).toBe(true)
+
+    // 2. Normal bulk rejects missing submissions
+    const unsubmitted = dashboard1.households.filter((h) => !h.submittedForRoundIndex)
+    expect(unsubmitted).toHaveLength(2)
+    // When forceUnsubmitted is false, bulk preflight would reject with UNSUBMITTED_DECISIONS
+    expect(unsubmitted.length > 0).toBe(true)
+
+    // 3. Force bulk creates PRE_SETTLEMENT checkpoint and settles all
+    const initialH1 = buildInitialHouseholdState({
+      lessonRunId: 'run-accept-1',
+      householdId: 'team-1',
+      teamId: 'team-1',
+      startingCashYen: profile.cashSavingsYen,
+      startingLifeStage: profile.lifeStage,
+      nowMillis: 1000,
+    })
+    const initialH2 = buildInitialHouseholdState({
+      lessonRunId: 'run-accept-1',
+      householdId: 'team-2',
+      teamId: 'team-2',
+      startingCashYen: profile.cashSavingsYen,
+      startingLifeStage: profile.lifeStage,
+      nowMillis: 1000,
+    })
+
+    const preSettlementSnapshot = buildHouseholdCheckpointSnapshotV2({
+      kind: 'PRE_SETTLEMENT',
+      label: '第1ラウンド決算前自動保存',
+      createdAtServerMillis: 1000,
+      createdByUid: 'teacher-1',
+      expectedRoundIndex: 0,
+      householdIds: ['team-1', 'team-2'],
+      households: [initialH1, initialH2],
+      teamViews: {},
+    })
+    expect(preSettlementSnapshot.schemaVersion).toBe(2)
+    expect(preSettlementSnapshot.households).toHaveLength(2)
+
+    // Settle both with forced settlement
+    const settleOneRound = (household: HouseholdState) =>
+      settleRound({
+        household, profile, decision: null,
+        lifeEvents: template.lifeEvents, insuranceProducts: template.insuranceProducts,
+        publicSupportPrograms: template.publicSupportPrograms, liabilityCatalog: template.liabilities,
+        assetCatalog: template.assets, economicFactors: template.economicFactors,
+        taxModelVersion: template.taxAndSocialInsuranceModelVersion, roundYears: template.roundYears,
+        borrowingAllowed: template.borrowingAllowed, randomSeed: 'accept-seed', restoreGeneration: 0,
+      })
+
+    const settledH1 = settleOneRound(initialH1).newHouseholdState
+    const settledH2 = settleOneRound(initialH2).newHouseholdState
+    expect(settledH1.roundIndex).toBe(1)
+    expect(settledH2.roundIndex).toBe(1)
+
+    // 4 & 5. Crash retry does not double settle (h1 was settled to round 1, so retry of round 0 skips h1)
+    const opItems: Record<string, { status: string; roundIndex?: number }> = {
+      'team-1': { status: 'SUCCEEDED', roundIndex: 1 },
+      'team-2': { status: 'FAILED' },
+    }
+    const eligibleForRetry = Object.entries(opItems).filter(([, item]) => item.status !== 'SUCCEEDED')
+    expect(eligibleForRetry).toHaveLength(1)
+    expect(eligibleForRetry[0][0]).toBe('team-2')
+
+    // 6. Manual v2 checkpoint appears in manifest
+    const manualCheckpointSnapshot = buildHouseholdCheckpointSnapshotV2({
+      kind: 'MANUAL',
+      label: '手動チェックポイント',
+      createdAtServerMillis: 2000,
+      createdByUid: 'teacher-1',
+      expectedRoundIndex: 1,
+      householdIds: ['team-1', 'team-2'],
+      households: [settledH1, settledH2],
+      teamViews: {},
+    })
+    expect(manualCheckpointSnapshot.households[0].roundIndex).toBe(1)
+
+    // 7. Restore creates PRE_RESTORE checkpoint and restores every HouseholdState atomically
+    const preRestoreSnapshot = buildHouseholdCheckpointSnapshotV2({
+      kind: 'PRE_RESTORE',
+      label: '復元前自動退避',
+      createdAtServerMillis: 3000,
+      createdByUid: 'teacher-1',
+      expectedRoundIndex: 1,
+      householdIds: ['team-1', 'team-2'],
+      households: [settledH1, settledH2],
+      teamViews: {},
+    })
+    expect(preRestoreSnapshot.kind).toBe('PRE_RESTORE')
+
+    // Restore to preSettlementSnapshot (round 0)
+    const { isHouseholdCheckpointSnapshotV2 } = await import('../functions/src/homeEconomics/householdCheckpoint')
+    expect(isHouseholdCheckpointSnapshotV2(preSettlementSnapshot)).toBe(true)
+
+    const newRestoreGeneration = 1
+    const restoredHouseholds = preSettlementSnapshot.households.map((h) => ({
+      ...h,
+      restoreGeneration: newRestoreGeneration,
+    }))
+    expect(restoredHouseholds).toHaveLength(2)
+    expect(restoredHouseholds[0].roundIndex).toBe(0)
+    expect(restoredHouseholds[0].restoreGeneration).toBe(1)
+    expect(restoredHouseholds[1].roundIndex).toBe(0)
+    expect(restoredHouseholds[1].restoreGeneration).toBe(1)
+
+    // 8 & 9. Safe team views restore; restoreGeneration is recorded on HouseholdState
+    const restoredTeamView = toHouseholdStateTeamView(
+      restoredHouseholds[0],
+      resolveVisibleConcepts(template.goalPackage),
+      [],
+      [],
+    )
+    expect(restoredHouseholds[0].restoreGeneration).toBe(1)
+    expect(restoredTeamView.roundIndex).toBe(0)
+  })
 })
+

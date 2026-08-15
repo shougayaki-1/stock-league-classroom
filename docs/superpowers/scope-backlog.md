@@ -50,15 +50,14 @@
 
 - 利用者を運営者許可アカウントに限定するアクセス制御(ベータの「限定公開」そのもの)
 
-## Phase 4: 家庭科モード — 実装済み(バックエンド・基本UI)、教師UI作り込みは要拡充(2026-08-15訂正)
+## Phase 4: 家庭科モード — 実装済み(バックエンド・共通条件教師ダッシュボード・生徒UI)(2026-08-15更新)
 
-> **訂正:** 「別スペックが必要」の初期メモ(旧ロードマップ文書)を根拠に丸ごと未着手と判定していたが誤り。統合仕様書§13(家庭科・生活設計シミュレーション)・§25「Phase D: 家庭科完成」・§26不変条件15項・§27.4受け入れテストに正式な仕様が存在し、`functions/src/homeEconomics/`配下にエンジン一式(`annualCashFlow.ts`・`assetReturn.ts`・`mortgage.ts`・`insurance.ts`・`lifeEvents.ts`・`publicSupport.ts`・`retirement.ts`・`shortfallOptions.ts`・`settleRound.ts`)、`goalPackage.ts`(目標達成型評価)、`checkpointRestore.ts`(人生段階をまたぐ保存・復元)が実装済み(テスト20件)。コミット履歴に「confirm Phase D completion conditions」「close the §27.4 acceptance-test gap」など仕様準拠検証コミットあり。
+> **更新(2026-08-15):** 統合仕様書§13(家庭科・生活設計シミュレーション)・§25「Phase D: 家庭科完成」・§26不変条件15項・§27.4受け入れテストに準拠し、`functions/src/homeEconomics/`配下にエンジン一式、目標達成型評価、v2チェックポイント管理(`householdCheckpoint.ts`)、アトミック復元(`householdRestore.ts`)、一括決算オーケストレーション(`bulkSettlement.ts` / `bulkSettlementOperation.ts`)、教師ダッシュボード投影(`teacherDashboard.ts`)を実装。フロントエンド側では `HouseholdTeacherDashboard.tsx`、`HouseholdSettlementConfirmationModal.tsx`、`HouseholdCheckpointModal.tsx` を整備し `LessonControlRoom.tsx` へ統合。共通条件モード(COMMON_CONDITIONS)における全体進捗・個別/一括決算・クラッシュ安全な再試行・世代管理付きアトミック復元が稼働。
 
 **未着手として残る点:**
 
-- 教師用UI — `HouseholdRoundControlPanel.tsx`は直近コミットで追加された「最小限のコントロールパネル」にとどまり、作り込みが薄い
-- §13.3の役割・人物別/クラス段階分担など発展的な授業形式のUI対応 — コアプロフィール中心の実装で未確認
-- `src/lib/homeEconomics/`のクライアント側表示ロジック(engine群の可視化)が薄い可能性 — 要詳細確認
+- §13.3の役割・人物別/クラス段階分担など発展的な授業形式(ROLE_VARIANT等)のUI・一括処理対応 — 現行は共通条件モード(COMMON_CONDITIONS)に特化
+- 発展形式向けの詳細なクライアント側高度可視化 — 必要に応じて将来拡張
 
 ## Phase 5: 組織・ライセンス・決済 — 実装済み(2026-08-15更新)
 
