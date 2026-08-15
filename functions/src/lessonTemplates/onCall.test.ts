@@ -35,6 +35,7 @@ vi.mock('./templateShares', () => ({
   revokeTemplateSharesWithAdminSdk: vi.fn(),
 }))
 vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
   getFirestore: () => ({ doc: () => ({ get: templateGetMock, update: templateUpdateMock }) }),
 }))
 
@@ -407,7 +408,7 @@ describe('publishTemplateToCommunityCallable', () => {
       get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
     })
     await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: true })
-    expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'COMMUNITY' })
+    expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'COMMUNITY', publishedToCommunityAt: 'SERVER_TIMESTAMP' })
   })
 })
 

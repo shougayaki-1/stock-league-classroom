@@ -50,7 +50,10 @@ describe('publishLessonVersion', () => {
       templateId: 't1', orgId: 'personal_teacher-a', schemaVersion: 1,
       content: baseTemplate.draft, createdByUid: 'teacher-a', changeSummary: '初版', immutable: true,
     })
-    expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({ currentPublishedVersionId: 'version-1', status: 'READY' })
+    expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({
+      currentPublishedVersionId: 'version-1', status: 'READY',
+      title: 'ドラフト', description: '', subject: 'SOCIAL_STUDIES',
+    })
   })
 
   it('is idempotent: retrying the same idempotencyKey with the same payload returns the same versionId and creates no second version', async () => {
