@@ -38,11 +38,13 @@ import { getTuningConstants, type TuningConstantsResponse } from './lib/platform
 import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboardPage'
 import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
+import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, listOrgInvitations, revokeInvitation, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/planLimits'
+import { getOrgUsageDashboard, type OrgUsageDashboard } from './lib/organizations/usageDashboard'
 import { getParentOrgQuotaUsage, getSchoolEffectiveQuota, setSchoolQuotaAllocation, type ParentOrgQuotaUsageResult, type SchoolEffectiveQuotaResult } from './lib/organizations/parentOrgQuota'
 import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
 import { createStripeCustomerPortalSession } from './lib/billing/stripeCustomerPortal'
@@ -582,6 +584,22 @@ function ParentOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   />
 }
 
+function UsageDashboardRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>()
+  const [data, setData] = useState<OrgUsageDashboard>()
+  const [error, setError] = useState<string>()
+  useEffect(() => {
+    let cancelled = false
+    if (!orgId) return
+    setError(undefined)
+    getOrgUsageDashboard(services.functions, { orgId })
+      .then((result) => { if (!cancelled) setData(result) })
+      .catch(() => { if (!cancelled) setError('failed') })
+    return () => { cancelled = true }
+  }, [services, orgId])
+  return <UsageDashboardPage data={data} error={error} />
+}
+
 function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [data, setData] = useState<PlanLimitsResult>()
@@ -831,6 +849,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/:orgId/usage-dashboard" element={enabled && services ? <TemplateRouteGuard services={services}><UsageDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />

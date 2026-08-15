@@ -90,6 +90,16 @@ describe('SchoolOrgSettingsPage', () => {
 
     expect(screen.getByRole('link', { name: '利用枠を確認' })).toHaveAttribute('href', '/teacher/organizations/org-1/plan-limits')
   })
+
+  it('links to the usage dashboard page', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('link', { name: '利用状況ダッシュボードを見る' })).toHaveAttribute('href', '/teacher/organizations/org-1/usage-dashboard')
+  })
 })
 
 describe('member list', () => {

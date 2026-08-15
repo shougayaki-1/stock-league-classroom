@@ -40,6 +40,7 @@ export function SchoolOrgSettingsPage({
     <Stack spacing={3} sx={{ p: 2 }}>
       <Typography variant="h5">{orgName}</Typography>
       <Link to={`/teacher/organizations/${orgId}/plan-limits`}>利用枠を確認</Link>
+      <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
       <Typography variant="body2">所属する上位組織: {parentOrgName ?? 'なし'}</Typography>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>
