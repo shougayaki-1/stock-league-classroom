@@ -26,8 +26,17 @@ describe('storage.rules', () => {
   it('allows an active member to upload to their organization', async () => {
     await assertSucceeds(environment.authenticatedContext('teacher-a', token).storage().ref('orgs/org-1/materials/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
   })
+  it('allows an active member to upload to template-scoped material path', async () => {
+    await assertSucceeds(environment.authenticatedContext('teacher-a', token).storage().ref('orgs/org-1/materials/tmpl-1/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
+  })
   it('denies another organization and unauthenticated writes', async () => {
     await assertFails(environment.authenticatedContext('teacher-a', token).storage().ref('orgs/org-2/materials/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
+    await assertFails(environment.authenticatedContext('teacher-a', token).storage().ref('orgs/org-2/materials/tmpl-1/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
     await assertFails(environment.unauthenticatedContext().storage().ref('orgs/org-1/materials/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
+    await assertFails(environment.unauthenticatedContext().storage().ref('orgs/org-1/materials/tmpl-1/mat-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
+  })
+  it('denies client access to staging path', async () => {
+    await assertFails(environment.authenticatedContext('teacher-a', token).storage().ref('templateMoveStaging/op-1/file.pdf').put(new Uint8Array([1]), { contentType: 'application/pdf' }).then(() => undefined))
+    await assertFails(environment.authenticatedContext('teacher-a', token).storage().ref('templateMoveStaging/op-1/file.pdf').getDownloadURL())
   })
 })
