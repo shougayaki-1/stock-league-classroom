@@ -16,6 +16,23 @@
         { "fieldPath": "versionId", "order": "ASCENDING" },
         { "fieldPath": "createdByUid", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "lessonTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibility", "order": "ASCENDING" },
+        { "fieldPath": "publishedToCommunityAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lessonTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibility", "order": "ASCENDING" },
+        { "fieldPath": "subject", "order": "ASCENDING" },
+        { "fieldPath": "publishedToCommunityAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
