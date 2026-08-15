@@ -21,6 +21,9 @@ const memberProps = {
   exportingStudentData: false,
   auditLogEntries: [],
   loadingAuditLog: false,
+  studentDataRetentionDays: null,
+  settingRetentionPolicy: false,
+  onSetStudentDataRetentionDays: vi.fn(),
 }
 
 describe('SchoolOrgSettingsPage', () => {
@@ -254,5 +257,27 @@ describe('parent organization display', () => {
     )
     expect(screen.queryByText('監査ログ')).not.toBeInTheDocument()
   })
+
+  it('shows the retention policy form to an owner and submits the entered days', () => {
+    const onSetStudentDataRetentionDays = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-owner" members={members} onSetStudentDataRetentionDays={onSetStudentDataRetentionDays} />
+      </MemoryRouter>,
+    )
+    fireEvent.change(screen.getByLabelText(/保持日数/), { target: { value: '400' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(onSetStudentDataRetentionDays).toHaveBeenCalledWith(400)
+  })
+
+  it('hides the retention policy form from a non-owner', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-teacher" members={members} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('生徒データの保持期間')).not.toBeInTheDocument()
+  })
 })
+
 

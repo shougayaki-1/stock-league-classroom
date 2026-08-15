@@ -28,10 +28,14 @@ export interface SchoolOrgSettingsPageProps {
   exportingStudentData: boolean
   auditLogEntries?: OrgAuditLogEntry[]
   loadingAuditLog?: boolean
+  studentDataRetentionDays?: number | null
+  settingRetentionPolicy?: boolean
+  onSetStudentDataRetentionDays?: (days: number) => void
 }
 
 export function SchoolOrgSettingsPage({
   orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData, auditLogEntries, loadingAuditLog,
+  studentDataRetentionDays = null, settingRetentionPolicy = false, onSetStudentDataRetentionDays,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -39,6 +43,7 @@ export function SchoolOrgSettingsPage({
   const safeInvitations = Array.isArray(invitations) ? invitations : []
   const activeSeatCount = safeMembers.filter((member) => member.status === 'active' && SEAT_ROLES.includes(member.role)).length
   const viewerRole = safeMembers.find((member) => member.uid === viewerUid)?.role
+  const isOwner = viewerRole === 'owner'
 
 
   return (
@@ -48,6 +53,24 @@ export function SchoolOrgSettingsPage({
       <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
       {(viewerRole === 'owner' || viewerRole === 'admin') && <Link to={`/teacher/organizations/${orgId}/template-approvals`}>承認待ちテンプレートを確認</Link>}
       {viewerRole === 'owner' && <Button variant="outlined" disabled={exportingStudentData} onClick={onExportStudentData}>生徒データを一括エクスポート</Button>}
+      {isOwner && (
+        <section>
+          <h3>生徒データの保持期間</h3>
+          <p>現在の設定: {studentDataRetentionDays !== null ? `${studentDataRetentionDays}日` : '未設定'}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault()
+            const input = new FormData(event.currentTarget).get('retentionDays')
+            const days = Number(input)
+            if (Number.isInteger(days) && days >= 30 && days <= 3650 && onSetStudentDataRetentionDays) onSetStudentDataRetentionDays(days)
+          }}>
+            <label>
+              保持日数(30〜3650)
+              <input name="retentionDays" type="number" min={30} max={3650} defaultValue={studentDataRetentionDays ?? 365} disabled={settingRetentionPolicy} />
+            </label>
+            <button type="submit" disabled={settingRetentionPolicy}>{settingRetentionPolicy ? '保存中…' : '保存'}</button>
+          </form>
+        </section>
+      )}
       {(viewerRole === 'owner' || viewerRole === 'admin') && (
         <section>
           <h3>監査ログ</h3>

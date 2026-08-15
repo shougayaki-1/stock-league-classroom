@@ -47,6 +47,7 @@ import { BillingSection } from './components/teacher/organizations/BillingSectio
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
 import { acceptInvitation, createInvitation, listMyInvitations, listOrgInvitations, revokeInvitation, type Invitation } from './lib/organizations/invitations'
+import { setStudentDataRetentionDays } from './lib/organizations/studentDataRetentionPolicy'
 import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/planLimits'
 import { getOrgUsageDashboard, type OrgUsageDashboard } from './lib/organizations/usageDashboard'
 import { getParentOrgQuotaUsage, getSchoolEffectiveQuota, setSchoolQuotaAllocation, type ParentOrgQuotaUsageResult, type SchoolEffectiveQuotaResult } from './lib/organizations/parentOrgQuota'
@@ -472,6 +473,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const [teacherSeatLimit, setTeacherSeatLimit] = useState<number>()
   const [suspending, setSuspending] = useState(false)
   const [parentOrgId, setParentOrgId] = useState<string | null>(null)
+  const [studentDataRetentionDays, setStudentDataRetentionDaysState] = useState<number | null>(null)
+  const [settingRetentionPolicy, setSettingRetentionPolicy] = useState(false)
   const uid = services.auth.currentUser?.uid
 
   const loadMembers = useCallback(() => {
@@ -498,7 +501,19 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   }, [orgId, services.functions])
   useEffect(() => {
     if (!orgId) return
-    void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => setParentOrgId(snapshot.exists() ? ((snapshot.data().parentOrgId as string | undefined) ?? null) : null))
+    void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data()
+        setParentOrgId((data.parentOrgId as string | undefined) ?? null)
+        const policyDays = typeof data.studentDataRetentionPolicy?.retentionDays === 'number'
+          ? data.studentDataRetentionPolicy.retentionDays
+          : null
+        setStudentDataRetentionDaysState(policyDays)
+      } else {
+        setParentOrgId(null)
+        setStudentDataRetentionDaysState(null)
+      }
+    })
   }, [orgId, services.firestore])
   useEffect(() => {
     if (!orgId) return
@@ -526,6 +541,14 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setExportingStudentData(false))
   }
 
+  const onSetStudentDataRetentionDays = (days: number) => {
+    if (!orgId) return
+    setSettingRetentionPolicy(true)
+    void setStudentDataRetentionDays(services.functions, { orgId, retentionDays: days })
+      .then(() => setStudentDataRetentionDaysState(days))
+      .finally(() => setSettingRetentionPolicy(false))
+  }
+
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
@@ -538,6 +561,9 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       suspending={suspending}
       teacherSeatLimit={teacherSeatLimit}
       parentOrgName={parentOrgId}
+      studentDataRetentionDays={studentDataRetentionDays}
+      settingRetentionPolicy={settingRetentionPolicy}
+      onSetStudentDataRetentionDays={onSetStudentDataRetentionDays}
       onSuspendMember={(targetUid) => {
         setSuspending(true)
         void suspendOrgMember(services.functions, { orgId, uid: targetUid })
