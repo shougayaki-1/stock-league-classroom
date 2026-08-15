@@ -16,7 +16,9 @@ import {
   createInvitationWithAdminSdk,
   listMyInvitations,
   reserveTeacherSeatForInvitation,
+  revokeInvitation,
 } from './invitations'
+
 
 const makeQuotaFirestore = () => {
   const documents = new Map<string, Record<string, unknown>>()
@@ -541,3 +543,31 @@ describe('listMyInvitations', () => {
     expect(queryPendingInvitationsByEmail).toHaveBeenCalledWith('teacher@example.com')
   })
 })
+
+describe('revokeInvitation', () => {
+  it('throws when the invitation does not exist', async () => {
+    await expect(revokeInvitation({
+      getInvitation: async () => null,
+      markInvitationRevoked: vi.fn(),
+    }, { orgId: 'org-1', invitationId: 'inv-1' })).rejects.toThrow('この招待は失効できません')
+  })
+
+  it('throws when the invitation is not PENDING', async () => {
+    const markInvitationRevoked = vi.fn()
+    await expect(revokeInvitation({
+      getInvitation: async () => ({ id: 'inv-1', orgId: 'org-1', email: 'a@example.com', role: 'teacher', status: 'ACCEPTED', invitedByUid: 'u1', createdAt: null }),
+      markInvitationRevoked,
+    }, { orgId: 'org-1', invitationId: 'inv-1' })).rejects.toThrow('この招待は失効できません')
+    expect(markInvitationRevoked).not.toHaveBeenCalled()
+  })
+
+  it('revokes a PENDING invitation', async () => {
+    const markInvitationRevoked = vi.fn()
+    await revokeInvitation({
+      getInvitation: async () => ({ id: 'inv-1', orgId: 'org-1', email: 'a@example.com', role: 'teacher', status: 'PENDING', invitedByUid: 'u1', createdAt: null }),
+      markInvitationRevoked,
+    }, { orgId: 'org-1', invitationId: 'inv-1' })
+    expect(markInvitationRevoked).toHaveBeenCalledWith('org-1', 'inv-1')
+  })
+})
+

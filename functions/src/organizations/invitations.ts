@@ -17,10 +17,11 @@ export interface Invitation {
   orgId: string
   email: string
   role: 'admin' | 'teacher'
-  status: 'PENDING' | 'ACCEPTED'
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED'
   invitedByUid: string
   createdAt: unknown
 }
+
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase()
 
@@ -413,6 +414,35 @@ export const acceptInvitationWithAdminSdk = (
     },
   }, input)
 }
+
+export interface RevokeInvitationDeps {
+  getInvitation: (orgId: string, invitationId: string) => Promise<Invitation | null>
+  markInvitationRevoked: (orgId: string, invitationId: string) => Promise<void>
+}
+
+export interface RevokeInvitationInput { orgId: string; invitationId: string }
+
+export const revokeInvitation = async (deps: RevokeInvitationDeps, input: RevokeInvitationInput): Promise<void> => {
+  const invitation = await deps.getInvitation(input.orgId, input.invitationId)
+  if (!invitation || invitation.status !== 'PENDING') throw new Error('この招待は失効できません')
+  await deps.markInvitationRevoked(input.orgId, input.invitationId)
+}
+
+/** Production wiring: Firestore Admin SDK. */
+export const revokeInvitationWithAdminSdk = (input: RevokeInvitationInput): Promise<void> => {
+  const db = getFirestore()
+  return revokeInvitation({
+    getInvitation: async (orgId, invitationId) => {
+      const snap = await db.doc(`organizations/${orgId}/invitations/${invitationId}`).get()
+      if (!snap.exists) return null
+      return { id: snap.id, orgId, ...(snap.data() as Omit<Invitation, 'id' | 'orgId'>) }
+    },
+    markInvitationRevoked: async (orgId, invitationId) => {
+      await db.doc(`organizations/${orgId}/invitations/${invitationId}`).update({ status: 'REVOKED' })
+    },
+  }, input)
+}
+
 
 export interface ListMyInvitationsDeps {
   queryPendingInvitationsByEmail: (email: string) => Promise<Invitation[]>
