@@ -2,7 +2,10 @@ import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { ensurePersonalOrgWithAdminSdk } from './personalOrg'
 import { createSchoolOrgWithAdminSdk } from './schoolOrg'
-import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
+import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk, listOrgInvitationsWithAdminSdk, revokeInvitationWithAdminSdk } from './invitations'
+
+import { changeOrgMemberRoleWithAdminSdk } from './changeRole'
+
 import { requireActiveOrgMember } from './authorization'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
@@ -175,3 +178,62 @@ export const listChildSchoolsCallable = onCall({ region: 'asia-northeast1' }, as
   await requireActiveOrgMember(getFirestore(), data.parentOrgId, request.auth.uid)
   return listChildSchoolsWithAdminSdk({ parentOrgId: data.parentOrgId })
 })
+
+interface ListOrgInvitationsRequest { orgId?: unknown }
+
+export const listOrgInvitationsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ListOrgInvitationsRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  requireManager(membership, 'owner または admin のみ招待一覧を確認できます。')
+  return listOrgInvitationsWithAdminSdk(data.orgId)
+})
+
+interface RevokeInvitationRequest { orgId?: unknown; invitationId?: unknown }
+
+export const revokeInvitationCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as RevokeInvitationRequest
+  if (typeof data.orgId !== 'string' || typeof data.invitationId !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  requireManager(membership, 'owner または admin のみ招待を失効できます。')
+  try {
+    await revokeInvitationWithAdminSdk({ orgId: data.orgId, invitationId: data.invitationId })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'この招待は失効できません') throw new HttpsError('failed-precondition', error.message)
+    throw error
+  }
+})
+
+interface ChangeOrgMemberRoleRequest { orgId?: unknown; uid?: unknown; newRole?: unknown }
+const isValidRole = (value: unknown): value is 'owner' | 'admin' | 'teacher' => value === 'owner' || value === 'admin' || value === 'teacher'
+
+export const changeOrgMemberRoleCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ChangeOrgMemberRoleRequest
+  if (typeof data.orgId !== 'string' || typeof data.uid !== 'string' || !isValidRole(data.newRole)) {
+    throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  }
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  requireManager(membership, 'owner または admin のみロールを変更できます。')
+
+  const targetSnap = await getFirestore().doc(`organizations/${data.orgId}/members/${data.uid}`).get()
+  const targetCurrentRole = targetSnap.exists ? (targetSnap.get('role') as string | undefined) : undefined
+  if ((data.newRole === 'owner' || targetCurrentRole === 'owner') && membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', 'owner に関わるロール変更は owner のみ行えます。')
+  }
+
+  try {
+    await changeOrgMemberRoleWithAdminSdk({ orgId: data.orgId, uid: data.uid, newRole: data.newRole })
+  } catch (error) {
+    if (error instanceof Error && (error.message === '組織には少なくとも1人のownerが必要です' || error.message === '解除されたメンバーのロールは変更できません' || error.message === 'このメンバーは見つかりません')) {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
+})
+

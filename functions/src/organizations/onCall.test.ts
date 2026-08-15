@@ -1,12 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   acceptInvitationCallable,
+  changeOrgMemberRoleCallable,
   createInvitationCallable,
   createSchoolOrgCallable,
   getOrgPlanLimitsCallable,
   isCallerTeacher,
+  listOrgInvitationsCallable,
   listOrgMembersCallable,
   listMyInvitationsCallable,
+  revokeInvitationCallable,
   suspendOrgMemberCallable,
   createParentOrgCallable,
   linkSchoolToParentOrgCallable,
@@ -16,7 +19,14 @@ import {
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import { requireActiveOrgMember } from './authorization'
 import { createSchoolOrgWithAdminSdk } from './schoolOrg'
-import { acceptInvitationWithAdminSdk, createInvitationWithAdminSdk, listMyInvitationsWithAdminSdk } from './invitations'
+import {
+  acceptInvitationWithAdminSdk,
+  createInvitationWithAdminSdk,
+  listMyInvitationsWithAdminSdk,
+  listOrgInvitationsWithAdminSdk,
+  revokeInvitationWithAdminSdk,
+} from './invitations'
+import { changeOrgMemberRoleWithAdminSdk } from './changeRole'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
 import { suspendOrgMemberWithAdminSdk } from './suspendMember'
@@ -29,12 +39,16 @@ vi.mock('./invitations', () => ({
   acceptInvitationWithAdminSdk: vi.fn(),
   createInvitationWithAdminSdk: vi.fn(),
   listMyInvitationsWithAdminSdk: vi.fn(),
+  listOrgInvitationsWithAdminSdk: vi.fn(),
+  revokeInvitationWithAdminSdk: vi.fn(),
 }))
+vi.mock('./changeRole', () => ({ changeOrgMemberRoleWithAdminSdk: vi.fn() }))
 vi.mock('./planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
 vi.mock('./orgMembers', () => ({ listOrgMembersWithAdminSdk: vi.fn() }))
 vi.mock('./suspendMember', () => ({ suspendOrgMemberWithAdminSdk: vi.fn() }))
 vi.mock('./parentOrg', () => ({ createParentOrgWithAdminSdk: vi.fn() }))
 vi.mock('./schoolHierarchy', () => ({ linkSchoolToParentOrgWithAdminSdk: vi.fn(), unlinkSchoolFromParentOrgWithAdminSdk: vi.fn(), listChildSchoolsWithAdminSdk: vi.fn() }))
+
 const docGetMock = vi.fn()
 vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
 
@@ -301,3 +315,113 @@ describe('parent organization hierarchy Callables', () => {
     await expect(listChildSchoolsCallable.run({ auth: teacher, data: { parentOrgId: 'parent-1' } } as unknown as CallableRequest)).resolves.toHaveLength(1)
   })
 })
+
+describe('listOrgInvitationsCallable', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a caller who is not owner/admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(listOrgInvitationsCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(listOrgInvitationsWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('returns invitations for an owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(listOrgInvitationsWithAdminSdk).mockResolvedValue([])
+    const request = { auth: teacher, data: { orgId: 'org-1' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(listOrgInvitationsCallable.run(request)).resolves.toEqual([])
+    expect(listOrgInvitationsWithAdminSdk).toHaveBeenCalledWith('org-1')
+  })
+})
+
+describe('revokeInvitationCallable', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a caller who is not owner/admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1', invitationId: 'inv-1' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(revokeInvitationCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(revokeInvitationWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('translates a non-PENDING error into failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(revokeInvitationWithAdminSdk).mockRejectedValue(new Error('この招待は失効できません'))
+    const request = { auth: teacher, data: { orgId: 'org-1', invitationId: 'inv-1' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(revokeInvitationCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('revokes for an admin caller', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(revokeInvitationWithAdminSdk).mockResolvedValue(undefined)
+    const request = { auth: teacher, data: { orgId: 'org-1', invitationId: 'inv-1' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(revokeInvitationCallable.run(request)).resolves.toBeUndefined()
+    expect(revokeInvitationWithAdminSdk).toHaveBeenCalledWith({ orgId: 'org-1', invitationId: 'inv-1' })
+  })
+})
+
+describe('changeOrgMemberRoleCallable', () => {
+  // docGetMock is the existing shared `getFirestore().doc().get` mock at the
+  // top of this file. changeOrgMemberRoleCallable reads the TARGET member's
+  // current role with it (to decide whether an owner is involved on either
+  // side of the change), separately from `requireActiveOrgMember`, which
+  // authorizes the CALLER via the mocked `requireActiveOrgMember` itself.
+  beforeEach(() => {
+    vi.clearAllMocks()
+    docGetMock.mockResolvedValue({ exists: true, get: () => 'teacher' }) // target's current role: non-owner by default
+  })
+
+  it('rejects a caller who is not owner/admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'admin' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(changeOrgMemberRoleWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects an admin caller promoting a member to owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'admin', membershipVersion: 1 })
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'owner' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(changeOrgMemberRoleWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects an admin caller demoting an existing owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'admin', membershipVersion: 1 })
+    docGetMock.mockResolvedValue({ exists: true, get: () => 'owner' }) // target is currently an owner
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'admin' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(changeOrgMemberRoleWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('translates the sole-owner guard error into failed-precondition', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(changeOrgMemberRoleWithAdminSdk).mockRejectedValue(new Error('組織には少なくとも1人のownerが必要です'))
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'admin' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('allows an owner to promote a member to owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(changeOrgMemberRoleWithAdminSdk).mockResolvedValue(undefined)
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'owner' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).resolves.toBeUndefined()
+    expect(changeOrgMemberRoleWithAdminSdk).toHaveBeenCalledWith({ orgId: 'org-1', uid: 'uid-2', newRole: 'owner' })
+  })
+
+  it('allows an owner to demote an existing owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+    docGetMock.mockResolvedValue({ exists: true, get: () => 'owner' })
+    vi.mocked(changeOrgMemberRoleWithAdminSdk).mockResolvedValue(undefined)
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'admin' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).resolves.toBeUndefined()
+  })
+
+  it('allows an admin to change a role between admin and teacher', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(changeOrgMemberRoleWithAdminSdk).mockResolvedValue(undefined)
+    const request = { auth: teacher, data: { orgId: 'org-1', uid: 'uid-2', newRole: 'teacher' }, rawRequest: {} } as unknown as CallableRequest
+    await expect(changeOrgMemberRoleCallable.run(request)).resolves.toBeUndefined()
+  })
+})
+

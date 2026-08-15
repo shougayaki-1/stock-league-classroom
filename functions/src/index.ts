@@ -17,6 +17,9 @@ export {
   createInvitationCallable,
   acceptInvitationCallable,
   listMyInvitationsCallable,
+  listOrgInvitationsCallable,
+  revokeInvitationCallable,
+  changeOrgMemberRoleCallable,
   getOrgPlanLimitsCallable,
   listOrgMembersCallable,
   suspendOrgMemberCallable,
@@ -25,6 +28,7 @@ export {
   unlinkSchoolFromParentOrgCallable,
   listChildSchoolsCallable,
 } from './organizations/onCall'
+
 export {
   getParentOrgQuotaUsageCallable,
   getSchoolEffectiveQuotaCallable,
