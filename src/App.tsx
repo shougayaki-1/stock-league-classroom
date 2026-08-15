@@ -23,6 +23,9 @@ import { TemplateListPage } from './components/teacher/templates/TemplateListPag
 import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilderWizard'
 import { TemplateOverviewPage } from './components/teacher/templates/TemplateOverviewPage'
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
+import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
+import { listCommunityTemplates, type CommunityTemplate } from './lib/lessonTemplates/communityTemplates'
+import { duplicateLessonTemplate } from './lib/lessonTemplates/duplicateLessonTemplate'
 import { SocialStudiesQuestionStep } from './components/teacher/templates/wizardSteps/socialStudies/QuestionSteps'
 import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizardSteps/homeEconomics/QuestionSteps'
 import { getTuningConstants, type TuningConstantsResponse } from './lib/platformConfig/getTuningConstants'
@@ -302,6 +305,27 @@ function TemplateListRoute({ services }: { services: FirebaseServices }) {
       <TemplateListPage templates={templates} loading={loading} onCreateNew={() => navigate('/teacher/templates/new')} onOpen={(id) => navigate(`/teacher/templates/${id}/edit`)} />
     </Stack>
   )
+}
+
+function CommunityMarketplaceRoute({ services }: { services: FirebaseServices }) {
+  const [templates, setTemplates] = useState<CommunityTemplate[]>([])
+  const [loading, setLoading] = useState(true)
+  const [subject, setSubject] = useState<'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined>(undefined)
+  useEffect(() => {
+    setLoading(true)
+    listCommunityTemplates(services.firestore, { subject }).then(setTemplates).finally(() => setLoading(false))
+  }, [services, subject])
+  const uid = services.auth.currentUser?.uid
+  return <CommunityTemplatesPage
+    templates={templates} loading={loading} subject={subject} onSubjectChange={setSubject}
+    onDuplicate={(template) => {
+      if (!uid) return
+      void duplicateLessonTemplate(services.functions, {
+        sourceTemplateId: template.id, sourceVersionId: template.currentPublishedVersionId,
+        targetOrgId: personalOrgId(uid), confirmedOverrides: {}, idempotencyKey: crypto.randomUUID(),
+      })
+    }}
+  />
 }
 
 function TemplateNewRoute({ services }: { services: FirebaseServices }) {
@@ -719,6 +743,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />

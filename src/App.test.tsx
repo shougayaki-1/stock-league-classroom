@@ -44,6 +44,8 @@ vi.mock('firebase/firestore', () => ({
   getDocs: (...args: unknown[]) => getDocsMock(...args),
   query: (...args: unknown[]) => args[0],
   where: (...args: unknown[]) => args,
+  orderBy: (...args: unknown[]) => args,
+  limit: (...args: unknown[]) => args,
   onSnapshot: (...args: Parameters<typeof onSnapshotMock>) => onSnapshotMock(...args),
 }))
 
@@ -267,6 +269,22 @@ describe('Guided Lesson Builder routes', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     expect(await screen.findByRole('heading', { name: '試運転用パラメータ一覧' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('routes /teacher/marketplace to the community marketplace and duplicates a listed template', async () => {
+    window.history.pushState({}, '', '/teacher/marketplace')
+    getDocsMock.mockResolvedValue({
+      docs: [{ id: 't1', data: () => ({ title: '公開教材', description: '説明', subject: 'SOCIAL_STUDIES', currentPublishedVersionId: 'v1' }) }],
+    })
+    callableMock.mockResolvedValue({ data: { templateId: 'copy-1', alreadyDuplicated: false } })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('heading', { name: '教材マーケットプレイス' })).toBeInTheDocument()
+    expect(await screen.findByText('公開教材')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '自組織へ複製' }))
+    await waitFor(() => expect(callableMock).toHaveBeenCalled())
     window.history.pushState({}, '', '/')
   })
 })
