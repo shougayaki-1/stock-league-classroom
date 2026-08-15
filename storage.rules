@@ -7,10 +7,12 @@ service firebase.storage {
         && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
     function activeMember(orgId) {
-      return firestore.get(/databases/(default)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
+      return firestore.exists(/databases/(default)/documents/organizations/$(orgId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
     }
     function materialsEnabled(orgId) {
-      return firestore.get(/databases/(default)/documents/organizations/$(orgId)).data.materialsUploadEnabled == true;
+      return firestore.exists(/databases/(default)/documents/organizations/$(orgId))
+        && firestore.get(/databases/(default)/documents/organizations/$(orgId)).data.materialsUploadEnabled == true;
     }
     match /orgs/{orgId}/materials/{materialId}/{fileName} {
       allow read: if teacher() && activeMember(orgId) && materialsEnabled(orgId);

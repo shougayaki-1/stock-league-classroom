@@ -62,9 +62,9 @@
 - §13.3の役割・人物別/クラス段階分担など発展的な授業形式のUI対応 — コアプロフィール中心の実装で未確認
 - `src/lib/homeEconomics/`のクライアント側表示ロジック(engine群の可視化)が薄い可能性 — 要詳細確認
 
-## Phase 5: 組織・ライセンス・決済 — 一部未着手
+## Phase 5: 組織・ライセンス・決済 — 実装済み(2026-08-15更新)
 
-最もスペック数が多いフェーズ(13件)。決済まわりは大部分実装済み。「教材の移動」未着手は2026-08-15時点のコード調査で確認済み(`functions/src/lessonTemplates/onCall.ts`に`move`/`transfer`系コーラブルなし)。
+最もスペック数が多いフェーズ(13件)。決済まわり、組織階層、教材の移動まですべて実装済み。
 
 > **注記(2026-08-15):** 以下の「スコープ外項目」欄はサブプロジェクト単位のスナップショットであり、後続サブプロジェクト(08-11・08-12等)が先行サブプロジェクトのスコープ外項目を実質的に埋めているケースがある(3件を下記で訂正済み)。この欄全体を「現在も未実装」と読まないよう注意。
 
@@ -113,9 +113,13 @@
   - 上限(80)超過時のクランプ(自動切り下げ) — 作成拒否のみ実装
   - `studentCount`の永続化・テンプレートスキーマ変更
 
+**実装済み(2026-08-15):**
+
+- 教材の「移動」(所有権が移動先組織へ完全に移る操作) — `functions/src/lessonTemplates/moveLessonTemplate.ts`, `moveLessonTemplateScheduled.ts`, `previewLessonTemplateMoveCallable`, `moveLessonTemplateCallable`, `getLessonTemplateMoveOperationCallable`, `lessonTemplateMoveScheduled`(移転元・移転先の双方owner限定、Cloud Storageのtemplate-scoped化、不変版・最新資料・派生関係の維持、COMMUNITY公開自動解除、組織内承認リセット、過去LessonRun移転元保持、監査ログ記録、Scheduled Reconciler)。
+
 **未着手項目:**
 
-- 教材の「移動」(所有権が移動先組織へ完全に移る操作) — 複製・派生・共有には個別スペックがあるが「移動」自体は対応スペックなし
+- なし
 
 ## Phase 6: テンプレートマーケットプレイス — 一部未着手
 
