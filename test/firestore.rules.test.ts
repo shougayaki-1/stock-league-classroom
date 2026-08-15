@@ -286,6 +286,13 @@ describe('orgId/createdByUid immutability on lessonTemplates', () => {
     await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'immutable'), { status: 'READY' }))
   })
 
+  it('rejects a client attempt to set approvalStatus directly', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const valid = { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' }
+    await setDoc(doc(owner, 'lessonTemplates', 'approval-immutable'), valid)
+    await assertFails(updateDoc(doc(owner, 'lessonTemplates', 'approval-immutable'), { approvalStatus: 'APPROVED' }))
+  })
+
   it('rejects updating an already-created version', async () => {
     const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
     await setDoc(doc(owner, 'lessonTemplates', 't1'), { orgId: 'personal_teacher-a', createdByUid: 'teacher-a', draft: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' }, currentPublishedVersionId: null, status: 'DRAFT', visibility: 'PRIVATE' })
