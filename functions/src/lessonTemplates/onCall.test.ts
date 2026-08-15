@@ -8,6 +8,7 @@ import {
   isValidPublishLessonVersionInput,
   publishLessonVersionCallable,
   publishTemplateToCommunityCallable,
+  reportTemplateCallable,
   resolveTemplateShareCallable,
   revokeTemplateShareCallable,
   unpublishTemplateFromCommunityCallable,
@@ -25,6 +26,10 @@ import {
 
 const templateGetMock = vi.fn()
 const templateUpdateMock = vi.fn()
+const reportAddMock = vi.fn()
+const reportGetMock = vi.fn()
+const reportUpdateMock = vi.fn()
+const reportsWhereGetMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./publishLessonVersion', () => ({ publishLessonVersionWithAdminSdk: vi.fn() }))
@@ -36,7 +41,14 @@ vi.mock('./templateShares', () => ({
 }))
 vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
-  getFirestore: () => ({ doc: () => ({ get: templateGetMock, update: templateUpdateMock }) }),
+  getFirestore: () => ({
+    doc: (path: string) => path.startsWith('templateReports/')
+      ? { get: reportGetMock, update: reportUpdateMock }
+      : { get: templateGetMock, update: templateUpdateMock },
+    collection: (path: string) => path === 'templateReports'
+      ? { add: reportAddMock, where: () => ({ get: reportsWhereGetMock }) }
+      : undefined,
+  }),
 }))
 
 describe('isValidPublishLessonVersionInput', () => {
@@ -430,3 +442,51 @@ describe('unpublishTemplateFromCommunityCallable', () => {
     expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'PRIVATE' })
   })
 })
+
+describe('reportTemplateCallable', () => {
+  const auth = { uid: 'teacher-b', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects an invalid reason without reading the template', async () => {
+    await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'NOT_A_REAL_REASON' }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a report on a template that does not exist', async () => {
+    templateGetMock.mockResolvedValue({ exists: false })
+    await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))).rejects.toMatchObject({ code: 'not-found' })
+    expect(reportAddMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a report on a template that is not COMMUNITY-visible', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'visibility' ? 'PRIVATE' : field === 'createdByUid' ? 'teacher-a' : undefined) })
+    await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))).rejects.toMatchObject({ code: 'not-found' })
+    expect(reportAddMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller reporting their own template', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'visibility' ? 'COMMUNITY' : field === 'createdByUid' ? 'teacher-b' : undefined) })
+    await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(reportAddMock).not.toHaveBeenCalled()
+  })
+
+  it('creates a PENDING report for a valid COMMUNITY template reported by someone else', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'visibility' ? 'COMMUNITY' : field === 'createdByUid' ? 'teacher-a' : undefined) })
+    reportAddMock.mockResolvedValue({ id: 'report-1' })
+    await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'COPYRIGHT', details: '出典不明' }))).resolves.toEqual({ reportId: 'report-1' })
+    expect(reportAddMock).toHaveBeenCalledWith({
+      templateId: 't1', versionId: 'v1', reportedByUid: 'teacher-b', reason: 'COPYRIGHT', details: '出典不明',
+      status: 'PENDING', resolution: null, resolvedByUid: null, resolvedAt: null, createdAt: 'SERVER_TIMESTAMP',
+    })
+  })
+
+  it('defaults details to null when omitted', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'visibility' ? 'COMMUNITY' : field === 'createdByUid' ? 'teacher-a' : undefined) })
+    reportAddMock.mockResolvedValue({ id: 'report-1' })
+    await reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))
+    expect(reportAddMock).toHaveBeenCalledWith(expect.objectContaining({ details: null }))
+  })
+})
+

@@ -244,3 +244,32 @@ export const unpublishTemplateFromCommunityCallable = onCall({ region: 'asia-nor
   return { published: false }
 })
 
+const TEMPLATE_REPORT_REASONS = ['PERSONAL_INFO', 'COPYRIGHT', 'INAPPROPRIATE', 'MISINFORMATION', 'OTHER'] as const
+type TemplateReportReason = typeof TEMPLATE_REPORT_REASONS[number]
+
+interface ReportTemplateCallableInput { templateId?: unknown; versionId?: unknown; reason?: unknown; details?: unknown }
+const isValidReportReason = (value: unknown): value is TemplateReportReason => TEMPLATE_REPORT_REASONS.includes(value as TemplateReportReason)
+
+export const reportTemplateCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ReportTemplateCallableInput
+  if (typeof data.templateId !== 'string' || typeof data.versionId !== 'string' || !isValidReportReason(data.reason)) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+  if (data.details !== undefined && typeof data.details !== 'string') throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  const templateSnap = await getFirestore().doc(`lessonTemplates/${data.templateId}`).get()
+  if (!templateSnap.exists || templateSnap.get('visibility') !== 'COMMUNITY') throw new HttpsError('not-found', '通報対象の教材が見つかりません。')
+  if (templateSnap.get('createdByUid') === request.auth.uid) throw new HttpsError('permission-denied', '自分が作成した教材は通報できません。')
+
+  const added = await getFirestore().collection('templateReports').add({
+    templateId: data.templateId, versionId: data.versionId, reportedByUid: request.auth.uid,
+    reason: data.reason, details: data.details ?? null,
+    status: 'PENDING', resolution: null, resolvedByUid: null, resolvedAt: null,
+    createdAt: FieldValue.serverTimestamp(),
+  })
+  return { reportId: added.id }
+})
+
+
