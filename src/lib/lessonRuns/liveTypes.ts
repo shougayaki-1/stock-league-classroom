@@ -239,6 +239,12 @@ export interface HouseholdStateTeamView {
   shortfallOptions: { type: string; description: string; resolvesYen: number }[]
 }
 
+export interface TeamResearchNoteView {
+  text: string
+  revision: number
+  updatedAtMillis: number
+}
+
 /**
  * Third visibility class alongside LessonRunPublicState (every participant)
  * and LessonRunPrivateState (teachers only): a team's own cash, holdings,
@@ -258,4 +264,6 @@ export interface LessonRunTeamState {
   updatedAtMillis: number
   /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
   household?: HouseholdStateTeamView
+  /** Team Research Desk notes mirror. Scoped to this team only. */
+  researchNote?: TeamResearchNoteView
 }

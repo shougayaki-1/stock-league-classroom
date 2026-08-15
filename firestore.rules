@@ -97,11 +97,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    function marketplaceVisible(data) {
+      return data.visibility in ['COMMUNITY', 'VERIFIED', 'OFFICIAL'];
+    }
+
     match /templateShares/{shareId} { allow read, write: if false; }
 
     match /templateReports/{reportId} { allow read, write: if false; }
 
     match /templateReviews/{reviewId} { allow read, write: if false; }
+
+    match /templateVersionCertifications/{id} { allow read, write: if false; }
+
+    match /templateCertificationEvents/{id} { allow read, write: if false; }
+
+    match /templateCertificationIdempotency/{id} { allow read, write: if false; }
 
     match /lessonTemplateMoveOperations/{operationId} { allow read, write: if false; }
 
@@ -117,8 +127,8 @@ service cloud.firestore {
     }
 
     match /lessonTemplates/{templateId} {
-      allow get: if teacher() && (activeMember(resource.data.orgId) || resource.data.visibility == 'COMMUNITY');
-      allow list: if teacher() && (activeMember(resource.data.orgId) || resource.data.visibility == 'COMMUNITY');
+      allow get: if teacher() && (activeMember(resource.data.orgId) || marketplaceVisible(resource.data));
+      allow list: if teacher() && (activeMember(resource.data.orgId) || marketplaceVisible(resource.data));
       allow create: if teacher()
         && request.resource.data.createdByUid == request.auth.uid
         && request.resource.data.currentPublishedVersionId == null
@@ -141,7 +151,7 @@ service cloud.firestore {
           && (
             activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
             || (
-              get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.visibility == 'COMMUNITY'
+              marketplaceVisible(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data)
               && versionId == get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.currentPublishedVersionId
             )
           );
@@ -214,6 +224,11 @@ service cloud.firestore {
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);
         allow write: if false;
       }
+      match /teamNotes/{teamId} {
+        allow read, write: if false;
+        match /saveNoteIdempotency/{key} { allow read, write: if false; }
+      }
+      match /teamNoteIdempotency/{key} { allow read, write: if false; }
       match /responses/{responseId} {
         allow get, list: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonRuns/$(lessonRunId)).data.orgId);

@@ -56,6 +56,7 @@ export {
   recoverParticipantCallable,
   rotateRepresentativeCallable,
 } from './lessonRuns/participants/onCall'
+export { saveTeamResearchNoteCallable } from './lessonRuns/teamNotes/onCall'
 export { transitionPhaseCallable } from './lessonRuns/phases/onCall'
 export {
   abortLessonCallable,
