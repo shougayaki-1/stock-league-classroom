@@ -538,6 +538,42 @@ unavailable
 
 status-only gate を先に deploy して legacy explicit approval を意図せず失効させないよう、実装計画では migration/backfill と gate 切替の順序を明示する。
 
+### 14.1 運用手順(2026-08-15 追記)
+
+`functions/src/ai/betaAccess.ts` の `assertAiBetaApproved`/`getAiBetaAccessApproved` は既に `status === 'APPROVED'` のみを許可条件として実装済みである(ドキュメント存在だけでは許可しない)。したがって、対象環境(本番・ステージング)へこの状態のコードを含む functions/Firestore Rules/Storage Rules をデプロイする前に、必ず次の順序を守る。
+
+1. functions をビルドする。
+
+   ```bash
+   npm run build --workspace=functions
+   ```
+
+2. 対象環境の Firebase Admin 資格情報で dry-run を実行し、内容を確認する。
+
+   ```bash
+   GOOGLE_APPLICATION_CREDENTIALS=<対象環境のサービスアカウントキー> \
+     npm run migrate:ai-beta-legacy:dry-run --workspace=functions
+   ```
+
+   出力される `scanned`/`alreadyMigrated`/`eligible`/`invalidAuthUser` の件数を確認する。`eligible` が 0 件であれば、対象環境に status-only gate 切替前の legacy record は存在しないため、Step 3 の `--apply` は不要でそのまま Step 4 へ進んでよい。
+
+3. `eligible` が 1 件以上あり、内容に問題がなければ apply を実行する。
+
+   ```bash
+   GOOGLE_APPLICATION_CREDENTIALS=<対象環境のサービスアカウントキー> \
+     npm run migrate:ai-beta-legacy:apply --workspace=functions
+   ```
+
+   出力される `migrated` 件数が Step 2 で確認した `eligible` 件数と一致することを確認する。
+
+4. Step 2 または Step 3 が完了してから初めて、status 判定のみで許可する functions のデプロイを実行する。
+
+   ```bash
+   firebase deploy --only functions,firestore:rules,storage
+   ```
+
+この順序を逆にする(migration より先に status-only gate を含むコードをデプロイする)と、legacy record を持つ既存の明示許可教師が、migration 実行前の期間だけ `permission-denied` で AI 機能を拒否される。
+
 ## 15. 実装時の注意
 
 - 既存 `grantAiBetaAccessCallable` / `revokeAiBetaAccessCallable` は partial implementation であり、そのまま足し算しない。今回の契約へ一本化する。
