@@ -53,3 +53,13 @@ export interface EconomicIndicatorPublicView {
     value?: number;
     changeFromPrevious?: number;
 }
+export type ResearchDeskPanelId = 'COMPANIES' | 'NEWS' | 'STATISTICS' | 'TEAM_NOTES' | 'ORDERS';
+export interface ResearchDeskPublicView {
+    phaseId: string | null;
+    phaseType: string | null;
+    availablePanels: ResearchDeskPanelId[];
+    companies: CompanyPublicView[];
+    informationItems: InformationPublicView[];
+    economicIndicators: EconomicIndicatorPublicView[];
+    updatedAtMillis: number;
+}
