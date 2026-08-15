@@ -54,7 +54,7 @@ describe('processRound', () => {
     readHouseholdState: vi.fn().mockResolvedValue(household),
     readHouseholdDecision: vi.fn().mockResolvedValue(submittedDecision),
     settleRoundFn: vi.fn().mockReturnValue(settleResult),
-    commitRoundSettlement: vi.fn().mockResolvedValue(undefined),
+    commitRoundSettlement: vi.fn().mockResolvedValue({ status: 'COMMITTED' }),
     publishRealtimeState: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   })
@@ -97,7 +97,7 @@ describe('processRound', () => {
   it('calls settleRoundFn with the assembled household/profile/decision/config, then commits the result', async () => {
     const deps = makeDeps()
     const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' })
-    expect(result).toBe(settleResult)
+    expect(result).toEqual({ status: 'COMMITTED', settlement: settleResult })
     expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({
       household, profile, decision: submittedDecision, randomSeed: 'seed-x', restoreGeneration: 0,
       taxModelVersion: 1, roundYears: 5, borrowingAllowed: false,
@@ -105,6 +105,7 @@ describe('processRound', () => {
     expect(deps.commitRoundSettlement).toHaveBeenCalledWith({
       lessonRunId: 'run-1', householdId: 'case-b', orgId: 'org-1',
       expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
+      forcedSettlement: false,
     })
   })
 
@@ -124,7 +125,7 @@ describe('processRound', () => {
       readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'team-a' }),
     })
     const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'team-a', actorId: 'teacher-a' })
-    expect(result).toBe(settleResult)
+    expect(result).toEqual({ status: 'COMMITTED', settlement: settleResult })
     expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ profile }))
   })
 
@@ -161,7 +162,10 @@ describe('processRound', () => {
   it('calls publishRealtimeState with orgId/homeEconomics/profile/decision/result, after commitRoundSettlement', async () => {
     const deps = makeDeps()
     const callOrder: string[] = []
-    ;(deps.commitRoundSettlement as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('commit') })
+    ;(deps.commitRoundSettlement as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callOrder.push('commit')
+      return { status: 'COMMITTED' }
+    })
     ;(deps.publishRealtimeState as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('publish') })
 
     await processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' })
@@ -190,14 +194,49 @@ describe('processRound', () => {
       expect(deps.commitRoundSettlement).not.toHaveBeenCalled()
     })
 
-    it('allows settlement with no submitted decision when forceSettle is true', async () => {
+    it('allows settlement with no submitted decision when forceSettle is true and records forcedSettlement=true', async () => {
       const deps = makeDeps({ readHouseholdDecision: vi.fn().mockResolvedValue(null) })
       const result = await processRound(deps, {
         lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: true,
       })
-      expect(result).toBe(settleResult)
+      expect(result).toEqual({ status: 'COMMITTED', settlement: settleResult })
       expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ decision: null }))
-      expect(deps.commitRoundSettlement).toHaveBeenCalled()
+      expect(deps.commitRoundSettlement).toHaveBeenCalledWith(expect.objectContaining({
+        forcedSettlement: true,
+      }))
+    })
+
+    it('records forcedSettlement=false when decision was submitted', async () => {
+      const deps = makeDeps()
+      const result = await processRound(deps, {
+        lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a', forceSettle: false,
+      })
+      expect(result).toEqual({ status: 'COMMITTED', settlement: settleResult })
+      expect(deps.commitRoundSettlement).toHaveBeenCalledWith(expect.objectContaining({
+        forcedSettlement: false,
+      }))
+    })
+  })
+
+  describe('duplicate settlement safety', () => {
+    it('returns ALREADY_SETTLED and does not publish realtime state when commitRoundSettlement reports ALREADY_SETTLED', async () => {
+      const currentHouseholdState: HouseholdState = { ...household, roundIndex: 3 }
+      const deps = makeDeps({
+        commitRoundSettlement: vi.fn().mockResolvedValue({
+          status: 'ALREADY_SETTLED',
+          householdState: currentHouseholdState,
+        }),
+      })
+
+      const result = await processRound(deps, {
+        lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a',
+      })
+
+      expect(result).toEqual({
+        status: 'ALREADY_SETTLED',
+        householdState: currentHouseholdState,
+      })
+      expect(deps.publishRealtimeState).not.toHaveBeenCalled()
     })
   })
 })

@@ -4,11 +4,11 @@ import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
 import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
 import {
   getHouseholdStateWithAdminSdk,
-  getOrInitHouseholdState,
   householdRepositoryWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
 import type { HouseholdState } from '../lessonRuns/households/repository'
+import { ensureCommonConditionsHouseholdState } from './commonConditionsHousehold'
 import { canControlLesson } from '../lessonRuns/authorization'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { restoreCheckpointWithAdminSdk, writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
@@ -119,23 +119,26 @@ const lazyInitHouseholdWithAdminSdk = async (
   if (!runSnap.exists) throw new HttpsError('not-found', '対象の家庭の状態が見つかりません。')
   const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
   const homeEconomics = templateSnapshot?.homeEconomics
-  if (!homeEconomics || homeEconomics.courseFormat !== 'COMMON_CONDITIONS' || homeEconomics.households.length !== 1) {
+  if (!homeEconomics) {
     throw new HttpsError(
       'failed-precondition',
       'このコース形式では家庭の自動初期化に対応していません（共通条件モードでプロフィールが1件の教材のみ対応）。',
     )
   }
-  const profile = homeEconomics.households[0]
-
-  return getOrInitHouseholdState({
-    firestore: householdRepositoryWithAdminSdk(),
-    lessonRunId,
-    teamId: householdId,
-    householdId,
-    startingCashYen: profile.cashSavingsYen,
-    startingLifeStage: profile.lifeStage,
-    now: Date.now,
-  })
+  try {
+    return await ensureCommonConditionsHouseholdState({
+      firestore: householdRepositoryWithAdminSdk(),
+      lessonRunId,
+      teamId: householdId,
+      content: homeEconomics,
+      now: Date.now,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('このコース形式では家庭の自動初期化に対応していません')) {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
 }
 
 interface SubmitHouseholdDecisionRequest {

@@ -67,6 +67,14 @@ import type { HouseholdDecisionInput } from './submitDecision'
  *    the field-ownership discipline (allow-list only, `orgId` on every
  *    write, public/private/team-state separation).
  */
+export type CommitRoundSettlementResult =
+  | { status: 'COMMITTED' }
+  | { status: 'ALREADY_SETTLED'; householdState: HouseholdState }
+
+export type ProcessRoundExecutionResult =
+  | { status: 'COMMITTED'; settlement: SettleRoundResult }
+  | { status: 'ALREADY_SETTLED'; householdState: HouseholdState }
+
 export interface ProcessRoundDeps {
   readLessonRunConfig: (lessonRunId: string) => Promise<{
     orgId: string
@@ -84,7 +92,8 @@ export interface ProcessRoundDeps {
     expectedPriorRoundIndex: number
     result: SettleRoundResult
     actorId: string
-  }) => Promise<void>
+    forcedSettlement: boolean
+  }) => Promise<CommitRoundSettlementResult>
   /**
    * Task 15: broadcasts this round's settlement to RTDB. Receives every
    * piece `processRound` already has assembled in scope — `orgId` and
@@ -134,7 +143,7 @@ export interface ProcessRoundInput {
   forceSettle?: boolean
 }
 
-export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundInput): Promise<SettleRoundResult> => {
+export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundInput): Promise<ProcessRoundExecutionResult> => {
   const [config, household] = await Promise.all([
     deps.readLessonRunConfig(input.lessonRunId),
     deps.readHouseholdState(input.lessonRunId, input.householdId),
@@ -183,14 +192,21 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
     restoreGeneration: config.restoreGeneration,
   })
 
-  await deps.commitRoundSettlement({
+  const forcedSettlement = decision === null && input.forceSettle === true
+
+  const commitResult = await deps.commitRoundSettlement({
     lessonRunId: input.lessonRunId,
     householdId: input.householdId,
     orgId: config.orgId,
     expectedPriorRoundIndex: household.roundIndex,
     result,
     actorId: input.actorId,
+    forcedSettlement,
   })
+
+  if (commitResult.status === 'ALREADY_SETTLED') {
+    return commitResult
+  }
 
   await deps.publishRealtimeState({
     lessonRunId: input.lessonRunId,
@@ -201,7 +217,7 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
     result,
   })
 
-  return result
+  return { status: 'COMMITTED', settlement: result }
 }
 
 // ---------------------------------------------------------------------
@@ -285,7 +301,7 @@ const readHouseholdDecisionWithAdminSdk: ProcessRoundDeps['readHouseholdDecision
  */
 const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement'] = async (input) => {
   const db = getFirestore()
-  await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
     const txAdapter: FirestoreTx = {
       get: async (path) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
       set: (path, data) => { tx.set(db.doc(path), data) },
@@ -294,9 +310,11 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
     // ---- ALL READS FIRST ----
     const householdPath = `lessonRuns/${input.lessonRunId}/households/${input.householdId}`
     const householdSnap = await txAdapter.get(householdPath)
-    if (!householdSnap.exists) return
+    if (!householdSnap.exists) throw new Error('HouseholdState not found')
     const currentHousehold = householdSnap.data() as unknown as HouseholdState
-    if (currentHousehold.roundIndex !== input.expectedPriorRoundIndex) return // already settled — no-op guard
+    if (currentHousehold.roundIndex !== input.expectedPriorRoundIndex) {
+      return { status: 'ALREADY_SETTLED', householdState: currentHousehold }
+    }
 
     const idempotencyKey = `round-settled_${input.lessonRunId}_${input.householdId}_${input.expectedPriorRoundIndex}`
     await appendLessonEventInTransaction(txAdapter, {
@@ -314,12 +332,14 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
         netCashFlowYen: input.result.netCashFlowYen,
         shortfallYen: input.result.shortfallYen,
         insuranceBenefitsYen: input.result.insuranceBenefitsYen,
+        forcedSettlement: input.forcedSettlement,
       },
       idempotencyKey,
     }, Date.now())
 
     // ---- WRITE AFTER (household state) ----
     txAdapter.set(householdPath, input.result.newHouseholdState as unknown as Record<string, unknown>)
+    return { status: 'COMMITTED' }
   })
 }
 
@@ -439,5 +459,5 @@ export const processRoundDepsWithAdminSdk = (): ProcessRoundDeps => ({
   publishRealtimeState: publishRealtimeStateWithAdminSdk,
 })
 
-export const processRoundWithAdminSdk = (input: ProcessRoundInput): Promise<SettleRoundResult> =>
+export const processRoundWithAdminSdk = (input: ProcessRoundInput): Promise<ProcessRoundExecutionResult> =>
   processRound(processRoundDepsWithAdminSdk(), input)

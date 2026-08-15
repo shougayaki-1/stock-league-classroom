@@ -18,6 +18,29 @@ export interface HouseholdState {
   updatedAtServerMillis: number
 }
 
+export interface BuildInitialHouseholdStateInput {
+  lessonRunId: string
+  teamId: string
+  householdId: string
+  startingCashYen: number
+  startingLifeStage: string
+  nowMillis: number
+}
+
+export const buildInitialHouseholdState = (input: BuildInitialHouseholdStateInput): HouseholdState => ({
+  householdId: input.householdId,
+  lessonRunId: input.lessonRunId,
+  teamId: input.teamId,
+  cashYen: input.startingCashYen,
+  assetHoldingsYen: {},
+  activeInsuranceContracts: {},
+  activeLiabilities: {},
+  lifeStage: input.startingLifeStage,
+  roundIndex: 0,
+  goalDelayedRounds: 0,
+  updatedAtServerMillis: input.nowMillis,
+})
+
 export interface HouseholdFirestoreDeps {
   firestore: { runTransaction: <T>(fn: (tx: HouseholdTx) => Promise<T>) => Promise<T> }
 }
@@ -43,12 +66,14 @@ export const getOrInitHouseholdState = (input: GetOrInitHouseholdStateInput): Pr
     if (existing.exists) return existing.data() as unknown as HouseholdState
 
     // ---- ALL WRITES AFTER ----
-    const state: HouseholdState = {
-      householdId: input.householdId, lessonRunId: input.lessonRunId, teamId: input.teamId,
-      cashYen: input.startingCashYen, assetHoldingsYen: {}, activeInsuranceContracts: {},
-      activeLiabilities: {}, lifeStage: input.startingLifeStage, roundIndex: 0,
-      goalDelayedRounds: 0, updatedAtServerMillis: input.now(),
-    }
+    const state = buildInitialHouseholdState({
+      lessonRunId: input.lessonRunId,
+      teamId: input.teamId,
+      householdId: input.householdId,
+      startingCashYen: input.startingCashYen,
+      startingLifeStage: input.startingLifeStage,
+      nowMillis: input.now(),
+    })
     tx.set(path, state as unknown as Record<string, unknown>)
     return state
   })

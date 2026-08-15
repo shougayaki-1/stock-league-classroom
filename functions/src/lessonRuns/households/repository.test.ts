@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getOrInitHouseholdState, saveHouseholdDecision } from './repository'
+import { buildInitialHouseholdState, getOrInitHouseholdState, saveHouseholdDecision } from './repository'
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -23,6 +23,32 @@ const makeFakeFirestore = () => {
     },
   }
 }
+
+describe('buildInitialHouseholdState', () => {
+  it('returns clean initial HouseholdState matching canonical contract', () => {
+    const state = buildInitialHouseholdState({
+      lessonRunId: 'run-1',
+      teamId: 'team-a',
+      householdId: 'house-a',
+      startingCashYen: 2000000,
+      startingLifeStage: 'CHILD_REARING',
+      nowMillis: 1000,
+    })
+    expect(state).toEqual({
+      householdId: 'house-a',
+      lessonRunId: 'run-1',
+      teamId: 'team-a',
+      cashYen: 2000000,
+      assetHoldingsYen: {},
+      activeInsuranceContracts: {},
+      activeLiabilities: {},
+      lifeStage: 'CHILD_REARING',
+      roundIndex: 0,
+      goalDelayedRounds: 0,
+      updatedAtServerMillis: 1000,
+    })
+  })
+})
 
 describe('getOrInitHouseholdState', () => {
   it('creates a fresh state with the profile\'s starting cash on first access', async () => {
