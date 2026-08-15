@@ -86,6 +86,7 @@ describe('previewCommonConditionsHouseholdState', () => {
       householdId: 'team-xyz',
       lessonRunId: 'run-1',
       teamId: 'team-xyz',
+      profileId: 'profile-1',
       cashYen: 1500000,
       assetHoldingsYen: {},
       activeInsuranceContracts: {},
@@ -127,6 +128,7 @@ describe('ensureCommonConditionsHouseholdState', () => {
       now: () => 9000,
     })
     expect(state.householdId).toBe('team-1')
+    expect(state.profileId).toBe('profile-1')
     expect(state.cashYen).toBe(1500000)
     expect(fake.docs.get('lessonRuns/run-1/households/team-1')).toBeDefined()
   })
@@ -137,6 +139,7 @@ describe('ensureCommonConditionsHouseholdState', () => {
       householdId: 'team-1',
       lessonRunId: 'run-1',
       teamId: 'team-1',
+      profileId: 'profile-1',
       cashYen: 888888,
       assetHoldingsYen: {},
       activeInsuranceContracts: {},

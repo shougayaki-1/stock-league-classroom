@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { processRound, type ProcessRoundDeps } from './processRound'
-import type { SettleRoundResult } from './engine/settleRound'
-import type { HouseholdState } from '../lessonRuns/households/repository'
+import { settleRound, type SettleRoundResult } from './engine/settleRound'
+import type { HouseholdState, StoredHouseholdState } from '../lessonRuns/households/repository'
 
 /**
  * These tests exercise the pure `processRound` orchestration against fully
@@ -11,7 +11,7 @@ import type { HouseholdState } from '../lessonRuns/households/repository'
  */
 describe('processRound', () => {
   const household: HouseholdState = {
-    householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 500000,
+    householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 500000,
     assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
     lifeStage: 'CHILD_REARING', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 0,
   }
@@ -110,18 +110,37 @@ describe('processRound', () => {
   })
 
   /**
-   * Critical Fix #1 (final whole-branch review) — under COMMON_CONDITIONS,
-   * `HouseholdState.householdId` is team-scoped (`householdId === teamId`,
-   * see `onCall.ts`'s `lazyInitHouseholdWithAdminSdk`) and will generally
-   * NOT equal the template's single `HouseholdProfile.householdId`. With
-   * exactly one profile in the snapshot, `processRound` must still resolve
-   * it rather than throwing 'HouseholdProfile not found in template
-   * snapshot'.
+   * Task 4 — `household.profileId` (not the runtime `householdId`) is the
+   * unambiguous key used to resolve the profile. This proves the resolution
+   * still works correctly even when the runtime `householdId` (an opaque
+   * per-team-slot id, `runtimeHouseholdId()`) is completely different from
+   * the profileId it's running — the exact case the 3 advanced formats
+   * introduce and the old array-length/courseFormat heuristic could not
+   * handle unambiguously.
    */
-  it('resolves the sole profile by position (not by id match) when the household is team-scoped and the template has exactly one profile', async () => {
-    const teamScopedHousehold: HouseholdState = { ...household, householdId: 'team-a' }
+  it('resolves the profile by household.profileId, independent of what the runtime householdId is', async () => {
+    const assignedHousehold: HouseholdState = { ...household, householdId: 'household-runtime-1', profileId: 'case-b' }
     const deps = makeDeps({
-      readHouseholdState: vi.fn().mockResolvedValue(teamScopedHousehold),
+      readHouseholdState: vi.fn().mockResolvedValue(assignedHousehold),
+      readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'household-runtime-1' }),
+    })
+    const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'household-runtime-1', actorId: 'teacher-a' })
+    expect(result).toEqual({ status: 'COMMITTED', settlement: settleResult })
+    expect(deps.settleRoundFn).toHaveBeenCalledWith(expect.objectContaining({ profile }))
+  })
+
+  /**
+   * Task 4 — legacy documents written before `profileId` existed have no
+   * such field on the stored data. Under COMMON_CONDITIONS with exactly one
+   * authored profile, `resolveStoredHouseholdState` (called internally by
+   * `processRound`) infers it from that sole profile, so settlement still
+   * succeeds rather than throwing 'HouseholdProfile not found'.
+   */
+  it('resolves the sole profile for a legacy COMMON_CONDITIONS household document with no stored profileId', async () => {
+    const legacyStored = { ...household, householdId: 'team-a' } as StoredHouseholdState
+    delete (legacyStored as { profileId?: string }).profileId
+    const deps = makeDeps({
+      readHouseholdState: vi.fn().mockResolvedValue(legacyStored),
       readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'team-a' }),
     })
     const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'team-a', actorId: 'teacher-a' })
@@ -130,25 +149,56 @@ describe('processRound', () => {
   })
 
   /**
-   * Single-profile fallback fix (final review) — the fallback is gated on
-   * courseFormat === 'COMMON_CONDITIONS', NOT just array length. Under
-   * other course formats (e.g. ROLE_VARIANT), a single-profile template
-   * with mismatched householdId must correctly fall through to the
-   * exact-match `.find()` and throw 'HouseholdProfile not found', rather
-   * than silently returning the mismatched profile.
+   * Task 4 — fail closed. There is no safe positional inference for a
+   * missing `profileId` under an advanced course format (ROLE_VARIANT/
+   * STAGE_SPLIT/MULTI_PERSON_PER_TEAM): a household with no recorded
+   * profile identity is a data-integrity problem, not something to guess
+   * at from array position or courseFormat alone (the exact fragility the
+   * old heuristic had).
    */
-  it('throws when single-profile template uses ROLE_VARIANT courseFormat and householdId does not match the profile', async () => {
-    const singleProfileRoleVariant = { ...homeEconomics, courseFormat: 'ROLE_VARIANT' as const }
+  it('throws when profileId is missing on the stored household under an advanced course format', async () => {
+    const advancedHomeEconomics = { ...homeEconomics, courseFormat: 'ROLE_VARIANT' as const }
+    const legacyStored = { ...household, householdId: 'household-runtime-1' } as StoredHouseholdState
+    delete (legacyStored as { profileId?: string }).profileId
     const deps = makeDeps({
       readLessonRunConfig: vi.fn().mockResolvedValue({
-        orgId: 'org-1', randomSeed: 'seed-x', restoreGeneration: 0, homeEconomics: singleProfileRoleVariant,
+        orgId: 'org-1', randomSeed: 'seed-x', restoreGeneration: 0, homeEconomics: advancedHomeEconomics,
       }),
-      readHouseholdState: vi.fn().mockResolvedValue({ ...household, householdId: 'different-id' }),
-      readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'different-id' }),
+      readHouseholdState: vi.fn().mockResolvedValue(legacyStored),
+      readHouseholdDecision: vi.fn().mockResolvedValue({ ...submittedDecision, householdId: 'household-runtime-1' }),
     })
-    await expect(processRound(deps, { lessonRunId: 'run-1', householdId: 'different-id', actorId: 'teacher-a' }))
-      .rejects.toThrow('HouseholdProfile not found in template snapshot')
+    await expect(processRound(deps, { lessonRunId: 'run-1', householdId: 'household-runtime-1', actorId: 'teacher-a' }))
+      .rejects.toThrow(/profileId/)
     expect(deps.settleRoundFn).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Task 4 — STAGE_SPLIT assigns a household to a profile whose authored
+   * `lifeStage` reflects that stage, but the household's OWN `lifeStage`
+   * (the source of truth for settlement, see `settleRound.ts`) must never
+   * be silently overwritten by the profile's `lifeStage` during settlement.
+   * This runs the REAL `settleRound` engine (not a mock) precisely so it
+   * proves actual settlement behavior, not just that the right arguments
+   * were passed to a stub.
+   */
+  it('keeps household.lifeStage fixed after settlement even when it differs from the STAGE_SPLIT profile\'s lifeStage', async () => {
+    const stageSplitProfile = { ...profile, lifeStage: 'RETIRED' as const }
+    const stageSplitHomeEconomics = {
+      ...homeEconomics, courseFormat: 'STAGE_SPLIT' as const, households: [stageSplitProfile],
+    }
+    const stageHousehold: HouseholdState = { ...household, lifeStage: 'CHILD_REARING' }
+    const deps = makeDeps({
+      readLessonRunConfig: vi.fn().mockResolvedValue({
+        orgId: 'org-1', randomSeed: 'seed-x', restoreGeneration: 0, homeEconomics: stageSplitHomeEconomics,
+      }),
+      readHouseholdState: vi.fn().mockResolvedValue(stageHousehold),
+      readHouseholdDecision: vi.fn().mockResolvedValue(submittedDecision),
+      settleRoundFn: settleRound,
+    })
+    const result = await processRound(deps, { lessonRunId: 'run-1', householdId: 'case-b', actorId: 'teacher-a' })
+    expect(result.status).toBe('COMMITTED')
+    if (result.status !== 'COMMITTED') throw new Error('unreachable')
+    expect(result.settlement.newHouseholdState.lifeStage).toBe('CHILD_REARING')
   })
 
   /**

@@ -1,10 +1,26 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
 import { idempotencyDocumentId, requestDigest } from '../../lib/idempotency'
 
 export interface HouseholdState {
   householdId: string
   lessonRunId: string
   teamId: string
+  /**
+   * The authored `HouseholdProfile.householdId` (from the LessonRun's
+   * `HomeEconomicsContent.households[]` template snapshot) this runtime
+   * household is actually using. Distinct from `householdId` above, which
+   * is an opaque per-team-slot RUNTIME identity (`runtimeHouseholdId()`,
+   * Task 1) — under COMMON_CONDITIONS the two happen to collide
+   * (`householdId === teamId === the sole profile's householdId`), but
+   * under the 3 advanced formats they never do: a team's runtime household
+   * is a different Firestore doc id than the profile it plays, and the
+   * same profile can be assigned to more than one team. This field is
+   * always required in business logic — decode possibly-missing legacy
+   * persistence through `StoredHouseholdState`/`resolveStoredHouseholdState`
+   * below, never by loosening this field itself.
+   */
+  profileId: string
   cashYen: number
   /** assetType → current value. Mirrors Task 1's AssetType keys. */
   assetHoldingsYen: Record<string, number>
@@ -18,10 +34,62 @@ export interface HouseholdState {
   updatedAtServerMillis: number
 }
 
+/**
+ * The shape a `HouseholdState` document ACTUALLY has at rest in Firestore —
+ * `profileId` is optional here ONLY because documents written before this
+ * task's migration exist without it. This type exists solely to decode that
+ * possibly-old persistence at the read boundary; it must never leak into
+ * business logic (settlement, processRound, projections, ...), which always
+ * operates on the fully-resolved `HouseholdState` with `profileId: string`
+ * required. Always pass a freshly-read document through
+ * `resolveStoredHouseholdState()` before using it as a `HouseholdState`.
+ */
+export type StoredHouseholdState = Omit<HouseholdState, 'profileId'> & { profileId?: string }
+
+/**
+ * Normalizes a possibly-legacy persisted `StoredHouseholdState` into a real
+ * `HouseholdState` with a guaranteed-present `profileId`.
+ *
+ * - Already present: passed through unchanged (a type-narrowing no-op).
+ * - Missing AND `content.courseFormat === 'COMMON_CONDITIONS'` with exactly
+ *   one authored profile: infers `profileId` as that sole profile's
+ *   `householdId` — the same "exactly one profile" invariant
+ *   `commonConditionsHousehold.ts`'s `resolveCommonConditionsProfile()`
+ *   already relies on for COMMON_CONDITIONS's `householdId === teamId`
+ *   lazy-init path. (The logic is intentionally re-expressed here, not
+ *   imported from `commonConditionsHousehold.ts`, to avoid a
+ *   repository.ts ↔ commonConditionsHousehold.ts import cycle — that file
+ *   already imports repository.ts's `buildInitialHouseholdState`/
+ *   `getOrInitHouseholdState`.)
+ * - Missing under any of the 3 advanced formats (or COMMON_CONDITIONS
+ *   without exactly one profile): FAILS CLOSED — there is no safe
+ *   inference for a missing `profileId` on an advanced-format household;
+ *   record identity there is never positional.
+ *
+ * This is a READ-TIME-ONLY normalization. It does not persist the inferred
+ * value back to Firestore — an optional backfill on the next legitimate
+ * write is permitted, but not required by this function.
+ */
+export const resolveStoredHouseholdState = (input: {
+  stored: StoredHouseholdState
+  content: HomeEconomicsContent
+}): HouseholdState => {
+  if (input.stored.profileId !== undefined) return input.stored as HouseholdState
+
+  if (input.content.courseFormat === 'COMMON_CONDITIONS' && input.content.households.length === 1) {
+    return { ...input.stored, profileId: input.content.households[0].householdId }
+  }
+
+  throw new Error(
+    `HouseholdState (householdId=${input.stored.householdId}, lessonRunId=${input.stored.lessonRunId}) is missing profileId and it cannot be safely inferred for courseFormat ${input.content.courseFormat}. This indicates a data-integrity problem — an advanced-format household must always have its profileId recorded at initialization time.`,
+  )
+}
+
 export interface BuildInitialHouseholdStateInput {
   lessonRunId: string
   teamId: string
   householdId: string
+  profileId: string
   startingCashYen: number
   startingLifeStage: string
   nowMillis: number
@@ -31,6 +99,7 @@ export const buildInitialHouseholdState = (input: BuildInitialHouseholdStateInpu
   householdId: input.householdId,
   lessonRunId: input.lessonRunId,
   teamId: input.teamId,
+  profileId: input.profileId,
   cashYen: input.startingCashYen,
   assetHoldingsYen: {},
   activeInsuranceContracts: {},
@@ -53,6 +122,7 @@ export interface GetOrInitHouseholdStateInput extends HouseholdFirestoreDeps {
   lessonRunId: string
   teamId: string
   householdId: string
+  profileId: string
   startingCashYen: number
   startingLifeStage: string
   now: () => number
@@ -70,6 +140,7 @@ export const getOrInitHouseholdState = (input: GetOrInitHouseholdStateInput): Pr
       lessonRunId: input.lessonRunId,
       teamId: input.teamId,
       householdId: input.householdId,
+      profileId: input.profileId,
       startingCashYen: input.startingCashYen,
       startingLifeStage: input.startingLifeStage,
       nowMillis: input.now(),

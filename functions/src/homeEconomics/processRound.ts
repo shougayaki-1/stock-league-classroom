@@ -5,7 +5,9 @@ import { appendLessonEventInTransaction, type FirestoreTx } from '../lessonRuns/
 import {
   getHouseholdDecisionForRoundWithAdminSdk,
   getHouseholdStateWithAdminSdk,
+  resolveStoredHouseholdState,
   type HouseholdState,
+  type StoredHouseholdState,
 } from '../lessonRuns/households/repository'
 import { settleRound, type SettleRoundInput, type SettleRoundResult } from './engine/settleRound'
 import { buildEventDisclosureView } from './engine/lifeEvents'
@@ -82,7 +84,7 @@ export interface ProcessRoundDeps {
     restoreGeneration: number
     homeEconomics: HomeEconomicsContent
   }>
-  readHouseholdState: (lessonRunId: string, householdId: string) => Promise<HouseholdState | null>
+  readHouseholdState: (lessonRunId: string, householdId: string) => Promise<StoredHouseholdState | null>
   readHouseholdDecision: (lessonRunId: string, householdId: string, roundIndex: number) => Promise<HouseholdDecisionInput | null>
   settleRoundFn: (input: SettleRoundInput) => SettleRoundResult
   commitRoundSettlement: (input: {
@@ -144,29 +146,24 @@ export interface ProcessRoundInput {
 }
 
 export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundInput): Promise<ProcessRoundExecutionResult> => {
-  const [config, household] = await Promise.all([
+  const [config, storedHousehold] = await Promise.all([
     deps.readLessonRunConfig(input.lessonRunId),
     deps.readHouseholdState(input.lessonRunId, input.householdId),
   ])
-  if (!household) throw new Error('HouseholdState not found')
+  if (!storedHousehold) throw new Error('HouseholdState not found')
 
-  // Critical Fix #1 (final whole-branch review): under the COMMON_CONDITIONS
-  // course format `templateValidation.ts` guarantees exactly one
-  // `HouseholdProfile` in `households`, and `HouseholdState.householdId` is
-  // team-scoped (`householdId === teamId`, see `onCall.ts`'s
-  // `lazyInitHouseholdWithAdminSdk`) rather than equal to the profile's own
-  // `householdId` — so an exact-match `.find` would never resolve a
-  // COMMON_CONDITIONS household's profile. This single-profile fallback is
-  // gated on courseFormat === 'COMMON_CONDITIONS', NOT just array length,
-  // to prevent silent mismatches in other course formats (e.g. ROLE_VARIANT)
-  // where a single-profile template with mismatched householdId should
-  // correctly fall through to the exact-match `.find()` and raise an error.
-  // This is unchanged/backward compatible for every existing caller:
-  // single-profile fixtures already use a matching id, and the multi-profile
-  // `.find` path (ROLE_VARIANT/etc, out of this fix's scope) is untouched.
-  const profile = (config.homeEconomics.households.length === 1 && config.homeEconomics.courseFormat === 'COMMON_CONDITIONS')
-    ? config.homeEconomics.households[0]
-    : config.homeEconomics.households.find((p) => p.householdId === input.householdId)
+  // Task 4: `household.profileId` is the runtime household's unambiguous
+  // record of which authored `HouseholdProfile` it is actually using —
+  // normalize the possibly-legacy stored document through
+  // `resolveStoredHouseholdState()` FIRST (infers `profileId` only for the
+  // COMMON_CONDITIONS single-profile case; fails closed for the 3 advanced
+  // formats), then resolve the profile by a simple, unambiguous exact
+  // match. This replaces the prior courseFormat+array-length positional
+  // heuristic, which could never disambiguate two teams running the same
+  // profile (MULTI_PERSON_PER_TEAM) or a team's runtime householdId
+  // differing from its profile's id (ROLE_VARIANT/STAGE_SPLIT).
+  const household = resolveStoredHouseholdState({ stored: storedHousehold, content: config.homeEconomics })
+  const profile = config.homeEconomics.households.find((p) => p.householdId === household.profileId)
   if (!profile) throw new Error('HouseholdProfile not found in template snapshot')
 
   const decision = await deps.readHouseholdDecision(input.lessonRunId, input.householdId, household.roundIndex)
