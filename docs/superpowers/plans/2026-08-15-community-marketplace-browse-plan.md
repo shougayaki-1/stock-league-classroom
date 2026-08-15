@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `lessonTemplates`ドキュメントに`title`/`description`/`subject`(公開のたび更新)、`publishedToCommunityAt`(コミュニティ公開のたび更新)フィールドが追加される。Task 2の`listCommunityTemplates`クエリがこれらのフィールドに依存する。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonTemplates/publishLessonVersion.test.ts`の最初のテスト(`'creates a version doc from the current draft and updates the template pointer/status in one transaction'`)内、`expect(fake.docs.get('lessonTemplates/t1')).toMatchObject(...)`の行を以下に置き換える。
 
@@ -63,12 +63,12 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `cd functions && npx vitest run src/lessonTemplates/publishLessonVersion.test.ts src/lessonTemplates/onCall.test.ts`
 Expected: FAIL(現行実装は`title`/`description`/`subject`/`publishedToCommunityAt`のいずれも書き込まない)。
 
-- [ ] **Step 3: `publishLessonVersion.ts`を修正する**
+- [x] **Step 3: `publishLessonVersion.ts`を修正する**
 
 `functions/src/lessonTemplates/publishLessonVersion.ts`の`tx.set(templatePath, { currentPublishedVersionId: versionId, status: 'READY', updatedAt: now }, { merge: true })`を以下に置き換える。
 
@@ -80,7 +80,7 @@ Expected: FAIL(現行実装は`title`/`description`/`subject`/`publishedToCommun
     }, { merge: true })
 ```
 
-- [ ] **Step 4: `onCall.ts`を修正する**
+- [x] **Step 4: `onCall.ts`を修正する**
 
 `functions/src/lessonTemplates/onCall.ts`の`import { getFirestore } from 'firebase-admin/firestore'`を以下に置き換える。
 
@@ -94,17 +94,17 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore'
   await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'COMMUNITY', publishedToCommunityAt: FieldValue.serverTimestamp() })
 ```
 
-- [ ] **Step 5: テストを実行して成功を確認する**
+- [x] **Step 5: テストを実行して成功を確認する**
 
 Run: `cd functions && npx vitest run src/lessonTemplates/publishLessonVersion.test.ts src/lessonTemplates/onCall.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 6: 型チェックとfunctions全体のテストを実行する**
+- [x] **Step 6: 型チェックとfunctions全体のテストを実行する**
 
 Run: `cd functions && npx tsc --noEmit && npx vitest run`
 Expected: エラーなし、全テストPASS。
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add functions/src/lessonTemplates/publishLessonVersion.ts functions/src/lessonTemplates/publishLessonVersion.test.ts functions/src/lessonTemplates/onCall.ts functions/src/lessonTemplates/onCall.test.ts
@@ -124,7 +124,7 @@ git commit -m "feat: 公開時にtitle/description/subject/publishedToCommunityA
 - Consumes: Task 1が書き込む`lessonTemplates.visibility`/`subject`/`publishedToCommunityAt`/`title`/`description`フィールド
 - Produces: `listCommunityTemplates(firestore: Firestore, input?: { subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' }): Promise<CommunityTemplate[]>`、`interface CommunityTemplate { id: string; title: string; description: string; subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'; currentPublishedVersionId: string }`。Task 3がこれを呼ぶ。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `src/lib/lessonTemplates/communityTemplates.test.ts`を新規作成する。
 
@@ -176,12 +176,12 @@ describe('listCommunityTemplates', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npx vitest run src/lib/lessonTemplates/communityTemplates.test.ts`
 Expected: FAIL(`./communityTemplates`モジュールが存在しない)。
 
-- [ ] **Step 3: 実装を追加する**
+- [x] **Step 3: 実装を追加する**
 
 `src/lib/lessonTemplates/communityTemplates.ts`を新規作成する。
 
@@ -211,12 +211,12 @@ export const listCommunityTemplates = async (firestore: Firestore, input: ListCo
 }
 ```
 
-- [ ] **Step 4: テストを実行して成功を確認する**
+- [x] **Step 4: テストを実行して成功を確認する**
 
 Run: `npx vitest run src/lib/lessonTemplates/communityTemplates.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 5: `firestore.indexes.json`に複合インデックスを追加する**
+- [x] **Step 5: `firestore.indexes.json`に複合インデックスを追加する**
 
 `firestore.indexes.json`の`indexes`配列に以下2件を追加する(既存の`templateShares`インデックスの後)。
 
@@ -240,12 +240,12 @@ Expected: 全件PASS。
     }
 ```
 
-- [ ] **Step 6: 型チェックを実行する**
+- [x] **Step 6: 型チェックを実行する**
 
 Run: `npx tsc -b`
 Expected: エラーなし。
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add src/lib/lessonTemplates/communityTemplates.ts src/lib/lessonTemplates/communityTemplates.test.ts firestore.indexes.json
@@ -304,12 +304,12 @@ describe('CommunityTemplatesPage', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npx vitest run src/components/teacher/templates/CommunityTemplatesPage.test.tsx`
 Expected: FAIL(`./CommunityTemplatesPage`モジュールが存在しない)。
 
-- [ ] **Step 3: コンポーネントを実装する**
+- [x] **Step 3: コンポーネントを実装する**
 
 `src/components/teacher/templates/CommunityTemplatesPage.tsx`を新規作成する(`TemplateListPage.tsx`と同じ簡素な単一行スタイルを踏襲)。
 
@@ -339,12 +339,12 @@ export function CommunityTemplatesPage({ templates, loading, subject, onSubjectC
 }
 ```
 
-- [ ] **Step 4: テストを実行して成功を確認する**
+- [x] **Step 4: テストを実行して成功を確認する**
 
 Run: `npx vitest run src/components/teacher/templates/CommunityTemplatesPage.test.tsx`
 Expected: 全件PASS。
 
-- [ ] **Step 5: 失敗するApp.test.tsxテストを書く**
+- [x] **Step 5: 失敗するApp.test.tsxテストを書く**
 
 `src/App.test.tsx`冒頭(37-46行目付近)の以下のブロックを:
 
@@ -396,12 +396,12 @@ vi.mock('firebase/firestore', () => ({
   })
 ```
 
-- [ ] **Step 6: テストを実行して失敗を確認する**
+- [x] **Step 6: テストを実行して失敗を確認する**
 
 Run: `npx vitest run src/App.test.tsx`
 Expected: FAIL(`/teacher/marketplace`ルートが存在しない)。
 
-- [ ] **Step 7: `App.tsx`にルートを追加する**
+- [x] **Step 7: `App.tsx`にルートを追加する**
 
 `import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'`の直後に追記する。
 
@@ -442,17 +442,17 @@ function CommunityMarketplaceRoute({ services }: { services: FirebaseServices })
   <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
 ```
 
-- [ ] **Step 8: テストを実行して成功を確認する**
+- [x] **Step 8: テストを実行して成功を確認する**
 
 Run: `npx vitest run src/App.test.tsx src/components/teacher/templates/CommunityTemplatesPage.test.tsx`
 Expected: 全件PASS。
 
-- [ ] **Step 9: プロジェクト全体の型チェックとテストを実行する**
+- [x] **Step 9: プロジェクト全体の型チェックとテストを実行する**
 
 Run: `npx tsc -b && npx tsc -p tsconfig.rules.json && npx vitest run`
 Expected: エラーなし、全テストPASS。
 
-- [ ] **Step 10: コミット**
+- [x] **Step 10: コミット**
 
 ```bash
 git add src/components/teacher/templates/CommunityTemplatesPage.tsx src/components/teacher/templates/CommunityTemplatesPage.test.tsx src/App.tsx src/App.test.tsx
