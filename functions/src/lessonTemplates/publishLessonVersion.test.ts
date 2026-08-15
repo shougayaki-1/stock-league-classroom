@@ -51,7 +51,7 @@ describe('publishLessonVersion', () => {
       content: baseTemplate.draft, createdByUid: 'teacher-a', changeSummary: '初版', immutable: true,
     })
     expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({
-      currentPublishedVersionId: 'version-1', status: 'READY',
+      currentPublishedVersionId: 'version-1', status: 'READY', approvalStatus: 'PENDING',
       title: 'ドラフト', description: '', subject: 'SOCIAL_STUDIES',
     })
   })
@@ -107,5 +107,18 @@ describe('publishLessonVersion', () => {
       templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: 'key-2',
     })
     expect(fake.docs.get(`lessonTemplates/t1/versions/${result.versionId}`)).toMatchObject({ parentVersionId: 'version-0' })
+  })
+})
+
+describe('publishLessonVersion approvalStatus', () => {
+  it('resets an already-APPROVED template back to PENDING when republished', async () => {
+    const fake = makeFakeFirestore([{
+      path: 'lessonTemplates/t1',
+      data: { ...baseTemplate, currentPublishedVersionId: 'version-0', status: 'READY', approvalStatus: 'APPROVED' },
+    }])
+    await publishLessonVersion(makeDeps(fake, ['version-1']), {
+      templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: 'key-2',
+    })
+    expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({ approvalStatus: 'PENDING' })
   })
 })

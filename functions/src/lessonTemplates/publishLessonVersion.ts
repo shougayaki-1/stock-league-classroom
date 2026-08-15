@@ -83,7 +83,7 @@ export const publishLessonVersion = (deps: PublishLessonVersionDeps, input: Publ
     })
     const publishedDraft = templateSnap.data.draft as { title: string; description: string; subject: string }
     tx.set(templatePath, {
-      currentPublishedVersionId: versionId, status: 'READY', updatedAt: now,
+      currentPublishedVersionId: versionId, status: 'READY', approvalStatus: 'PENDING', updatedAt: now,
       title: publishedDraft.title, description: publishedDraft.description, subject: publishedDraft.subject,
     }, { merge: true })
     tx.set(idempotencyPath, { requestDigest, versionId, createdAt: now })
