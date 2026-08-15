@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallableRequest } from 'firebase-functions/v2/https'
-import { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './onCall'
+import { generateLessonDraftCallable, generateTeacherGuidanceCallable, grantAiBetaAccessCallable, revokeAiBetaAccessCallable } from './onCall'
 import { AiKillSwitchEnabledError, AiQuotaExceededError, checkAiQuota, consumeAiQuota } from './usageQuota'
 
 const orgGet = vi.fn()
+const betaAccessGet = vi.fn()
+const betaAccessSet = vi.fn()
+const betaAccessDelete = vi.fn()
 const usageLogAdd = vi.fn()
-vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: orgGet }), collection: () => ({ add: usageLogAdd }) }) }))
+vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
+  getFirestore: () => ({
+    doc: (path: string) => (path.startsWith('aiBetaAccess/') ? { get: betaAccessGet, set: betaAccessSet, delete: betaAccessDelete } : { get: orgGet }),
+    collection: () => ({ add: usageLogAdd }),
+  }),
+}))
 vi.mock('./usageQuota', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./usageQuota')>()
   return { ...actual, checkAiQuota: vi.fn(), consumeAiQuota: vi.fn(), getAiUsageQuotaDepsWithAdminSdk: () => ({}) }
@@ -18,7 +27,13 @@ const request = (auth = teacher, data: Record<string, unknown> = {}): CallableRe
 const guidanceRequest = (auth = teacher, data: Record<string, unknown> = { topic: 'トピック' }): CallableRequest => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
 
 describe('generateLessonDraftCallable', () => {
-  beforeEach(() => { vi.clearAllMocks(); usageLogAdd.mockResolvedValue(undefined); vi.mocked(checkAiQuota).mockResolvedValue(undefined); vi.mocked(consumeAiQuota).mockResolvedValue(undefined) })
+  beforeEach(() => { vi.clearAllMocks(); usageLogAdd.mockResolvedValue(undefined); vi.mocked(checkAiQuota).mockResolvedValue(undefined); vi.mocked(consumeAiQuota).mockResolvedValue(undefined); betaAccessGet.mockResolvedValue({ exists: true }) })
+
+  it('rejects callers the operator has not approved for the AI beta, without touching the organization', async () => {
+    betaAccessGet.mockResolvedValueOnce({ exists: false })
+    await expect(generateLessonDraftCallable.run(request())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(orgGet).not.toHaveBeenCalled()
+  })
 
   it('returns the generated draft even when consumeAiQuota bookkeeping fails after a successful generation (Finding 4)', async () => {
     orgGet.mockResolvedValueOnce({ exists: true, get: () => true })
@@ -62,7 +77,13 @@ describe('generateLessonDraftCallable', () => {
 })
 
 describe('generateTeacherGuidanceCallable', () => {
-  beforeEach(() => { vi.clearAllMocks(); usageLogAdd.mockResolvedValue(undefined); vi.mocked(checkAiQuota).mockResolvedValue(undefined); vi.mocked(consumeAiQuota).mockResolvedValue(undefined) })
+  beforeEach(() => { vi.clearAllMocks(); usageLogAdd.mockResolvedValue(undefined); vi.mocked(checkAiQuota).mockResolvedValue(undefined); vi.mocked(consumeAiQuota).mockResolvedValue(undefined); betaAccessGet.mockResolvedValue({ exists: true }) })
+
+  it('rejects callers the operator has not approved for the AI beta', async () => {
+    betaAccessGet.mockResolvedValueOnce({ exists: false })
+    await expect(generateTeacherGuidanceCallable.run(guidanceRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(orgGet).not.toHaveBeenCalled()
+  })
 
   it('rejects with resource-exhausted when the monthly quota is exceeded', async () => {
     orgGet.mockResolvedValueOnce({ exists: true, get: () => true })
@@ -77,5 +98,35 @@ describe('generateTeacherGuidanceCallable', () => {
     vi.mocked(consumeAiQuota).mockRejectedValueOnce(new Error('firestore write failed'))
     await expect(generateTeacherGuidanceCallable.run(guidanceRequest())).resolves.toEqual({ teacherGuidance: '下書き' })
     expect(usageLogAdd).toHaveBeenCalledWith(expect.objectContaining({ feature: 'TEACHER_GUIDANCE', succeeded: true }))
+  })
+})
+
+describe('grantAiBetaAccessCallable / revokeAiBetaAccessCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const operatorAuth = { uid: 'operator-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true } }
+  const makeRequest = (auth: typeof teacherAuth, data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a non-operator caller from granting access', async () => {
+    await expect(grantAiBetaAccessCallable.run(makeRequest(teacherAuth, { targetUid: 'teacher-b' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(betaAccessSet).not.toHaveBeenCalled()
+  })
+
+  it('grants beta access to the target uid', async () => {
+    betaAccessSet.mockResolvedValue(undefined)
+    await expect(grantAiBetaAccessCallable.run(makeRequest(operatorAuth, { targetUid: 'teacher-b' }))).resolves.toEqual({ granted: true })
+    expect(betaAccessSet).toHaveBeenCalledWith({ approvedByUid: 'operator-a', approvedAt: 'SERVER_TIMESTAMP' })
+  })
+
+  it('rejects a non-operator caller from revoking access', async () => {
+    await expect(revokeAiBetaAccessCallable.run(makeRequest(teacherAuth, { targetUid: 'teacher-b' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(betaAccessDelete).not.toHaveBeenCalled()
+  })
+
+  it('revokes beta access from the target uid', async () => {
+    betaAccessDelete.mockResolvedValue(undefined)
+    await expect(revokeAiBetaAccessCallable.run(makeRequest(operatorAuth, { targetUid: 'teacher-b' }))).resolves.toEqual({ revoked: true })
+    expect(betaAccessDelete).toHaveBeenCalled()
   })
 })
