@@ -11,12 +11,19 @@ import type { HouseholdState } from '../lessonRuns/households/repository'
 import { ensureCommonConditionsHouseholdState } from './commonConditionsHousehold'
 import { canControlLesson } from '../lessonRuns/authorization'
 import { requireActiveOrgMember } from '../organizations/authorization'
-import { restoreCheckpointWithAdminSdk, writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
+import { writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
 import { submitHouseholdDecision } from './submitDecision'
 import type { HouseholdDecisionInput } from './submitDecision'
 import { processRoundWithAdminSdk } from './processRound'
-import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from './checkpointRestore'
-import type { HouseholdCheckpointSnapshot } from './checkpointRestore'
+import { buildHouseholdCheckpointSnapshot } from './checkpointRestore'
+import { findActiveBulkSettlementLeaseWithAdminSdk } from './bulkSettlementOperation'
+import { loadHouseholdTeacherDashboardWithAdminSdk } from './teacherDashboard'
+import {
+  processHouseholdRoundBatchWithAdminSdk,
+  retryHouseholdRoundBatchWithAdminSdk,
+} from './bulkSettlement'
+import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
+import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
 
 /**
  * Resolves the caller's `participantId` on this lessonRun from the verified
@@ -406,6 +413,11 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
     throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
   }
 
+  const activeLease = await findActiveBulkSettlementLeaseWithAdminSdk(data.lessonRunId, Date.now())
+  if (activeLease) {
+    throw new HttpsError('failed-precondition', '一括決算処理が実行中のため、個別の決算は行えません。')
+  }
+
   try {
     return await processRoundWithAdminSdk({
       lessonRunId: data.lessonRunId,
@@ -419,14 +431,162 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
 })
 
 /**
- * Shared authorization for both checkpoint Callables below — deliberately
- * the exact same shape as `restoreCheckpointCallable` (`lessonRuns/onCall.ts`):
- * only a PRIMARY/ASSISTANT teacher on THIS run may write or restore a
- * checkpoint (a VIEWER must be rejected even though teacher() Firestore
- * rules let them read the run). `orgId` is always read from the run
- * document itself, never taken from client input, so a caller cannot point
- * `requireActiveOrgMember` at an org they belong to while acting on a run
- * that belongs to a different org.
+ * Teacher-facing dashboard loader Callable.
+ */
+interface GetHouseholdTeacherDashboardRequest {
+  lessonRunId: string
+}
+
+export const getHouseholdTeacherDashboardCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as GetHouseholdTeacherDashboardRequest
+  if (!data.lessonRunId || typeof data.lessonRunId !== 'string') {
+    throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const subject = runSnap.get('subject') as string | undefined
+  if (subject !== 'HOME_ECONOMICS') {
+    throw new HttpsError('failed-precondition', 'LessonRun subject is not HOME_ECONOMICS')
+  }
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  if (templateSnapshot?.homeEconomics?.courseFormat !== 'COMMON_CONDITIONS') {
+    throw new HttpsError('failed-precondition', 'LessonRun course format must be COMMON_CONDITIONS')
+  }
+
+  try {
+    return await loadHouseholdTeacherDashboardWithAdminSdk(data.lessonRunId, Date.now())
+  } catch (error) {
+    if (error instanceof HttpsError) throw error
+    if (error instanceof Error) {
+      if (error.message.includes('not found')) throw new HttpsError('not-found', error.message)
+      throw new HttpsError('internal', error.message)
+    }
+    throw error
+  }
+})
+
+/**
+ * Teacher-facing bulk round settlement Callable.
+ */
+interface ProcessHouseholdRoundBatchCallableRequest {
+  lessonRunId: string
+  expectedRoundIndex: number
+  forceUnsubmitted: boolean
+  idempotencyKey: string
+}
+
+export const processHouseholdRoundBatchCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as ProcessHouseholdRoundBatchCallableRequest
+  if (
+    !data.lessonRunId || typeof data.lessonRunId !== 'string' ||
+    typeof data.expectedRoundIndex !== 'number' || !Number.isInteger(data.expectedRoundIndex) || data.expectedRoundIndex < 0 ||
+    typeof data.forceUnsubmitted !== 'boolean' ||
+    !data.idempotencyKey || typeof data.idempotencyKey !== 'string'
+  ) {
+    throw new HttpsError('invalid-argument', 'lessonRunId, expectedRoundIndex (非負整数), forceUnsubmitted (boolean), idempotencyKey は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'PROCESS_ROUND')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const status = runSnap.get('status') as string | undefined
+  if (status !== 'RUNNING') {
+    throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
+
+  try {
+    return await processHouseholdRoundBatchWithAdminSdk({
+      lessonRunId: data.lessonRunId,
+      expectedRoundIndex: data.expectedRoundIndex,
+      forceUnsubmitted: data.forceUnsubmitted,
+      actorUid: request.auth.uid,
+      idempotencyKey: data.idempotencyKey,
+      nowMillis: Date.now(),
+    })
+  } catch (error) {
+    if (error instanceof HttpsError) throw error
+    if (error instanceof Error) {
+      if (error.message.includes('Idempotency key payload mismatch')) throw new HttpsError('failed-precondition', error.message)
+      if (error.message.includes('未提出') || error.message.includes('不一致') || error.message.includes('存在します')) {
+        throw new HttpsError('failed-precondition', error.message)
+      }
+      throw new HttpsError('internal', error.message)
+    }
+    throw error
+  }
+})
+
+/**
+ * Teacher-facing retry for failed/incomplete bulk round settlement.
+ */
+interface RetryHouseholdRoundBatchCallableRequest {
+  lessonRunId: string
+  operationId: string
+}
+
+export const retryHouseholdRoundBatchCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as RetryHouseholdRoundBatchCallableRequest
+  if (!data.lessonRunId || typeof data.lessonRunId !== 'string' || !data.operationId || typeof data.operationId !== 'string') {
+    throw new HttpsError('invalid-argument', 'lessonRunId, operationId は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'PROCESS_ROUND')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const status = runSnap.get('status') as string | undefined
+  if (status !== 'RUNNING') {
+    throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
+
+  try {
+    return await retryHouseholdRoundBatchWithAdminSdk({
+      lessonRunId: data.lessonRunId,
+      operationId: data.operationId,
+      actorUid: request.auth.uid,
+      nowMillis: Date.now(),
+    })
+  } catch (error) {
+    if (error instanceof HttpsError) throw error
+    if (error instanceof Error) {
+      if (error.message.includes('not found')) throw new HttpsError('not-found', error.message)
+      if (error.message.includes('チェックポイント復元') || error.message.includes('mismatch')) throw new HttpsError('failed-precondition', error.message)
+      throw new HttpsError('internal', error.message)
+    }
+    throw error
+  }
+})
+
+/**
+ * Shared authorization for both checkpoint Callables below.
  */
 const requireCheckpointAuthority = async (lessonRunId: string, authUid: string): Promise<void> => {
   const db = getFirestore()
@@ -443,68 +603,82 @@ const requireCheckpointAuthority = async (lessonRunId: string, authUid: string):
 
 interface WriteHouseholdCheckpointRequest {
   lessonRunId: string
-  phaseId: string
-  sequence: number
-  householdIds: string[]
+  label?: string
+  phaseId?: string
+  sequence?: number
+  householdIds?: string[]
   idempotencyKey: string
 }
 
 /**
- * Translates `writeCheckpoint`'s (Phase A, `lessonRuns/checkpoint.ts`) bare
- * Error messages into HttpsError codes at the Callable boundary, same
- * convention as `translateProcessRoundError` above.
+ * Translates `writeCheckpoint`'s bare Error messages into HttpsError codes.
  */
 const translateWriteHouseholdCheckpointError = (error: unknown): unknown => {
   if (error instanceof HttpsError) return error
   if (error instanceof Error) {
     if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+    if (error.message.includes('Label must be')) return new HttpsError('invalid-argument', error.message)
+    if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
   }
   return error
 }
 
 /**
- * Teacher-facing checkpoint-write Callable — spec §13.18 (Task 13).
- * Authorization mirrors `restoreCheckpointCallable` exactly (see
- * `requireCheckpointAuthority` above). Reads every named household's
- * CURRENT `HouseholdState` document (never trusting client-supplied state,
- * same "read from Firestore, not from the request body" rule
- * `submitHouseholdDecisionCallable` follows), builds the opaque snapshot
- * payload with `buildHouseholdCheckpointSnapshot` (checkpointRestore.ts),
- * and hands it to Phase A's generic `writeCheckpointWithAdminSdk` — no new
- * Firestore schema, the `checkpoints` subcollection Phase A already owns is
- * reused as-is.
+ * Teacher-facing checkpoint-write Callable.
  */
 export const writeHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   const data = request.data as WriteHouseholdCheckpointRequest
-  if (
-    !data.lessonRunId || !data.phaseId
-    || typeof data.sequence !== 'number' || !Number.isInteger(data.sequence) || data.sequence < 0
-    || !Array.isArray(data.householdIds) || data.householdIds.length === 0
-    || !data.householdIds.every((id) => typeof id === 'string' && id.length > 0)
-    || !data.idempotencyKey
-  ) {
-    throw new HttpsError(
-      'invalid-argument',
-      'lessonRunId、phaseId、sequence、householdIds（1件以上）、idempotencyKey は必須です。',
-    )
+
+  if (!data.lessonRunId || !data.idempotencyKey) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、idempotencyKey は必須です。')
+  }
+
+  // If label is not provided, validate legacy parameters before reading DB
+  if (typeof data.label !== 'string') {
+    if (
+      !data.phaseId
+      || typeof data.sequence !== 'number' || !Number.isInteger(data.sequence) || data.sequence < 0
+      || !Array.isArray(data.householdIds) || data.householdIds.length === 0
+      || !data.householdIds.every((id) => typeof id === 'string' && id.length > 0)
+    ) {
+      throw new HttpsError(
+        'invalid-argument',
+        'lessonRunId、phaseId、sequence、householdIds（1件以上）、idempotencyKey は必須です。',
+      )
+    }
   }
 
   await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
+  // v2 manual checkpoint path
+  if (typeof data.label === 'string') {
+    try {
+      return await saveManualHouseholdCheckpointWithAdminSdk({
+        lessonRunId: data.lessonRunId,
+        label: data.label,
+        actorUid: request.auth.uid,
+        idempotencyKey: data.idempotencyKey,
+      })
+    } catch (error) {
+      throw translateWriteHouseholdCheckpointError(error)
+    }
+  }
+
+  // Legacy v1 fallback path
   const households: HouseholdState[] = []
-  for (const householdId of data.householdIds) {
-    const household = await getHouseholdStateWithAdminSdk(data.lessonRunId, householdId)
-    if (!household) throw new HttpsError('not-found', `対象の家庭の状態が見つかりません: ${householdId}`)
-    households.push(household)
+  for (const householdId of data.householdIds!) {
+    const h = await getHouseholdStateWithAdminSdk(data.lessonRunId, householdId)
+    if (!h) throw new HttpsError('not-found', `対象の家庭の状態が見つかりません: ${householdId}`)
+    households.push(h)
   }
 
   try {
     return await writeCheckpointWithAdminSdk({
       lessonRunId: data.lessonRunId,
-      phaseId: data.phaseId,
-      sequence: data.sequence,
+      phaseId: data.phaseId!,
+      sequence: data.sequence!,
       snapshot: buildHouseholdCheckpointSnapshot(households),
       createdBy: 'TEACHER',
       idempotencyKey: data.idempotencyKey,
@@ -522,9 +696,7 @@ interface RestoreHouseholdCheckpointRequest {
 }
 
 /**
- * Translates `restoreCheckpoint`'s (Phase A) bare Error messages into
- * HttpsError codes at the Callable boundary, same convention as
- * `lessonRuns/onCall.ts`'s `translateRestoreCheckpointError`.
+ * Translates `restoreCheckpoint` bare Error messages into HttpsError codes.
  */
 const translateRestoreHouseholdCheckpointError = (error: unknown): unknown => {
   if (error instanceof HttpsError) return error
@@ -532,48 +704,14 @@ const translateRestoreHouseholdCheckpointError = (error: unknown): unknown => {
     if (error.message === 'LessonRun not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Checkpoint not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+    if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
+    if (error.message.includes('復元できるのは')) return new HttpsError('failed-precondition', error.message)
   }
   return error
 }
 
 /**
- * Writes every restored `HouseholdState` back to its own document at
- * `lessonRuns/{lessonRunId}/households/{householdId}` — the same path and
- * `tx.set` shape `getOrInitHouseholdState` (Task 10, households/repository.ts)
- * writes to, via the same `householdRepositoryWithAdminSdk()` transaction
- * wiring. This is the one place Task 13 departs from Phase A's own
- * `restoreCheckpointCallable`, which does NOT write anything back (Phase
- * A's LessonRun is event-sourced and append-only by design — see
- * `checkpoint.ts`'s doc comment: "'Restore' is append, not rewind"). A
- * `HouseholdState` document is not event-sourced, though — it IS the
- * current, mutable state a household is in, read directly by
- * `submitHouseholdDecisionCallable`/`processRoundCallable` on every call —
- * so restoring a checkpoint here must overwrite those documents, or
- * "restore" would silently do nothing for home economics. All households
- * are written back inside a single transaction so a mid-restore failure
- * cannot leave some households restored and others not.
- */
-const writeRestoredHouseholdsToFirestore = (lessonRunId: string, households: HouseholdState[]): Promise<void> =>
-  householdRepositoryWithAdminSdk().runTransaction(async (tx) => {
-    for (const household of households) {
-      tx.set(`lessonRuns/${lessonRunId}/households/${household.householdId}`, household as unknown as Record<string, unknown>)
-    }
-  })
-
-/**
- * Teacher-facing checkpoint-restore Callable — spec §13.18 (Task 13).
- * Authorization mirrors `restoreCheckpointCallable` exactly (see
- * `requireCheckpointAuthority` above). First delegates to Phase A's generic
- * `restoreCheckpointWithAdminSdk` to authorize-then-record the restore
- * (increments `LessonRun.restoreGeneration`, appends a
- * `CHECKPOINT_RESTORED` LessonEvent) — same as
- * `restoreCheckpointCallable`. Phase A's generic layer treats `snapshot` as
- * `unknown` and never reads it, so after that call this Callable reads the
- * checkpoint document's own `snapshot` field back out, decodes it with
- * `restoreHouseholdsFromSnapshot` (checkpointRestore.ts), and writes the
- * restored `HouseholdState`s back to Firestore — see
- * `writeRestoredHouseholdsToFirestore`'s doc comment for why this Callable
- * does that write and Phase A's own restore flow does not.
+ * Teacher-facing checkpoint-restore Callable (v2 atomic).
  */
 export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
@@ -584,21 +722,17 @@ export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northea
 
   await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
-  let restoreResult
   try {
-    restoreResult = await restoreCheckpointWithAdminSdk({
-      lessonRunId: data.lessonRunId, checkpointId: data.checkpointId,
-      reason: data.reason, actorId: request.auth.uid, idempotencyKey: data.idempotencyKey,
+    return await restoreHouseholdCheckpointV2WithAdminSdk({
+      lessonRunId: data.lessonRunId,
+      checkpointId: data.checkpointId,
+      reason: data.reason,
+      actorUid: request.auth.uid,
+      idempotencyKey: data.idempotencyKey,
+      nowMillis: Date.now(),
     })
   } catch (error) {
     throw translateRestoreHouseholdCheckpointError(error)
   }
-
-  const checkpointSnap = await getFirestore().doc(`lessonRuns/${data.lessonRunId}/checkpoints/${data.checkpointId}`).get()
-  if (!checkpointSnap.exists) throw new HttpsError('not-found', 'Checkpoint not found')
-  const snapshot = checkpointSnap.get('snapshot') as HouseholdCheckpointSnapshot
-  const restoredHouseholds = restoreHouseholdsFromSnapshot(snapshot)
-  await writeRestoredHouseholdsToFirestore(data.lessonRunId, restoredHouseholds)
-
-  return { ...restoreResult, restoredHouseholdIds: restoredHouseholds.map((household) => household.householdId) }
 })
+

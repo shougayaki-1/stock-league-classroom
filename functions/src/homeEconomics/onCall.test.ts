@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import {
+  getHouseholdTeacherDashboardCallable,
+  processHouseholdRoundBatchCallable,
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
+  retryHouseholdRoundBatchCallable,
   submitHouseholdDecisionCallable,
   writeHouseholdCheckpointCallable,
 } from './onCall'
@@ -15,6 +18,14 @@ import {
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { restoreCheckpointWithAdminSdk, writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
 import { processRoundWithAdminSdk } from './processRound'
+import { findActiveBulkSettlementLeaseWithAdminSdk } from './bulkSettlementOperation'
+import { loadHouseholdTeacherDashboardWithAdminSdk } from './teacherDashboard'
+import {
+  processHouseholdRoundBatchWithAdminSdk,
+  retryHouseholdRoundBatchWithAdminSdk,
+} from './bulkSettlement'
+import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
+import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
@@ -47,6 +58,22 @@ vi.mock('../lessonRuns/checkpoint', () => ({
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./processRound', () => ({ processRoundWithAdminSdk: vi.fn() }))
+vi.mock('./bulkSettlementOperation', () => ({
+  findActiveBulkSettlementLeaseWithAdminSdk: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('./teacherDashboard', () => ({
+  loadHouseholdTeacherDashboardWithAdminSdk: vi.fn(),
+}))
+vi.mock('./bulkSettlement', () => ({
+  processHouseholdRoundBatchWithAdminSdk: vi.fn(),
+  retryHouseholdRoundBatchWithAdminSdk: vi.fn(),
+}))
+vi.mock('./householdCheckpoint', () => ({
+  saveManualHouseholdCheckpointWithAdminSdk: vi.fn(),
+}))
+vi.mock('./householdRestore', () => ({
+  restoreHouseholdCheckpointV2WithAdminSdk: vi.fn(),
+}))
 
 interface SubmitHouseholdDecisionRequestData {
   lessonRunId: string
@@ -558,6 +585,27 @@ describe('writeHouseholdCheckpointCallable', () => {
     })
   })
 
+  it('calls saveManualHouseholdCheckpointWithAdminSdk when label is provided', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(saveManualHouseholdCheckpointWithAdminSdk).mockResolvedValue({ checkpointId: 'hcp-1', created: true })
+
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', label: '手動チェックポイント', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    const result = await writeHouseholdCheckpointCallable.run(req)
+    expect(result).toEqual({ checkpointId: 'hcp-1', created: true })
+    expect(saveManualHouseholdCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1',
+      label: '手動チェックポイント',
+      actorUid: 'teacher-a',
+      idempotencyKey: 'k-1',
+    })
+  })
+
   it('translates an idempotency key payload mismatch into failed-precondition', async () => {
     lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
@@ -623,39 +671,192 @@ describe('restoreHouseholdCheckpointCallable', () => {
     expect(restoreCheckpointWithAdminSdk).not.toHaveBeenCalled()
   })
 
-  it('happy path: an ASSISTANT-role teacher who is an active org member restores the checkpoint and writes every household back to Firestore', async () => {
+  it('rejects when active bulk settlement lease is present', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(findActiveBulkSettlementLeaseWithAdminSdk).mockResolvedValue({ operationId: 'op-1' } as never)
+
+    await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '一括決算処理が実行中のため、個別の決算は行えません。',
+    })
+    expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+  })
+})
+
+describe('getHouseholdTeacherDashboardCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      subject: 'HOME_ECONOMICS',
+      templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS' } },
+      teacherRoles: { 'teacher-a': 'VIEWER' },
+    }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
+
+  it('rejects unauthenticated callers', async () => {
+    const req = { auth: undefined, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+    await expect(getHouseholdTeacherDashboardCallable.run(req)).rejects.toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('rejects missing lessonRunId', async () => {
+    const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: '' }, rawRequest: {} } as never
+    await expect(getHouseholdTeacherDashboardCallable.run(req)).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('rejects non-teacher callers', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      subject: 'HOME_ECONOMICS',
+      teacherRoles: {},
+    }))
+    const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+    await expect(getHouseholdTeacherDashboardCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('loads dashboard for any teacher role including VIEWER', async () => {
+    const mockDashboard = { lessonRunId: 'run-1', households: [] }
+    vi.mocked(loadHouseholdTeacherDashboardWithAdminSdk).mockResolvedValue(mockDashboard as never)
+
+    const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+    const result = await getHouseholdTeacherDashboardCallable.run(req)
+
+    expect(result).toEqual(mockDashboard)
+    expect(loadHouseholdTeacherDashboardWithAdminSdk).toHaveBeenCalledWith('run-1', expect.any(Number))
+  })
+})
+
+describe('processHouseholdRoundBatchCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      status: 'RUNNING',
+      subject: 'HOME_ECONOMICS',
+      templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS' } },
+      teacherRoles: { 'teacher-a': 'PRIMARY' },
+    }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
+
+  it('rejects non-PRIMARY teacher', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      status: 'RUNNING',
+      teacherRoles: { 'teacher-a': 'ASSISTANT' },
+    }))
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', expectedRoundIndex: 1, forceUnsubmitted: false, idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+    await expect(processHouseholdRoundBatchCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('calls processHouseholdRoundBatchWithAdminSdk on happy path', async () => {
+    const mockView = { operationId: 'op-1', status: 'COMPLETED' }
+    vi.mocked(processHouseholdRoundBatchWithAdminSdk).mockResolvedValue(mockView as never)
+
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', expectedRoundIndex: 1, forceUnsubmitted: false, idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+    const result = await processHouseholdRoundBatchCallable.run(req)
+
+    expect(result).toEqual(mockView)
+    expect(processHouseholdRoundBatchWithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({
+      lessonRunId: 'run-1',
+      expectedRoundIndex: 1,
+      forceUnsubmitted: false,
+      actorUid: 'teacher-a',
+      idempotencyKey: 'k-1',
+    }))
+  })
+})
+
+describe('retryHouseholdRoundBatchCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      status: 'RUNNING',
+      teacherRoles: { 'teacher-a': 'PRIMARY' },
+    }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
+
+  it('rejects non-PRIMARY teacher', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      status: 'RUNNING',
+      teacherRoles: { 'teacher-a': 'ASSISTANT' },
+    }))
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', operationId: 'op-1' },
+      rawRequest: {},
+    } as never
+    await expect(retryHouseholdRoundBatchCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('calls retryHouseholdRoundBatchWithAdminSdk on happy path', async () => {
+    const mockView = { operationId: 'op-1', status: 'COMPLETED' }
+    vi.mocked(retryHouseholdRoundBatchWithAdminSdk).mockResolvedValue(mockView as never)
+
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', operationId: 'op-1' },
+      rawRequest: {},
+    } as never
+    const result = await retryHouseholdRoundBatchCallable.run(req)
+
+    expect(result).toEqual(mockView)
+    expect(retryHouseholdRoundBatchWithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({
+      lessonRunId: 'run-1',
+      operationId: 'op-1',
+      actorUid: 'teacher-a',
+    }))
+  })
+})
+
+describe('restoreHouseholdCheckpointCallable v2', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
     lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
-    vi.mocked(restoreCheckpointWithAdminSdk).mockResolvedValue({ newRestoreGeneration: 2, eventId: 'evt-1', deduplicated: false })
-    checkpointGetMock.mockResolvedValue({
-      exists: true,
-      get: (field: string) => (field === 'snapshot' ? { schemaVersion: 1, households: [household] } : undefined),
-    })
-
-    const result = await restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())
-
-    expect(result).toEqual({ newRestoreGeneration: 2, eventId: 'evt-1', deduplicated: false, restoredHouseholdIds: ['case-b'] })
-    expect(restoreCheckpointWithAdminSdk).toHaveBeenCalledWith({
-      lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'undo mistaken settlement', actorId: 'teacher-a', idempotencyKey: 'key-1',
-    })
-    // Proves restore genuinely persists the restored HouseholdState back to
-    // Firestore — not just returning it to the caller unpersisted.
-    expect(snapshotSetCalls).toEqual([{ path: 'lessonRuns/run-1/households/case-b', data: household }])
   })
 
-  it('translates "Checkpoint not found" from restoreCheckpointWithAdminSdk into not-found, writing nothing back', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
-    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
-    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Checkpoint not found'))
-    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest())).rejects.toMatchObject({ code: 'not-found' })
-    expect(snapshotSetCalls).toHaveLength(0)
+  it('rejects when active bulk lease is present', async () => {
+    vi.mocked(restoreHouseholdCheckpointV2WithAdminSdk).mockRejectedValue(new Error('Active bulk operation lease is active'))
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'restore', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    await expect(restoreHouseholdCheckpointCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 
-  it('translates an idempotency key payload mismatch into failed-precondition', async () => {
-    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
-    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
-    vi.mocked(restoreCheckpointWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
-    await expect(restoreHouseholdCheckpointCallable.run(makeRestoreCheckpointRequest()))
-      .rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
+  it('calls restoreHouseholdCheckpointV2WithAdminSdk on happy path', async () => {
+    const mockResult = { newRestoreGeneration: 2, restoredHouseholdIds: ['team-a'], preRestoreCheckpointId: 'pre-1' }
+    vi.mocked(restoreHouseholdCheckpointV2WithAdminSdk).mockResolvedValue(mockResult)
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'restore', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    const result = await restoreHouseholdCheckpointCallable.run(req)
+    expect(result).toEqual(mockResult)
+    expect(restoreHouseholdCheckpointV2WithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({
+      lessonRunId: 'run-1',
+      checkpointId: 'cp-1',
+      reason: 'restore',
+      actorUid: 'teacher-a',
+      idempotencyKey: 'k-1',
+    }))
   })
 })

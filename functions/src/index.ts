@@ -90,8 +90,11 @@ export {
   triggerBankruptcyCallable,
 } from './market/onCall'
 export {
+  getHouseholdTeacherDashboardCallable,
+  processHouseholdRoundBatchCallable,
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
+  retryHouseholdRoundBatchCallable,
   submitHouseholdDecisionCallable,
   writeHouseholdCheckpointCallable,
 } from './homeEconomics/onCall'
