@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import {
+  getHouseholdAssignmentCallable,
   getHouseholdTeacherDashboardCallable,
+  prepareHouseholdAssignmentCallable,
   processHouseholdRoundBatchCallable,
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
   retryHouseholdRoundBatchCallable,
   submitHouseholdDecisionCallable,
+  updateHouseholdAssignmentCallable,
   writeHouseholdCheckpointCallable,
 } from './onCall'
 import {
@@ -26,11 +29,19 @@ import {
 } from './bulkSettlement'
 import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
 import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
+import {
+  buildHouseholdAssignmentView,
+  getHouseholdAssignmentView,
+  prepareHouseholdAssignment,
+  updateHouseholdAssignment,
+} from './householdAssignmentRepository'
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
 const lessonRunGetMock = vi.fn()
 const checkpointGetMock = vi.fn()
+const teamsIndexGetMock = vi.fn()
+const teamsCollectionGetMock = vi.fn()
 const teamDocPaths: string[] = []
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -38,10 +49,24 @@ vi.mock('firebase-admin/firestore', () => ({
     doc: (path: string) => {
       if (/^lessonRuns\/[^/]+$/.test(path)) return { get: lessonRunGetMock }
       if (path.includes('/checkpoints/')) return { get: checkpointGetMock }
+      if (path.endsWith('/meta/teamsIndex')) return { get: teamsIndexGetMock }
       if (!path.includes('/participantsByAuthUid/')) teamDocPaths.push(path)
       return { get: path.includes('/participantsByAuthUid/') ? participantGetMock : teamGetMock }
     },
+    collection: (path: string) => {
+      if (path.endsWith('/teams')) return { get: teamsCollectionGetMock }
+      return { get: vi.fn().mockResolvedValue({ docs: [] }) }
+    },
   }),
+}))
+
+vi.mock('./householdAssignmentRepository', () => ({
+  getHouseholdAssignmentView: vi.fn(),
+  prepareHouseholdAssignment: vi.fn(),
+  updateHouseholdAssignment: vi.fn(),
+  buildHouseholdAssignmentView: vi.fn(),
+  householdAssignmentReadDepsWithAdminSdk: vi.fn(() => ({})),
+  householdAssignmentRepositoryWithAdminSdk: vi.fn(() => ({})),
 }))
 
 vi.mock('../lessonRuns/households/repository', () => ({
@@ -858,5 +883,176 @@ describe('restoreHouseholdCheckpointCallable v2', () => {
       actorUid: 'teacher-a',
       idempotencyKey: 'k-1',
     }))
+  })
+})
+
+describe('household assignment Callables (Task 2)', () => {
+  const roleVariantContent = {
+    households: [{
+      householdId: 'profile-1', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000,
+      cashSavingsYen: 1000000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄', lifeStage: 'INDEPENDENT',
+      eventProbabilityOverrides: {}, internalRiskFactors: {},
+    }],
+    courseFormat: 'ROLE_VARIANT',
+  }
+  const commonContent = {
+    households: [{
+      householdId: 'profile-1', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000,
+      cashSavingsYen: 1000000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄', lifeStage: 'INDEPENDENT',
+      eventProbabilityOverrides: {}, internalRiskFactors: {},
+    }],
+    courseFormat: 'COMMON_CONDITIONS',
+  }
+
+  const setLessonRun = (teacherRoles: Record<string, string>, homeEconomics: unknown = roleVariantContent) => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      subject: 'HOME_ECONOMICS',
+      teacherRoles,
+      templateSnapshot: { homeEconomics },
+    }))
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    teamsIndexGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'teamIds' ? ['team-a', 'team-b'] : undefined) })
+    teamsCollectionGetMock.mockResolvedValue({ docs: [] })
+  })
+
+  describe('getHouseholdAssignmentCallable', () => {
+    it('rejects unauthenticated callers', async () => {
+      const req = { auth: undefined, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      await expect(getHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'unauthenticated' })
+    })
+
+    it('rejects a caller with no teacherRole on the lesson', async () => {
+      setLessonRun({})
+      const req = { auth: { uid: 'stranger' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      await expect(getHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+    })
+
+    it.each(['PRIMARY', 'ASSISTANT', 'VIEWER'])('allows %s to read the view (VIEW_PROGRESS is allowed for every role)', async (role) => {
+      setLessonRun({ 'teacher-a': role })
+      const view = { lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', state: 'DRAFT', validationStatus: 'READY', assignmentRevision: 1, warnings: [], teams: [] }
+      vi.mocked(getHouseholdAssignmentView).mockResolvedValue(view as never)
+
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      const result = await getHouseholdAssignmentCallable.run(req)
+      expect(result).toEqual(view)
+    })
+
+    it('returns the implicit compatibility view for COMMON_CONDITIONS', async () => {
+      setLessonRun({ 'teacher-a': 'VIEWER' }, commonContent)
+      const view = { lessonRunId: 'run-1', courseFormat: 'COMMON_CONDITIONS', state: 'FROZEN', validationStatus: 'READY', assignmentRevision: null, warnings: [], teams: [] }
+      vi.mocked(getHouseholdAssignmentView).mockResolvedValue(view as never)
+
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      const result = await getHouseholdAssignmentCallable.run(req)
+      expect(result).toEqual(view)
+      expect(getHouseholdAssignmentView).toHaveBeenCalledWith(expect.objectContaining({ courseFormat: 'COMMON_CONDITIONS', commonProfile: expect.objectContaining({ householdId: 'profile-1' }) }))
+    })
+  })
+
+  describe('prepareHouseholdAssignmentCallable', () => {
+    it('rejects unauthenticated callers', async () => {
+      const req = { auth: undefined, data: { lessonRunId: 'run-1', idempotencyKey: 'k-1' }, rawRequest: {} } as never
+      await expect(prepareHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'unauthenticated' })
+    })
+
+    it('rejects a request missing idempotencyKey', async () => {
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      await expect(prepareHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'invalid-argument' })
+    })
+
+    it.each(['ASSISTANT', 'VIEWER'])('rejects a %s from preparing the assignment', async (role) => {
+      setLessonRun({ 'teacher-a': role })
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1', idempotencyKey: 'k-1' }, rawRequest: {} } as never
+      await expect(prepareHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(prepareHouseholdAssignment).not.toHaveBeenCalled()
+    })
+
+    it('rejects PRIMARY preparing a COMMON_CONDITIONS assignment', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' }, commonContent)
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1', idempotencyKey: 'k-1' }, rawRequest: {} } as never
+      await expect(prepareHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(prepareHouseholdAssignment).not.toHaveBeenCalled()
+    })
+
+    it('allows PRIMARY to prepare an advanced-format assignment before FROZEN', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' })
+      const mutationResult = { config: { courseFormat: 'ROLE_VARIANT', state: 'DRAFT', assignmentRevision: 1 }, entries: [], deduplicated: false }
+      vi.mocked(prepareHouseholdAssignment).mockResolvedValue(mutationResult as never)
+      const view = { lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', state: 'DRAFT', validationStatus: 'READY', assignmentRevision: 1, warnings: [], teams: [] }
+      vi.mocked(buildHouseholdAssignmentView).mockReturnValue(view as never)
+
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1', idempotencyKey: 'k-1' }, rawRequest: {} } as never
+      const result = await prepareHouseholdAssignmentCallable.run(req)
+
+      expect(result).toEqual(view)
+      expect(prepareHouseholdAssignment).toHaveBeenCalledWith(expect.objectContaining({
+        lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', teamIds: ['team-a', 'team-b'],
+        actorUid: 'teacher-a', idempotencyKey: 'k-1',
+      }))
+    })
+
+    it('translates a frozen-assignment error to failed-precondition', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' })
+      vi.mocked(prepareHouseholdAssignment).mockRejectedValue(new Error('HouseholdAssignment is frozen'))
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1', idempotencyKey: 'k-1' }, rawRequest: {} } as never
+      await expect(prepareHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+    })
+  })
+
+  describe('updateHouseholdAssignmentCallable', () => {
+    const baseData = { lessonRunId: 'run-1', expectedRevision: 1, changes: [{ householdId: 'h-1', displayOrder: 2 }], idempotencyKey: 'k-1' }
+
+    it('rejects unauthenticated callers', async () => {
+      const req = { auth: undefined, data: baseData, rawRequest: {} } as never
+      await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'unauthenticated' })
+    })
+
+    it('rejects a request with an empty changes array', async () => {
+      const req = { auth: { uid: 'teacher-a' }, data: { ...baseData, changes: [] }, rawRequest: {} } as never
+      await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'invalid-argument' })
+    })
+
+    it.each(['ASSISTANT', 'VIEWER'])('rejects a %s from updating the assignment', async (role) => {
+      setLessonRun({ 'teacher-a': role })
+      const req = { auth: { uid: 'teacher-a' }, data: baseData, rawRequest: {} } as never
+      await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(updateHouseholdAssignment).not.toHaveBeenCalled()
+    })
+
+    it('allows PRIMARY to update an advanced-format assignment', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' })
+      const mutationResult = { config: { courseFormat: 'ROLE_VARIANT', state: 'DRAFT', assignmentRevision: 2 }, entries: [], deduplicated: false }
+      vi.mocked(updateHouseholdAssignment).mockResolvedValue(mutationResult as never)
+      const view = { lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', state: 'DRAFT', validationStatus: 'READY', assignmentRevision: 2, warnings: [], teams: [] }
+      vi.mocked(buildHouseholdAssignmentView).mockReturnValue(view as never)
+
+      const req = { auth: { uid: 'teacher-a' }, data: baseData, rawRequest: {} } as never
+      const result = await updateHouseholdAssignmentCallable.run(req)
+
+      expect(result).toEqual(view)
+      expect(updateHouseholdAssignment).toHaveBeenCalledWith(expect.objectContaining({
+        lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', expectedRevision: 1, changes: baseData.changes,
+        actorUid: 'teacher-a', idempotencyKey: 'k-1',
+      }))
+    })
+
+    it('translates a revision-mismatch error to failed-precondition', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' })
+      vi.mocked(updateHouseholdAssignment).mockRejectedValue(new Error('Revision mismatch'))
+      const req = { auth: { uid: 'teacher-a' }, data: baseData, rawRequest: {} } as never
+      await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+    })
+
+    it('rejects PRIMARY updating a COMMON_CONDITIONS assignment', async () => {
+      setLessonRun({ 'teacher-a': 'PRIMARY' }, commonContent)
+      const req = { auth: { uid: 'teacher-a' }, data: baseData, rawRequest: {} } as never
+      await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+      expect(updateHouseholdAssignment).not.toHaveBeenCalled()
+    })
   })
 })

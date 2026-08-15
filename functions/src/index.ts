@@ -95,12 +95,15 @@ export {
   triggerBankruptcyCallable,
 } from './market/onCall'
 export {
+  getHouseholdAssignmentCallable,
   getHouseholdTeacherDashboardCallable,
+  prepareHouseholdAssignmentCallable,
   processHouseholdRoundBatchCallable,
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
   retryHouseholdRoundBatchCallable,
   submitHouseholdDecisionCallable,
+  updateHouseholdAssignmentCallable,
   writeHouseholdCheckpointCallable,
 } from './homeEconomics/onCall'
 export { batchTaskQueue } from './market/taskHandler'

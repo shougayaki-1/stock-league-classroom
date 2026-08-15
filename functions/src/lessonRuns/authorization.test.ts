@@ -56,6 +56,12 @@ describe('canControlLesson', () => {
     expect(canControlLesson('VIEWER', 'PROCESS_ROUND')).toBe(false)
   })
 
+  it('MANAGE_HOUSEHOLD_ASSIGNMENT is PRIMARY-only (independent judgment call, see comment in authorization.ts)', () => {
+    expect(canControlLesson('PRIMARY', 'MANAGE_HOUSEHOLD_ASSIGNMENT')).toBe(true)
+    expect(canControlLesson('ASSISTANT', 'MANAGE_HOUSEHOLD_ASSIGNMENT')).toBe(false)
+    expect(canControlLesson('VIEWER', 'MANAGE_HOUSEHOLD_ASSIGNMENT')).toBe(false)
+  })
+
   it('exhaustively covers every LessonControlAction with no gaps against the §6.5 table', () => {
     const allRoles: LessonRunRole[] = ['PRIMARY', 'ASSISTANT', 'VIEWER']
     for (const action of lessonControlActions) {
