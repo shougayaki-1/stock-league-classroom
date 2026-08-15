@@ -41,6 +41,7 @@ import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPag
 import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
 import { exportOrgStudentData, downloadAsJsonFile } from './lib/privacy/orgStudentDataExport'
 import { listOrgAuditLog, type OrgAuditLogEntry } from './lib/privacy/orgAuditLog'
+import { purgeSchoolOrg } from './lib/privacy/purgeSchoolOrg'
 import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
 import { listPendingTemplateApprovals, reviewTemplateApproval, type PendingTemplateApproval } from './lib/lessonTemplates/templateApprovals'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
@@ -549,6 +550,17 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setSettingRetentionPolicy(false))
   }
 
+  const [purgingOrg, setPurgingOrg] = useState(false)
+  const navigate = useNavigate()
+
+  const onPurgeOrg = () => {
+    if (!orgId) return
+    setPurgingOrg(true)
+    void purgeSchoolOrg(services.functions, { orgId })
+      .then(() => navigate('/teacher'))
+      .finally(() => setPurgingOrg(false))
+  }
+
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
@@ -564,6 +576,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       studentDataRetentionDays={studentDataRetentionDays}
       settingRetentionPolicy={settingRetentionPolicy}
       onSetStudentDataRetentionDays={onSetStudentDataRetentionDays}
+      purgingOrg={purgingOrg}
+      onPurgeOrg={onPurgeOrg}
       onSuspendMember={(targetUid) => {
         setSuspending(true)
         void suspendOrgMember(services.functions, { orgId, uid: targetUid })

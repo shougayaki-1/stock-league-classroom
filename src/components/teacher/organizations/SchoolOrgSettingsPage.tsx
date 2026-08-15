@@ -31,11 +31,29 @@ export interface SchoolOrgSettingsPageProps {
   studentDataRetentionDays?: number | null
   settingRetentionPolicy?: boolean
   onSetStudentDataRetentionDays?: (days: number) => void
+  purgingOrg?: boolean
+  onPurgeOrg?: () => void
+}
+
+function ConfirmDeleteOrgForm({ orgId, purging, onConfirm }: { orgId: string; purging: boolean; onConfirm?: () => void }) {
+  const [typed, setTyped] = useState('')
+  return (
+    <div>
+      <label>
+        確認のため組織ID({orgId})を入力してください
+        <input value={typed} onChange={(event) => setTyped(event.target.value)} disabled={purging} />
+      </label>
+      <button type="button" disabled={typed !== orgId || purging} onClick={onConfirm}>
+        {purging ? '削除中…' : '完全に削除する'}
+      </button>
+    </div>
+  )
 }
 
 export function SchoolOrgSettingsPage({
   orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData, auditLogEntries, loadingAuditLog,
   studentDataRetentionDays = null, settingRetentionPolicy = false, onSetStudentDataRetentionDays,
+  purgingOrg = false, onPurgeOrg,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -69,6 +87,13 @@ export function SchoolOrgSettingsPage({
             </label>
             <button type="submit" disabled={settingRetentionPolicy}>{settingRetentionPolicy ? '保存中…' : '保存'}</button>
           </form>
+        </section>
+      )}
+      {isOwner && (
+        <section>
+          <h3>組織の完全削除</h3>
+          <p>この操作は取り消せません。組織のすべてのデータ(授業・教材・メンバー)が完全に削除されます。</p>
+          <ConfirmDeleteOrgForm orgId={orgId} purging={purgingOrg} onConfirm={onPurgeOrg} />
         </section>
       )}
       {(viewerRole === 'owner' || viewerRole === 'admin') && (

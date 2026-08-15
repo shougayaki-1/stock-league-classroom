@@ -24,6 +24,8 @@ const memberProps = {
   studentDataRetentionDays: null,
   settingRetentionPolicy: false,
   onSetStudentDataRetentionDays: vi.fn(),
+  purgingOrg: false,
+  onPurgeOrg: vi.fn(),
 }
 
 describe('SchoolOrgSettingsPage', () => {
@@ -278,6 +280,33 @@ describe('parent organization display', () => {
     )
     expect(screen.queryByText('生徒データの保持期間')).not.toBeInTheDocument()
   })
+
+  it('only enables the delete button once the owner types the exact orgId', () => {
+    const onPurgeOrg = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-owner" members={members} onPurgeOrg={onPurgeOrg} />
+      </MemoryRouter>,
+    )
+    const deleteButton = screen.getByRole('button', { name: '完全に削除する' })
+    expect(deleteButton).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/組織ID.*を入力/), { target: { value: 'wrong-id' } })
+    expect(deleteButton).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/組織ID.*を入力/), { target: { value: 'org-1' } })
+    expect(deleteButton).toBeEnabled()
+    fireEvent.click(deleteButton)
+    expect(onPurgeOrg).toHaveBeenCalled()
+  })
+
+  it('hides the delete-org section from a non-owner', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-teacher" members={members} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('組織の完全削除')).not.toBeInTheDocument()
+  })
 })
+
 
 
