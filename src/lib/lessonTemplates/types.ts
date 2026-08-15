@@ -40,6 +40,8 @@ export interface LessonTemplate {
   visibility: 'PRIVATE' | 'LINK' | 'ORGANIZATION' | 'PUBLIC'
   createdAt: Timestamp
   updatedAt: Timestamp
+  sourceTemplateId?: string
+  sourceTemplateTitle?: string
 }
 
 /**
