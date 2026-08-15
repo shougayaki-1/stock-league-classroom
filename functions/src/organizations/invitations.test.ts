@@ -15,9 +15,11 @@ import {
   createInvitation,
   createInvitationWithAdminSdk,
   listMyInvitations,
+  listOrgInvitations,
   reserveTeacherSeatForInvitation,
   revokeInvitation,
 } from './invitations'
+
 
 
 const makeQuotaFirestore = () => {
@@ -570,4 +572,15 @@ describe('revokeInvitation', () => {
     expect(markInvitationRevoked).toHaveBeenCalledWith('org-1', 'inv-1')
   })
 })
+
+describe('listOrgInvitations', () => {
+  it('returns all invitations for the organization regardless of status', async () => {
+    const invitations = [
+      { id: 'inv-1', orgId: 'org-1', email: 'a@example.com', role: 'teacher' as const, status: 'PENDING' as const, invitedByUid: 'u1', createdAt: null },
+      { id: 'inv-2', orgId: 'org-1', email: 'b@example.com', role: 'admin' as const, status: 'REVOKED' as const, invitedByUid: 'u1', createdAt: null },
+    ]
+    await expect(listOrgInvitations({ getInvitationDocs: async () => invitations }, { orgId: 'org-1' })).resolves.toEqual(invitations)
+  })
+})
+
 

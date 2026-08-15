@@ -443,6 +443,27 @@ export const revokeInvitationWithAdminSdk = (input: RevokeInvitationInput): Prom
   }, input)
 }
 
+export interface ListOrgInvitationsDeps {
+  getInvitationDocs: (orgId: string) => Promise<Invitation[]>
+}
+
+export interface ListOrgInvitationsInput { orgId: string }
+
+export const listOrgInvitations = (deps: ListOrgInvitationsDeps, input: ListOrgInvitationsInput): Promise<Invitation[]> =>
+  deps.getInvitationDocs(input.orgId)
+
+/** Production wiring: Firestore Admin SDK. */
+export const listOrgInvitationsWithAdminSdk = (orgId: string): Promise<Invitation[]> => {
+  const db = getFirestore()
+  return listOrgInvitations({
+    getInvitationDocs: async (id) => {
+      const snap = await db.collection(`organizations/${id}/invitations`).get()
+      return snap.docs.map((doc) => ({ id: doc.id, orgId: id, ...(doc.data() as Omit<Invitation, 'id' | 'orgId'>) }))
+    },
+  }, { orgId })
+}
+
+
 
 export interface ListMyInvitationsDeps {
   queryPendingInvitationsByEmail: (email: string) => Promise<Invitation[]>
