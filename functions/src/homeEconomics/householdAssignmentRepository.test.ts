@@ -119,6 +119,32 @@ describe('prepareHouseholdAssignment', () => {
     expect(second.entries).toEqual(first.entries)
   })
 
+  it('returns the real persisted config, not a fabricated edit stamp, when a fresh idempotencyKey hits the unchanged team-set branch', async () => {
+    const { firestore, docs } = makeFakeFirestore()
+    const first = await prepareHouseholdAssignment({
+      firestore, lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT',
+      teamIds: ['team-a', 'team-b'], profiles: [profileA, profileB],
+      actorUid: 'teacher-1', idempotencyKey: 'key-1', now: nextNow,
+    })
+
+    // Same team set as before (unchanged), but a brand-new idempotencyKey and a
+    // different actor — this must NOT be treated as a fresh edit by this actor.
+    const second = await prepareHouseholdAssignment({
+      firestore, lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT',
+      teamIds: ['team-a', 'team-b'], profiles: [profileA, profileB],
+      actorUid: 'teacher-2', idempotencyKey: 'key-2', now: nextNow,
+    })
+
+    expect(second.deduplicated).toBe(false)
+    // The returned config must reflect what's actually persisted in Firestore
+    // (the real, prior edit) — not a fabricated stamp for this call's actor/time.
+    const persisted = docs.get('lessonRuns/run-1/householdAssignment/config') as unknown as HouseholdAssignmentConfig
+    expect(second.config).toEqual(persisted)
+    expect(second.config.lastEditedByUid).toBe(first.config.lastEditedByUid)
+    expect(second.config.lastEditedAtServerMillis).toBe(first.config.lastEditedAtServerMillis)
+    expect(second.config.lastEditedByUid).not.toBe('teacher-2')
+  })
+
   it('rejects a reused idempotencyKey whose payload changed', async () => {
     const { firestore } = makeFakeFirestore()
     await prepareHouseholdAssignment({

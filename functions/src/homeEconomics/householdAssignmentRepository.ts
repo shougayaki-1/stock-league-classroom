@@ -302,17 +302,23 @@ export const prepareHouseholdAssignment = (
     courseFormat: input.courseFormat, teamIds: input.teamIds, profiles: input.profiles, entries,
   })
 
-  const config: HouseholdAssignmentConfig = {
-    courseFormat: input.courseFormat,
-    state: 'DRAFT',
-    validationStatus: validation.status,
-    assignmentRevision,
-    teamSetFingerprint: fingerprint,
-    entryIds: entries.map((entry) => entry.householdId),
-    entriesDigest: requestDigest(entries),
-    lastEditedByUid: input.actorUid,
-    lastEditedAtServerMillis: input.now(),
-  }
+  // When the team set is unchanged there is nothing to reconcile or persist —
+  // the returned/cached config must reflect what's ACTUALLY in Firestore
+  // (the real prior edit), not a fresh stamp fabricated for this call's
+  // actor/time, or `get`/idempotency replays would diverge from this response.
+  const config: HouseholdAssignmentConfig = unchanged
+    ? (configSnap.data() as unknown as HouseholdAssignmentConfig)
+    : {
+      courseFormat: input.courseFormat,
+      state: 'DRAFT',
+      validationStatus: validation.status,
+      assignmentRevision,
+      teamSetFingerprint: fingerprint,
+      entryIds: entries.map((entry) => entry.householdId),
+      entriesDigest: requestDigest(entries),
+      lastEditedByUid: input.actorUid,
+      lastEditedAtServerMillis: input.now(),
+    }
 
   // ---- ALL WRITES AFTER ----
   if (!unchanged) {
