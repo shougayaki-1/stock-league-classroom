@@ -8,8 +8,9 @@ import {
   type HouseholdState,
 } from '../lessonRuns/households/repository'
 import {
-  cancelInactiveUnresolvedBulkSettlementOperationWithAdminSdk,
+  cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk,
   findActiveBulkSettlementLeaseWithAdminSdk,
+  findUnresolvedBulkSettlementOperationIdWithAdminSdk,
 } from './bulkSettlementOperation'
 import {
   isHouseholdCheckpointSnapshotV2,
@@ -48,20 +49,41 @@ export interface HouseholdRestoreDeps {
   }) => Promise<{ checkpointId: string; created: boolean }>
   syncRtdbProjections: (updates: Record<string, unknown>) => Promise<void>
   /**
-   * Restore-time cleanup, new in this task: any unresolved (not `COMPLETED`)
-   * bulk-settlement operation for this lessonRun that is NOT currently under
-   * an active lease must be atomically transitioned to `CANCELLED` as part
-   * of a restore, so a stale/abandoned operation from before the restore
-   * doesn't linger and block the next bulk settlement attempt after the
-   * round state has been rewound. Naturally idempotent (once cancelled, it
-   * no longer shows up as "unresolved"), so this is safe to call on every
-   * restore attempt including replays — see `bulkSettlementOperation.ts`'s
-   * `cancelInactiveUnresolvedBulkSettlementOperation`/`...WithAdminSdk` for
-   * the actual atomic transition. An ACTIVE lease is never touched here —
-   * both restore flows already hard-reject outright via `checkActiveBulkLease`
-   * before this is ever called.
+   * Restore-time cleanup, new in this task: any unresolved (not `COMPLETED`
+   * or `CANCELLED`) bulk-settlement operation for this lessonRun that is NOT
+   * currently under an active lease must be atomically transitioned to
+   * `CANCELLED` as part of a restore, so a stale/abandoned operation from
+   * before the restore doesn't linger and block the next bulk settlement
+   * attempt after the round state has been rewound.
+   *
+   * Fixed after an earlier version of this dependency raced with genuinely
+   * NEW/concurrent bulk operations: the earlier `cancelInactiveUnresolvedBulkOperation(lessonRunId, nowMillis)`
+   * shape re-queried "whatever is unresolved right now" INSIDE its own
+   * implementation, unconditionally on every call (including pure RTDB-sync
+   * retries of an already-committed restore). A brand-new bulk operation
+   * created by another teacher device in the gap between this restore's
+   * `checkActiveBulkLease` check and the cancel step would be `PENDING` with
+   * no lease yet — invisible to `checkActiveBulkLease` — and could get
+   * force-cancelled by that fresh re-query, destroying unrelated in-flight
+   * work (and, for advanced formats, force-releasing its `HouseholdRuntimeControl`
+   * lock).
+   *
+   * Now split into two steps, both below, so the restore flows can fence the
+   * cancel to a SINGLE specific operation captured ONCE, only on a genuinely
+   * new attempt:
+   *   1. `findUnresolvedBulkOperationId` — look up the current candidate's
+   *      id ONCE, only when this call is NOT a retry of an already-committed
+   *      attempt (see the idempotency-lookup-before-pre-restore-checkpoint
+   *      pattern already in this file — the same `existingRecord` check that
+   *      gates `savePreRestoreCheckpoint` also gates this lookup).
+   *   2. `cancelInactiveUnresolvedBulkOperationById` — cancel THAT SPECIFIC
+   *      operation by id, never re-querying "whatever is unresolved now".
+   *      Still a safe no-op if, by the time it runs, that operation has
+   *      already gone terminal or is under an active lease — see
+   *      `bulkSettlementOperation.ts`'s `cancelInactiveUnresolvedBulkSettlementOperation`.
    */
-  cancelInactiveUnresolvedBulkOperation: (lessonRunId: string, nowMillis: number) => Promise<void>
+  findUnresolvedBulkOperationId: (lessonRunId: string) => Promise<string | null>
+  cancelInactiveUnresolvedBulkOperationById: (operationId: string, nowMillis: number) => Promise<void>
 }
 
 export interface RestoreHouseholdCheckpointV2Input {
@@ -111,12 +133,6 @@ export const restoreHouseholdCheckpointV2 = async (
     throw new Error('Active bulk operation lease is active')
   }
 
-  // Cancel any inactive unresolved bulk-settlement operation left over from
-  // before this restore — see `HouseholdRestoreDeps.cancelInactiveUnresolvedBulkOperation`'s
-  // doc comment. New behavior added by this task, applies uniformly to v2
-  // and v3.
-  await deps.cancelInactiveUnresolvedBulkOperation(input.lessonRunId, input.nowMillis)
-
   const keyId = idempotencyDocumentId(input.lessonRunId, input.idempotencyKey)
   const idempotencyPath = `lessonRuns/${input.lessonRunId}/householdCheckpointRestoreIdempotency/${keyId}`
   const digest = requestDigest({
@@ -141,6 +157,20 @@ export const restoreHouseholdCheckpointV2 = async (
 
   if (existingRecord && existingRecord.requestDigest !== digest) {
     throw new Error('Idempotency key payload mismatch')
+  }
+
+  // Cancel any inactive unresolved bulk-settlement operation left over from
+  // before this restore — see `HouseholdRestoreDeps.findUnresolvedBulkOperationId`'s
+  // doc comment for the race this fixes. Only runs on a genuinely NEW attempt
+  // (no `existingRecord` yet) — a retry of an already-committed restore must
+  // never re-run this, exactly like `savePreRestoreCheckpoint` below. The
+  // candidate id is captured ONCE here and cancelled BY THAT SPECIFIC id,
+  // never by a fresh "whatever is unresolved now" re-query.
+  if (!existingRecord) {
+    const unresolvedOperationId = await deps.findUnresolvedBulkOperationId(input.lessonRunId)
+    if (unresolvedOperationId) {
+      await deps.cancelInactiveUnresolvedBulkOperationById(unresolvedOperationId, input.nowMillis)
+    }
   }
 
   const preRestoreIdempotencyKey = `pre-restore:${keyId}`
@@ -348,7 +378,8 @@ export const restoreHouseholdCheckpointV2DepsWithAdminSdk = (): HouseholdRestore
     syncRtdbProjections: async (updates) => {
       await rtdb.ref().update(updates)
     },
-    cancelInactiveUnresolvedBulkOperation: cancelInactiveUnresolvedBulkSettlementOperationWithAdminSdk,
+    findUnresolvedBulkOperationId: findUnresolvedBulkSettlementOperationIdWithAdminSdk,
+    cancelInactiveUnresolvedBulkOperationById: cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk,
   }
 }
 
@@ -364,7 +395,9 @@ export const restoreHouseholdCheckpointV2WithAdminSdk = (
 export interface HouseholdRestoreV3Deps {
   firestore: HouseholdFirestoreDeps['firestore']
   checkActiveBulkLease: (lessonRunId: string, nowMillis: number) => Promise<boolean>
-  cancelInactiveUnresolvedBulkOperation: (lessonRunId: string, nowMillis: number) => Promise<void>
+  /** See `HouseholdRestoreDeps.findUnresolvedBulkOperationId`'s doc comment. */
+  findUnresolvedBulkOperationId: (lessonRunId: string) => Promise<string | null>
+  cancelInactiveUnresolvedBulkOperationById: (operationId: string, nowMillis: number) => Promise<void>
   savePreRestoreCheckpoint: (input: {
     lessonRunId: string
     actorUid: string
@@ -417,8 +450,6 @@ export const restoreHouseholdCheckpointV3 = async (
     throw new Error('Active bulk operation lease is active')
   }
 
-  await deps.cancelInactiveUnresolvedBulkOperation(input.lessonRunId, input.nowMillis)
-
   const keyId = idempotencyDocumentId(input.lessonRunId, input.idempotencyKey)
   const idempotencyPath = `lessonRuns/${input.lessonRunId}/householdCheckpointRestoreIdempotency/${keyId}`
   const digest = requestDigest({
@@ -439,6 +470,15 @@ export const restoreHouseholdCheckpointV3 = async (
 
   if (existingRecord && existingRecord.requestDigest !== digest) {
     throw new Error('Idempotency key payload mismatch')
+  }
+
+  // Same fenced cancel-by-captured-id as v2 — see
+  // `HouseholdRestoreDeps.findUnresolvedBulkOperationId`'s doc comment.
+  if (!existingRecord) {
+    const unresolvedOperationId = await deps.findUnresolvedBulkOperationId(input.lessonRunId)
+    if (unresolvedOperationId) {
+      await deps.cancelInactiveUnresolvedBulkOperationById(unresolvedOperationId, input.nowMillis)
+    }
   }
 
   const preRestoreIdempotencyKey = `pre-restore:${keyId}`
@@ -650,7 +690,8 @@ export const restoreHouseholdCheckpointV3DepsWithAdminSdk = (): HouseholdRestore
       const active = await findActiveBulkSettlementLeaseWithAdminSdk(lessonRunId, nowMillis)
       return active !== null
     },
-    cancelInactiveUnresolvedBulkOperation: cancelInactiveUnresolvedBulkSettlementOperationWithAdminSdk,
+    findUnresolvedBulkOperationId: findUnresolvedBulkSettlementOperationIdWithAdminSdk,
+    cancelInactiveUnresolvedBulkOperationById: cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk,
     savePreRestoreCheckpoint: async (input) => {
       const controlSnap = await db.doc(`lessonRuns/${input.lessonRunId}/householdRuntime/control`).get()
       if (!controlSnap.exists) throw new Error('HouseholdRuntimeControl not found')
@@ -700,15 +741,26 @@ export const restoreHouseholdCheckpointV3WithAdminSdk = (
 // (`onCall.ts`'s `restoreHouseholdCheckpointCallable` calls THIS instead of
 // calling `restoreHouseholdCheckpointV2WithAdminSdk` directly), routing
 // internally by the target checkpoint's `snapshot.schemaVersion`.
+//
+// Split into a pure `restoreHouseholdCheckpoint` (deps-injected, matching
+// this file's usual pure-function + `WithAdminSdk`-wrapper pattern) and a
+// thin `restoreHouseholdCheckpointWithAdminSdk` wrapper, so the routing
+// logic itself is directly unit-testable against a fake/injected backing
+// instead of only being reachable through a whole-module mock.
 // ---------------------------------------------------------------------------
 
-export const restoreHouseholdCheckpointWithAdminSdk = async (
+export interface HouseholdRestoreDispatchDeps {
+  /** Fetches the checkpoint's stored `snapshot` (or throws if not found). */
+  getCheckpointSnapshot: (lessonRunId: string, checkpointId: string) => Promise<unknown>
+  restoreV2: (input: RestoreHouseholdCheckpointV2Input) => Promise<RestoreHouseholdCheckpointV2Result>
+  restoreV3: (input: RestoreHouseholdCheckpointV3Input) => Promise<RestoreHouseholdCheckpointV3Result>
+}
+
+export const restoreHouseholdCheckpoint = async (
+  deps: HouseholdRestoreDispatchDeps,
   input: RestoreHouseholdCheckpointV2Input,
 ): Promise<HouseholdRestoreOperationView> => {
-  const db = getFirestore()
-  const checkpointSnap = await db.doc(`lessonRuns/${input.lessonRunId}/checkpoints/${input.checkpointId}`).get()
-  if (!checkpointSnap.exists) throw new Error('Checkpoint not found')
-  const snapshot = checkpointSnap.data()?.snapshot as { schemaVersion?: unknown } | undefined
+  const snapshot = await deps.getCheckpointSnapshot(input.lessonRunId, input.checkpointId)
 
   // Only dispatch to v3 for an actual v3 snapshot. Everything else
   // (v2, v1, malformed) falls through to v2's own restore flow — that
@@ -718,9 +770,27 @@ export const restoreHouseholdCheckpointWithAdminSdk = async (
   // it just needs to correctly route the one case (v3) that would
   // otherwise be misrouted into v2's incompatible restore logic.
   if (isHouseholdCheckpointSnapshotV3(snapshot)) {
-    const result = await restoreHouseholdCheckpointV3WithAdminSdk(input)
+    const result = await deps.restoreV3(input)
     return { ...result, schemaVersion: 3 }
   }
-  const result = await restoreHouseholdCheckpointV2WithAdminSdk(input)
+  const result = await deps.restoreV2(input)
   return { ...result, schemaVersion: 2 }
+}
+
+export const restoreHouseholdCheckpointWithAdminSdk = (
+  input: RestoreHouseholdCheckpointV2Input,
+): Promise<HouseholdRestoreOperationView> => {
+  const db = getFirestore()
+  return restoreHouseholdCheckpoint(
+    {
+      getCheckpointSnapshot: async (lessonRunId, checkpointId) => {
+        const checkpointSnap = await db.doc(`lessonRuns/${lessonRunId}/checkpoints/${checkpointId}`).get()
+        if (!checkpointSnap.exists) throw new Error('Checkpoint not found')
+        return checkpointSnap.data()?.snapshot
+      },
+      restoreV2: restoreHouseholdCheckpointV2WithAdminSdk,
+      restoreV3: restoreHouseholdCheckpointV3WithAdminSdk,
+    },
+    input,
+  )
 }

@@ -567,6 +567,33 @@ describe('bulkSettlementOperation', () => {
       },
     )
 
+    it.each(['COMPLETED', 'CANCELLED'] as const)(
+      'does not re-cancel a candidate already %s by the time it runs (safe no-op, closes the by-id race)',
+      async (status) => {
+        // Simulates the by-id restore path: `findUnresolvedBulkOperationId`
+        // captured this operation while it was still unresolved, but by the
+        // time `cancelInactiveUnresolvedBulkOperationById` re-fetched and
+        // called this function, something else had already finished/cancelled
+        // it. Must be a safe no-op, not a re-open of a terminal operation.
+        const fake = makeFakeFirestore()
+        const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+        const candidate: HouseholdBulkSettlementOperation = { ...op, status, leaseExpiresAtServerMillis: null }
+        // Seed the stored doc with the terminal status too, so we can assert
+        // it stays untouched.
+        fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, candidate as unknown as Record<string, unknown>)
+
+        const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+          firestore: fake as never,
+          candidate,
+          nowMillis: 2000,
+        })
+
+        expect(result).toBeNull()
+        const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+        expect(stored.status).toBe(status) // untouched
+      },
+    )
+
     it('does not cancel a RUNNING operation with a still-active lease', async () => {
       const fake = makeFakeFirestore()
       const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })

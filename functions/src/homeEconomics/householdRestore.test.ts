@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  restoreHouseholdCheckpoint,
   restoreHouseholdCheckpointV2,
   restoreHouseholdCheckpointV3,
   type HouseholdRestoreDeps,
@@ -108,7 +109,8 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+      findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+      cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockImplementation(async (updates) => {
@@ -154,7 +156,8 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+      findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+      cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockImplementation(async () => {
@@ -199,7 +202,8 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+      findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+      cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockImplementation(async (input) => {
         savePreRestoreCallCount++
@@ -242,7 +246,8 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+      findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+      cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
@@ -258,7 +263,8 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(true),
-      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+      findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+      cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
@@ -279,11 +285,13 @@ describe('householdRestore v2', () => {
     fake.docs.set('lessonRuns/run-1/households/team-a', makeBaseHousehold('team-a', 500000, 3) as unknown as Record<string, unknown>)
     fake.docs.set('lessonRuns/run-1/households/team-b', makeBaseHousehold('team-b', 600000, 3) as unknown as Record<string, unknown>)
 
+    const findSpy = vi.fn().mockResolvedValue('stale-op-1')
     const cancelSpy = vi.fn().mockResolvedValue(undefined)
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-      cancelInactiveUnresolvedBulkOperation: cancelSpy,
+      findUnresolvedBulkOperationId: findSpy,
+      cancelInactiveUnresolvedBulkOperationById: cancelSpy,
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
@@ -291,7 +299,45 @@ describe('householdRestore v2', () => {
 
     await restoreHouseholdCheckpointV2(deps, baseInput)
 
-    expect(cancelSpy).toHaveBeenCalledWith('run-1', baseInput.nowMillis)
+    expect(findSpy).toHaveBeenCalledWith('run-1')
+    expect(cancelSpy).toHaveBeenCalledWith('stale-op-1', baseInput.nowMillis)
+  })
+
+  it('does NOT re-run the bulk-cancel cleanup on a retry of an already-committed restore', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { orgId: 'org-1', restoreGeneration: 0, currentPhaseId: 'phase-1' })
+    fake.docs.set('lessonRuns/run-1/meta/eventCounter', { value: 10 })
+    fake.docs.set('lessonRuns/run-1/checkpoints/hcp-1', {
+      id: 'hcp-1',
+      lessonRunId: 'run-1',
+      snapshot: v2Snapshot,
+    })
+    fake.docs.set('lessonRuns/run-1/households/team-a', makeBaseHousehold('team-a', 500000, 3) as unknown as Record<string, unknown>)
+    fake.docs.set('lessonRuns/run-1/households/team-b', makeBaseHousehold('team-b', 600000, 3) as unknown as Record<string, unknown>)
+
+    const findSpy = vi.fn().mockResolvedValue(null)
+    const cancelSpy = vi.fn().mockResolvedValue(undefined)
+    const deps: HouseholdRestoreDeps = {
+      firestore: fake as never,
+      checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      findUnresolvedBulkOperationId: findSpy,
+      cancelInactiveUnresolvedBulkOperationById: cancelSpy,
+      listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
+      savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
+      syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
+    }
+
+    // First attempt: genuinely new — the cancel step runs once.
+    await restoreHouseholdCheckpointV2(deps, baseInput)
+    expect(findSpy).toHaveBeenCalledTimes(1)
+
+    // Second attempt: replay of the SAME idempotencyKey, already committed —
+    // the cancel step must be skipped entirely, so it can never target a
+    // different (newer, legitimate) operation that appeared after the first
+    // attempt committed.
+    await restoreHouseholdCheckpointV2(deps, { ...baseInput, nowMillis: 6000 })
+    expect(findSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -397,7 +443,8 @@ describe('householdRestore v3 (advanced formats)', () => {
   const makeDeps = (fake: ReturnType<typeof makeFakeFirestore>, overrides: Partial<HouseholdRestoreV3Deps> = {}): HouseholdRestoreV3Deps => ({
     firestore: fake as never,
     checkActiveBulkLease: vi.fn().mockResolvedValue(false),
-    cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+    findUnresolvedBulkOperationId: vi.fn().mockResolvedValue(null),
+    cancelInactiveUnresolvedBulkOperationById: vi.fn().mockResolvedValue(undefined),
     savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore-v3', created: true }),
     syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -495,11 +542,171 @@ describe('householdRestore v3 (advanced formats)', () => {
     const fake = makeFakeFirestore()
     seedBaseDocs(fake)
 
+    const findSpy = vi.fn().mockResolvedValue('stale-op-v3-1')
     const cancelSpy = vi.fn().mockResolvedValue(undefined)
-    const deps = makeDeps(fake, { cancelInactiveUnresolvedBulkOperation: cancelSpy })
+    const deps = makeDeps(fake, { findUnresolvedBulkOperationId: findSpy, cancelInactiveUnresolvedBulkOperationById: cancelSpy })
 
     await restoreHouseholdCheckpointV3(deps, baseInput)
 
-    expect(cancelSpy).toHaveBeenCalledWith('run-1', baseInput.nowMillis)
+    expect(findSpy).toHaveBeenCalledWith('run-1')
+    expect(cancelSpy).toHaveBeenCalledWith('stale-op-v3-1', baseInput.nowMillis)
+  })
+
+  it('does NOT re-run the bulk-cancel cleanup on a retry of an already-committed restore', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+
+    const findSpy = vi.fn().mockResolvedValue(null)
+    const cancelSpy = vi.fn().mockResolvedValue(undefined)
+    const deps = makeDeps(fake, { findUnresolvedBulkOperationId: findSpy, cancelInactiveUnresolvedBulkOperationById: cancelSpy })
+
+    await restoreHouseholdCheckpointV3(deps, baseInput)
+    expect(findSpy).toHaveBeenCalledTimes(1)
+
+    await restoreHouseholdCheckpointV3(deps, { ...baseInput, nowMillis: 6000 })
+    expect(findSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy).not.toHaveBeenCalled()
+  })
+
+  it('never cancels a genuinely new concurrent bulk operation created after the restore captured its own target id', async () => {
+    // Regression for the race: `findUnresolvedBulkOperationId` is called
+    // ONCE and its result captured — even if a DIFFERENT operation becomes
+    // "unresolved" afterward (e.g. another teacher device starts a fresh
+    // bulk settlement in the gap before the cancel-by-id call runs), the
+    // cancel step must only ever target the id captured at lookup time.
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+
+    const findSpy = vi.fn().mockResolvedValue('stale-op-v3-1')
+    const cancelSpy = vi.fn().mockImplementation(async (operationId: string) => {
+      // Simulate a brand-new concurrent operation ('new-concurrent-op')
+      // appearing in Firestore between the lookup and the cancel call. The
+      // production `cancelInactiveUnresolvedBulkOperationById` wiring fetches
+      // strictly by the given `operationId`, so it can never observe or
+      // touch this new operation — this spy asserts the CALLER never passes
+      // its id either.
+      expect(operationId).toBe('stale-op-v3-1')
+      expect(operationId).not.toBe('new-concurrent-op')
+    })
+    const deps = makeDeps(fake, { findUnresolvedBulkOperationId: findSpy, cancelInactiveUnresolvedBulkOperationById: cancelSpy })
+
+    await restoreHouseholdCheckpointV3(deps, baseInput)
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy).toHaveBeenCalledWith('stale-op-v3-1', baseInput.nowMillis)
+  })
+})
+
+describe('restoreHouseholdCheckpoint (schema-version dispatcher)', () => {
+  const dispatchInput = {
+    lessonRunId: 'run-1',
+    checkpointId: 'hcp-1',
+    reason: '復元テスト',
+    actorUid: 'teacher-1',
+    idempotencyKey: 'restore-key-dispatch-1',
+    nowMillis: 5000,
+  }
+
+  const v2Result = { newRestoreGeneration: 1, restoredHouseholdIds: ['team-a'], preRestoreCheckpointId: 'pre-1' }
+  const v3Result = { newRestoreGeneration: 1, restoredHouseholdIds: ['hh-a'], preRestoreCheckpointId: 'pre-2' }
+
+  it('routes a v3-shaped checkpoint snapshot to restoreV3 and tags schemaVersion: 3', async () => {
+    const v3Snapshot = buildHouseholdCheckpointSnapshotV3({
+      courseFormat: 'ROLE_VARIANT',
+      assignmentRevision: 5,
+      restoreGeneration: 0,
+      expectedRoundIndex: 1,
+      householdIds: ['hh-a'],
+      householdStates: [{
+        householdId: 'hh-a',
+        lessonRunId: 'run-1',
+        teamId: 'team-a',
+        profileId: 'profile-1',
+        cashYen: 1000000,
+        assetHoldingsYen: {},
+        activeInsuranceContracts: {},
+        activeLiabilities: {},
+        lifeStage: 'INDEPENDENT',
+        roundIndex: 1,
+        goalDelayedRounds: 0,
+        updatedAtServerMillis: 1000,
+      }],
+      visibleConcepts: ['ASSET_DIVERSIFICATION'],
+      createdAtServerMillis: 1000,
+    })
+    const restoreV2 = vi.fn().mockResolvedValue(v2Result)
+    const restoreV3 = vi.fn().mockResolvedValue(v3Result)
+
+    const result = await restoreHouseholdCheckpoint(
+      {
+        getCheckpointSnapshot: vi.fn().mockResolvedValue(v3Snapshot),
+        restoreV2,
+        restoreV3,
+      },
+      dispatchInput,
+    )
+
+    expect(restoreV3).toHaveBeenCalledWith(dispatchInput)
+    expect(restoreV2).not.toHaveBeenCalled()
+    expect(result).toEqual({ ...v3Result, schemaVersion: 3 })
+  })
+
+  it('routes a v2-shaped checkpoint snapshot to restoreV2 and tags schemaVersion: 2', async () => {
+    const v2Snapshot = buildHouseholdCheckpointSnapshotV2({
+      kind: 'MANUAL',
+      label: 'checkpoint',
+      createdAtServerMillis: 1000,
+      createdByUid: 'teacher-1',
+      expectedRoundIndex: 1,
+      householdIds: ['team-a'],
+      households: [{
+        householdId: 'team-a',
+        lessonRunId: 'run-1',
+        teamId: 'team-a',
+        profileId: 'team-a',
+        cashYen: 1000000,
+        assetHoldingsYen: {},
+        activeInsuranceContracts: {},
+        activeLiabilities: {},
+        lifeStage: 'INDEPENDENT',
+        roundIndex: 1,
+        goalDelayedRounds: 0,
+        updatedAtServerMillis: 1000,
+      }],
+      teamViews: {},
+    })
+    const restoreV2 = vi.fn().mockResolvedValue(v2Result)
+    const restoreV3 = vi.fn().mockResolvedValue(v3Result)
+
+    const result = await restoreHouseholdCheckpoint(
+      {
+        getCheckpointSnapshot: vi.fn().mockResolvedValue(v2Snapshot),
+        restoreV2,
+        restoreV3,
+      },
+      dispatchInput,
+    )
+
+    expect(restoreV2).toHaveBeenCalledWith(dispatchInput)
+    expect(restoreV3).not.toHaveBeenCalled()
+    expect(result).toEqual({ ...v2Result, schemaVersion: 2 })
+  })
+
+  it('routes a malformed/v1 checkpoint snapshot to restoreV2 (falls through, does not misroute to v3)', async () => {
+    const restoreV2 = vi.fn().mockResolvedValue(v2Result)
+    const restoreV3 = vi.fn().mockResolvedValue(v3Result)
+
+    const result = await restoreHouseholdCheckpoint(
+      {
+        getCheckpointSnapshot: vi.fn().mockResolvedValue({ schemaVersion: 1 }),
+        restoreV2,
+        restoreV3,
+      },
+      dispatchInput,
+    )
+
+    expect(restoreV2).toHaveBeenCalledWith(dispatchInput)
+    expect(restoreV3).not.toHaveBeenCalled()
+    expect(result).toEqual({ ...v2Result, schemaVersion: 2 })
   })
 })

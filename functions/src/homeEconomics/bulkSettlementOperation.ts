@@ -661,17 +661,26 @@ export interface CancelInactiveUnresolvedBulkSettlementOperationInput {
  * transitions such an operation to `CANCELLED` via `cancelBulkSettlementOperation`
  * (which itself, for the 3 advanced formats, also releases the
  * `HouseholdRuntimeControl` lock in the same transaction — see that
- * function's doc comment) — UNLESS the candidate is currently under an
- * ACTIVE lease (`RUNNING` with a still-live `leaseExpiresAtServerMillis`),
- * in which case it is left untouched: both restore flows already
- * hard-reject outright when an active lease exists (`checkActiveBulkLease`),
- * so observing one active here would only happen from a race, and this
- * function must never force-cancel someone else's in-flight work.
+ * function's doc comment) — UNLESS the candidate is:
+ *   - currently under an ACTIVE lease (`RUNNING` with a still-live
+ *     `leaseExpiresAtServerMillis`) — both restore flows already hard-reject
+ *     outright when an active lease exists (`checkActiveBulkLease`), so
+ *     observing one active here would only happen from a race, and this
+ *     function must never force-cancel someone else's in-flight work; or
+ *   - already terminal (`COMPLETED`/`CANCELLED`) — the caller is expected to
+ *     capture `candidate` ONCE (by a specific `operationId`, see
+ *     `cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk`
+ *     below) and re-fetch its current state immediately before calling this
+ *     function, so this can legitimately observe an operation that someone
+ *     else already finished/cancelled in the gap — that must be a safe no-op,
+ *     not a re-open of a terminal operation.
  */
 export const cancelInactiveUnresolvedBulkSettlementOperation = async (
   input: CancelInactiveUnresolvedBulkSettlementOperationInput,
 ): Promise<HouseholdBulkSettlementOperation | null> => {
   if (!input.candidate) return null
+
+  if (input.candidate.status === 'COMPLETED' || input.candidate.status === 'CANCELLED') return null
 
   const leaseActive = input.candidate.status === 'RUNNING'
     && (input.candidate.leaseExpiresAtServerMillis ?? 0) > input.nowMillis
@@ -685,16 +694,37 @@ export const cancelInactiveUnresolvedBulkSettlementOperation = async (
 }
 
 /**
- * Production wiring for both restore paths' `HouseholdRestoreDeps.cancelInactiveUnresolvedBulkOperation`
- * dependency: looks up the candidate via the live-Firestore query
- * (`findUnresolvedBulkSettlementOperationWithAdminSdk`), then delegates the
- * actual atomic decision/transition to `cancelInactiveUnresolvedBulkSettlementOperation`.
+ * Looks up the `operationId` of the currently-unresolved bulk-settlement
+ * operation for this lessonRun (if any), via the live-Firestore query
+ * (`findUnresolvedBulkSettlementOperationWithAdminSdk`). Intended to be
+ * called ONCE per genuinely new restore attempt to CAPTURE a specific
+ * candidate id — see `HouseholdRestoreDeps.findUnresolvedBulkOperationId`'s
+ * doc comment in `householdRestore.ts` for why the restore flows must not
+ * re-run this query a second time right before cancelling (that re-query is
+ * exactly the race this split guards against).
  */
-export const cancelInactiveUnresolvedBulkSettlementOperationWithAdminSdk = async (
+export const findUnresolvedBulkSettlementOperationIdWithAdminSdk = async (
   lessonRunId: string,
+): Promise<string | null> => {
+  const candidate = await findUnresolvedBulkSettlementOperationWithAdminSdk(lessonRunId)
+  return candidate?.operationId ?? null
+}
+
+/**
+ * Production wiring for both restore paths' `HouseholdRestoreDeps.cancelInactiveUnresolvedBulkOperationById`
+ * dependency: fetches the SPECIFIC operation named by `operationId` via a
+ * targeted document read (`getBulkSettlementOperationWithAdminSdk`) — never
+ * a fresh "whatever is unresolved right now" query — then delegates the
+ * actual atomic decision/transition to `cancelInactiveUnresolvedBulkSettlementOperation`,
+ * which itself no-ops if that specific operation is no longer a legitimate
+ * cancellation target (already terminal, or under an active lease) by the
+ * time this runs.
+ */
+export const cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk = async (
+  operationId: string,
   nowMillis: number,
 ): Promise<void> => {
-  const candidate = await findUnresolvedBulkSettlementOperationWithAdminSdk(lessonRunId)
+  const candidate = await getBulkSettlementOperationWithAdminSdk(operationId)
   await cancelInactiveUnresolvedBulkSettlementOperation({
     firestore: householdRepositoryWithAdminSdk(),
     candidate,
