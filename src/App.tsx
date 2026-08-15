@@ -18,6 +18,7 @@ import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
 import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repository'
 import { publishLessonVersion } from './lib/lessonTemplates/publishLessonVersion'
+import { useAiBetaAccess } from './hooks/useAiBetaAccess'
 import { personalOrgId } from './lib/org/personalOrgId'
 import { TemplateListPage } from './components/teacher/templates/TemplateListPage'
 import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilderWizard'
@@ -474,6 +475,7 @@ function OperatorCertificationsRoute({ services }: { services: FirebaseServices 
 
 function TemplateNewRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
+  const aiBetaState = useAiBetaAccess(services.functions)
   const [completed, setCompleted] = useState<{ goal: LearningGoal; answers: Record<string, unknown> }>()
   const [creating, setCreating] = useState(false)
   const [aiEnabled, setAiEnabled] = useState(false)
@@ -487,7 +489,7 @@ function TemplateNewRoute({ services }: { services: FirebaseServices }) {
     return () => { cancelled = true }
   }, [services])
   if (!completed) return <GuidedBuilderWizard socialStudiesSteps={[SocialStudiesQuestionStep]} homeEconomicsSteps={[HomeEconomicsQuestionStep]} onComplete={(goal, answers) => setCompleted({ goal, answers })} />
-  return <TemplateOverviewPage answers={{ goal: completed.goal, ...completed.answers } as WizardAnswers} creating={creating} functions={services.functions} aiEnabled={aiEnabled} onCreate={async (draft) => {
+  return <TemplateOverviewPage answers={{ goal: completed.goal, ...completed.answers } as WizardAnswers} creating={creating} functions={services.functions} aiEnabled={aiEnabled} aiBetaState={aiBetaState} onCreate={async (draft) => {
     const uid = services.auth.currentUser?.uid
     if (!uid) return
     setCreating(true)
@@ -497,6 +499,7 @@ function TemplateNewRoute({ services }: { services: FirebaseServices }) {
 
 function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   const { templateId } = useParams<{ templateId: string }>()
+  const aiBetaState = useAiBetaAccess(services.functions)
   const [template, setTemplate] = useState<LessonTemplate>()
   const [draft, setDraft] = useState<LessonContent>()
   const [sourceTemplateTitle, setSourceTemplateTitle] = useState<string>()
@@ -551,6 +554,7 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
       functions={services.functions}
       aiEnabled={aiEnabled}
       materialsUploadEnabled={materialsUploadEnabled}
+      aiBetaState={aiBetaState}
       saving={saving}
       publishing={publishing}
       sourceTemplateTitle={sourceTemplateTitle}

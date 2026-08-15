@@ -34,6 +34,7 @@ import {
   type LessonTemplateMoveOperationStatus,
   type LessonTemplateMovePreview,
 } from '../../../lib/lessonTemplates/moveLessonTemplate'
+import type { AiBetaUiState } from '../../../lib/ai/betaAccess'
 import { MaterialUploadPanel } from './materials/MaterialUploadPanel'
 import { ArrayFieldEditor } from './editors/ArrayFieldEditor'
 import { companyFields, createEmptyCompany, createEmptyInformationItem, informationItemFields } from './editors/socialStudies/fieldConfigs'
@@ -48,6 +49,7 @@ export interface TemplateEditorPageProps {
   functions: Functions
   aiEnabled: boolean
   materialsUploadEnabled: boolean
+  aiBetaState: AiBetaUiState
   onSaveDraft: (content: LessonContent) => void
   onPublish: () => void
   saving: boolean
@@ -68,6 +70,7 @@ export function TemplateEditorPage({
   functions,
   aiEnabled,
   materialsUploadEnabled,
+  aiBetaState,
   onSaveDraft,
   onPublish,
   saving,
@@ -137,7 +140,10 @@ export function TemplateEditorPage({
   const refresh = () => listMaterials(firestore, templateId).then(setMaterials).catch(() => setMaterials([]))
   useEffect(() => { if (aiEnabled && materialsUploadEnabled) void listMaterials(firestore, templateId).then(setMaterials).catch(() => setMaterials([])) }, [aiEnabled, firestore, materialsUploadEnabled, templateId])
 
+  const isApproved = aiBetaState === 'APPROVED'
+
   const upload = async (file: File) => {
+    if (!isApproved) return
     setUploading(true)
     setAiError('')
     try {
@@ -151,6 +157,7 @@ export function TemplateEditorPage({
   }
 
   const regenerate = async () => {
+    if (!isApproved) return
     setRegenerating(true)
     setAiError('')
     try {
@@ -263,9 +270,35 @@ export function TemplateEditorPage({
 
       {tab === materialsTab && (
         <Stack spacing={2}>
-          <MaterialUploadPanel materials={materials} uploading={uploading} onUpload={(file) => void upload(file)} selectedIds={selected} onSelectionChange={setSelected} />
+          {aiBetaState === 'LOCKED' && (
+            <Alert severity="info">
+              <Typography sx={{ fontWeight: 700 }}>AI提案（限定ベータ）</Typography>
+              <Typography variant="body2" sx={{ whiteSpace: 'pre-line' }}>
+                現在この機能は限定公開です。{'\n'}利用には運営者による許可が必要です。
+              </Typography>
+            </Alert>
+          )}
+          {aiBetaState === 'ERROR' && (
+            <Alert severity="warning">
+              AIベータの利用状態を確認できません。再読み込みしてもう一度お試しください。
+            </Alert>
+          )}
+          <MaterialUploadPanel
+            materials={materials}
+            uploading={uploading}
+            disabled={!isApproved}
+            onUpload={(file) => void upload(file)}
+            selectedIds={selected}
+            onSelectionChange={setSelected}
+          />
           {aiError && <Typography role="alert" color="error">{aiError}</Typography>}
-          <Button variant="contained" disabled={!selected.length || regenerating || isMoving} onClick={() => void regenerate()}>資料を使ってAI提案を更新</Button>
+          <Button
+            variant="contained"
+            disabled={!selected.length || regenerating || isMoving || !isApproved}
+            onClick={() => void regenerate()}
+          >
+            資料を使ってAI提案を更新
+          </Button>
         </Stack>
       )}
 
