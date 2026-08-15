@@ -429,6 +429,7 @@ function TemplateNewRoute({ services }: { services: FirebaseServices }) {
 
 function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   const { templateId } = useParams<{ templateId: string }>()
+  const [template, setTemplate] = useState<LessonTemplate>()
   const [draft, setDraft] = useState<LessonContent>()
   const [sourceTemplateTitle, setSourceTemplateTitle] = useState<string>()
   const [derivatives, setDerivatives] = useState<CommunityTemplate[]>([])
@@ -437,11 +438,76 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   const [aiEnabled, setAiEnabled] = useState(false)
   const [materialsUploadEnabled, setMaterialsUploadEnabled] = useState(false)
   const uid = services.auth.currentUser?.uid
-  useEffect(() => { if (templateId) getDoc(doc(services.firestore, 'lessonTemplates', templateId)).then((snapshot) => { if (snapshot.exists()) { const data = snapshot.data() as LessonTemplate; setDraft(data.draft); setSourceTemplateTitle(data.sourceTemplateTitle) } }) }, [services, templateId])
+
+  const loadTemplate = useCallback(() => {
+    if (!templateId) return
+    getDoc(doc(services.firestore, 'lessonTemplates', templateId)).then((snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data() as LessonTemplate
+        setTemplate(data)
+        setDraft(data.draft)
+        setSourceTemplateTitle(data.sourceTemplateTitle)
+      }
+    })
+  }, [services, templateId])
+
+  useEffect(() => { loadTemplate() }, [loadTemplate])
   useEffect(() => { if (templateId) listTemplateDerivatives(services.firestore, templateId).then(setDerivatives).catch(() => setDerivatives([])) }, [services, templateId])
-  useEffect(() => { if (uid) getDoc(doc(services.firestore, 'organizations', personalOrgId(uid))).then((snapshot) => { setAiEnabled(snapshot.exists() && snapshot.data()?.aiEnabled === true); setMaterialsUploadEnabled(snapshot.exists() && snapshot.data()?.materialsUploadEnabled === true) }).catch(() => { setAiEnabled(false); setMaterialsUploadEnabled(false) }) }, [services, uid])
-  if (!templateId || !draft) return <GuardLoading />
-  return <TemplateEditorPage draft={draft} templateId={templateId} orgId={personalOrgId(uid ?? '')} storage={services.storage} firestore={services.firestore} functions={services.functions} aiEnabled={aiEnabled} materialsUploadEnabled={materialsUploadEnabled} saving={saving} publishing={publishing} sourceTemplateTitle={sourceTemplateTitle} derivatives={derivatives} onSaveDraft={async (content) => { setSaving(true); try { await saveDraft(services.firestore, templateId, content); setDraft(content) } finally { setSaving(false) } }} onPublish={async () => { setPublishing(true); try { await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() }) } finally { setPublishing(false) } }} />
+
+  const targetOrgId = template?.orgId || (uid ? personalOrgId(uid) : '')
+  useEffect(() => {
+    if (!targetOrgId) return
+    let cancelled = false
+    getDoc(doc(services.firestore, 'organizations', targetOrgId)).then((snapshot) => {
+      if (!cancelled) {
+        setAiEnabled(snapshot.exists() && snapshot.data()?.aiEnabled === true)
+        setMaterialsUploadEnabled(snapshot.exists() && snapshot.data()?.materialsUploadEnabled === true)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setAiEnabled(false)
+        setMaterialsUploadEnabled(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [services, targetOrgId])
+
+  if (!templateId || !draft || !template) return <GuardLoading />
+  return (
+    <TemplateEditorPage
+      draft={draft}
+      templateId={templateId}
+      orgId={template.orgId}
+      storage={services.storage}
+      firestore={services.firestore}
+      functions={services.functions}
+      aiEnabled={aiEnabled}
+      materialsUploadEnabled={materialsUploadEnabled}
+      saving={saving}
+      publishing={publishing}
+      sourceTemplateTitle={sourceTemplateTitle}
+      derivatives={derivatives}
+      moveOperationId={template.moveOperationId}
+      onReloadTemplate={loadTemplate}
+      onSaveDraft={async (content) => {
+        setSaving(true)
+        try {
+          await saveDraft(services.firestore, templateId, content)
+          setDraft(content)
+        } finally {
+          setSaving(false)
+        }
+      }}
+      onPublish={async () => {
+        setPublishing(true)
+        try {
+          await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() })
+        } finally {
+          setPublishing(false)
+        }
+      }}
+    />
+  )
 }
 
 function SchoolOrgNewRoute({ services }: { services: FirebaseServices }) {

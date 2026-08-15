@@ -39,6 +39,7 @@ export interface LessonTemplate {
   status: 'DRAFT' | 'READY' | 'ARCHIVED'
   visibility: 'PRIVATE' | 'LINK' | 'ORGANIZATION' | 'PUBLIC'
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
+  moveOperationId?: string
   createdAt: Timestamp
   updatedAt: Timestamp
   sourceTemplateId?: string

@@ -287,6 +287,37 @@ describe('Guided Lesson Builder routes', () => {
     await waitFor(() => expect(callableMock).toHaveBeenCalled())
     window.history.pushState({}, '', '/')
   })
+
+  it('routes /teacher/templates/:templateId/edit and uses the template orgId', async () => {
+    window.history.pushState({}, '', '/teacher/templates/tpl-1/edit')
+    getDocMock.mockImplementation((reference: { __path: string }) => {
+      if (reference.__path === 'organizations/personal_teacher-uid/members/teacher-uid') {
+        return Promise.resolve({ exists: () => true, data: () => ({ status: 'active' }) })
+      }
+      if (reference.__path === 'lessonTemplates/tpl-1') {
+        return Promise.resolve({
+          exists: () => true,
+          data: () => ({
+            id: 'tpl-1',
+            orgId: 'school-org-123',
+            draft: { title: '学校教材タイトル', description: '説明', subject: 'SOCIAL_STUDIES' },
+            moveOperationId: 'op-moving-1',
+          }),
+        })
+      }
+      if (reference.__path === 'organizations/school-org-123') {
+        return Promise.resolve({ exists: () => true, data: () => ({ aiEnabled: true, materialsUploadEnabled: true }) })
+      }
+      return Promise.resolve({ exists: () => false, data: () => ({}) })
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    expect(await screen.findByDisplayValue('学校教材タイトル')).toBeInTheDocument()
+    expect(screen.getByText(/別の組織へ移動処理中/)).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
 })
 
 describe('School org creation and invitation routes', () => {
