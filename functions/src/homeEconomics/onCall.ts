@@ -3,16 +3,20 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
 import type { CourseFormat, HomeEconomicsContent } from '@stock-league/household-authoring-content'
 import {
+  getHouseholdRuntimeControlWithAdminSdk,
   getHouseholdStateWithAdminSdk,
   householdRepositoryWithAdminSdk,
+  saveAdvancedHouseholdDecisionWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
 import type { HouseholdState } from '../lessonRuns/households/repository'
 import { ensureCommonConditionsHouseholdState, resolveCommonConditionsProfile } from './commonConditionsHousehold'
+import { ensureAssignedHouseholdStateWithAdminSdk } from './assignedHousehold'
 import { canControlLesson } from '../lessonRuns/authorization'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
-import { submitHouseholdDecision } from './submitDecision'
+import { idempotencyDocumentId } from '../lib/idempotency'
+import { submitAdvancedHouseholdDecision, submitHouseholdDecision } from './submitDecision'
 import type { HouseholdDecisionInput } from './submitDecision'
 import { processRoundWithAdminSdk } from './processRound'
 import { buildHouseholdCheckpointSnapshot } from './checkpointRestore'
@@ -93,6 +97,97 @@ const requireLessonRunRunning = async (lessonRunId: string): Promise<void> => {
   const status = snap.get('status') as string | undefined
   if (status !== 'RUNNING') {
     throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
+}
+
+/**
+ * Task 5's Common-vs-advanced branch point. Mirrors `statusTransition.ts`'s
+ * own private `ADVANCED_FORMATS`/`isAdvancedHouseholdCourseFormat` (not
+ * exported from there — re-declared here rather than imported, matching
+ * that file's own choice to keep this small set local to each call site).
+ */
+const ADVANCED_HOUSEHOLD_COURSE_FORMATS = new Set<AdvancedHouseholdCourseFormat>([
+  'ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM',
+])
+const isAdvancedHouseholdCourseFormat = (value: unknown): value is AdvancedHouseholdCourseFormat =>
+  typeof value === 'string' && ADVANCED_HOUSEHOLD_COURSE_FORMATS.has(value as AdvancedHouseholdCourseFormat)
+
+/**
+ * Resolves the LessonRun's `courseFormat` off its `templateSnapshot`, the
+ * same field/path `statusTransition.ts`'s `prepareStatusTransition` reads
+ * (`run.templateSnapshot?.homeEconomics?.courseFormat`). Used by
+ * `submitHouseholdDecisionCallable` to decide whether to take the Common
+ * lazy-init path or the advanced FROZEN-assignment path below. Throws
+ * `not-found` when the LessonRun itself does not exist — the same message
+ * every other helper in this file uses for a missing LessonRun doc.
+ */
+const resolveLessonRunCourseFormat = async (lessonRunId: string): Promise<CourseFormat | undefined> => {
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  return templateSnapshot?.homeEconomics?.courseFormat
+}
+
+/**
+ * Resolves the `teamId`/`profileId` a runtime `householdId` is assigned to
+ * from the FROZEN `HouseholdAssignmentConfig`/`HouseholdAssignmentEntry`
+ * (Task 2/3) — read directly by doc id, since entries are persisted at
+ * `.../entries/{householdId}` (`householdAssignmentRepository.ts`'s
+ * `entryPath`). Used ONLY to authorize a caller against a household that
+ * does not exist yet — this never creates anything itself. Throws
+ * `HttpsError` directly (this helper lives at the Callable boundary, same
+ * as `requireTeamMembership`/`requireLessonRunRunning` above) rather than a
+ * bare `Error` translated elsewhere.
+ */
+const resolveFrozenAssignmentEntry = async (
+  lessonRunId: string, householdId: string,
+): Promise<{ teamId: string; profileId: string; assignmentRevision: number }> => {
+  const db = getFirestore()
+  const configSnap = await db.doc(`lessonRuns/${lessonRunId}/householdAssignment/config`).get()
+  if (!configSnap.exists) {
+    throw new HttpsError('failed-precondition', 'この授業の家庭割り当てはまだ準備されていません。')
+  }
+  const config = configSnap.data() as { state: string; assignmentRevision: number }
+  if (config.state !== 'FROZEN') {
+    throw new HttpsError('failed-precondition', `家庭割り当てが確定（FROZEN）されるまで、家庭を初期化できません（現在の状態: ${config.state}）。`)
+  }
+  const entrySnap = await db.doc(`lessonRuns/${lessonRunId}/householdAssignment/config/entries/${householdId}`).get()
+  if (!entrySnap.exists) {
+    throw new HttpsError('not-found', `対象の家庭の割り当てが見つかりません: ${householdId}`)
+  }
+  const entry = entrySnap.data() as { teamId: string; profileId: string }
+  return { teamId: entry.teamId, profileId: entry.profileId, assignmentRevision: config.assignmentRevision }
+}
+
+/**
+ * Advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+ * counterpart to `lazyInitHouseholdWithAdminSdk` below. Security ordering is
+ * the whole point (per this task's brief): an existing household is
+ * authorized against ITS OWN stored `teamId` exactly like Common; a MISSING
+ * household's owning `teamId` is resolved from the FROZEN assignment and
+ * membership is checked against THAT `teamId` BEFORE
+ * `ensureAssignedHouseholdStateWithAdminSdk` (Task 4) is ever called — so a
+ * caller can never cause a household document to be created, or learn
+ * whether one exists, for a team they are not a member of.
+ */
+const resolveAdvancedHousehold = async (
+  lessonRunId: string, householdId: string, actorParticipantId: string,
+): Promise<HouseholdState> => {
+  const existing = await getHouseholdStateWithAdminSdk(lessonRunId, householdId)
+  if (existing) {
+    await requireTeamMembership(lessonRunId, existing.teamId, actorParticipantId)
+    return existing
+  }
+
+  const { teamId } = await resolveFrozenAssignmentEntry(lessonRunId, householdId)
+  await requireTeamMembership(lessonRunId, teamId, actorParticipantId)
+
+  try {
+    return await ensureAssignedHouseholdStateWithAdminSdk(lessonRunId, householdId)
+  } catch (error) {
+    if (error instanceof Error) throw new HttpsError('failed-precondition', error.message)
+    throw error
   }
 }
 
@@ -241,6 +336,23 @@ const translateSubmitHouseholdDecisionError = (error: unknown): unknown => {
       return new HttpsError('failed-precondition', error.message)
     }
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+    // Task 5: `saveAdvancedHouseholdDecisionWithAdminSdk`'s
+    // `HouseholdRuntimeControl`/round-consistency guard messages
+    // (`lessonRuns/households/repository.ts`).
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdState not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'HouseholdRuntimeControl assignmentRevision does not match the expected assignment revision') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'HouseholdState roundIndex does not match HouseholdRuntimeControl synchronizedRoundIndex') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'Requested round no longer matches the synchronized round') {
+      return new HttpsError('failed-precondition', error.message)
+    }
   }
   return error
 }
@@ -268,6 +380,74 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
   validateRequest(data, shortfallResolutionType)
 
   const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
+
+  // Task 5: branch on the LessonRun's own courseFormat — the 3 advanced
+  // formats (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) route through a
+  // parallel resolution/save path (`resolveAdvancedHousehold` +
+  // `saveAdvancedHouseholdDecisionWithAdminSdk`) guarded by the shared
+  // `HouseholdRuntimeControl` document; COMMON_CONDITIONS keeps the
+  // pre-existing lazy-init/`saveHouseholdDecision` flow below entirely
+  // unchanged.
+  const courseFormat = await resolveLessonRunCourseFormat(data.lessonRunId)
+  if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+    const household = await resolveAdvancedHousehold(data.lessonRunId, data.householdId, actorParticipantId)
+
+    // Important I2 (mirrors the Common flow below): gate on LessonRun status
+    // AFTER authorization has resolved, but BEFORE the roundIndex check and
+    // the actual decision-saving transaction.
+    await requireLessonRunRunning(data.lessonRunId)
+
+    if (data.roundIndex !== household.roundIndex) {
+      throw new HttpsError('failed-precondition', 'この家庭は現在別のラウンドです。roundIndex が一致しません。')
+    }
+
+    const control = await getHouseholdRuntimeControlWithAdminSdk(data.lessonRunId)
+    if (!control) {
+      throw new HttpsError('failed-precondition', 'この授業の家庭運用制御ドキュメントが見つかりません。')
+    }
+
+    const idempotencyId = idempotencyDocumentId(
+      `${data.lessonRunId}/${data.householdId}/${data.roundIndex}`, data.idempotencyKey,
+    )
+    const decisionId = `${data.lessonRunId}_decision_${idempotencyId}`
+
+    try {
+      return await submitAdvancedHouseholdDecision({
+        saveDecision: (input) => saveAdvancedHouseholdDecisionWithAdminSdk({
+          firestore: householdRepositoryWithAdminSdk(),
+          lessonRunId: input.lessonRunId,
+          householdId: input.householdId,
+          decision: input.decision,
+          expectedSynchronizedRoundIndex: input.expectedSynchronizedRoundIndex,
+          assignmentRevision: input.assignmentRevision,
+          idempotencyKey: input.idempotencyKey,
+          nowMillis: input.nowMillis,
+        }),
+        lessonRunId: data.lessonRunId,
+        householdId: data.householdId,
+        decision: {
+          decisionId,
+          lessonRunId: data.lessonRunId,
+          householdId: data.householdId,
+          roundIndex: data.roundIndex,
+          assetAllocationChangesYen: data.assetAllocationChangesYen,
+          insurancePurchaseIds: data.insurancePurchaseIds,
+          insuranceCancelIds: data.insuranceCancelIds,
+          shortfallResolutionType,
+          ...(data.shortfallResolutionAssetType !== undefined ? { shortfallResolutionAssetType: data.shortfallResolutionAssetType } : {}),
+          publicSupportApplicationIds: data.publicSupportApplicationIds,
+          idempotencyKey: data.idempotencyKey,
+          ...(data.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: data.voluntaryDrawdownRequestedYen } : {}),
+        },
+        expectedSynchronizedRoundIndex: data.roundIndex,
+        assignmentRevision: control.assignmentRevision,
+        idempotencyKey: data.idempotencyKey,
+        nowMillis: Date.now(),
+      })
+    } catch (error) {
+      throw translateSubmitHouseholdDecisionError(error)
+    }
+  }
 
   // Critical Fix #1: previously this threw 'not-found' unconditionally when
   // no household document existed yet — the exact gap the final

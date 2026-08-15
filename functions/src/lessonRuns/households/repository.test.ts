@@ -4,9 +4,12 @@ import {
   buildInitialHouseholdState,
   getOrInitHouseholdState,
   resolveStoredHouseholdState,
+  saveAdvancedHouseholdDecisionWithAdminSdk,
   saveHouseholdDecision,
+  type HouseholdDecisionRecord,
   type StoredHouseholdState,
 } from './repository'
+import type { HouseholdRuntimeControl } from '../../homeEconomics/statusTransition'
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -189,5 +192,119 @@ describe('saveHouseholdDecision', () => {
     const round4 = await saveHouseholdDecision({ firestore: fake as never, ...baseInput, roundIndex: 4 })
     expect(round4.created).toBe(true)
     expect(round4.decisionId).not.toBe(round3.decisionId)
+  })
+})
+
+describe('saveAdvancedHouseholdDecisionWithAdminSdk', () => {
+  const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+  const householdPath = 'lessonRuns/run-1/households/case-b'
+
+  const baseControl: HouseholdRuntimeControl = {
+    courseFormat: 'ROLE_VARIANT', assignmentRevision: 1, synchronizedRoundIndex: 3,
+    roundStatus: 'OPEN', activeOperationId: null, updatedAtServerMillis: 0,
+  }
+
+  const baseHousehold = {
+    householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'profile-a', cashYen: 500000,
+    assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+    lifeStage: 'INDEPENDENT', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+  }
+
+  const baseDecision: Omit<HouseholdDecisionRecord, 'submittedAtServerMillis'> = {
+    decisionId: 'run-1_decision_abc123', lessonRunId: 'run-1', householdId: 'case-b', roundIndex: 3,
+    assetAllocationChangesYen: { DOMESTIC_STOCK: 100000 }, insurancePurchaseIds: [], insuranceCancelIds: [],
+    shortfallResolutionType: null, publicSupportApplicationIds: [], idempotencyKey: 'key-1',
+  }
+
+  const seedReady = (fake: ReturnType<typeof makeFakeFirestore>): void => {
+    fake.docs.set(controlPath, baseControl as unknown as Record<string, unknown>)
+    fake.docs.set(householdPath, baseHousehold)
+  }
+
+  const baseInput = {
+    lessonRunId: 'run-1', householdId: 'case-b', decision: baseDecision,
+    expectedSynchronizedRoundIndex: 3, assignmentRevision: 1, idempotencyKey: 'key-1', nowMillis: 42,
+  }
+
+  it('creates a decision on first submission, stamping submittedAtServerMillis from nowMillis', async () => {
+    const fake = makeFakeFirestore()
+    seedReady(fake)
+    const record = await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    expect(record).toMatchObject({ decisionId: 'run-1_decision_abc123', roundIndex: 3, submittedAtServerMillis: 42 })
+  })
+
+  it('is idempotent for a repeated idempotencyKey with the same payload, returning the original record', async () => {
+    const fake = makeFakeFirestore()
+    seedReady(fake)
+    const first = await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    const second = await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    expect(second).toEqual(first)
+  })
+
+  it('rejects the same idempotencyKey replayed with a materially different payload', async () => {
+    const fake = makeFakeFirestore()
+    seedReady(fake)
+    await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({
+      firestore: fake as never, ...baseInput,
+      decision: { ...baseDecision, assetAllocationChangesYen: { DOMESTIC_STOCK: 999 } },
+    })).rejects.toThrow('Idempotency key payload mismatch')
+  })
+
+  it('a replay short-circuits before re-checking roundStatus/assignmentRevision/round consistency', async () => {
+    const fake = makeFakeFirestore()
+    seedReady(fake)
+    const first = await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    // Mutate the control doc directly (bypassing the transaction) to simulate
+    // the round having moved on since the original submission.
+    fake.docs.set(controlPath, { ...baseControl, roundStatus: 'SETTLING' } as unknown as Record<string, unknown>)
+    const second = await saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput })
+    expect(second).toEqual(first)
+  })
+
+  it('rejects when the HouseholdRuntimeControl document does not exist', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set(householdPath, baseHousehold)
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput }))
+      .rejects.toThrow('HouseholdRuntimeControl not found')
+  })
+
+  it('rejects when the HouseholdState document does not exist', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set(controlPath, baseControl as unknown as Record<string, unknown>)
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput }))
+      .rejects.toThrow('HouseholdState not found')
+  })
+
+  it('rejects when roundStatus is SETTLING (a bulk settlement is in progress)', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set(controlPath, { ...baseControl, roundStatus: 'SETTLING' } as unknown as Record<string, unknown>)
+    fake.docs.set(householdPath, baseHousehold)
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput }))
+      .rejects.toThrow('HouseholdRuntimeControl round is not OPEN')
+  })
+
+  it('rejects when the control document\'s assignmentRevision does not match the caller\'s expected assignmentRevision', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set(controlPath, { ...baseControl, assignmentRevision: 2 } as unknown as Record<string, unknown>)
+    fake.docs.set(householdPath, baseHousehold)
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput }))
+      .rejects.toThrow('assignmentRevision does not match')
+  })
+
+  it('rejects when the HouseholdState\'s own roundIndex has drifted from the control document\'s synchronizedRoundIndex', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set(controlPath, baseControl as unknown as Record<string, unknown>)
+    fake.docs.set(householdPath, { ...baseHousehold, roundIndex: 4 })
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({ firestore: fake as never, ...baseInput }))
+      .rejects.toThrow('HouseholdState roundIndex does not match HouseholdRuntimeControl synchronizedRoundIndex')
+  })
+
+  it('rejects when the caller\'s expectedSynchronizedRoundIndex no longer matches the control document\'s synchronizedRoundIndex (round moved on)', async () => {
+    const fake = makeFakeFirestore()
+    seedReady(fake)
+    await expect(saveAdvancedHouseholdDecisionWithAdminSdk({
+      firestore: fake as never, ...baseInput, expectedSynchronizedRoundIndex: 2,
+    })).rejects.toThrow('Requested round no longer matches the synchronized round')
   })
 })
