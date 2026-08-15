@@ -110,4 +110,6 @@ export {
   searchOrgStudentDataCallable,
 } from './privacy/onCall'
 export { purgeExpiredSoftDeletesScheduled } from './privacy/purgeExpiredSoftDeletes'
+export { annualArchiveScheduled } from './privacy/annualArchiveScheduled'
+
 
