@@ -336,6 +336,22 @@ describe('duplicateLessonTemplateCallable', () => {
     expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-target', 'teacher-target')
   })
 
+  it('allows duplicating a VERIFIED or OFFICIAL template without source-org membership', async () => {
+    for (const vis of ['VERIFIED', 'OFFICIAL']) {
+      vi.clearAllMocks()
+      templateGetMock.mockResolvedValue({
+        exists: true,
+        get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'visibility' ? vis : undefined),
+      })
+      vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+      vi.mocked(duplicateLessonTemplateWithAdminSdk).mockResolvedValue({ templateId: 'template-copy-1', alreadyDuplicated: false })
+
+      await expect(duplicateLessonTemplateCallable.run(makeRequest())).resolves.toEqual({ templateId: 'template-copy-1', alreadyDuplicated: false })
+      expect(requireActiveOrgMember).toHaveBeenCalledTimes(1)
+      expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-target', 'teacher-target')
+    }
+  })
+
   it('rejects with not-found when shareToken is invalid, expired, or revoked', async () => {
     vi.mocked(resolveTemplateShareWithAdminSdk).mockRejectedValue(new Error('Template share not found'))
     const request = { ...makeRequest(), data: { ...makeRequest().data, shareToken: 'bad-token' } } as unknown as CallableRequest<DuplicateLessonTemplateCallableInput>
@@ -542,6 +558,19 @@ describe('publishTemplateToCommunityCallable', () => {
     await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: true })
     expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'COMMUNITY', publishedToCommunityAt: 'SERVER_TIMESTAMP' })
   })
+
+  it('rejects when template is already VERIFIED or OFFICIAL to prevent implicit downgrade', async () => {
+    for (const vis of ['VERIFIED', 'OFFICIAL']) {
+      templateGetMock.mockResolvedValue({
+        exists: true,
+        get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : field === 'visibility' ? vis : undefined),
+      })
+      await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: '認証済み・公式教材の公開区分は直接変更できません。',
+      })
+    }
+  })
 })
 
 describe('unpublishTemplateFromCommunityCallable', () => {
@@ -597,10 +626,27 @@ describe('reportTemplateCallable', () => {
     expect(reportAddMock).not.toHaveBeenCalled()
   })
 
-  it('rejects a report on a template that is not COMMUNITY-visible', async () => {
+  it('rejects a report on a template that is not in marketplace (PRIVATE)', async () => {
     templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'visibility' ? 'PRIVATE' : field === 'createdByUid' ? 'teacher-a' : undefined) })
     await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))).rejects.toMatchObject({ code: 'not-found' })
     expect(reportAddMock).not.toHaveBeenCalled()
+  })
+
+  it('allows reporting on VERIFIED or OFFICIAL templates', async () => {
+    for (const vis of ['VERIFIED', 'OFFICIAL']) {
+      vi.clearAllMocks()
+      templateGetMock.mockResolvedValue({
+        exists: true,
+        get: (field: string) => (field === 'visibility' ? vis : field === 'createdByUid' ? 'teacher-a' : undefined),
+      })
+      reportAddMock.mockResolvedValue({ id: 'report-1' })
+      await expect(reportTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', reason: 'OTHER' }))).resolves.toEqual({ reportId: 'report-1' })
+      expect(reportAddMock).toHaveBeenCalledWith(expect.objectContaining({
+        templateId: 't1',
+        versionId: 'v1',
+        reportedByUid: 'teacher-b',
+      }))
+    }
   })
 
   it('rejects a caller reporting their own template', async () => {

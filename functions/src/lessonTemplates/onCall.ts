@@ -136,8 +136,8 @@ export const duplicateLessonTemplateCallable = onCall({ region: 'asia-northeast1
     // A valid, matching share token substitutes for source-org membership —
     // this is the one intentional way to read/duplicate another org's
     // template, mirroring the comment below for target-org membership.
-  } else if (sourceTemplateSnap.get('visibility') === 'COMMUNITY') {
-    // A COMMUNITY-visible template is readable by any teacher (mirrors the
+  } else if (isMarketplaceVisibility(sourceTemplateSnap.get('visibility'))) {
+    // A marketplace-visible template (COMMUNITY, VERIFIED, OFFICIAL) is readable by any teacher (mirrors the
     // Firestore rule relaxation), so source-org membership is not required
     // either — the same intentional bypass as the shareToken branch above.
   } else {
@@ -257,6 +257,11 @@ export const publishTemplateToCommunityCallable = onCall({ region: 'asia-northea
   if (templateSnap.get('createdByUid') !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ公開できます。')
   if (!templateSnap.get('currentPublishedVersionId')) throw new HttpsError('failed-precondition', '公開済みの版がまだありません。')
 
+  const currentVisibility = templateSnap.get('visibility')
+  if (currentVisibility === 'VERIFIED' || currentVisibility === 'OFFICIAL') {
+    throw new HttpsError('failed-precondition', '認証済み・公式教材の公開区分は直接変更できません。')
+  }
+
   await firestore.doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'COMMUNITY', publishedToCommunityAt: FieldValue.serverTimestamp() })
   return { published: true }
 })
@@ -294,7 +299,7 @@ export const reportTemplateCallable = onCall({ region: 'asia-northeast1' }, asyn
   if (data.details !== undefined && typeof data.details !== 'string') throw new HttpsError('invalid-argument', 'リクエストが不正です。')
 
   const templateSnap = await getFirestore().doc(`lessonTemplates/${data.templateId}`).get()
-  if (!templateSnap.exists || templateSnap.get('visibility') !== 'COMMUNITY') throw new HttpsError('not-found', '通報対象の教材が見つかりません。')
+  if (!templateSnap.exists || !isMarketplaceVisibility(templateSnap.get('visibility'))) throw new HttpsError('not-found', '通報対象の教材が見つかりません。')
   if (templateSnap.get('createdByUid') === request.auth.uid) throw new HttpsError('permission-denied', '自分が作成した教材は通報できません。')
 
   const added = await getFirestore().collection('templateReports').add({
