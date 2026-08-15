@@ -2,11 +2,20 @@ import { useState } from 'react'
 import { Alert, Button, Chip, Divider, List, ListItem, Stack, Typography } from '@mui/material'
 import type { Functions } from 'firebase/functions'
 import type { LessonInputField, LessonInputValue } from '@stock-league/lesson-inputs'
+import type {
+  ResearchDeskPanelId,
+  ResearchDeskPublicView,
+} from '@stock-league/market-public-content'
+import type {
+  LessonRunTeamState,
+  StockPublicState,
+} from '../../lib/lessonRuns/liveTypes'
 import { LessonInputRenderer, type LessonInputRendererProps } from '../lessonInputs/LessonInputRenderer'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { useLessonResponseDraft, type UseLessonResponseDraftInput, type UseLessonResponseDraftResult } from '../../hooks/useLessonResponseDraft'
 import { requestLessonHelp as requestLessonHelpDefault, type RequestLessonHelpInput, type RequestLessonHelpResult } from '../../lib/lessonRuns/helpRequests'
 import type { LessonResponseStatus } from '../../lib/lessonRuns/responses'
+import { ResearchDeskPage } from './ResearchDeskPage'
 
 /**
  * この画面が要求する「生徒公開情報」の形。`functions/src/lessonRuns/
@@ -66,6 +75,15 @@ export interface LessonPlayPageProps {
   requestHelp?: (functions: Functions, input: RequestLessonHelpInput) => Promise<RequestLessonHelpResult>
   /** テスト用フック差し替え(内部実装の一部を検証しやすくするためのみ)。 */
   useResponseDraft?: (input: UseLessonResponseDraftInput) => UseLessonResponseDraftResult
+  /** Phase 2 Research Desk props */
+  researchDesk?: ResearchDeskPublicView | null
+  teamState?: LessonRunTeamState | null
+  stocks?: Record<string, StockPublicState>
+  marketPaused?: boolean
+  onSaveResearchNote?: (text: string, expectedRevision: number) => Promise<void>
+  onSubmitOrder?: (input: { stockId: string; side: 'BUY' | 'SELL'; quantity: number }) => Promise<void>
+  activeResearchDeskPanel?: ResearchDeskPanelId
+  onSelectResearchDeskPanel?: (panel: ResearchDeskPanelId) => void
 }
 
 /**
@@ -84,6 +102,14 @@ export function LessonPlayPage({
   saveResponseDraft,
   requestHelp = requestLessonHelpDefault,
   useResponseDraft = useLessonResponseDraft,
+  researchDesk,
+  teamState,
+  stocks,
+  marketPaused,
+  onSaveResearchNote,
+  onSubmitOrder,
+  activeResearchDeskPanel,
+  onSelectResearchDeskPanel,
 }: LessonPlayPageProps) {
   const draft = useResponseDraft({
     functions, lessonRunId, participantId, teamId, phaseId, inputId,
@@ -109,7 +135,7 @@ export function LessonPlayPage({
   }
 
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: 560, p: 2 }}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: { xs: 560, md: 960 }, p: 2, mx: 'auto' }}>
       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
         <Chip label={displayName} />
         {teamName && <Chip label={teamName} color="primary" variant="outlined" />}
@@ -158,6 +184,22 @@ export function LessonPlayPage({
 
       {responseStatus && <Alert severity="info">{RESPONSE_STATUS_LABELS[responseStatus]}</Alert>}
       {draft.status === 'error' && <Alert severity="warning">保存に失敗しました。通信を確認してください(入力内容は保持されています)。</Alert>}
+
+      {researchDesk && researchDesk.availablePanels.length > 0 && (
+        <>
+          <Divider sx={{ my: 2 }} />
+          <ResearchDeskPage
+            publicView={researchDesk}
+            teamState={teamState}
+            stocks={stocks}
+            marketPaused={marketPaused}
+            onSaveNote={onSaveResearchNote}
+            onSubmitOrder={onSubmitOrder}
+            activePanel={activeResearchDeskPanel}
+            onSelectPanel={onSelectResearchDeskPanel}
+          />
+        </>
+      )}
 
       <Divider />
 

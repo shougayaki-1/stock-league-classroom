@@ -100,4 +100,41 @@ describe('LessonPlayPage', () => {
     const helpButton = screen.getByRole('button', { name: /困っている|助けて|ヘルプ/ })
     expect(Number.parseFloat(getComputedStyle(helpButton).minHeight)).toBeGreaterThanOrEqual(44)
   })
+
+  it('renders Research Desk when researchDesk has availablePanels', () => {
+    render(
+      <LessonPlayPage
+        {...baseProps}
+        researchDesk={{
+          phaseId: 'phase-1',
+          phaseType: 'INFORMATION',
+          availablePanels: ['COMPANIES', 'NEWS'],
+          companies: [
+            {
+              id: 'c1',
+              name: 'Alpha Energy',
+              symbol: '1001',
+              industry: 'Energy',
+              sizeClass: 'LARGE',
+              description: 'Energy provider',
+              productsAndServices: [],
+              riskFactors: [],
+            },
+          ],
+          informationItems: [],
+          economicIndicators: [],
+          updatedAtMillis: 1000,
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('tab', { name: '企業情報' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'ニュース' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Alpha Energy' })).toBeInTheDocument()
+  })
+
+  it('does not render Research Desk when availablePanels is empty or researchDesk is undefined', () => {
+    render(<LessonPlayPage {...baseProps} researchDesk={null} />)
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  })
 })
