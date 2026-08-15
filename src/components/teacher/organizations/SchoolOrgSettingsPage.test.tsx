@@ -19,6 +19,8 @@ const memberProps = {
   onChangeRole: vi.fn(),
   onExportStudentData: vi.fn(),
   exportingStudentData: false,
+  auditLogEntries: [],
+  loadingAuditLog: false,
 }
 
 describe('SchoolOrgSettingsPage', () => {
@@ -232,6 +234,25 @@ describe('parent organization display', () => {
       </MemoryRouter>,
     )
     expect(screen.queryByRole('button', { name: '生徒データを一括エクスポート' })).not.toBeInTheDocument()
+  })
+
+  it('shows audit log entries to an owner', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-owner" members={members}
+          auditLogEntries={[{ id: 'log-1', actorUid: 'uid-owner', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS', occurredAt: '2026-08-15T00:00:00.000Z' }]} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/EXPORT_ORG_STUDENT_DATA/)).toBeInTheDocument()
+  })
+
+  it('hides the audit log section from a teacher', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-teacher" members={members} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('監査ログ')).not.toBeInTheDocument()
   })
 })
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { Button, List, ListItem, ListItemText, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import type { Invitation } from '../../../lib/organizations/invitations'
 import type { OrgMember } from '../../../lib/organizations/orgMembers'
+import type { OrgAuditLogEntry } from '../../../lib/privacy/orgAuditLog'
 
 const STATUS_LABEL: Record<Invitation['status'], string> = { PENDING: '招待中', ACCEPTED: '参加済み', REVOKED: '失効済み' }
 const ROLE_LABEL: Record<OrgMember['role'], string> = { owner: 'owner', admin: '管理者', teacher: '教師' }
@@ -25,10 +26,12 @@ export interface SchoolOrgSettingsPageProps {
   onChangeRole: (uid: string, newRole: 'owner' | 'admin' | 'teacher') => void
   onExportStudentData: () => void
   exportingStudentData: boolean
+  auditLogEntries?: OrgAuditLogEntry[]
+  loadingAuditLog?: boolean
 }
 
 export function SchoolOrgSettingsPage({
-  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData,
+  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData, auditLogEntries, loadingAuditLog,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -45,6 +48,22 @@ export function SchoolOrgSettingsPage({
       <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
       {(viewerRole === 'owner' || viewerRole === 'admin') && <Link to={`/teacher/organizations/${orgId}/template-approvals`}>承認待ちテンプレートを確認</Link>}
       {viewerRole === 'owner' && <Button variant="outlined" disabled={exportingStudentData} onClick={onExportStudentData}>生徒データを一括エクスポート</Button>}
+      {(viewerRole === 'owner' || viewerRole === 'admin') && (
+        <section>
+          <h3>監査ログ</h3>
+          {loadingAuditLog ? (
+            <p>読み込み中…</p>
+          ) : (
+            <ul>
+              {(auditLogEntries ?? []).map((entry) => (
+                <li key={entry.id}>
+                  {entry.occurredAt ?? '(日時不明)'} — {entry.actorUid} — {entry.action} — {entry.result === 'SUCCESS' ? '成功' : '失敗'}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       <Typography variant="body2">所属する上位組織: {parentOrgName ?? 'なし'}</Typography>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>

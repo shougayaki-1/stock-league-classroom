@@ -40,6 +40,7 @@ import { SchoolOrgSettingsPage } from './components/teacher/organizations/School
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
 import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
 import { exportOrgStudentData, downloadAsJsonFile } from './lib/privacy/orgStudentDataExport'
+import { listOrgAuditLog, type OrgAuditLogEntry } from './lib/privacy/orgAuditLog'
 import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
 import { listPendingTemplateApprovals, reviewTemplateApproval, type PendingTemplateApproval } from './lib/lessonTemplates/templateApprovals'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
@@ -463,6 +464,8 @@ function SchoolOrgNewRoute({ services }: { services: FirebaseServices }) {
 function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [exportingStudentData, setExportingStudentData] = useState(false)
+  const [auditLogEntries, setAuditLogEntries] = useState<OrgAuditLogEntry[]>([])
+  const [loadingAuditLog, setLoadingAuditLog] = useState(false)
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [inviting, setInviting] = useState(false)
   const [members, setMembers] = useState<OrgMember[]>([])
@@ -497,6 +500,20 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
     if (!orgId) return
     void getDoc(doc(services.firestore, 'organizations', orgId)).then((snapshot) => setParentOrgId(snapshot.exists() ? ((snapshot.data().parentOrgId as string | undefined) ?? null) : null))
   }, [orgId, services.firestore])
+  useEffect(() => {
+    if (!orgId) return
+    setLoadingAuditLog(true)
+    void listOrgAuditLog(services.functions, { orgId })
+      .then((result) => {
+        if (result && Array.isArray(result.entries)) {
+          setAuditLogEntries(result.entries)
+        } else {
+          setAuditLogEntries([])
+        }
+      })
+      .catch(() => setAuditLogEntries([]))
+      .finally(() => setLoadingAuditLog(false))
+  }, [services, orgId])
 
   if (!orgId || !uid) return <GuardLoading />
   const viewerMembership = members.find((member) => member.uid === uid)
@@ -545,6 +562,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       }}
       onExportStudentData={onExportStudentData}
       exportingStudentData={exportingStudentData}
+      auditLogEntries={auditLogEntries}
+      loadingAuditLog={loadingAuditLog}
     />
   )
 }
