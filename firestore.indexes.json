@@ -33,6 +33,14 @@
         { "fieldPath": "subject", "order": "ASCENDING" },
         { "fieldPath": "publishedToCommunityAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "lessonTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceTemplateId", "order": "ASCENDING" },
+        { "fieldPath": "visibility", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
