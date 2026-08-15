@@ -217,3 +217,102 @@ export const purgePersonalOrganizationWithAdminSdk = async (input: {
     buildGroups,
   })
 }
+
+interface SchoolOrgEnumeration {
+  templateIds: string[]
+  runIds: string[]
+  memberUids: string[]
+}
+
+/**
+ * Whole school-org hard delete (spec §21.3 priority 1), for multi-member
+ * school organizations. Deliberately differs from
+ * purgePersonalOrganizationWithAdminSdk in two ways:
+ *
+ *  - users/{uid} is NEVER deleted here — a school-org member's account may
+ *    belong to other organizations (their own personal org, other schools),
+ *    unlike a personal org's single owner.
+ *  - Every active member's RTDB orgAccess/orgAccessMeta mirror is nulled,
+ *    not just one uid's.
+ *
+ * Group ordering follows the same re-authorization reasoning as the
+ * personal-org purge: `organizations/{orgId}` (re-read by the Callable on
+ * every retry to verify the caller is still an active owner) is deleted
+ * LAST.
+ *
+ * Deliberately out of scope (see plan's Global Constraints): Stripe
+ * subscription cancellation, COMMUNITY-published template handling.
+ */
+export const purgeSchoolOrgWithAdminSdk = async (input: {
+  uid: string
+  orgId: string
+  idempotencyKey: string
+}): ReturnType<typeof runDeletionSaga<SchoolOrgEnumeration>> => {
+  const db = getFirestore()
+  const rtdb = getDatabase()
+  const { uid, orgId } = input
+
+  const enumerate = async (): Promise<SchoolOrgEnumeration> => {
+    const [templatesSnap, runsSnap, membersSnap] = await Promise.all([
+      db.collection('lessonTemplates').where('orgId', '==', orgId).get(),
+      db.collection('lessonRuns').where('orgId', '==', orgId).get(),
+      db.collection(`organizations/${orgId}/members`).get(),
+    ])
+    return {
+      templateIds: templatesSnap.docs.map((doc) => doc.id),
+      runIds: runsSnap.docs.map((doc) => doc.id),
+      memberUids: membersSnap.docs.map((doc) => doc.id),
+    }
+  }
+
+  const buildGroups = (enumeration: SchoolOrgEnumeration): DeletionSagaGroup[] => [
+    {
+      name: 'lessonTemplates',
+      run: async () => { await Promise.all(enumeration.templateIds.map((id) => db.recursiveDelete(db.doc(`lessonTemplates/${id}`)))) },
+    },
+    {
+      name: 'lessonRuns',
+      run: async () => { await Promise.all(enumeration.runIds.map((id) => db.recursiveDelete(db.doc(`lessonRuns/${id}`)))) },
+    },
+    {
+      name: 'rtdbOrgAccess',
+      run: async () => {
+        const updates: Record<string, null> = {}
+        for (const memberUid of enumeration.memberUids) {
+          updates[`orgAccess/${orgId}/${memberUid}`] = null
+          updates[`orgAccessMeta/${orgId}/${memberUid}`] = null
+        }
+        if (Object.keys(updates).length > 0) await rtdb.ref().update(updates)
+      },
+    },
+    {
+      name: 'rtdbLessonRuns',
+      run: async () => {
+        if (enumeration.runIds.length === 0) return
+        const updates: Record<string, null> = {}
+        for (const id of enumeration.runIds) {
+          updates[`lessonRunPublic/${id}`] = null
+          updates[`lessonRunPrivate/${id}`] = null
+        }
+        await rtdb.ref().update(updates)
+      },
+    },
+    {
+      name: 'organization',
+      run: async () => { await db.recursiveDelete(db.doc(`organizations/${orgId}`)) },
+    },
+  ]
+
+  return runDeletionSaga<SchoolOrgEnumeration>({
+    store: adminSagaStore(),
+    uid,
+    orgId,
+    operationKind: 'SCHOOL_ORG_PURGE',
+    target: orgId,
+    confirmedIdentifier: orgId,
+    idempotencyKey: input.idempotencyKey,
+    enumerate,
+    buildGroups,
+  })
+}
+

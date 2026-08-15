@@ -1,23 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { purgeHardDeleteResourceWithAdminSdk, purgePersonalOrganizationWithAdminSdk } from './deletePersonalData'
+import {
+  purgeHardDeleteResourceWithAdminSdk,
+  purgePersonalOrganizationWithAdminSdk,
+  purgeSchoolOrgWithAdminSdk,
+} from './deletePersonalData'
 
 // -----------------------------------------------------------------------------
-// This file exercises purgeHardDeleteResourceWithAdminSdk and
-// purgePersonalOrganizationWithAdminSdk directly — the two functions in
-// deletePersonalData.ts that define WHAT gets deleted (exact Firestore paths
-// passed to recursiveDelete, exact RTDB update payloads, and group ordering).
-// Neither function has an existing dependency-injection seam (they call
-// getFirestore()/getDatabase() directly), so — following the precedent in
-// lessonRuns/onCall.test.ts and privacy/onCall.test.ts of module-level
-// vi.mock('firebase-admin/firestore', ...) — this file intercepts the
-// firebase-admin/firestore and firebase-admin/database modules themselves
-// rather than adding a new seam, which would touch the saga/production code
-// for no behavioral benefit.
+// This file exercises purgeHardDeleteResourceWithAdminSdk,
+// purgePersonalOrganizationWithAdminSdk, and purgeSchoolOrgWithAdminSdk directly.
 // -----------------------------------------------------------------------------
 
 const operationDocs = new Map<string, Record<string, unknown>>()
 const recursiveDeleteMock = vi.fn(async (_ref: { path: string }) => {})
 const collectionResults = new Map<string, string[]>()
+const subcollectionResults = new Map<string, string[]>()
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
@@ -31,6 +27,7 @@ vi.mock('firebase-admin/firestore', () => ({
       where: () => ({
         get: async () => ({ docs: (collectionResults.get(name) ?? []).map((id) => ({ id })) }),
       }),
+      get: async () => ({ docs: (subcollectionResults.get(name) ?? []).map((id) => ({ id })) }),
     }),
   }),
   FieldValue: { delete: () => 'FIELD_DELETE_SENTINEL' },
@@ -45,6 +42,7 @@ vi.mock('firebase-admin/database', () => ({
 beforeEach(() => {
   operationDocs.clear()
   collectionResults.clear()
+  subcollectionResults.clear()
   recursiveDeleteMock.mockClear()
   rtdbUpdateMock.mockClear()
 })
@@ -153,3 +151,57 @@ describe('purgePersonalOrganizationWithAdminSdk', () => {
     expect(deletedPaths).toEqual(['users/teacher-b', 'organizations/personal_teacher-b'])
   })
 })
+
+describe('purgeSchoolOrgWithAdminSdk', () => {
+  it('recursively deletes every enumerated template/run, does NOT touch users/{uid}, deletes organizations/{orgId} LAST, and nulls RTDB mirrors for every member', async () => {
+    collectionResults.set('lessonTemplates', ['t1'])
+    collectionResults.set('lessonRuns', ['r1'])
+    subcollectionResults.set('organizations/school-1/members', ['owner-a', 'teacher-b'])
+
+    const result = await purgeSchoolOrgWithAdminSdk({
+      uid: 'owner-a',
+      orgId: 'school-1',
+      idempotencyKey: 'school-key-1',
+    })
+
+    expect(result.completed).toBe(true)
+
+    const deletedPaths = recursiveDeleteMock.mock.calls.map((call) => call[0].path)
+    expect(deletedPaths).toEqual([
+      'lessonTemplates/t1',
+      'lessonRuns/r1',
+      'organizations/school-1',
+    ])
+    expect(deletedPaths).not.toContain('users/owner-a')
+    expect(deletedPaths).not.toContain('users/teacher-b')
+    expect(deletedPaths.at(-1)).toBe('organizations/school-1')
+
+    expect(rtdbUpdateMock).toHaveBeenCalledWith({
+      'orgAccess/school-1/owner-a': null,
+      'orgAccessMeta/school-1/owner-a': null,
+      'orgAccess/school-1/teacher-b': null,
+      'orgAccessMeta/school-1/teacher-b': null,
+    })
+    expect(rtdbUpdateMock).toHaveBeenCalledWith({
+      'lessonRunPublic/r1': null,
+      'lessonRunPrivate/r1': null,
+    })
+  })
+
+  it('is idempotent: a second call with the same idempotencyKey does not re-run any group', async () => {
+    collectionResults.set('lessonTemplates', [])
+    collectionResults.set('lessonRuns', [])
+    subcollectionResults.set('organizations/school-2/members', ['owner-c'])
+
+    await purgeSchoolOrgWithAdminSdk({ uid: 'owner-c', orgId: 'school-2', idempotencyKey: 'school-key-2' })
+    recursiveDeleteMock.mockClear()
+    rtdbUpdateMock.mockClear()
+
+    const second = await purgeSchoolOrgWithAdminSdk({ uid: 'owner-c', orgId: 'school-2', idempotencyKey: 'school-key-2' })
+
+    expect(second.alreadyCompleted).toBe(true)
+    expect(recursiveDeleteMock).not.toHaveBeenCalled()
+    expect(rtdbUpdateMock).not.toHaveBeenCalled()
+  })
+})
+
