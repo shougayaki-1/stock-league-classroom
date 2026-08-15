@@ -14,15 +14,20 @@ service firebase.storage {
       return firestore.exists(/databases/(default)/documents/organizations/$(orgId))
         && firestore.get(/databases/(default)/documents/organizations/$(orgId)).data.materialsUploadEnabled == true;
     }
+    function aiBetaApproved() {
+      return teacher()
+        && firestore.exists(/databases/(default)/documents/aiBetaAccess/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/aiBetaAccess/$(request.auth.uid)).data.status == 'APPROVED';
+    }
     match /orgs/{orgId}/materials/{materialId}/{fileName} {
       allow read: if teacher() && activeMember(orgId) && materialsEnabled(orgId);
-      allow write: if teacher() && activeMember(orgId) && materialsEnabled(orgId)
+      allow write: if aiBetaApproved() && activeMember(orgId) && materialsEnabled(orgId)
         && request.resource.size <= 10 * 1024 * 1024
         && (request.resource.contentType == 'application/pdf' || request.resource.contentType == 'text/plain');
     }
     match /orgs/{orgId}/materials/{templateId}/{materialId}/{fileName} {
       allow read: if teacher() && activeMember(orgId) && materialsEnabled(orgId);
-      allow write: if teacher() && activeMember(orgId) && materialsEnabled(orgId)
+      allow write: if aiBetaApproved() && activeMember(orgId) && materialsEnabled(orgId)
         && request.resource.size <= 10 * 1024 * 1024
         && (request.resource.contentType == 'application/pdf' || request.resource.contentType == 'text/plain');
     }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
@@ -181,14 +181,19 @@ describe('organizations/{orgId}/auditLog/{logId}', () => {
 })
 
 describe('aiBetaAccess/{uid}', () => {
-  it('lets a caller read their own approval doc but not another account\'s', async () => {
+  it('denies all direct client reads, including by the account itself or an operator', async () => {
     await environment.withSecurityRulesDisabled(async (context) =>
-      setDoc(doc(context.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'operator-a' }),
+      setDoc(doc(context.firestore(), 'aiBetaAccess/teacher-a'), {
+        status: 'APPROVED',
+        approvedByUid: 'operator-a',
+      }),
     )
     const owner = environment.authenticatedContext('teacher-a', teacherToken)
     const other = environment.authenticatedContext('teacher-b', teacherToken)
-    await assertSucceeds(getDoc(doc(owner.firestore(), 'aiBetaAccess/teacher-a')))
+    const operator = environment.authenticatedContext('operator-a', operatorToken)
+    await assertFails(getDoc(doc(owner.firestore(), 'aiBetaAccess/teacher-a')))
     await assertFails(getDoc(doc(other.firestore(), 'aiBetaAccess/teacher-a')))
+    await assertFails(getDoc(doc(operator.firestore(), 'aiBetaAccess/teacher-a')))
   })
 
   it('denies all direct client writes, including by the account itself or an operator', async () => {
@@ -196,6 +201,54 @@ describe('aiBetaAccess/{uid}', () => {
     const operator = environment.authenticatedContext('operator-a', operatorToken)
     await assertFails(setDoc(doc(owner.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'teacher-a' }))
     await assertFails(setDoc(doc(operator.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'operator-a' }))
+  })
+})
+
+describe('aiBetaAccessEvents and aiBetaAccessIdempotency', () => {
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const eventDoc = doc(context.firestore(), 'aiBetaAccessEvents/ev-1')
+    const idempotencyDoc = doc(context.firestore(), 'aiBetaAccessIdempotency/id-1')
+    await assertFails(getDoc(eventDoc))
+    await assertFails(setDoc(eventDoc, { action: 'GRANTED' }))
+    await assertFails(getDoc(idempotencyDoc))
+    await assertFails(setDoc(idempotencyDoc, { digest: '123' }))
+  })
+})
+
+describe('lessonTemplates/{templateId}/materials/{materialId}', () => {
+  beforeEach(async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore()
+      await setDoc(doc(db, 'organizations/org-1'), { materialsUploadEnabled: true })
+      await setDoc(doc(db, 'organizations/org-1/members/teacher-approved'), { status: 'active' })
+      await setDoc(doc(db, 'organizations/org-1/members/teacher-revoked'), { status: 'active' })
+      await setDoc(doc(db, 'organizations/org-1/members/teacher-absent'), { status: 'active' })
+      await setDoc(doc(db, 'aiBetaAccess/teacher-approved'), { status: 'APPROVED' })
+      await setDoc(doc(db, 'aiBetaAccess/teacher-revoked'), { status: 'REVOKED' })
+      await setDoc(doc(db, 'lessonTemplates/tmpl-1'), { orgId: 'org-1' })
+      await setDoc(doc(db, 'lessonTemplates/tmpl-1/materials/mat-1'), { title: '既存資料' })
+    })
+  })
+
+  it('allows create and delete only when user has APPROVED status', async () => {
+    const approved = environment.authenticatedContext('teacher-approved', teacherToken)
+    const revoked = environment.authenticatedContext('teacher-revoked', teacherToken)
+    const absent = environment.authenticatedContext('teacher-absent', teacherToken)
+
+    await assertSucceeds(setDoc(doc(approved.firestore(), 'lessonTemplates/tmpl-1/materials/mat-new'), { title: '新規資料' }))
+    await assertSucceeds(deleteDoc(doc(approved.firestore(), 'lessonTemplates/tmpl-1/materials/mat-1')))
+
+    await assertFails(setDoc(doc(revoked.firestore(), 'lessonTemplates/tmpl-1/materials/mat-new-2'), { title: '新規資料2' }))
+    await assertFails(deleteDoc(doc(revoked.firestore(), 'lessonTemplates/tmpl-1/materials/mat-1')))
+
+    await assertFails(setDoc(doc(absent.firestore(), 'lessonTemplates/tmpl-1/materials/mat-new-3'), { title: '新規資料3' }))
+    await assertFails(deleteDoc(doc(absent.firestore(), 'lessonTemplates/tmpl-1/materials/mat-1')))
+  })
+
+  it('allows get and list for active member even when beta status is REVOKED', async () => {
+    const revoked = environment.authenticatedContext('teacher-revoked', teacherToken)
+    await assertSucceeds(getDoc(doc(revoked.firestore(), 'lessonTemplates/tmpl-1/materials/mat-1')))
   })
 })
 

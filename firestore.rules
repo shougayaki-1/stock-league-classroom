@@ -75,19 +75,22 @@ service cloud.firestore {
 
     match /organizations/{orgId}/aiUsageCounters/{counterId} { allow read, write: if false; }
 
-    // Spec §21.6: 追記専用の監査ログ。書き込みはCloud FunctionsのAdmin SDK
-    // 経由のみ(recordAuditLogEntry)。読み取りはlistOrgAuditLogCallable経由
-    // が標準だが、将来の管理画面直接読み取りに備えowner/adminには開放する。
     match /organizations/{orgId}/auditLog/{logId} {
-      allow read: if request.auth != null &&
-        get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.status == 'active' &&
-        get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role in ['owner', 'admin'];
+      allow read: if teacher()
+        && activeMember(orgId)
+        && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role in ['owner', 'admin'];
       allow write: if false;
     }
 
-    // 運営者がベータ招待したアカウントのみ存在するドキュメント(存在自体が許可を表す)。
-    // 付与・失効はgrantAiBetaAccessCallable/revokeAiBetaAccessCallable(Admin SDK)経由のみ。
-    match /aiBetaAccess/{uid} { allow read: if request.auth != null && request.auth.uid == uid; allow write: if false; }
+    function aiBetaApproved() {
+      return teacher()
+        && exists(/databases/$(database)/documents/aiBetaAccess/$(request.auth.uid))
+        && get(/databases/$(database)/documents/aiBetaAccess/$(request.auth.uid)).data.status == 'APPROVED';
+    }
+
+    match /aiBetaAccess/{uid} { allow read, write: if false; }
+    match /aiBetaAccessEvents/{id} { allow read, write: if false; }
+    match /aiBetaAccessIdempotency/{id} { allow read, write: if false; }
 
     // 組織削除の監査ログ。actorUid本人または運営者のみ閲覧可能。
     // 書き込みはrecordOrgDeletionAuditLogEntry(Admin SDK)経由のみ。
@@ -161,7 +164,10 @@ service cloud.firestore {
       }
 
       match /materials/{materialId} {
-        allow get, list, create, delete: if teacher()
+        allow get, list: if teacher()
+          && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
+          && get(/databases/$(database)/documents/organizations/$(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)).data.materialsUploadEnabled == true;
+        allow create, delete: if aiBetaApproved()
           && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
           && get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.get('moveOperationId', null) == null
           && get(/databases/$(database)/documents/organizations/$(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)).data.materialsUploadEnabled == true;
