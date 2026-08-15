@@ -602,6 +602,23 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
     throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
   }
 
+  // Task 6 / Global Constraint: 発展3形式（ROLE_VARIANT/STAGE_SPLIT/
+  // MULTI_PERSON_PER_TEAM）は通常の個別決算を server-side で拒否する —
+  // these formats settle ONLY through the bulk path
+  // (`processHouseholdRoundBatchCallable`/`retryHouseholdRoundBatchCallable`),
+  // which internally calls `processRoundWithAdminSdk` per household itself
+  // (unchanged, still callable — only THIS teacher-facing individual-settle
+  // Callable gains the rejection). Reuses `runSnap`, already fetched above
+  // for `teacherRoles`/`orgId`/`status` — no extra read.
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  const courseFormat = templateSnapshot?.homeEconomics?.courseFormat
+  if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'この授業形式（発展形式）では個別の決算は利用できません。一括決算を利用してください。',
+    )
+  }
+
   const activeLease = await findActiveBulkSettlementLeaseWithAdminSdk(data.lessonRunId, Date.now())
   if (activeLease) {
     throw new HttpsError('failed-precondition', '一括決算処理が実行中のため、個別の決算は行えません。')

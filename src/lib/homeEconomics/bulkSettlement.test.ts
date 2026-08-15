@@ -41,4 +41,31 @@ describe('bulkSettlement (client)', () => {
     expect(callable).toHaveBeenCalledWith(input)
     expect(result).toEqual(mockView)
   })
+
+  // Task 6: CANCELLED is a new terminal status (advanced-format preflight
+  // cancellation) — the client wrapper must pass it through unchanged, same
+  // as any other status literal.
+  it('passes a CANCELLED operation view through unchanged', async () => {
+    const mockView = {
+      operationId: 'op-1',
+      status: 'CANCELLED',
+      retryable: false,
+      leaseActive: false,
+      households: {
+        'hh-a': { teamId: 'team-a', profileId: 'profile-x', status: 'PENDING' },
+      },
+    }
+    callable.mockResolvedValue({ data: mockView })
+    const functions = {} as Functions
+
+    const result = await processHouseholdRoundBatch(functions, {
+      lessonRunId: 'run-1',
+      expectedRoundIndex: 1,
+      forceUnsubmitted: false,
+      idempotencyKey: 'k-1',
+    })
+
+    expect(result).toEqual(mockView)
+    expect(result.status).toBe('CANCELLED')
+  })
 })

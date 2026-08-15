@@ -707,6 +707,54 @@ describe('processRoundCallable', () => {
       expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
     })
   })
+
+  /**
+   * Task 6 / Global Constraint: 発展3形式は通常の個別決算を server-side で
+   * 拒否する。処理は bulk 経路（processHouseholdRoundBatchCallable /
+   * retryHouseholdRoundBatchCallable）からのみ許可される —
+   * `processRoundWithAdminSdk` そのものは変更せず、bulk 実行が内部から
+   * 呼び出し続ける。
+   */
+  describe('advanced course format rejection (Task 6)', () => {
+    it.each(['ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM'])(
+      'rejects with failed-precondition for %s, never calling processRoundWithAdminSdk',
+      async (courseFormat) => {
+        lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+          orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' },
+          templateSnapshot: { homeEconomics: { courseFormat, households: [] } },
+        }))
+        vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+
+        await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+        expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+      },
+    )
+
+    it('still allows COMMON_CONDITIONS through (regression)', async () => {
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+        orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-a': 'PRIMARY' },
+        templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS', households: [] } },
+      }))
+      vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+      const result = {
+        newHouseholdState: { householdId: 'case-b' }, occurredEventIds: [], incomeYen: 0, expensesYen: 0,
+        netCashFlowYen: 0, shortfallYen: 0, insuranceBenefitsYen: 0,
+      }
+      vi.mocked(processRoundWithAdminSdk).mockResolvedValue(result as never)
+
+      await expect(processRoundCallable.run(makeProcessRoundRequest())).resolves.toEqual(result)
+    })
+
+    it('checks the course format only after teacher-role authorization has already passed (ordering)', async () => {
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+        orgId: 'org-1', status: 'RUNNING', teacherRoles: {},
+        templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [] } },
+      }))
+      await expect(processRoundCallable.run(makeProcessRoundRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(requireActiveOrgMember).not.toHaveBeenCalled()
+      expect(processRoundWithAdminSdk).not.toHaveBeenCalled()
+    })
+  })
 })
 
 interface WriteHouseholdCheckpointRequestData {
