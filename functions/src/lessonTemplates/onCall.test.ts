@@ -178,13 +178,18 @@ describe('publishLessonVersionCallable', () => {
     })
   })
 
-  it('translates a bare "Idempotency key payload mismatch" Error from the pure layer into failed-precondition', async () => {
+  it('rejects publishing when template is currently moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-1' : field === 'moveOperationId' ? 'op-1' : undefined),
+    })
     vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
-    vi.mocked(publishLessonVersionWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
 
     await expect(publishLessonVersionCallable.run(makeRequest())).rejects.toMatchObject({
-      code: 'failed-precondition', message: 'Idempotency key payload mismatch',
+      code: 'failed-precondition',
+      message: '教材の移動中は公開できません。',
     })
+    expect(publishLessonVersionWithAdminSdk).not.toHaveBeenCalled()
   })
 })
 
@@ -349,13 +354,28 @@ describe('duplicateLessonTemplateCallable', () => {
     expect(requireActiveOrgMember).toHaveBeenCalledTimes(2)
     expect(requireActiveOrgMember).toHaveBeenNthCalledWith(1, expect.anything(), 'org-source', 'teacher-target')
   })
+
+  it('rejects duplicating when source template is currently moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'moveOperationId' ? 'op-1' : undefined),
+    })
+    await expect(duplicateLessonTemplateCallable.run(makeRequest())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: '教材の移動中は複製できません。',
+    })
+    expect(duplicateLessonTemplateWithAdminSdk).not.toHaveBeenCalled()
+  })
 })
 
 describe('createTemplateShareCallable', () => {
   const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
   const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
 
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
 
   it('rejects expiresInDays outside 1-90 without reading the template', async () => {
     await expect(createTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', expiresInDays: 0 }))).rejects.toMatchObject({ code: 'invalid-argument' })
@@ -363,9 +383,23 @@ describe('createTemplateShareCallable', () => {
     expect(templateGetMock).not.toHaveBeenCalled()
   })
 
+  it('rejects a caller who is not an active org member of the template org', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : undefined) })
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+
+    await expect(createTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', expiresInDays: 30 }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-source', 'teacher-a')
+  })
+
   it('rejects a caller who is not the template author', async () => {
     templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'someone-else' : undefined) })
     await expect(createTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', expiresInDays: 30 }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(createTemplateShareWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when template is moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'moveOperationId' ? 'op-1' : undefined) })
+    await expect(createTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1', expiresInDays: 30 }))).rejects.toMatchObject({ code: 'failed-precondition', message: '教材の移動中は共有リンクを発行できません。' })
     expect(createTemplateShareWithAdminSdk).not.toHaveBeenCalled()
   })
 
@@ -405,7 +439,23 @@ describe('revokeTemplateShareCallable', () => {
   const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
   const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
 
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : undefined) })
+  })
+
+  it('rejects when template is moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'moveOperationId' ? 'op-1' : undefined) })
+    await expect(revokeTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).rejects.toMatchObject({ code: 'failed-precondition', message: '教材の移動中は共有リンクを無効化できません。' })
+    expect(revokeTemplateSharesWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when caller is not an active org member', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+    await expect(revokeTemplateShareCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(revokeTemplateSharesWithAdminSdk).not.toHaveBeenCalled()
+  })
 
   it('always resolves, delegating creator-scoping to the query itself', async () => {
     vi.mocked(revokeTemplateSharesWithAdminSdk).mockResolvedValue(undefined)
@@ -418,21 +468,44 @@ describe('publishTemplateToCommunityCallable', () => {
   const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
   const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
 
-  beforeEach(() => { vi.clearAllMocks(); templateUpdateMock.mockResolvedValue(undefined) })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    templateUpdateMock.mockResolvedValue(undefined)
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
+
+  it('rejects a caller who is not an active member of template org', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+    })
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+    await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
 
   it('rejects a caller who is not the template author', async () => {
     templateGetMock.mockResolvedValue({
       exists: true,
-      get: (field: string) => (field === 'createdByUid' ? 'someone-else' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'someone-else' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
     })
     await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when template is moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'moveOperationId' ? 'op-1' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+    })
+    await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'failed-precondition', message: '教材の移動中はコミュニティ公開できません。' })
     expect(templateUpdateMock).not.toHaveBeenCalled()
   })
 
   it('rejects a template with no published version', async () => {
     templateGetMock.mockResolvedValue({
       exists: true,
-      get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? null : undefined),
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? null : undefined),
     })
     await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'failed-precondition' })
     expect(templateUpdateMock).not.toHaveBeenCalled()
@@ -441,7 +514,7 @@ describe('publishTemplateToCommunityCallable', () => {
   it('publishes for the template author when a published version exists', async () => {
     templateGetMock.mockResolvedValue({
       exists: true,
-      get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
+      get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'currentPublishedVersionId' ? 'v1' : undefined),
     })
     await expect(publishTemplateToCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: true })
     expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'COMMUNITY', publishedToCommunityAt: 'SERVER_TIMESTAMP' })
@@ -452,16 +525,33 @@ describe('unpublishTemplateFromCommunityCallable', () => {
   const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
   const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
 
-  beforeEach(() => { vi.clearAllMocks(); templateUpdateMock.mockResolvedValue(undefined) })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    templateUpdateMock.mockResolvedValue(undefined)
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+  })
 
-  it('rejects a caller who is not the template author', async () => {
-    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'createdByUid' ? 'someone-else' : undefined) })
+  it('rejects a caller who is not an active org member', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : undefined) })
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
     await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
     expect(templateUpdateMock).not.toHaveBeenCalled()
   })
 
+  it('rejects a caller who is not the template author', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'someone-else' : undefined) })
+    await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when template is moving (moveOperationId set)', async () => {
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : field === 'moveOperationId' ? 'op-1' : undefined) })
+    await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).rejects.toMatchObject({ code: 'failed-precondition', message: '教材の移動中はコミュニティ公開を変更できません。' })
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+  })
+
   it('unpublishes for the template author', async () => {
-    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'createdByUid' ? 'teacher-a' : undefined) })
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'orgId' ? 'org-source' : field === 'createdByUid' ? 'teacher-a' : undefined) })
     await expect(unpublishTemplateFromCommunityCallable.run(makeRequest({ templateId: 't1' }))).resolves.toEqual({ published: false })
     expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'PRIVATE' })
   })
@@ -677,6 +767,13 @@ describe('reviewTemplateApprovalCallable', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
     const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'APPROVED' } } as unknown as CallableRequest
     await expect(reviewTemplateApprovalCallable.run(request)).rejects.toThrow('owner または admin')
+  })
+
+  it('rejects when the template is currently moving (moveOperationId set)', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => ({ orgId: 'org-1', approvalStatus: 'PENDING', moveOperationId: 'op-1' } as Record<string, unknown>)[field] })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'APPROVED' } } as unknown as CallableRequest
+    await expect(reviewTemplateApprovalCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: '教材の移動中は承認状態を変更できません。' })
   })
 
   it('rejects when the template is not PENDING', async () => {

@@ -38,6 +38,7 @@ describe('createTemplateShareWithAdminSdk / resolveTemplateShareWithAdminSdk', (
   beforeEach(() => { documents.clear(); queryResults.clear() })
 
   it('creates a share and resolves it back by the returned token', async () => {
+    documents.set('lessonTemplates/tpl-1', { orgId: 'org-source' })
     const { token } = await createTemplateShareWithAdminSdk({
       templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a', expiresInDays: 30,
     })

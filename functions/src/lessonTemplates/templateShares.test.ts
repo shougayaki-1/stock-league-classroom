@@ -37,15 +37,47 @@ describe('createTemplateShare', () => {
 })
 
 describe('resolveTemplateShare', () => {
-  it('returns share metadata for a valid, unexpired, unrevoked token', async () => {
+  it('returns share metadata for a valid, unexpired, unrevoked token when template org matches', async () => {
     const fake = makeFakeFirestore({
       'templateShares/hash-of-tok': {
         templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a',
         expiresAtMillis: 2_000_000, revokedAt: null,
       },
+      'lessonTemplates/tpl-1': {
+        orgId: 'org-source',
+      },
     })
     const result = await resolveTemplateShare({ firestore: fake, hashToken, nowMillis: () => 1_000_000 }, { token: 'tok' })
     expect(result).toEqual({ templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a' })
+  })
+
+  it('rejects a token when template org has changed (transferred to target org)', async () => {
+    const fake = makeFakeFirestore({
+      'templateShares/hash-of-tok': {
+        templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a',
+        expiresAtMillis: 2_000_000, revokedAt: null,
+      },
+      'lessonTemplates/tpl-1': {
+        orgId: 'org-target',
+      },
+    })
+    await expect(resolveTemplateShare({ firestore: fake, hashToken, nowMillis: () => 1_000_000 }, { token: 'tok' }))
+      .rejects.toThrow('Template share not found')
+  })
+
+  it('rejects a token when template is currently moving (moveOperationId set)', async () => {
+    const fake = makeFakeFirestore({
+      'templateShares/hash-of-tok': {
+        templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a',
+        expiresAtMillis: 2_000_000, revokedAt: null,
+      },
+      'lessonTemplates/tpl-1': {
+        orgId: 'org-source',
+        moveOperationId: 'move-op-1',
+      },
+    })
+    await expect(resolveTemplateShare({ firestore: fake, hashToken, nowMillis: () => 1_000_000 }, { token: 'tok' }))
+      .rejects.toThrow('Template share not found')
   })
 
   it('rejects a token with no matching document', async () => {
@@ -60,6 +92,9 @@ describe('resolveTemplateShare', () => {
         templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a',
         expiresAtMillis: 2_000_000, revokedAt: 'sometime',
       },
+      'lessonTemplates/tpl-1': {
+        orgId: 'org-source',
+      },
     })
     await expect(resolveTemplateShare({ firestore: fake, hashToken, nowMillis: () => 1_000_000 }, { token: 'tok' }))
       .rejects.toThrow('Template share not found')
@@ -70,6 +105,9 @@ describe('resolveTemplateShare', () => {
       'templateShares/hash-of-tok': {
         templateId: 'tpl-1', versionId: 'v1', sourceOrgId: 'org-source', createdByUid: 'teacher-a',
         expiresAtMillis: 1_000_000, revokedAt: null,
+      },
+      'lessonTemplates/tpl-1': {
+        orgId: 'org-source',
       },
     })
     await expect(resolveTemplateShare({ firestore: fake, hashToken, nowMillis: () => 1_000_001 }, { token: 'tok' }))

@@ -45,6 +45,7 @@ export const publishLessonVersionCallable = onCall({ region: 'asia-northeast1' }
   const firestore = getFirestore()
   const templateSnap = await firestore.doc(`lessonTemplates/${request.data.templateId}`).get()
   if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中は公開できません。')
   // orgId always comes from the stored template, never from client input.
   const orgId = templateSnap.get('orgId') as string
   await requireActiveOrgMember(firestore, orgId, request.auth.uid)
@@ -111,6 +112,7 @@ export const duplicateLessonTemplateCallable = onCall({ region: 'asia-northeast1
   const firestore = getFirestore()
   const sourceTemplateSnap = await firestore.doc(`lessonTemplates/${request.data.sourceTemplateId}`).get()
   if (!sourceTemplateSnap.exists) throw new HttpsError('not-found', '複製元のレッスンテンプレートが見つかりません。')
+  if (sourceTemplateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中は複製できません。')
   // sourceOrgId always comes from the stored source template, never from client input.
   const sourceOrgId = sourceTemplateSnap.get('orgId') as string
   if (request.data.shareToken) {
@@ -181,7 +183,9 @@ export const createTemplateShareCallable = onCall({ region: 'asia-northeast1' },
   const firestore = getFirestore()
   const templateSnap = await firestore.doc(`lessonTemplates/${data.templateId}`).get()
   if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中は共有リンクを発行できません。')
   const sourceOrgId = templateSnap.get('orgId') as string
+  await requireActiveOrgMember(firestore, sourceOrgId, request.auth.uid)
   const createdByUid = templateSnap.get('createdByUid') as string
   if (createdByUid !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ共有リンクを発行できます。')
 
@@ -216,6 +220,13 @@ export const revokeTemplateShareCallable = onCall({ region: 'asia-northeast1' },
   const data = request.data as RevokeTemplateShareCallableInput
   if (typeof data.templateId !== 'string' || typeof data.versionId !== 'string') throw new HttpsError('invalid-argument', 'リクエストが不正です。')
 
+  const firestore = getFirestore()
+  const templateSnap = await firestore.doc(`lessonTemplates/${data.templateId}`).get()
+  if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中は共有リンクを無効化できません。')
+  const sourceOrgId = templateSnap.get('orgId') as string
+  await requireActiveOrgMember(firestore, sourceOrgId, request.auth.uid)
+
   await revokeTemplateSharesWithAdminSdk({ templateId: data.templateId, versionId: data.versionId, createdByUid: request.auth.uid })
   return { revoked: true }
 })
@@ -229,12 +240,16 @@ export const publishTemplateToCommunityCallable = onCall({ region: 'asia-northea
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
   if (!isValidTemplateIdInput(request.data)) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
 
-  const templateSnap = await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).get()
+  const firestore = getFirestore()
+  const templateSnap = await firestore.doc(`lessonTemplates/${request.data.templateId}`).get()
   if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中はコミュニティ公開できません。')
+  const orgId = templateSnap.get('orgId') as string
+  await requireActiveOrgMember(firestore, orgId, request.auth.uid)
   if (templateSnap.get('createdByUid') !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ公開できます。')
   if (!templateSnap.get('currentPublishedVersionId')) throw new HttpsError('failed-precondition', '公開済みの版がまだありません。')
 
-  await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'COMMUNITY', publishedToCommunityAt: FieldValue.serverTimestamp() })
+  await firestore.doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'COMMUNITY', publishedToCommunityAt: FieldValue.serverTimestamp() })
   return { published: true }
 })
 
@@ -243,11 +258,15 @@ export const unpublishTemplateFromCommunityCallable = onCall({ region: 'asia-nor
   if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
   if (!isValidTemplateIdInput(request.data)) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
 
-  const templateSnap = await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).get()
+  const firestore = getFirestore()
+  const templateSnap = await firestore.doc(`lessonTemplates/${request.data.templateId}`).get()
   if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中はコミュニティ公開を変更できません。')
+  const orgId = templateSnap.get('orgId') as string
+  await requireActiveOrgMember(firestore, orgId, request.auth.uid)
   if (templateSnap.get('createdByUid') !== request.auth.uid) throw new HttpsError('permission-denied', 'このテンプレートの作成者のみ非公開にできます。')
 
-  await getFirestore().doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'PRIVATE' })
+  await firestore.doc(`lessonTemplates/${request.data.templateId}`).update({ visibility: 'PRIVATE' })
   return { published: false }
 })
 
@@ -427,6 +446,7 @@ export const reviewTemplateApprovalCallable = onCall({ region: 'asia-northeast1'
   const templateRef = getFirestore().doc(`lessonTemplates/${data.templateId}`)
   const templateSnap = await templateRef.get()
   if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('moveOperationId')) throw new HttpsError('failed-precondition', '教材の移動中は承認状態を変更できません。')
   if (templateSnap.get('orgId') !== data.orgId) throw new HttpsError('failed-precondition', 'このテンプレートは対象組織のものではありません。')
   if (templateSnap.get('approvalStatus') !== 'PENDING') throw new HttpsError('failed-precondition', 'このテンプレートは承認待ちではありません。')
 

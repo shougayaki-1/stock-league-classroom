@@ -65,6 +65,13 @@ export const resolveTemplateShare = async (
     }
     if (share.revokedAt !== null) throw new Error('Template share not found')
     if (nowMillisValue > share.expiresAtMillis) throw new Error('Template share not found')
+
+    const templateSnap = await tx.get(`lessonTemplates/${share.templateId}`)
+    if (!templateSnap.exists || !templateSnap.data) throw new Error('Template share not found')
+    const template = templateSnap.data as { orgId: string; moveOperationId?: string }
+    if (template.orgId !== share.sourceOrgId) throw new Error('Template share not found')
+    if (template.moveOperationId) throw new Error('Template share not found')
+
     return { templateId: share.templateId, versionId: share.versionId, sourceOrgId: share.sourceOrgId, createdByUid: share.createdByUid }
   })
 }
