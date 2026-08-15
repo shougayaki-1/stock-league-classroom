@@ -105,7 +105,7 @@ describe('processRound', () => {
     expect(deps.commitRoundSettlement).toHaveBeenCalledWith({
       lessonRunId: 'run-1', householdId: 'case-b', orgId: 'org-1',
       expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
-      forcedSettlement: false,
+      forcedSettlement: false, homeEconomicsContent: homeEconomics,
     })
   })
 
@@ -305,8 +305,29 @@ const firestoreDocs = new Map<string, Record<string, unknown>>()
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
     doc: (path: string) => ({
+      path,
       get: async () => ({ exists: firestoreDocs.has(path), data: () => firestoreDocs.get(path) }),
     }),
+    // Task 4 fix test support: `commitRoundSettlementWithAdminSdk` reads/writes
+    // via `db.runTransaction`, not a bare `doc().get()` — a minimal fake tx
+    // that reuses the same `firestoreDocs` map/`doc()` shape above so
+    // `tx.get(db.doc(path))` and `tx.set(db.doc(path), data)` behave like the
+    // real Admin SDK closely enough for this file's own read/write calls.
+    runTransaction: async (fn: (tx: {
+      get: (docRef: { path: string }) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      set: (docRef: { path: string }, data: Record<string, unknown>) => void
+    }) => unknown) => {
+      const tx = {
+        get: async (docRef: { path: string }) => ({
+          exists: firestoreDocs.has(docRef.path),
+          data: () => firestoreDocs.get(docRef.path),
+        }),
+        set: (docRef: { path: string }, data: Record<string, unknown>) => {
+          firestoreDocs.set(docRef.path, data)
+        },
+      }
+      return fn(tx)
+    },
   }),
 }))
 
@@ -360,5 +381,89 @@ describe('readLessonRunConfigWithAdminSdk (Important I3)', () => {
     const { readLessonRunConfigWithAdminSdk } = await import('./processRound')
     const config = await readLessonRunConfigWithAdminSdk('run-1')
     expect(config.orgId).toBe('org-real')
+  })
+})
+
+/**
+ * Task 4 review fix — the `ALREADY_SETTLED` race-guard branch inside
+ * `commitRoundSettlementWithAdminSdk` re-reads the household doc directly
+ * from Firestore. Before this fix it cast that raw read straight to
+ * `HouseholdState`, bypassing `resolveStoredHouseholdState()` — so a legacy
+ * `COMMON_CONDITIONS` document with no stored `profileId` (written before
+ * `profileId` became required) would come back TYPED as complete but
+ * ACTUALLY missing `profileId` at runtime. This exercises the real Admin SDK
+ * implementation (not a mocked `commitRoundSettlement` dep, unlike the
+ * `processRound` describe block above) against exactly that legacy shape.
+ */
+describe('commitRoundSettlementWithAdminSdk — ALREADY_SETTLED race-guard normalization (Task 4 fix)', () => {
+  const profile = {
+    householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+    annualLivingExpensesYen: 3000000, cashSavingsYen: 500000,
+    family: '配偶者・子2人', housing: '賃貸マンション', lifeGoal: '住宅購入と教育資金',
+    lifeStage: 'CHILD_REARING' as const, eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }
+  const homeEconomicsContent = {
+    households: [profile], assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+    publicSupportPrograms: [], roundYears: 5 as const, courseFormat: 'COMMON_CONDITIONS' as const,
+    taxAndSocialInsuranceModelVersion: 1,
+    economicFactors: { inflationPercent: 0, interestRatePercent: 1, marketReturnPercent: 0 },
+    borrowingAllowed: false, goalPackage: 'OVERALL_BALANCE' as const,
+    evaluationWeights: {
+      lifeGoalAchievement: 1, emergencyFundAdequacy: 0, stability: 0, diversification: 0, borrowingBurden: 0, reflection: 0,
+    },
+  }
+  const settleResult: SettleRoundResult = {
+    newHouseholdState: {
+      householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 600000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'CHILD_REARING', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+    },
+    occurredEventIds: [], incomeYen: 4800000, expensesYen: 3000000,
+    netCashFlowYen: 1800000, shortfallYen: 0, insuranceBenefitsYen: 0,
+    shortfallOptionsConsidered: [],
+  }
+
+  it('resolves the sole COMMON_CONDITIONS profile for a legacy household doc with no stored profileId, instead of returning it undefined', async () => {
+    // A round already settled by a concurrent/duplicate call: the doc's
+    // roundIndex (3) no longer matches expectedPriorRoundIndex (2), which is
+    // exactly what makes the race-guard fire. It has NO `profileId` field at
+    // all — the pre-migration legacy shape.
+    const legacyStoredHousehold = {
+      householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 600000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'CHILD_REARING', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+    }
+    firestoreDocs.set('lessonRuns/run-1/households/case-b', legacyStoredHousehold)
+
+    const { commitRoundSettlementWithAdminSdk } = await import('./processRound')
+    const result = await commitRoundSettlementWithAdminSdk({
+      lessonRunId: 'run-1', householdId: 'case-b', orgId: 'org-1',
+      expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
+      forcedSettlement: false, homeEconomicsContent,
+    })
+
+    expect(result.status).toBe('ALREADY_SETTLED')
+    if (result.status !== 'ALREADY_SETTLED') throw new Error('unreachable')
+    // The bug this test guards against: without routing through
+    // `resolveStoredHouseholdState()`, `profileId` would be `undefined` here
+    // despite the `HouseholdState` type claiming it's always present.
+    expect(result.householdState.profileId).toBe('case-b')
+  })
+
+  it('fails closed for a legacy household doc with no stored profileId under an advanced course format', async () => {
+    const advancedContent = { ...homeEconomicsContent, courseFormat: 'ROLE_VARIANT' as const }
+    const legacyStoredHousehold = {
+      householdId: 'household-runtime-1', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 600000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'CHILD_REARING', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+    }
+    firestoreDocs.set('lessonRuns/run-1/households/household-runtime-1', legacyStoredHousehold)
+
+    const { commitRoundSettlementWithAdminSdk } = await import('./processRound')
+    await expect(commitRoundSettlementWithAdminSdk({
+      lessonRunId: 'run-1', householdId: 'household-runtime-1', orgId: 'org-1',
+      expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
+      forcedSettlement: false, homeEconomicsContent: advancedContent,
+    })).rejects.toThrow(/profileId/)
   })
 })

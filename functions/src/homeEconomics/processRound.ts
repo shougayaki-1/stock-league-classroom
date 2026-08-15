@@ -95,6 +95,16 @@ export interface ProcessRoundDeps {
     result: SettleRoundResult
     actorId: string
     forcedSettlement: boolean
+    /**
+     * Task 4 fix (task-4 review finding): the template-snapshot content
+     * needed to normalize a possibly-legacy re-read `HouseholdState` via
+     * `resolveStoredHouseholdState()` on the `ALREADY_SETTLED` race-guard
+     * path below — the SAME `config.homeEconomics` the caller (`processRound`)
+     * already normalized its own initial read against, just forwarded so
+     * this Admin SDK implementation doesn't need to re-read Firestore for
+     * content the caller already has in scope.
+     */
+    homeEconomicsContent: HomeEconomicsContent
   }) => Promise<CommitRoundSettlementResult>
   /**
    * Task 15: broadcasts this round's settlement to RTDB. Receives every
@@ -199,6 +209,7 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
     result,
     actorId: input.actorId,
     forcedSettlement,
+    homeEconomicsContent: config.homeEconomics,
   })
 
   if (commitResult.status === 'ALREADY_SETTLED') {
@@ -296,7 +307,7 @@ const readHouseholdDecisionWithAdminSdk: ProcessRoundDeps['readHouseholdDecision
  * idempotency pattern, per the Global Constraints instruction to prefer
  * `lib/idempotency.ts`'s established pattern over a new one).
  */
-const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement'] = async (input) => {
+export const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement'] = async (input) => {
   const db = getFirestore()
   return db.runTransaction(async (tx) => {
     const txAdapter: FirestoreTx = {
@@ -308,8 +319,15 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
     const householdPath = `lessonRuns/${input.lessonRunId}/households/${input.householdId}`
     const householdSnap = await txAdapter.get(householdPath)
     if (!householdSnap.exists) throw new Error('HouseholdState not found')
-    const currentHousehold = householdSnap.data() as unknown as HouseholdState
-    if (currentHousehold.roundIndex !== input.expectedPriorRoundIndex) {
+    const storedHousehold = householdSnap.data() as unknown as StoredHouseholdState
+    if (storedHousehold.roundIndex !== input.expectedPriorRoundIndex) {
+      // Task 4 fix: this re-read may hit a legacy `COMMON_CONDITIONS`
+      // document written before `profileId` became required — normalize it
+      // through the same `resolveStoredHouseholdState()` path `processRound`
+      // uses for its own initial read, so the `ALREADY_SETTLED` result's
+      // `householdState.profileId` is a real, guaranteed value rather than
+      // a type-only guarantee over a runtime-missing field.
+      const currentHousehold = resolveStoredHouseholdState({ stored: storedHousehold, content: input.homeEconomicsContent })
       return { status: 'ALREADY_SETTLED', householdState: currentHousehold }
     }
 
