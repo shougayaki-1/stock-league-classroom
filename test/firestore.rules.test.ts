@@ -155,6 +155,43 @@ describe('organizations/{orgId}/aiUsageCounters/{counterId}', () => {
   })
 })
 
+describe('organizations/{orgId}/auditLog/{logId}', () => {
+  it('lets an active owner/admin read but denies a teacher and all client writes', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations/org-1/members/owner-a'), { status: 'active', role: 'owner' })
+      await setDoc(doc(context.firestore(), 'organizations/org-1/members/admin-a'), { status: 'active', role: 'admin' })
+      await setDoc(doc(context.firestore(), 'organizations/org-1/members/teacher-a'), { status: 'active', role: 'teacher' })
+      await setDoc(doc(context.firestore(), 'organizations/org-1/auditLog/log-1'), { orgId: 'org-1', actorUid: 'owner-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS' })
+    })
+    const owner = environment.authenticatedContext('owner-a', teacherToken)
+    const admin = environment.authenticatedContext('admin-a', teacherToken)
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken)
+    await assertSucceeds(getDoc(doc(owner.firestore(), 'organizations/org-1/auditLog/log-1')))
+    await assertSucceeds(getDoc(doc(admin.firestore(), 'organizations/org-1/auditLog/log-1')))
+    await assertFails(getDoc(doc(teacher.firestore(), 'organizations/org-1/auditLog/log-1')))
+    await assertFails(setDoc(doc(owner.firestore(), 'organizations/org-1/auditLog/log-2'), { orgId: 'org-1', actorUid: 'owner-a', action: 'X', result: 'SUCCESS' }))
+  })
+})
+
+describe('aiBetaAccess/{uid}', () => {
+  it('lets a caller read their own approval doc but not another account\'s', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'operator-a' }),
+    )
+    const owner = environment.authenticatedContext('teacher-a', teacherToken)
+    const other = environment.authenticatedContext('teacher-b', teacherToken)
+    await assertSucceeds(getDoc(doc(owner.firestore(), 'aiBetaAccess/teacher-a')))
+    await assertFails(getDoc(doc(other.firestore(), 'aiBetaAccess/teacher-a')))
+  })
+
+  it('denies all direct client writes, including by the account itself or an operator', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken)
+    const operator = environment.authenticatedContext('operator-a', operatorToken)
+    await assertFails(setDoc(doc(owner.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'teacher-a' }))
+    await assertFails(setDoc(doc(operator.firestore(), 'aiBetaAccess/teacher-a'), { approvedByUid: 'operator-a' }))
+  })
+})
+
 describe('templateShares/{shareId}', () => {
   it('declares an explicit deny rule for the template shares collection', () => {
     const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
