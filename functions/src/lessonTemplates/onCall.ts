@@ -272,4 +272,49 @@ export const reportTemplateCallable = onCall({ region: 'asia-northeast1' }, asyn
   return { reportId: added.id }
 })
 
+/** Mirrors firestore.rules' operator(): teacher() && request.auth.token.operator == true. */
+const isCallerOperator = (token: { email_verified?: boolean; firebase?: { sign_in_provider?: string }; operator?: boolean }): boolean =>
+  isCallerTeacher(token) && token.operator === true
+
+export const listPendingTemplateReportsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+
+  const snapshot = await getFirestore().collection('templateReports').where('status', '==', 'PENDING').get()
+  const reports = await Promise.all(snapshot.docs.map(async (reportDoc) => {
+    const data = reportDoc.data() as { templateId: string; versionId: string; reportedByUid: string; reason: TemplateReportReason; details: string | null; createdAt: unknown }
+    const templateSnap = await getFirestore().doc(`lessonTemplates/${data.templateId}`).get()
+    return {
+      id: reportDoc.id, templateId: data.templateId, versionId: data.versionId, reportedByUid: data.reportedByUid,
+      reason: data.reason, details: data.details, createdAt: data.createdAt,
+      templateTitle: templateSnap.exists ? (templateSnap.get('title') as string | undefined) ?? null : null,
+    }
+  }))
+  return reports
+})
+
+interface ResolveTemplateReportCallableInput { reportId?: unknown; action?: unknown }
+const isValidResolveAction = (value: unknown): value is 'UNPUBLISH' | 'DISMISS' => value === 'UNPUBLISH' || value === 'DISMISS'
+
+export const resolveTemplateReportCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+  const data = request.data as ResolveTemplateReportCallableInput
+  if (typeof data.reportId !== 'string' || !isValidResolveAction(data.action)) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  const reportSnap = await getFirestore().doc(`templateReports/${data.reportId}`).get()
+  if (!reportSnap.exists || reportSnap.get('status') !== 'PENDING') throw new HttpsError('not-found', '通報が見つからないか、既に解決済みです。')
+
+  if (data.action === 'UNPUBLISH') {
+    const templateId = reportSnap.get('templateId') as string
+    await getFirestore().doc(`lessonTemplates/${templateId}`).update({ visibility: 'PRIVATE' })
+  }
+  await getFirestore().doc(`templateReports/${data.reportId}`).update({
+    status: 'RESOLVED', resolution: data.action === 'UNPUBLISH' ? 'UNPUBLISHED' : 'DISMISSED',
+    resolvedByUid: request.auth.uid, resolvedAt: FieldValue.serverTimestamp(),
+  })
+  return { resolved: true }
+})
+
+
 

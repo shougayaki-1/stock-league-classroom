@@ -6,9 +6,11 @@ import {
   duplicateLessonTemplateCallable,
   isValidDuplicateLessonTemplateInput,
   isValidPublishLessonVersionInput,
+  listPendingTemplateReportsCallable,
   publishLessonVersionCallable,
   publishTemplateToCommunityCallable,
   reportTemplateCallable,
+  resolveTemplateReportCallable,
   resolveTemplateShareCallable,
   revokeTemplateShareCallable,
   unpublishTemplateFromCommunityCallable,
@@ -489,4 +491,64 @@ describe('reportTemplateCallable', () => {
     expect(reportAddMock).toHaveBeenCalledWith(expect.objectContaining({ details: null }))
   })
 })
+
+describe('listPendingTemplateReportsCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const operatorAuth = { uid: 'operator-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true } }
+  const makeRequest = (auth: typeof teacherAuth) => ({ auth, data: {}, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a non-operator caller', async () => {
+    await expect(listPendingTemplateReportsCallable.run(makeRequest(teacherAuth))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(reportsWhereGetMock).not.toHaveBeenCalled()
+  })
+
+  it('returns PENDING reports enriched with the reported template title', async () => {
+    reportsWhereGetMock.mockResolvedValue({
+      docs: [{ id: 'report-1', data: () => ({ templateId: 't1', versionId: 'v1', reportedByUid: 'teacher-b', reason: 'COPYRIGHT', details: null, status: 'PENDING', createdAt: 'sometime' }) }],
+    })
+    templateGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'title' ? '通報された教材' : undefined) })
+
+    await expect(listPendingTemplateReportsCallable.run(makeRequest(operatorAuth))).resolves.toEqual([
+      { id: 'report-1', templateId: 't1', versionId: 'v1', reportedByUid: 'teacher-b', reason: 'COPYRIGHT', details: null, createdAt: 'sometime', templateTitle: '通報された教材' },
+    ])
+  })
+})
+
+describe('resolveTemplateReportCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const operatorAuth = { uid: 'operator-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true } }
+  const makeRequest = (auth: typeof teacherAuth, data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a non-operator caller', async () => {
+    await expect(resolveTemplateReportCallable.run(makeRequest(teacherAuth, { reportId: 'report-1', action: 'DISMISS' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(reportGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a report that does not exist or is already resolved', async () => {
+    reportGetMock.mockResolvedValue({ exists: false })
+    await expect(resolveTemplateReportCallable.run(makeRequest(operatorAuth, { reportId: 'missing', action: 'DISMISS' }))).rejects.toMatchObject({ code: 'not-found' })
+
+    reportGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'status' ? 'RESOLVED' : undefined) })
+    await expect(resolveTemplateReportCallable.run(makeRequest(operatorAuth, { reportId: 'report-1', action: 'DISMISS' }))).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('DISMISS resolves the report without touching the template', async () => {
+    reportGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'status' ? 'PENDING' : field === 'templateId' ? 't1' : undefined) })
+    await resolveTemplateReportCallable.run(makeRequest(operatorAuth, { reportId: 'report-1', action: 'DISMISS' }))
+    expect(templateUpdateMock).not.toHaveBeenCalled()
+    expect(reportUpdateMock).toHaveBeenCalledWith({ status: 'RESOLVED', resolution: 'DISMISSED', resolvedByUid: 'operator-a', resolvedAt: 'SERVER_TIMESTAMP' })
+  })
+
+  it('UNPUBLISH sets the template back to PRIVATE and resolves the report', async () => {
+    reportGetMock.mockResolvedValue({ exists: true, get: (field: string) => (field === 'status' ? 'PENDING' : field === 'templateId' ? 't1' : undefined) })
+    await resolveTemplateReportCallable.run(makeRequest(operatorAuth, { reportId: 'report-1', action: 'UNPUBLISH' }))
+    expect(templateUpdateMock).toHaveBeenCalledWith({ visibility: 'PRIVATE' })
+    expect(reportUpdateMock).toHaveBeenCalledWith({ status: 'RESOLVED', resolution: 'UNPUBLISHED', resolvedByUid: 'operator-a', resolvedAt: 'SERVER_TIMESTAMP' })
+  })
+})
+
 
