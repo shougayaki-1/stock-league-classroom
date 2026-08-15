@@ -34,7 +34,7 @@ import {
   saveManualAdvancedHouseholdCheckpointWithAdminSdk,
   saveManualHouseholdCheckpointWithAdminSdk,
 } from './householdCheckpoint'
-import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
+import { restoreHouseholdCheckpointWithAdminSdk } from './householdRestore'
 import {
   buildHouseholdAssignmentView,
   getHouseholdAssignmentView,
@@ -116,7 +116,7 @@ vi.mock('./householdCheckpoint', () => ({
   saveManualAdvancedHouseholdCheckpointWithAdminSdk: vi.fn(),
 }))
 vi.mock('./householdRestore', () => ({
-  restoreHouseholdCheckpointV2WithAdminSdk: vi.fn(),
+  restoreHouseholdCheckpointWithAdminSdk: vi.fn(),
 }))
 
 interface SubmitHouseholdDecisionRequestData {
@@ -1127,7 +1127,7 @@ describe('retryHouseholdRoundBatchCallable', () => {
   })
 })
 
-describe('restoreHouseholdCheckpointCallable v2', () => {
+describe('restoreHouseholdCheckpointCallable', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
@@ -1135,7 +1135,7 @@ describe('restoreHouseholdCheckpointCallable v2', () => {
   })
 
   it('rejects when active bulk lease is present', async () => {
-    vi.mocked(restoreHouseholdCheckpointV2WithAdminSdk).mockRejectedValue(new Error('Active bulk operation lease is active'))
+    vi.mocked(restoreHouseholdCheckpointWithAdminSdk).mockRejectedValue(new Error('Active bulk operation lease is active'))
     const req = {
       auth: { uid: 'teacher-a' },
       data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'restore', idempotencyKey: 'k-1' },
@@ -1145,9 +1145,22 @@ describe('restoreHouseholdCheckpointCallable v2', () => {
     await expect(restoreHouseholdCheckpointCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 
-  it('calls restoreHouseholdCheckpointV2WithAdminSdk on happy path', async () => {
-    const mockResult = { newRestoreGeneration: 2, restoredHouseholdIds: ['team-a'], preRestoreCheckpointId: 'pre-1' }
-    vi.mocked(restoreHouseholdCheckpointV2WithAdminSdk).mockResolvedValue(mockResult)
+  it('rejects when the HouseholdAssignment revision does not match the checkpoint (v3 defensive guard)', async () => {
+    vi.mocked(restoreHouseholdCheckpointWithAdminSdk).mockRejectedValue(
+      new Error('HouseholdAssignment assignmentRevision does not match the checkpoint snapshot'),
+    )
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'restore', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    await expect(restoreHouseholdCheckpointCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('calls restoreHouseholdCheckpointWithAdminSdk on happy path (dispatcher return includes schemaVersion)', async () => {
+    const mockResult = { newRestoreGeneration: 2, restoredHouseholdIds: ['team-a'], preRestoreCheckpointId: 'pre-1', schemaVersion: 2 as const }
+    vi.mocked(restoreHouseholdCheckpointWithAdminSdk).mockResolvedValue(mockResult)
     const req = {
       auth: { uid: 'teacher-a' },
       data: { lessonRunId: 'run-1', checkpointId: 'cp-1', reason: 'restore', idempotencyKey: 'k-1' },
@@ -1156,13 +1169,26 @@ describe('restoreHouseholdCheckpointCallable v2', () => {
 
     const result = await restoreHouseholdCheckpointCallable.run(req)
     expect(result).toEqual(mockResult)
-    expect(restoreHouseholdCheckpointV2WithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({
+    expect(restoreHouseholdCheckpointWithAdminSdk).toHaveBeenCalledWith(expect.objectContaining({
       lessonRunId: 'run-1',
       checkpointId: 'cp-1',
       reason: 'restore',
       actorUid: 'teacher-a',
       idempotencyKey: 'k-1',
     }))
+  })
+
+  it('passes through a v3 dispatcher result unchanged (advanced-format restore)', async () => {
+    const mockResult = { newRestoreGeneration: 3, restoredHouseholdIds: ['hh-1', 'hh-2'], preRestoreCheckpointId: 'pre-2', schemaVersion: 3 as const }
+    vi.mocked(restoreHouseholdCheckpointWithAdminSdk).mockResolvedValue(mockResult)
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', checkpointId: 'cp-2', reason: 'restore', idempotencyKey: 'k-2' },
+      rawRequest: {},
+    } as never
+
+    const result = await restoreHouseholdCheckpointCallable.run(req)
+    expect(result).toEqual(mockResult)
   })
 })
 

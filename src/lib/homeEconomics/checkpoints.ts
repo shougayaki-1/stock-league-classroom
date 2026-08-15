@@ -31,6 +31,14 @@ export interface RestoreHouseholdCheckpointResult {
   newRestoreGeneration: number
   restoredHouseholdIds: string[]
   preRestoreCheckpointId: string
+  /**
+   * Which checkpoint codec the server dispatched to for this restore — `2`
+   * for Common-only (v2), `3` for advanced-format (v3). See
+   * `functions/src/homeEconomics/householdRestore.ts`'s
+   * `HouseholdRestoreOperationView`. Optional so older cached results/tests
+   * that predate this field keep compiling.
+   */
+  schemaVersion?: 2 | 3
 }
 
 export const writeHouseholdCheckpoint = async (

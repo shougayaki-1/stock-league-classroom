@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   restoreHouseholdCheckpointV2,
+  restoreHouseholdCheckpointV3,
   type HouseholdRestoreDeps,
+  type HouseholdRestoreV3Deps,
 } from './householdRestore'
 import type { HouseholdState } from '../lessonRuns/households/repository'
-import { buildHouseholdCheckpointSnapshotV2 } from './householdCheckpoint'
+import { buildHouseholdCheckpointSnapshotV2, buildHouseholdCheckpointSnapshotV3 } from './householdCheckpoint'
 import type { HouseholdStateTeamView } from './realtimeProjection'
+import type { HouseholdRuntimeControl } from './statusTransition'
+import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
 
 describe('householdRestore v2', () => {
   const makeBaseHousehold = (teamId: string, cash = 1000000, roundIndex = 1): HouseholdState => ({
@@ -104,6 +108,7 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockImplementation(async (updates) => {
@@ -149,6 +154,7 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockImplementation(async () => {
@@ -193,6 +199,7 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockImplementation(async (input) => {
         savePreRestoreCallCount++
@@ -235,6 +242,7 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
@@ -250,11 +258,248 @@ describe('householdRestore v2', () => {
     const deps: HouseholdRestoreDeps = {
       firestore: fake as never,
       checkActiveBulkLease: vi.fn().mockResolvedValue(true),
+      cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
       listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
       savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
       syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
     }
 
     await expect(restoreHouseholdCheckpointV2(deps, baseInput)).rejects.toThrow('Active bulk operation lease')
+  })
+
+  it('cancels an inactive unresolved bulk operation as part of restore (regression: NEW behavior, not just wiring)', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { orgId: 'org-1', restoreGeneration: 0, currentPhaseId: 'phase-1' })
+    fake.docs.set('lessonRuns/run-1/meta/eventCounter', { value: 10 })
+    fake.docs.set('lessonRuns/run-1/checkpoints/hcp-1', {
+      id: 'hcp-1',
+      lessonRunId: 'run-1',
+      snapshot: v2Snapshot,
+    })
+    fake.docs.set('lessonRuns/run-1/households/team-a', makeBaseHousehold('team-a', 500000, 3) as unknown as Record<string, unknown>)
+    fake.docs.set('lessonRuns/run-1/households/team-b', makeBaseHousehold('team-b', 600000, 3) as unknown as Record<string, unknown>)
+
+    const cancelSpy = vi.fn().mockResolvedValue(undefined)
+    const deps: HouseholdRestoreDeps = {
+      firestore: fake as never,
+      checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      cancelInactiveUnresolvedBulkOperation: cancelSpy,
+      listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
+      savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore', created: true }),
+      syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await restoreHouseholdCheckpointV2(deps, baseInput)
+
+    expect(cancelSpy).toHaveBeenCalledWith('run-1', baseInput.nowMillis)
+  })
+})
+
+describe('householdRestore v3 (advanced formats)', () => {
+  const makeHousehold = (householdId: string, teamId: string, cash = 1000000, roundIndex = 1): HouseholdState => ({
+    householdId,
+    lessonRunId: 'run-1',
+    teamId,
+    profileId: 'profile-1',
+    cashYen: cash,
+    assetHoldingsYen: {},
+    activeInsuranceContracts: {},
+    activeLiabilities: {},
+    lifeStage: 'INDEPENDENT',
+    roundIndex,
+    goalDelayedRounds: 0,
+    updatedAtServerMillis: 1000,
+  })
+
+  const v3Snapshot = buildHouseholdCheckpointSnapshotV3({
+    courseFormat: 'ROLE_VARIANT',
+    assignmentRevision: 5,
+    restoreGeneration: 0,
+    expectedRoundIndex: 1,
+    householdIds: ['hh-a', 'hh-b'],
+    householdStates: [
+      makeHousehold('hh-a', 'team-a', 2000000, 1),
+      makeHousehold('hh-b', 'team-b', 3000000, 1),
+    ],
+    visibleConcepts: ['ASSET_DIVERSIFICATION'],
+    createdAtServerMillis: 1000,
+  })
+
+  const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+  const assignmentConfigPath = 'lessonRuns/run-1/householdAssignment/config'
+
+  const openControl: HouseholdRuntimeControl = {
+    courseFormat: 'ROLE_VARIANT',
+    assignmentRevision: 5,
+    synchronizedRoundIndex: 3,
+    roundStatus: 'OPEN',
+    activeOperationId: null,
+    updatedAtServerMillis: 900,
+  }
+
+  const frozenAssignmentConfig: HouseholdAssignmentConfig = {
+    courseFormat: 'ROLE_VARIANT',
+    state: 'FROZEN',
+    validationStatus: 'READY',
+    assignmentRevision: 5,
+    teamSetFingerprint: 'fp-1',
+    entryIds: ['hh-a', 'hh-b'],
+    entriesDigest: 'digest-1',
+    lastEditedByUid: 'teacher-1',
+    lastEditedAtServerMillis: 100,
+    frozenByUid: 'teacher-1',
+    frozenAtServerMillis: 200,
+  }
+
+  const makeFakeFirestore = () => {
+    const docs = new Map<string, Record<string, unknown>>()
+    return {
+      docs,
+      runTransaction: async <T>(fn: (tx: {
+        get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+        set: (path: string, data: Record<string, unknown>) => void
+      }) => Promise<T>): Promise<T> => {
+        const written = new Set<string>()
+        return fn({
+          get: async (path: string) => {
+            if (written.has(path)) throw new Error(`read-after-write violation: ${path}`)
+            return { exists: docs.has(path), data: () => docs.get(path) }
+          },
+          set: (path: string, data: Record<string, unknown>) => { docs.set(path, data); written.add(path) },
+        })
+      },
+    }
+  }
+
+  const seedBaseDocs = (fake: ReturnType<typeof makeFakeFirestore>) => {
+    fake.docs.set('lessonRuns/run-1', { orgId: 'org-1', restoreGeneration: 0, currentPhaseId: 'phase-1' })
+    fake.docs.set('lessonRuns/run-1/meta/eventCounter', { value: 10 })
+    fake.docs.set('lessonRuns/run-1/checkpoints/hcp-1', {
+      id: 'hcp-1',
+      lessonRunId: 'run-1',
+      snapshot: v3Snapshot,
+    })
+    fake.docs.set('lessonRuns/run-1/households/hh-a', makeHousehold('hh-a', 'team-a', 500000, 3) as unknown as Record<string, unknown>)
+    fake.docs.set('lessonRuns/run-1/households/hh-b', makeHousehold('hh-b', 'team-b', 600000, 3) as unknown as Record<string, unknown>)
+    fake.docs.set(controlPath, openControl as unknown as Record<string, unknown>)
+    fake.docs.set(assignmentConfigPath, frozenAssignmentConfig as unknown as Record<string, unknown>)
+  }
+
+  const baseInput = {
+    lessonRunId: 'run-1',
+    checkpointId: 'hcp-1',
+    reason: '復元テスト',
+    actorUid: 'teacher-1',
+    idempotencyKey: 'restore-key-v3-1',
+    nowMillis: 5000,
+  }
+
+  const makeDeps = (fake: ReturnType<typeof makeFakeFirestore>, overrides: Partial<HouseholdRestoreV3Deps> = {}): HouseholdRestoreV3Deps => ({
+    firestore: fake as never,
+    checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+    cancelInactiveUnresolvedBulkOperation: vi.fn().mockResolvedValue(undefined),
+    savePreRestoreCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'hcp-pre-restore-v3', created: true }),
+    syncRtdbProjections: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  })
+
+  it('restores states, increments generation, and rewrites control to OPEN/no-active-op/checkpoint round in the same transaction', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+
+    let rtdbUpdates: Record<string, unknown> | null = null
+    const deps = makeDeps(fake, {
+      syncRtdbProjections: vi.fn().mockImplementation(async (updates) => { rtdbUpdates = updates }),
+    })
+
+    const result = await restoreHouseholdCheckpointV3(deps, baseInput)
+
+    expect(result.newRestoreGeneration).toBe(1)
+    expect(result.restoredHouseholdIds).toEqual(['hh-a', 'hh-b'])
+    expect(deps.savePreRestoreCheckpoint).toHaveBeenCalledOnce()
+
+    const hhA = fake.docs.get('lessonRuns/run-1/households/hh-a') as unknown as HouseholdState
+    expect(hhA.cashYen).toBe(2000000)
+    expect(hhA.roundIndex).toBe(1)
+
+    const runDoc = fake.docs.get('lessonRuns/run-1') as { restoreGeneration: number }
+    expect(runDoc.restoreGeneration).toBe(1)
+
+    const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+    expect(control.roundStatus).toBe('OPEN')
+    expect(control.activeOperationId).toBeNull()
+    expect(control.synchronizedRoundIndex).toBe(1) // checkpoint's expectedRoundIndex
+    expect(control.assignmentRevision).toBe(5) // unchanged
+
+    expect(rtdbUpdates).toBeDefined()
+    expect(rtdbUpdates!['lessonRunTeamState/run-1/team-a/households']).toBeDefined()
+    expect(rtdbUpdates!['lessonRunTeamState/run-1/team-a/householdOrder']).toEqual(['hh-a'])
+    expect(rtdbUpdates!['lessonRunPrivate/run-1/householdComputationLog/hh-a']).toBeNull()
+    expect(rtdbUpdates!['lessonRunPrivate/run-1/householdComputationLog/hh-b']).toBeNull()
+  })
+
+  it('rejects when the current HouseholdAssignmentConfig assignmentRevision does not match the checkpoint snapshot', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+    fake.docs.set(assignmentConfigPath, {
+      ...frozenAssignmentConfig,
+      assignmentRevision: 6, // drifted since the checkpoint was created
+    } as unknown as Record<string, unknown>)
+
+    const deps = makeDeps(fake)
+
+    await expect(restoreHouseholdCheckpointV3(deps, baseInput)).rejects.toThrow('assignmentRevision')
+  })
+
+  it('rejects when the current HouseholdAssignmentConfig is not FROZEN', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+    fake.docs.set(assignmentConfigPath, {
+      ...frozenAssignmentConfig,
+      state: 'DRAFT',
+    } as unknown as Record<string, unknown>)
+
+    const deps = makeDeps(fake)
+
+    await expect(restoreHouseholdCheckpointV3(deps, baseInput)).rejects.toThrow('FROZEN')
+  })
+
+  it('rejects restore if active bulk lease is present', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+    const deps = makeDeps(fake, { checkActiveBulkLease: vi.fn().mockResolvedValue(true) })
+
+    await expect(restoreHouseholdCheckpointV3(deps, baseInput)).rejects.toThrow('Active bulk operation lease')
+  })
+
+  it('crash-safe: retries RTDB sync without double-incrementing restoreGeneration', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+
+    let syncAttempt = 0
+    const deps = makeDeps(fake, {
+      syncRtdbProjections: vi.fn().mockImplementation(async () => {
+        syncAttempt++
+        if (syncAttempt === 1) throw new Error('RTDB network error')
+      }),
+    })
+
+    await expect(restoreHouseholdCheckpointV3(deps, baseInput)).rejects.toThrow('RTDB network error')
+
+    const secondResult = await restoreHouseholdCheckpointV3(deps, { ...baseInput, nowMillis: 6000 })
+    expect(secondResult.newRestoreGeneration).toBe(1)
+    expect(syncAttempt).toBe(2)
+  })
+
+  it('cancels an inactive unresolved bulk operation as part of restore', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+
+    const cancelSpy = vi.fn().mockResolvedValue(undefined)
+    const deps = makeDeps(fake, { cancelInactiveUnresolvedBulkOperation: cancelSpy })
+
+    await restoreHouseholdCheckpointV3(deps, baseInput)
+
+    expect(cancelSpy).toHaveBeenCalledWith('run-1', baseInput.nowMillis)
   })
 })

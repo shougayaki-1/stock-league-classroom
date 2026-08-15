@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   acquireBulkSettlementLease,
   cancelBulkSettlementOperation,
+  cancelInactiveUnresolvedBulkSettlementOperation,
   createOrReplayBulkSettlementOperation,
   createOrReplayBulkSettlementOperationWithControlLock,
   finalizeBulkSettlementOperation,
@@ -529,6 +530,97 @@ describe('bulkSettlementOperation', () => {
       expect(view.status).toBe('CANCELLED')
       expect(view.retryable).toBe(false)
       expect(view.leaseActive).toBe(false)
+    })
+  })
+
+  describe('cancelInactiveUnresolvedBulkSettlementOperation (restore-time cleanup)', () => {
+    it('returns null when there is no unresolved candidate', async () => {
+      const fake = makeFakeFirestore()
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: null,
+        nowMillis: 2000,
+      })
+      expect(result).toBeNull()
+    })
+
+    it.each(['PENDING', 'RUNNING', 'FAILED'] as const)(
+      'cancels a %s operation with no active lease',
+      async (status) => {
+        const fake = makeFakeFirestore()
+        const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+        const candidate: HouseholdBulkSettlementOperation = {
+          ...op,
+          status,
+          leaseExpiresAtServerMillis: status === 'RUNNING' ? 1500 : null, // expired lease for RUNNING
+        }
+
+        const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+          firestore: fake as never,
+          candidate,
+          nowMillis: 2000,
+        })
+
+        expect(result?.status).toBe('CANCELLED')
+        const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+        expect(stored.status).toBe('CANCELLED')
+      },
+    )
+
+    it('does not cancel a RUNNING operation with a still-active lease', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      const candidate: HouseholdBulkSettlementOperation = {
+        ...op,
+        status: 'RUNNING',
+        leaseExpiresAtServerMillis: 5000,
+      }
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull()
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('PENDING') // untouched — never wrote CANCELLED
+    })
+
+    it('also releases the HouseholdRuntimeControl lock for an advanced-format candidate', async () => {
+      const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+      const openControl: HouseholdRuntimeControl = {
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 5,
+        synchronizedRoundIndex: 2,
+        roundStatus: 'OPEN',
+        activeOperationId: null,
+        updatedAtServerMillis: 500,
+      }
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: op,
+        nowMillis: 2000,
+      })
+
+      expect(result?.status).toBe('CANCELLED')
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN')
+      expect(control.activeOperationId).toBeNull()
     })
   })
 

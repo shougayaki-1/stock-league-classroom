@@ -1,6 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest } from '../lib/idempotency'
-import type { HouseholdFirestoreDeps } from '../lessonRuns/households/repository'
+import { householdRepositoryWithAdminSdk, type HouseholdFirestoreDeps } from '../lessonRuns/households/repository'
 import type { HouseholdRuntimeControl } from './statusTransition'
 
 export const HOUSEHOLD_BULK_LEASE_MS = 60_000
@@ -633,4 +633,71 @@ export const findUnresolvedBulkSettlementOperationWithAdminSdk = async (
     .sort((a, b) => b.updatedAtServerMillis - a.updatedAtServerMillis)
 
   return unresolved[0] ?? null
+}
+
+export interface CancelInactiveUnresolvedBulkSettlementOperationInput {
+  firestore: HouseholdFirestoreDeps['firestore']
+  /**
+   * The unresolved (not `COMPLETED`, not `CANCELLED`) operation to consider
+   * cancelling, or `null` if none exists — the caller is expected to have
+   * already looked this up (e.g. via `findUnresolvedBulkSettlementOperationWithAdminSdk`),
+   * so this core function stays transaction-testable with a fake `firestore`
+   * the way every other primitive in this file is, instead of embedding a
+   * live Firestore query (which the fakes used across this repo's tests
+   * cannot simulate).
+   */
+  candidate: HouseholdBulkSettlementOperation | null
+  nowMillis: number
+}
+
+/**
+ * Restore-time cleanup shared by v2 (`householdRestore.ts`'s
+ * `restoreHouseholdCheckpointV2`) and v3 (`restoreHouseholdCheckpointV3`):
+ * a household checkpoint restore rewinds the round state, so any
+ * PENDING/RUNNING/FAILED bulk-settlement operation left over from BEFORE the
+ * restore is now stale — if left alone it would block the next bulk
+ * settlement attempt (`findUnresolvedBulkSettlementOperationWithAdminSdk`'s
+ * single-unresolved-operation-per-lessonRun invariant). This atomically
+ * transitions such an operation to `CANCELLED` via `cancelBulkSettlementOperation`
+ * (which itself, for the 3 advanced formats, also releases the
+ * `HouseholdRuntimeControl` lock in the same transaction — see that
+ * function's doc comment) — UNLESS the candidate is currently under an
+ * ACTIVE lease (`RUNNING` with a still-live `leaseExpiresAtServerMillis`),
+ * in which case it is left untouched: both restore flows already
+ * hard-reject outright when an active lease exists (`checkActiveBulkLease`),
+ * so observing one active here would only happen from a race, and this
+ * function must never force-cancel someone else's in-flight work.
+ */
+export const cancelInactiveUnresolvedBulkSettlementOperation = async (
+  input: CancelInactiveUnresolvedBulkSettlementOperationInput,
+): Promise<HouseholdBulkSettlementOperation | null> => {
+  if (!input.candidate) return null
+
+  const leaseActive = input.candidate.status === 'RUNNING'
+    && (input.candidate.leaseExpiresAtServerMillis ?? 0) > input.nowMillis
+  if (leaseActive) return null
+
+  return cancelBulkSettlementOperation({
+    firestore: input.firestore,
+    operationId: input.candidate.operationId,
+    nowMillis: input.nowMillis,
+  })
+}
+
+/**
+ * Production wiring for both restore paths' `HouseholdRestoreDeps.cancelInactiveUnresolvedBulkOperation`
+ * dependency: looks up the candidate via the live-Firestore query
+ * (`findUnresolvedBulkSettlementOperationWithAdminSdk`), then delegates the
+ * actual atomic decision/transition to `cancelInactiveUnresolvedBulkSettlementOperation`.
+ */
+export const cancelInactiveUnresolvedBulkSettlementOperationWithAdminSdk = async (
+  lessonRunId: string,
+  nowMillis: number,
+): Promise<void> => {
+  const candidate = await findUnresolvedBulkSettlementOperationWithAdminSdk(lessonRunId)
+  await cancelInactiveUnresolvedBulkSettlementOperation({
+    firestore: householdRepositoryWithAdminSdk(),
+    candidate,
+    nowMillis,
+  })
 }

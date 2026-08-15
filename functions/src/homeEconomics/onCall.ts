@@ -30,7 +30,7 @@ import {
   saveManualAdvancedHouseholdCheckpointWithAdminSdk,
   saveManualHouseholdCheckpointWithAdminSdk,
 } from './householdCheckpoint'
-import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
+import { restoreHouseholdCheckpointWithAdminSdk } from './householdRestore'
 import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
 import {
   buildHouseholdAssignmentView,
@@ -942,12 +942,22 @@ const translateRestoreHouseholdCheckpointError = (error: unknown): unknown => {
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('復元できるのは')) return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdAssignment not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdAssignment is not FROZEN') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdAssignment assignmentRevision does not match the checkpoint snapshot') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message.includes('より新しい世代の復元が行われた')) return new HttpsError('failed-precondition', error.message)
   }
   return error
 }
 
 /**
- * Teacher-facing checkpoint-restore Callable (v2 atomic).
+ * Teacher-facing checkpoint-restore Callable. Retains its external shape
+ * unchanged (Task 8) — internally now dispatches by checkpoint schema
+ * version via `restoreHouseholdCheckpointWithAdminSdk` (v2 Common-only /
+ * v3 advanced-format), instead of always calling the v2 restore flow.
  */
 export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
@@ -959,7 +969,7 @@ export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northea
   await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
   try {
-    return await restoreHouseholdCheckpointV2WithAdminSdk({
+    return await restoreHouseholdCheckpointWithAdminSdk({
       lessonRunId: data.lessonRunId,
       checkpointId: data.checkpointId,
       reason: data.reason,
