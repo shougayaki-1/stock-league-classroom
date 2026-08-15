@@ -13,6 +13,16 @@ Phase 7の「メンバーとライセンスの管理」は、招待発行(`creat
 
 ## アーキテクチャ
 
+### 追加調査: 組織管理者向けの招待一覧取得が存在しない
+
+`src/App.tsx`の`SchoolOrgSettingsRoute`(457行目〜)を確認したところ、`invitations`状態はページ読み込み時にサーバーから取得されておらず、`onInvite`で招待した直後にローカルへ楽観的に追加されるだけだった(ページを再読み込みすると消える)。既存の`listMyInvitationsCallable`は「自分宛ての`PENDING`招待」を取得するものであり、組織管理者が「この組織が送った全招待」を見るための仕組みではない。招待は秘密情報保護のため直接クライアント読み取りを禁止しているため(`firestore.rules`)、失効ボタンを意味のあるUIにするには新しい一覧取得Callableが必要と判断し、本サブプロジェクトに含める。
+
+### 招待一覧取得: `listOrgInvitationsCallable`(追加)
+
+- 入力: `{ orgId: string }`
+- 認可: `requireActiveOrgMember`で対象`orgId`のアクティブメンバーであることを確認し`role`が`owner`または`admin`(`requireManager`ヘルパーを再利用)。
+- 処理: `organizations/{orgId}/invitations`を全件取得して返す(`PENDING`/`ACCEPTED`/`REVOKED`すべて、失効済み・承諾済みも含めて履歴として見られるようにする)。
+
 ### 招待失効: `revokeInvitationCallable`
 
 - 入力: `{ orgId: string; invitationId: string }`
@@ -33,7 +43,8 @@ Phase 7の「メンバーとライセンスの管理」は、招待発行(`creat
 ### UI
 
 - `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`は既に`invitations: Invitation[]`をpropsで受け取り一覧表示している(4・17・30・65-69行目)。各招待行に「失効」ボタンを追加し、`onRevokeInvitation(invitationId)`propを呼ぶ。
-- 同ページの既存メンバー一覧(`members`)の各行に、ロール変更セレクト(owner/admin/teacher)を追加する。`owner`選択肢は、閲覧者(`viewerUid`の役割)が`owner`の場合のみ表示する(admin閲覧時は`owner`への変更・`owner`からの変更ができないため選択肢自体を隠す)。
+- 同ページの既存メンバー一覧(`members`)の各行に、ロール変更セレクト(owner/admin/teacher)を追加する。`owner`選択肢は、閲覧者の役割が`owner`の場合のみ表示する(admin閲覧時は`owner`への変更・`owner`からの変更ができないため選択肢自体を隠す)。閲覧者の役割は新しいpropを追加せず、既存の`members.find(m => m.uid === viewerUid)?.role`から`SchoolOrgSettingsPage`内で導出する(`canManageMembers`と同じ導出元)。
+- `invitations`は`SchoolOrgSettingsRoute`が`listOrgInvitationsCallable`をページ読み込み時に呼んで取得するよう変更する(現状の楽観的ローカル追加のみの状態を修正)。
 
 ## エラー処理
 
