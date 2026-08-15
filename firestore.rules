@@ -79,6 +79,8 @@ service cloud.firestore {
 
     match /templateReports/{reportId} { allow read, write: if false; }
 
+    match /templateReviews/{reviewId} { allow read, write: if false; }
+
     match /systemConfig/{documentId} {
       allow get: if false;
       allow list: if false;

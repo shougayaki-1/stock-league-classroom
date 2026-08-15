@@ -187,6 +187,22 @@ describe('templateReports/{reportId}', () => {
   })
 })
 
+describe('templateReviews/{reviewId}', () => {
+  it('declares an explicit deny rule for the template reviews collection', () => {
+    const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
+    expect(rules).toMatch(
+      /match \/templateReviews\/\{reviewId\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+    )
+  })
+
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const review = doc(context.firestore(), 'templateReviews/version-1_teacher-a')
+    await assertFails(getDoc(review))
+    await assertFails(setDoc(review, { clarityRating: 5 }))
+  })
+})
+
 
 describe('lessonTemplates COMMUNITY visibility', () => {
   beforeEach(async () => {
