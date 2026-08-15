@@ -183,6 +183,24 @@ describe('member list', () => {
     fireEvent.change(screen.getByLabelText('uid-teacherのロール'), { target: { value: 'admin' } })
     expect(onChangeRole).toHaveBeenCalledWith('uid-teacher', 'admin')
   })
+
+  it('shows the approvals link to an owner', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-owner" members={members} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: '承認待ちテンプレートを確認' })).toHaveAttribute('href', '/teacher/organizations/org-1/template-approvals')
+  })
+
+  it('hides the approvals link from a teacher', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-teacher" members={members} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('link', { name: '承認待ちテンプレートを確認' })).not.toBeInTheDocument()
+  })
 })
 
 describe('parent organization display', () => {

@@ -38,6 +38,7 @@ export interface LessonTemplate {
   currentPublishedVersionId: string | null
   status: 'DRAFT' | 'READY' | 'ARCHIVED'
   visibility: 'PRIVATE' | 'LINK' | 'ORGANIZATION' | 'PUBLIC'
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
   createdAt: Timestamp
   updatedAt: Timestamp
   sourceTemplateId?: string

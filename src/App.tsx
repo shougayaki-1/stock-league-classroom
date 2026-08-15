@@ -39,6 +39,8 @@ import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboard
 import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
 import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
+import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
+import { listPendingTemplateApprovals, reviewTemplateApproval, type PendingTemplateApproval } from './lib/lessonTemplates/templateApprovals'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
@@ -600,6 +602,27 @@ function UsageDashboardRoute({ services }: { services: FirebaseServices }) {
   return <UsageDashboardPage data={data} error={error} />
 }
 
+function TemplateApprovalsRoute({ services }: { services: FirebaseServices }) {
+  const { orgId } = useParams<{ orgId: string }>()
+  const [data, setData] = useState<PendingTemplateApproval[]>()
+  const [error, setError] = useState<string>()
+  const [reload, setReload] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    if (!orgId) return
+    setError(undefined)
+    listPendingTemplateApprovals(services.functions, { orgId })
+      .then((result) => { if (!cancelled) setData(result) })
+      .catch(() => { if (!cancelled) setError('failed') })
+    return () => { cancelled = true }
+  }, [services, orgId, reload])
+  if (!orgId) return null
+  const decide = (templateId: string, decision: 'APPROVED' | 'REJECTED') => {
+    void reviewTemplateApproval(services.functions, { orgId, templateId, decision }).then(() => setReload((n) => n + 1))
+  }
+  return <TemplateApprovalsPage data={data} error={error} onApprove={(id) => decide(id, 'APPROVED')} onReject={(id) => decide(id, 'REJECTED')} />
+}
+
 function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
   const [data, setData] = useState<PlanLimitsResult>()
@@ -850,6 +873,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/usage-dashboard" element={enabled && services ? <TemplateRouteGuard services={services}><UsageDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/organizations/:orgId/template-approvals" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateApprovalsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />

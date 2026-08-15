@@ -41,6 +41,7 @@ export function SchoolOrgSettingsPage({
       <Typography variant="h5">{orgName}</Typography>
       <Link to={`/teacher/organizations/${orgId}/plan-limits`}>利用枠を確認</Link>
       <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
+      {(viewerRole === 'owner' || viewerRole === 'admin') && <Link to={`/teacher/organizations/${orgId}/template-approvals`}>承認待ちテンプレートを確認</Link>}
       <Typography variant="body2">所属する上位組織: {parentOrgName ?? 'なし'}</Typography>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>
