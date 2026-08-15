@@ -13,12 +13,16 @@ import {
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
   searchOrgStudentDataCallable,
+  previewAnnualArchiveCallable,
+  scheduleAnnualArchiveCallable,
+  cancelAnnualArchiveCallable,
+  listAnnualArchiveJobsCallable,
 } from './onCall'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
 import { searchOrgStudentDataWithAdminSdk } from './searchOrgStudentData'
-import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
+import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry, recordAuditLogInTransaction } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -30,6 +34,8 @@ import {
 const orgDocGetMock = vi.fn()
 const resourceDocs = new Map<string, { exists: boolean; data?: Record<string, unknown> }>()
 const auditLogDocs: Array<{ id: string; data: Record<string, unknown> }> = []
+const annualArchiveJobDocs = new Map<string, Record<string, unknown>>()
+const mockLessonRuns: Array<Record<string, unknown>> = []
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
 vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
@@ -37,6 +43,7 @@ vi.mock('./searchOrgStudentData', () => ({ searchOrgStudentDataWithAdminSdk: vi.
 vi.mock('./auditLog', () => ({
   recordAuditLogEntry: vi.fn(),
   recordOrgDeletionAuditLogEntry: vi.fn(),
+  recordAuditLogInTransaction: vi.fn(),
 }))
 vi.mock('./deletePersonalData', () => ({
   requestSoftDeleteWithAdminSdk: vi.fn(),
@@ -47,18 +54,79 @@ vi.mock('./deletePersonalData', () => ({
 }))
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
   getFirestore: () => ({
     doc: (path: string) => ({
+      path,
+      id: path.split('/').pop()!,
       get: async () => {
+        if (resourceDocs.has(path)) {
+          const entry = resourceDocs.get(path)!
+          return { exists: entry.exists, data: () => entry.data, get: (field: string) => entry.data?.[field] }
+        }
+        if (path.includes('/annualArchiveJobs/')) {
+          const data = annualArchiveJobDocs.get(path)
+          return { exists: !!data, data: () => data, get: (field: string) => data?.[field] }
+        }
         if (path.startsWith('organizations/')) return orgDocGetMock()
         const entry = resourceDocs.get(path)
         return {
           exists: entry?.exists ?? false,
+          data: () => entry?.data,
           get: (field: string) => entry?.data?.[field],
+        }
+      },
+      set: async (data: Record<string, unknown>) => {
+        if (path.includes('/annualArchiveJobs/')) {
+          annualArchiveJobDocs.set(path, data)
+        } else {
+          resourceDocs.set(path, { exists: true, data })
         }
       },
     }),
     collection: (path: string) => ({
+      path,
+      doc: (id?: string) => {
+        const docId = id ?? 'auto-gen-id'
+        const docPath = `${path}/${docId}`
+        return {
+          id: docId,
+          path: docPath,
+          get: async () => {
+            if (docPath.includes('/annualArchiveJobs/')) {
+              const data = annualArchiveJobDocs.get(docPath)
+              return { exists: !!data, data: () => data, get: (f: string) => data?.[f] }
+            }
+            const entry = resourceDocs.get(docPath)
+            return { exists: entry?.exists ?? false, data: () => entry?.data, get: (f: string) => entry?.data?.[f] }
+          },
+          set: async (data: Record<string, unknown>) => {
+            if (docPath.includes('/annualArchiveJobs/')) {
+              annualArchiveJobDocs.set(docPath, data)
+            } else {
+              resourceDocs.set(docPath, { exists: true, data })
+            }
+          },
+        }
+      },
+      where: (field: string, op: string, val: unknown) => {
+        const createQuery = (filters: Array<{ field: string; op: string; val: unknown }>) => ({
+          where: (f: string, o: string, v: unknown) => createQuery([...filters, { field: f, op: o, val: v }]),
+          orderBy: () => createQuery(filters),
+          get: async () => {
+            let runs = [...mockLessonRuns]
+            for (const filter of filters) {
+              if (filter.op === '==') {
+                runs = runs.filter((r) => r[filter.field] === filter.val)
+              } else if (filter.op === 'in') {
+                runs = runs.filter((r) => Array.isArray(filter.val) && (filter.val as unknown[]).includes(r[filter.field]))
+              }
+            }
+            return { docs: runs.map((r) => ({ id: r.id as string, data: () => r })) }
+          },
+        })
+        return createQuery([{ field, op, val }])
+      },
       orderBy: () => ({
         limit: () => ({
           get: async () => ({
@@ -67,6 +135,15 @@ vi.mock('firebase-admin/firestore', () => ({
               : [],
           }),
         }),
+        get: async () => {
+          if (path.includes('/annualArchiveJobs')) {
+            const jobs = [...annualArchiveJobDocs.entries()]
+              .filter(([p]) => p.startsWith(path))
+              .map(([_, d]) => ({ id: d.id as string, data: () => d }))
+            return { docs: jobs }
+          }
+          return { docs: [] }
+        },
       }),
       limit: () => ({
         get: async () => ({
@@ -75,6 +152,31 @@ vi.mock('firebase-admin/firestore', () => ({
         }),
       }),
     }),
+    runTransaction: async <T>(fn: (tx: {
+      get: (ref: { path: string }) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      set: (ref: { path: string }, data: Record<string, unknown>) => void
+    }) => Promise<T>): Promise<T> => {
+      const tx = {
+        get: async (ref: { path: string }) => {
+          const path = ref.path
+          if (path.includes('/annualArchiveJobs/')) {
+            const d = annualArchiveJobDocs.get(path)
+            return { exists: !!d, data: () => d }
+          }
+          const entry = resourceDocs.get(path)
+          return { exists: entry?.exists ?? false, data: () => entry?.data }
+        },
+        set: (ref: { path: string }, data: Record<string, unknown>) => {
+          const path = ref.path
+          if (path.includes('/annualArchiveJobs/')) {
+            annualArchiveJobDocs.set(path, data)
+          } else {
+            resourceDocs.set(path, { exists: true, data })
+          }
+        },
+      }
+      return fn(tx)
+    },
   }),
 }))
 
@@ -823,6 +925,237 @@ describe('searchOrgStudentDataCallable', () => {
     // auth_time is 2 hours ago (older than 10 minutes)
     const request = makeRequest({ uid: 'owner-a', authTime: NOW_SECONDS - 7200, data: validData })
     await expect(searchOrgStudentDataCallable.run(request)).resolves.toBeDefined()
+  })
+})
+
+describe('annualArchiveCallables', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resourceDocs.clear()
+    annualArchiveJobDocs.clear()
+    mockLessonRuns.length = 0
+  })
+
+  describe('previewAnnualArchiveCallable', () => {
+    it('rejects unauthenticated caller', async () => {
+      await expect(previewAnnualArchiveCallable.run(makeRequest({ noAuth: true, data: { orgId: 'school-1', academicYear: 2025 } })))
+        .rejects.toMatchObject({ code: 'unauthenticated' })
+      expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    })
+
+    it('rejects non-teacher caller', async () => {
+      const req = {
+        auth: { uid: 'teacher-1', token: { email_verified: false } },
+        data: { orgId: 'school-1', academicYear: 2025 },
+        rawRequest: {},
+      } as unknown as CallableRequest<unknown>
+      await expect(previewAnnualArchiveCallable.run(req)).rejects.toMatchObject({ code: 'permission-denied' })
+      expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    })
+
+    it('rejects malformed scalar arguments before checking membership', async () => {
+      // missing orgId
+      await expect(previewAnnualArchiveCallable.run(makeRequest({ data: { academicYear: 2025 } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+      // invalid academicYear
+      await expect(previewAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 'invalid' } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+      expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    })
+
+    it('rejects non-owner roles (admin or teacher)', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+      await expect(previewAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025 } })))
+        .rejects.toMatchObject({ code: 'permission-denied' })
+
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+      await expect(previewAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025 } })))
+        .rejects.toMatchObject({ code: 'permission-denied' })
+    })
+
+    it('returns preview result for owner including eligible and missingEndedAt counts', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      mockLessonRuns.push(
+        { id: 'r1', orgId: 'school-1', status: 'COMPLETED', endedAt: '2025-06-01T10:00:00+09:00' }, // eligible
+        { id: 'r2', orgId: 'school-1', status: 'ABORTED', endedAt: '2026-03-31T23:00:00+09:00' }, // eligible
+        { id: 'r3', orgId: 'school-1', status: 'COMPLETED', endedAt: '2026-05-01T10:00:00+09:00' }, // outside
+        { id: 'r4', orgId: 'school-1', status: 'COMPLETED', endedAt: null }, // missingEndedAt
+      )
+
+      const result = await previewAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025 } }))
+      expect(result).toEqual({
+        academicYear: 2025,
+        periodStart: '2025-04-01T00:00:00+09:00',
+        periodEnd: '2026-04-01T00:00:00+09:00',
+        eligibleCount: 2,
+        missingEndedAtCount: 1,
+      })
+    })
+  })
+
+  describe('scheduleAnnualArchiveCallable', () => {
+    it('rejects invalid scalar input (reason length, scheduledFor, idempotencyKey)', async () => {
+      // empty reason
+      await expect(scheduleAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025, scheduledFor: '2026-08-20T00:00:00Z', reason: '   ', idempotencyKey: 'k1' } })))
+        .rejects.toMatchObject({ code: 'invalid-argument' })
+      // reason too long
+      await expect(scheduleAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025, scheduledFor: '2026-08-20T00:00:00Z', reason: 'a'.repeat(501), idempotencyKey: 'k1' } })))
+        .rejects.toMatchObject({ code: 'invalid-argument' })
+      // invalid date
+      await expect(scheduleAnnualArchiveCallable.run(makeRequest({ data: { orgId: 'school-1', academicYear: 2025, scheduledFor: 'invalid-date', reason: 'アーカイブ', idempotencyKey: 'k1' } })))
+        .rejects.toMatchObject({ code: 'invalid-argument' })
+    })
+
+    it('creates a new SCHEDULED job atomically with audit log for owner', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+
+      const res = await scheduleAnnualArchiveCallable.run(makeRequest({
+        uid: 'owner-1',
+        data: {
+          orgId: 'school-1',
+          academicYear: 2025,
+          scheduledFor: '2026-08-20T00:00:00Z',
+          reason: '年度末処理',
+          idempotencyKey: 'sched-1',
+        },
+      })) as { job: { id: string; status: string; academicYear: number }; deduplicated: boolean }
+
+      expect(res.deduplicated).toBe(false)
+      expect(res.job.status).toBe('SCHEDULED')
+      expect(res.job.academicYear).toBe(2025)
+      expect(recordAuditLogInTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          orgId: 'school-1',
+          actorUid: 'owner-1',
+          action: 'SCHEDULE_ANNUAL_ARCHIVE',
+          result: 'SUCCESS',
+          reason: '年度末処理',
+        }),
+      )
+    })
+
+    it('returns deduplicated result on retry with same idempotencyKey, rejects payload mismatch', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+
+      const req1 = makeRequest({
+        uid: 'owner-1',
+        data: {
+          orgId: 'school-1',
+          academicYear: 2025,
+          scheduledFor: '2026-08-20T00:00:00Z',
+          reason: '年度末処理',
+          idempotencyKey: 'sched-idem',
+        },
+      })
+      const res1 = await scheduleAnnualArchiveCallable.run(req1) as { deduplicated: boolean; job: { id: string } }
+      expect(res1.deduplicated).toBe(false)
+
+      const res2 = await scheduleAnnualArchiveCallable.run(req1) as { deduplicated: boolean; job: { id: string } }
+      expect(res2.deduplicated).toBe(true)
+      expect(res2.job.id).toBe(res1.job.id)
+
+      // Payload mismatch
+      const reqMismatch = makeRequest({
+        uid: 'owner-1',
+        data: {
+          orgId: 'school-1',
+          academicYear: 2024,
+          scheduledFor: '2026-08-20T00:00:00Z',
+          reason: '違う年度',
+          idempotencyKey: 'sched-idem',
+        },
+      })
+      await expect(scheduleAnnualArchiveCallable.run(reqMismatch)).rejects.toMatchObject({ code: 'failed-precondition' })
+    })
+  })
+
+  describe('cancelAnnualArchiveCallable', () => {
+    it('sets status to CANCELLING atomically with audit log when job is SCHEDULED/RUNNING/FAILED', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'owner', membershipVersion: 1 })
+
+      const jobPath = 'organizations/school-1/annualArchiveJobs/job-1'
+      annualArchiveJobDocs.set(jobPath, {
+        id: 'job-1',
+        orgId: 'school-1',
+        academicYear: 2025,
+        status: 'SCHEDULED',
+        scheduledFor: '2026-08-20T00:00:00Z',
+        reason: '予約',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-15T00:00:00Z',
+        archivedCount: 0,
+        restoredCount: 0,
+      })
+
+      const res = await cancelAnnualArchiveCallable.run(makeRequest({
+        uid: 'owner-1',
+        data: {
+          orgId: 'school-1',
+          jobId: 'job-1',
+          reason: '間違いでした',
+          idempotencyKey: 'cancel-1',
+        },
+      })) as { job: { id: string; status: string }; deduplicated: boolean }
+
+      expect(res.deduplicated).toBe(false)
+      expect(res.job.status).toBe('CANCELLING')
+      expect(recordAuditLogInTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          orgId: 'school-1',
+          actorUid: 'owner-1',
+          action: 'CANCEL_ANNUAL_ARCHIVE',
+          result: 'SUCCESS',
+          reason: '間違いでした',
+        }),
+      )
+    })
+
+    it('rejects cancellation if job is already COMPLETED', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+
+      const jobPath = 'organizations/school-1/annualArchiveJobs/job-completed'
+      annualArchiveJobDocs.set(jobPath, {
+        id: 'job-completed',
+        orgId: 'school-1',
+        status: 'COMPLETED',
+        archivedCount: 5,
+      })
+
+      await expect(cancelAnnualArchiveCallable.run(makeRequest({
+        uid: 'owner-1',
+        data: {
+          orgId: 'school-1',
+          jobId: 'job-completed',
+          reason: '完了後の取消',
+          idempotencyKey: 'cancel-2',
+        },
+      }))).rejects.toMatchObject({ code: 'failed-precondition' })
+    })
+  })
+
+  describe('listAnnualArchiveJobsCallable', () => {
+    it('rejects non-owner callers', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+      await expect(listAnnualArchiveJobsCallable.run(makeRequest({ data: { orgId: 'school-1' } })))
+        .rejects.toMatchObject({ code: 'permission-denied' })
+    })
+
+    it('returns jobs list for owner', async () => {
+      vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      annualArchiveJobDocs.set('organizations/school-1/annualArchiveJobs/j1', {
+        id: 'j1',
+        orgId: 'school-1',
+        academicYear: 2025,
+        status: 'SCHEDULED',
+        createdAt: '2026-08-15T00:00:00Z',
+      })
+
+      const res = await listAnnualArchiveJobsCallable.run(makeRequest({ data: { orgId: 'school-1' } })) as { jobs: Array<{ id: string }> }
+      expect(res.jobs).toHaveLength(1)
+      expect(res.jobs[0].id).toBe('j1')
+    })
   })
 })
 

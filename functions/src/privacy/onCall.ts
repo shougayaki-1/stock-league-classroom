@@ -1,12 +1,14 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { getFirestore } from 'firebase-admin/firestore'
 import { personalOrgId } from '../lib/personalOrgId'
+import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
 import { searchOrgStudentDataWithAdminSdk, type OrgStudentSearchField } from './searchOrgStudentData'
-import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
+import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry, recordAuditLogInTransaction } from './auditLog'
+import { getAcademicYearBounds, type AnnualArchiveJob } from './annualArchive'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -439,6 +441,282 @@ export const searchOrgStudentDataCallable = onCall({ region: 'asia-northeast1' }
 
   return result
 })
+
+// ---------------------------------------------------------------------------
+// Annual Archive Callables
+// ---------------------------------------------------------------------------
+
+interface PreviewAnnualArchiveRequest {
+  orgId?: unknown
+  academicYear?: unknown
+}
+
+export const previewAnnualArchiveCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+
+  const data = request.data as PreviewAnnualArchiveRequest
+  if (typeof data?.orgId !== 'string' || !data.orgId || typeof data?.academicYear !== 'number' || !Number.isInteger(data.academicYear)) {
+    throw new HttpsError('invalid-argument', 'orgId、academicYear は必須です。')
+  }
+
+  const db = getFirestore()
+  const membership = await requireActiveOrgMember(db, data.orgId, request.auth.uid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ年度アーカイブを操作できます。')
+  }
+
+  const bounds = getAcademicYearBounds(data.academicYear)
+  const snap = await db.collection('lessonRuns')
+    .where('orgId', '==', data.orgId)
+    .where('status', 'in', ['COMPLETED', 'ABORTED'])
+    .get()
+
+  let eligibleCount = 0
+  let missingEndedAtCount = 0
+
+  for (const doc of snap.docs) {
+    const run = doc.data() as { endedAt?: string | null }
+    if (!run.endedAt) {
+      missingEndedAtCount++
+    } else {
+      const endedMs = new Date(run.endedAt).getTime()
+      if (!Number.isNaN(endedMs) && endedMs >= bounds.startMs && endedMs < bounds.endMs) {
+        eligibleCount++
+      }
+    }
+  }
+
+  return {
+    academicYear: data.academicYear,
+    periodStart: bounds.periodStart,
+    periodEnd: bounds.periodEnd,
+    eligibleCount,
+    missingEndedAtCount,
+  }
+})
+
+interface ScheduleAnnualArchiveRequest {
+  orgId?: unknown
+  academicYear?: unknown
+  scheduledFor?: unknown
+  reason?: unknown
+  idempotencyKey?: unknown
+}
+
+export const scheduleAnnualArchiveCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+
+  const data = request.data as ScheduleAnnualArchiveRequest
+  if (
+    typeof data?.orgId !== 'string' || !data.orgId ||
+    typeof data?.academicYear !== 'number' || !Number.isInteger(data.academicYear) ||
+    typeof data?.scheduledFor !== 'string' || Number.isNaN(Date.parse(data.scheduledFor)) ||
+    typeof data?.reason !== 'string' ||
+    typeof data?.idempotencyKey !== 'string' || !data.idempotencyKey
+  ) {
+    throw new HttpsError('invalid-argument', '不正なリクエストパラメータです。')
+  }
+
+  const reason = data.reason.trim()
+  if (reason.length < 1 || reason.length > 500) {
+    throw new HttpsError('invalid-argument', 'reason は1文字以上500文字以下で指定してください。')
+  }
+
+  const db = getFirestore()
+  const actorUid = request.auth.uid
+  const orgId = data.orgId
+  const academicYear = data.academicYear
+  const scheduledFor = new Date(data.scheduledFor).toISOString()
+  const idempotencyKey = data.idempotencyKey
+
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ年度アーカイブを予約できます。')
+  }
+
+  const bounds = getAcademicYearBounds(academicYear)
+  const reqDigest = computeRequestDigest({ academicYear, scheduledFor, reason })
+  const idempotencyDocPath = `organizations/${orgId}/annualArchiveJobIdempotency/${idempotencyDocumentId(orgId, idempotencyKey)}`
+
+  return await db.runTransaction(async (tx) => {
+    const existingIdemSnap = await tx.get(db.doc(idempotencyDocPath))
+    if (existingIdemSnap.exists) {
+      const prior = existingIdemSnap.data() as { requestDigest: string; jobId: string }
+      if (prior.requestDigest !== reqDigest) {
+        throw new HttpsError('failed-precondition', 'Idempotency key payload mismatch')
+      }
+      const existingJobSnap = await tx.get(db.doc(`organizations/${orgId}/annualArchiveJobs/${prior.jobId}`))
+      if (!existingJobSnap.exists) {
+        throw new HttpsError('not-found', 'Referenced job not found')
+      }
+      return { job: existingJobSnap.data() as AnnualArchiveJob, deduplicated: true }
+    }
+
+    const jobDocRef = db.collection(`organizations/${orgId}/annualArchiveJobs`).doc()
+    const nowIso = new Date().toISOString()
+    const job: AnnualArchiveJob = {
+      id: jobDocRef.id,
+      orgId,
+      academicYear,
+      periodStart: bounds.periodStart,
+      periodEnd: bounds.periodEnd,
+      status: 'SCHEDULED',
+      scheduledFor,
+      reason,
+      requestedByUid: actorUid,
+      createdAt: nowIso,
+      archivedCount: 0,
+      restoredCount: 0,
+    }
+
+    tx.set(jobDocRef, job as unknown as Record<string, unknown>)
+    tx.set(db.doc(idempotencyDocPath), {
+      requestDigest: reqDigest,
+      jobId: jobDocRef.id,
+      createdAt: nowIso,
+    })
+
+    recordAuditLogInTransaction(tx, db, {
+      orgId,
+      actorUid,
+      action: 'SCHEDULE_ANNUAL_ARCHIVE',
+      result: 'SUCCESS',
+      reason,
+      after: {
+        jobId: jobDocRef.id,
+        academicYear,
+        scheduledFor,
+      },
+    })
+
+    return { job, deduplicated: false }
+  })
+})
+
+interface CancelAnnualArchiveRequest {
+  orgId?: unknown
+  jobId?: unknown
+  reason?: unknown
+  idempotencyKey?: unknown
+}
+
+export const cancelAnnualArchiveCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+
+  const data = request.data as CancelAnnualArchiveRequest
+  if (
+    typeof data?.orgId !== 'string' || !data.orgId ||
+    typeof data?.jobId !== 'string' || !data.jobId ||
+    typeof data?.reason !== 'string' ||
+    typeof data?.idempotencyKey !== 'string' || !data.idempotencyKey
+  ) {
+    throw new HttpsError('invalid-argument', '不正なリクエストパラメータです。')
+  }
+
+  const reason = data.reason.trim()
+  if (reason.length < 1 || reason.length > 500) {
+    throw new HttpsError('invalid-argument', 'reason は1文字以上500文字以下で指定してください。')
+  }
+
+  const db = getFirestore()
+  const actorUid = request.auth.uid
+  const orgId = data.orgId
+  const jobId = data.jobId
+  const idempotencyKey = data.idempotencyKey
+
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ年度アーカイブを取り消せます。')
+  }
+
+  const reqDigest = computeRequestDigest({ jobId, reason })
+  const idempotencyDocPath = `organizations/${orgId}/annualArchiveCancelIdempotency/${idempotencyDocumentId(orgId, idempotencyKey)}`
+
+  return await db.runTransaction(async (tx) => {
+    const existingIdemSnap = await tx.get(db.doc(idempotencyDocPath))
+    if (existingIdemSnap.exists) {
+      const prior = existingIdemSnap.data() as { requestDigest: string; jobId: string }
+      if (prior.requestDigest !== reqDigest) {
+        throw new HttpsError('failed-precondition', 'Idempotency key payload mismatch')
+      }
+      const existingJobSnap = await tx.get(db.doc(`organizations/${orgId}/annualArchiveJobs/${jobId}`))
+      if (!existingJobSnap.exists) {
+        throw new HttpsError('not-found', 'Referenced job not found')
+      }
+      return { job: existingJobSnap.data() as AnnualArchiveJob, deduplicated: true }
+    }
+
+    const jobDocRef = db.doc(`organizations/${orgId}/annualArchiveJobs/${jobId}`)
+    const jobSnap = await tx.get(jobDocRef)
+    if (!jobSnap.exists) {
+      throw new HttpsError('not-found', '指定されたジョブが見つかりません。')
+    }
+
+    const jobData = jobSnap.data() as AnnualArchiveJob
+    if (jobData.status === 'COMPLETED') {
+      throw new HttpsError('failed-precondition', '完了済みのジョブは取り消せません。')
+    }
+
+    const nowIso = new Date().toISOString()
+    const updatedJob: AnnualArchiveJob = {
+      ...jobData,
+      status: 'CANCELLING',
+      cancelRequestedAt: nowIso,
+    }
+
+    tx.set(jobDocRef, updatedJob as unknown as Record<string, unknown>)
+    tx.set(db.doc(idempotencyDocPath), {
+      requestDigest: reqDigest,
+      jobId,
+      createdAt: nowIso,
+    })
+
+    recordAuditLogInTransaction(tx, db, {
+      orgId,
+      actorUid,
+      action: 'CANCEL_ANNUAL_ARCHIVE',
+      result: 'SUCCESS',
+      reason,
+      after: {
+        jobId,
+        status: 'CANCELLING',
+      },
+    })
+
+    return { job: updatedJob, deduplicated: false }
+  })
+})
+
+interface ListAnnualArchiveJobsRequest {
+  orgId?: unknown
+}
+
+export const listAnnualArchiveJobsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+
+  const data = request.data as ListAnnualArchiveJobsRequest
+  if (typeof data?.orgId !== 'string' || !data.orgId) {
+    throw new HttpsError('invalid-argument', 'orgId は必須です。')
+  }
+
+  const db = getFirestore()
+  const membership = await requireActiveOrgMember(db, data.orgId, request.auth.uid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ年度アーカイブジョブを一覧できます。')
+  }
+
+  const snap = await db.collection(`organizations/${data.orgId}/annualArchiveJobs`)
+    .orderBy('createdAt', 'desc')
+    .get()
+
+  const jobs = snap.docs.map((doc) => doc.data() as AnnualArchiveJob)
+  return { jobs }
+})
+
 
 
 

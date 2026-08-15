@@ -95,14 +95,19 @@ export { batchTaskQueue } from './market/taskHandler'
 export { resumeTaskQueue } from './market/resumeMarket'
 export { chainWatchdogScheduled } from './market/chainWatchdog'
 export {
+  cancelAnnualArchiveCallable,
   exportOrgStudentDataCallable,
   exportPersonalDataCallable,
+  listAnnualArchiveJobsCallable,
   listOrgAuditLogCallable,
+  previewAnnualArchiveCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
   purgeSchoolOrgCallable,
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
+  scheduleAnnualArchiveCallable,
   searchOrgStudentDataCallable,
 } from './privacy/onCall'
 export { purgeExpiredSoftDeletesScheduled } from './privacy/purgeExpiredSoftDeletes'
+
