@@ -343,6 +343,16 @@ export const purgeSchoolOrgCallable = onCall({ region: 'asia-northeast1' }, asyn
   const orgId = data.orgId
   const actorUid = request.auth.uid
 
+  // Authorization MUST run before any of the type/hierarchy checks below —
+  // those checks read fields off the org document (type, parentOrgId,
+  // whether it has child schools) and their distinct error codes would
+  // otherwise let a non-member probe an arbitrary orgId's existence and
+  // shape before ever being told they lack access to it.
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ組織全体を削除できます。')
+  }
+
   const orgSnap = await db.doc(`organizations/${orgId}`).get()
   if (!orgSnap.exists || orgSnap.get('type') !== 'school') {
     throw new HttpsError('invalid-argument', '学校組織のみ削除できます(個人組織は purgePersonalOrganizationCallable を使用してください)。')
@@ -353,11 +363,6 @@ export const purgeSchoolOrgCallable = onCall({ region: 'asia-northeast1' }, asyn
   const allocationsSnap = await db.collection(`organizations/${orgId}/schoolAllocations`).limit(1).get()
   if (!allocationsSnap.empty) {
     throw new HttpsError('failed-precondition', 'この組織は配下に学校を持つため削除できません。先にすべての学校の連携を解除してください。')
-  }
-
-  const membership = await requireActiveOrgMember(db, orgId, actorUid)
-  if (membership.role !== 'owner') {
-    throw new HttpsError('permission-denied', '組織のownerのみ組織全体を削除できます。')
   }
 
   try {

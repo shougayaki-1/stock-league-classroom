@@ -612,20 +612,22 @@ describe('purgeSchoolOrgCallable', () => {
       .rejects.toMatchObject({ code: 'failed-precondition' })
   })
 
+  it('rejects a non-owner before ever reading the org document (no type/hierarchy info leaks to a non-member)', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(orgDocGetMock).not.toHaveBeenCalled()
+  })
+
   it('rejects a personal org', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
     orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'personal' : undefined) })
     await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'invalid-argument' })
   })
 
   it('rejects an org still linked to a parent org', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
     orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'school' : field === 'parentOrgId' ? 'parent-1' : undefined) })
     await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
-  })
-
-  it('rejects a non-owner', async () => {
-    orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'school' : undefined) })
-    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
-    await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'permission-denied' })
   })
 
   it('purges the org and records a SUCCESS deletion audit log entry for a valid owner request', async () => {
