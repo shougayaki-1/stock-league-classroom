@@ -40,6 +40,7 @@ import { SchoolOrgSettingsPage } from './components/teacher/organizations/School
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
 import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
 import { exportOrgStudentData, downloadAsJsonFile } from './lib/privacy/orgStudentDataExport'
+import { searchOrgStudentData, type OrgStudentDataSearchResult, type OrgStudentSearchField } from './lib/privacy/orgStudentDataSearch'
 import { listOrgAuditLog, type OrgAuditLogEntry } from './lib/privacy/orgAuditLog'
 import { purgeSchoolOrg } from './lib/privacy/purgeSchoolOrg'
 import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
@@ -476,6 +477,10 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const [parentOrgId, setParentOrgId] = useState<string | null>(null)
   const [studentDataRetentionDays, setStudentDataRetentionDaysState] = useState<number | null>(null)
   const [settingRetentionPolicy, setSettingRetentionPolicy] = useState(false)
+  const [searchingStudentData, setSearchingStudentData] = useState(false)
+  const [studentDataSearchResult, setStudentDataSearchResult] = useState<OrgStudentDataSearchResult | undefined>(undefined)
+  const [purgingOrg, setPurgingOrg] = useState(false)
+  const navigate = useNavigate()
   const uid = services.auth.currentUser?.uid
 
   const loadMembers = useCallback(() => {
@@ -531,6 +536,19 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setLoadingAuditLog(false))
   }, [services, orgId])
 
+  useEffect(() => {
+    setStudentDataSearchResult(undefined)
+  }, [orgId])
+
+  useEffect(() => {
+    if (!studentDataSearchResult) return
+    const timeoutMs = Math.max(0, new Date(studentDataSearchResult.expiresAt).getTime() - Date.now())
+    const timer = setTimeout(() => {
+      setStudentDataSearchResult(undefined)
+    }, timeoutMs)
+    return () => clearTimeout(timer)
+  }, [studentDataSearchResult])
+
   if (!orgId || !uid) return <GuardLoading />
   const viewerMembership = members.find((member) => member.uid === uid)
   const canManageMembers = viewerMembership?.role === 'owner' || viewerMembership?.role === 'admin'
@@ -542,6 +560,19 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setExportingStudentData(false))
   }
 
+  const onSearchStudentData = (input: { field: OrgStudentSearchField; query: string; reason: string }) => {
+    setSearchingStudentData(true)
+    setStudentDataSearchResult(undefined)
+    void searchOrgStudentData(services.functions, { orgId, ...input })
+      .then((result) => setStudentDataSearchResult(result))
+      .catch(() => setStudentDataSearchResult(undefined))
+      .finally(() => setSearchingStudentData(false))
+  }
+
+  const onClearStudentDataSearch = () => {
+    setStudentDataSearchResult(undefined)
+  }
+
   const onSetStudentDataRetentionDays = (days: number) => {
     if (!orgId) return
     setSettingRetentionPolicy(true)
@@ -549,9 +580,6 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .then(() => setStudentDataRetentionDaysState(days))
       .finally(() => setSettingRetentionPolicy(false))
   }
-
-  const [purgingOrg, setPurgingOrg] = useState(false)
-  const navigate = useNavigate()
 
   const onPurgeOrg = () => {
     if (!orgId) return
@@ -578,6 +606,10 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       onSetStudentDataRetentionDays={onSetStudentDataRetentionDays}
       purgingOrg={purgingOrg}
       onPurgeOrg={onPurgeOrg}
+      onSearchStudentData={onSearchStudentData}
+      searchingStudentData={searchingStudentData}
+      studentDataSearchResult={studentDataSearchResult}
+      onClearStudentDataSearch={onClearStudentDataSearch}
       onSuspendMember={(targetUid) => {
         setSuspending(true)
         void suspendOrgMember(services.functions, { orgId, uid: targetUid })

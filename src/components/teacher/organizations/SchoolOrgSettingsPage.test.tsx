@@ -308,5 +308,236 @@ describe('parent organization display', () => {
   })
 })
 
+describe('student data search', () => {
+  const adminMembers = [
+    { uid: 'uid-admin', email: 'admin@example.com', role: 'admin' as const, status: 'active' as const, membershipVersion: 1 },
+    { uid: 'uid-teacher', email: 'teacher@example.com', role: 'teacher' as const, status: 'active' as const, membershipVersion: 1 },
+  ]
+
+  it('shows the student data search section to an owner', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('生徒データ検索')).toBeInTheDocument()
+  })
+
+  it('shows the student data search section to an admin', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-admin"
+          members={adminMembers}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('生徒データ検索')).toBeInTheDocument()
+  })
+
+  it('hides the student data search section from a teacher', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-teacher"
+          members={members}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('生徒データ検索')).not.toBeInTheDocument()
+  })
+
+  it('disables search button when query or reason is empty, and enables when both are filled', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+        />
+      </MemoryRouter>,
+    )
+    const searchButton = screen.getByRole('button', { name: '検索' })
+    expect(searchButton).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/検索値/), { target: { value: '山田 太郎' } })
+    expect(searchButton).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/閲覧理由/), { target: { value: '学籍照会' } })
+    expect(searchButton).toBeEnabled()
+  })
+
+  it('provides search field selection for displayName and externalIdentifier and indicates exact match', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/完全一致/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/検索項目/)).toBeInTheDocument()
+  })
+
+  it('calls onSearchStudentData with field, query, and reason on submit', () => {
+    const onSearchStudentData = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          onSearchStudentData={onSearchStudentData}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.change(screen.getByLabelText(/検索項目/), { target: { value: 'externalIdentifier' } })
+    fireEvent.change(screen.getByLabelText(/検索値/), { target: { value: 'STU-001' } })
+    fireEvent.change(screen.getByLabelText(/閲覧理由/), { target: { value: '学籍照会のため' } })
+    fireEvent.click(screen.getByRole('button', { name: '検索' }))
+
+    expect(onSearchStudentData).toHaveBeenCalledWith({
+      field: 'externalIdentifier',
+      query: 'STU-001',
+      reason: '学籍照会のため',
+    })
+  })
+
+  it('disables search button while searchingStudentData is true', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          searchingStudentData
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.change(screen.getByLabelText(/検索値/), { target: { value: '山田 太郎' } })
+    fireEvent.change(screen.getByLabelText(/閲覧理由/), { target: { value: '学籍照会' } })
+    expect(screen.getByRole('button', { name: '検索中…' })).toBeDisabled()
+  })
+
+  it('displays search results, 10-minute notice, and calls onClearStudentDataSearch on close', () => {
+    const onClearStudentDataSearch = vi.fn()
+    const result = {
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [
+        {
+          lessonRunId: 'run-alpha',
+          participantId: 'p-1',
+          displayName: '山田 太郎',
+          externalIdentifier: 'ID-001',
+          status: 'ACTIVE',
+        },
+      ],
+    }
+
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          studentDataSearchResult={result}
+          onClearStudentDataSearch={onClearStudentDataSearch}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/この個票は10分後に自動的に閉じられます/)).toBeInTheDocument()
+    expect(screen.getByText('山田 太郎')).toBeInTheDocument()
+    expect(screen.getByText(/ID-001/)).toBeInTheDocument()
+    expect(screen.getByText(/run-alpha/)).toBeInTheDocument()
+    expect(screen.getByText(/ACTIVE/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }))
+    expect(onClearStudentDataSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('displays truncation notice when truncated is true', () => {
+    const result = {
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: true,
+      matches: [
+        {
+          lessonRunId: 'run-1',
+          participantId: 'p-1',
+          displayName: '同姓同名',
+        },
+      ],
+    }
+
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          studentDataSearchResult={result}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/先頭50件/)).toBeInTheDocument()
+  })
+})
+
+
 
 

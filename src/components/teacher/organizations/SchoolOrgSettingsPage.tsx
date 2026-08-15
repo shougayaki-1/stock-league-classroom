@@ -4,6 +4,10 @@ import { Button, List, ListItem, ListItemText, MenuItem, Stack, TextField, Typog
 import type { Invitation } from '../../../lib/organizations/invitations'
 import type { OrgMember } from '../../../lib/organizations/orgMembers'
 import type { OrgAuditLogEntry } from '../../../lib/privacy/orgAuditLog'
+import type {
+  OrgStudentDataSearchResult,
+  OrgStudentSearchField,
+} from '../../../lib/privacy/orgStudentDataSearch'
 
 const STATUS_LABEL: Record<Invitation['status'], string> = { PENDING: '招待中', ACCEPTED: '参加済み', REVOKED: '失効済み' }
 const ROLE_LABEL: Record<OrgMember['role'], string> = { owner: 'owner', admin: '管理者', teacher: '教師' }
@@ -33,6 +37,10 @@ export interface SchoolOrgSettingsPageProps {
   onSetStudentDataRetentionDays?: (days: number) => void
   purgingOrg?: boolean
   onPurgeOrg?: () => void
+  onSearchStudentData?: (input: { field: OrgStudentSearchField; query: string; reason: string }) => void
+  searchingStudentData?: boolean
+  studentDataSearchResult?: OrgStudentDataSearchResult
+  onClearStudentDataSearch?: () => void
 }
 
 function ConfirmDeleteOrgForm({ orgId, purging, onConfirm }: { orgId: string; purging: boolean; onConfirm?: () => void }) {
@@ -50,10 +58,121 @@ function ConfirmDeleteOrgForm({ orgId, purging, onConfirm }: { orgId: string; pu
   )
 }
 
+function StudentDataSearchSection({
+  onSearch,
+  searching,
+  result,
+  onClear,
+}: {
+  onSearch?: (input: { field: OrgStudentSearchField; query: string; reason: string }) => void
+  searching?: boolean
+  result?: OrgStudentDataSearchResult
+  onClear?: () => void
+}) {
+  const [field, setField] = useState<OrgStudentSearchField>('displayName')
+  const [query, setQuery] = useState('')
+  const [reason, setReason] = useState('')
+
+  const canSubmit = !searching && query.trim().length > 0 && reason.trim().length > 0
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!canSubmit || !onSearch) return
+    onSearch({ field, query: query.trim(), reason: reason.trim() })
+  }
+
+  return (
+    <section>
+      <Typography variant="h6" component="h3">生徒データ検索</Typography>
+      <Typography variant="body2" color="text.secondary">
+        生徒名または外部識別子（完全一致）で授業内の生徒参加者データを検索します。
+      </Typography>
+      <form onSubmit={handleSubmit}>
+        <Stack spacing={2} sx={{ mt: 1, maxWidth: 500 }}>
+          <TextField
+            select
+            slotProps={{ select: { native: true } }}
+            label="検索項目"
+            value={field}
+            onChange={(e) => setField(e.target.value as OrgStudentSearchField)}
+            size="small"
+          >
+            <option value="displayName">生徒名</option>
+            <option value="externalIdentifier">外部識別子</option>
+          </TextField>
+          <TextField
+            label="検索値"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            size="small"
+            placeholder={field === 'displayName' ? '生徒名（完全一致）' : '外部識別子（完全一致）'}
+            disabled={searching}
+          />
+          <TextField
+            label="閲覧理由"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            size="small"
+            placeholder="閲覧理由を入力してください（必須）"
+            multiline
+            rows={2}
+            disabled={searching}
+          />
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={!canSubmit}
+            sx={{ alignSelf: 'flex-start' }}
+          >
+            {searching ? '検索中…' : '検索'}
+          </Button>
+        </Stack>
+      </form>
+
+      {result && (
+        <Stack spacing={1} sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            この個票は10分後に自動的に閉じられます。
+          </Typography>
+          {result.truncated && (
+            <Typography variant="body2" color="warning.main">
+              検索結果が50件を超えているため、先頭50件のみ表示しています。
+            </Typography>
+          )}
+          {result.matches.length === 0 ? (
+            <Typography variant="body2">該当する生徒データは見つかりませんでした。</Typography>
+          ) : (
+            <List>
+              {result.matches.map((m) => (
+                <ListItem key={`${m.lessonRunId}-${m.participantId}`}>
+                  <ListItemText
+                    primary={m.displayName ?? '(名前なし)'}
+                    secondary={
+                      <span>
+                        授業ID: {m.lessonRunId}
+                        {m.externalIdentifier ? ` / 識別子: ${m.externalIdentifier}` : ''}
+                        {m.status ? ` / 状態: ${m.status}` : ''}
+                      </span>
+                    }
+                  />
+                </ListItem>
+              ))}
+            </List>
+          )}
+          <Button variant="outlined" size="small" onClick={onClear} sx={{ alignSelf: 'flex-start' }}>
+            閉じる
+          </Button>
+        </Stack>
+      )}
+    </section>
+  )
+}
+
 export function SchoolOrgSettingsPage({
   orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData, auditLogEntries, loadingAuditLog,
   studentDataRetentionDays = null, settingRetentionPolicy = false, onSetStudentDataRetentionDays,
   purgingOrg = false, onPurgeOrg,
+  onSearchStudentData, searchingStudentData = false, studentDataSearchResult, onClearStudentDataSearch,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -71,6 +190,14 @@ export function SchoolOrgSettingsPage({
       <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
       {(viewerRole === 'owner' || viewerRole === 'admin') && <Link to={`/teacher/organizations/${orgId}/template-approvals`}>承認待ちテンプレートを確認</Link>}
       {viewerRole === 'owner' && <Button variant="outlined" disabled={exportingStudentData} onClick={onExportStudentData}>生徒データを一括エクスポート</Button>}
+      {(viewerRole === 'owner' || viewerRole === 'admin') && (
+        <StudentDataSearchSection
+          onSearch={onSearchStudentData}
+          searching={searchingStudentData}
+          result={studentDataSearchResult}
+          onClear={onClearStudentDataSearch}
+        />
+      )}
       {isOwner && (
         <section>
           <h3>生徒データの保持期間</h3>
