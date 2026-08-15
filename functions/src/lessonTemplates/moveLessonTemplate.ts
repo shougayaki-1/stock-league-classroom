@@ -515,13 +515,14 @@ export const runLessonTemplateMoveOperation = async (
 
           // Verify target exists before removing source and staging
           const targetConfirmed = await deps.storage.exists(targetRawPath)
-          if (targetConfirmed) {
-            if (await deps.storage.exists(sourceRawPath)) {
-              await deps.storage.delete(sourceRawPath)
-            }
-            if (await deps.storage.exists(stagingPath)) {
-              await deps.storage.delete(stagingPath)
-            }
+          if (!targetConfirmed) {
+            throw new Error(`Material object missing at source, staging, and target during finalization: ${matData.storagePath}`)
+          }
+          if (await deps.storage.exists(sourceRawPath)) {
+            await deps.storage.delete(sourceRawPath)
+          }
+          if (await deps.storage.exists(stagingPath)) {
+            await deps.storage.delete(stagingPath)
           }
         }
 

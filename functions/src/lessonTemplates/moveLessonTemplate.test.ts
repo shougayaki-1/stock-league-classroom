@@ -477,4 +477,40 @@ describe('runLessonTemplateMoveOperation', () => {
     const op = db.store.get(`lessonTemplateMoveOperations/${opResult.operation.id}`)!
     expect(op.lastError).toContain('unexpected third organization')
   })
+
+  it('fails finalization instead of rewriting storagePath when the raw object is missing at source, staging, and target', async () => {
+    const rawPath = 'orgs/org-source/materials/tpl-1/s-1/guide.pdf'
+    // storage has no objects at all: the material doc claims a storagePath, but the
+    // underlying file was already lost (e.g. deleted out-of-band before the move ran).
+    const storage = createFakeStorage([])
+    const db = createFakeDb({
+      'lessonTemplates/tpl-1': { orgId: 'org-source', createdByUid: 'creator-uid' },
+      'lessonTemplates/tpl-1/versions/v1': { orgId: 'org-source' },
+      'lessonTemplates/tpl-1/materials/mat-1': { fileName: 'guide.pdf', storagePath: rawPath },
+    })
+
+    const opResult = await createLessonTemplateMoveOperation({ db: db as any }, {
+      templateId: 'tpl-1',
+      sourceOrgId: 'org-source',
+      targetOrgId: 'org-target',
+      requestedByUid: 'owner-uid',
+      reason: '欠損オブジェクトのテスト',
+      idempotencyKey: 'key-missing-object',
+    })
+
+    const deps: LessonTemplateMoveDeps = {
+      db: db as any,
+      storage: storage as any,
+      now: () => '2026-08-15T12:00:00.000Z',
+    }
+
+    const res = await runLessonTemplateMoveOperation(deps, opResult.operation.id)
+    expect(res.status).toBe('FAILED')
+    const op = db.store.get(`lessonTemplateMoveOperations/${opResult.operation.id}`)!
+    expect(op.lastError).toContain('missing at source, staging, and target')
+
+    // The Firestore pointer must NOT be silently rewritten to a target path that has no backing object.
+    const mat = db.store.get('lessonTemplates/tpl-1/materials/mat-1')!
+    expect(mat.storagePath).toBe(rawPath)
+  })
 })
