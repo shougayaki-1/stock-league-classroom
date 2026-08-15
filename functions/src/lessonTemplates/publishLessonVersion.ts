@@ -82,9 +82,13 @@ export const publishLessonVersion = (deps: PublishLessonVersionDeps, input: Publ
       immutable: true,
     })
     const publishedDraft = templateSnap.data.draft as { title: string; description: string; subject: string }
+    const currentVisibility = templateSnap.data.visibility as string | undefined
+    const shouldResetVisibility = currentVisibility === 'VERIFIED' || currentVisibility === 'OFFICIAL'
+
     tx.set(templatePath, {
       currentPublishedVersionId: versionId, status: 'READY', approvalStatus: 'PENDING', updatedAt: now,
       title: publishedDraft.title, description: publishedDraft.description, subject: publishedDraft.subject,
+      ...(shouldResetVisibility ? { visibility: 'COMMUNITY' } : {}),
     }, { merge: true })
     tx.set(idempotencyPath, { requestDigest, versionId, createdAt: now })
 

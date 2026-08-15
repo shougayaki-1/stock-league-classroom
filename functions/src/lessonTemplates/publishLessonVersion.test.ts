@@ -110,7 +110,7 @@ describe('publishLessonVersion', () => {
   })
 })
 
-describe('publishLessonVersion approvalStatus', () => {
+describe('publishLessonVersion approvalStatus and certification reset', () => {
   it('resets an already-APPROVED template back to PENDING when republished', async () => {
     const fake = makeFakeFirestore([{
       path: 'lessonTemplates/t1',
@@ -120,5 +120,64 @@ describe('publishLessonVersion approvalStatus', () => {
       templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: 'key-2',
     })
     expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({ approvalStatus: 'PENDING' })
+  })
+
+  it('resets VERIFIED template visibility to COMMUNITY on new version publish and preserves certification history', async () => {
+    const certPath = 'templateVersionCertifications/t1__version-0'
+    const fake = makeFakeFirestore([
+      {
+        path: 'lessonTemplates/t1',
+        data: { ...baseTemplate, currentPublishedVersionId: 'version-0', status: 'READY', visibility: 'VERIFIED' },
+      },
+      {
+        path: certPath,
+        data: { templateId: 't1', versionId: 'version-0', level: 'VERIFIED' },
+      },
+    ])
+    const result = await publishLessonVersion(makeDeps(fake, ['version-1']), {
+      templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: 'key-2',
+    })
+    expect(result.versionId).toBe('version-1')
+    expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({
+      visibility: 'COMMUNITY',
+      currentPublishedVersionId: 'version-1',
+    })
+    // Certification doc for old version is preserved
+    expect(fake.docs.get(certPath)).toEqual({
+      templateId: 't1',
+      versionId: 'version-0',
+      level: 'VERIFIED',
+    })
+  })
+
+  it('resets OFFICIAL template visibility to COMMUNITY on new version publish', async () => {
+    const fake = makeFakeFirestore([
+      {
+        path: 'lessonTemplates/t1',
+        data: { ...baseTemplate, currentPublishedVersionId: 'version-0', status: 'READY', visibility: 'OFFICIAL' },
+      },
+    ])
+    await publishLessonVersion(makeDeps(fake, ['version-1']), {
+      templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: 'key-2',
+    })
+    expect(fake.docs.get('lessonTemplates/t1')).toMatchObject({
+      visibility: 'COMMUNITY',
+      currentPublishedVersionId: 'version-1',
+    })
+  })
+
+  it('preserves existing visibility for PRIVATE, LINK, ORGANIZATION, and COMMUNITY templates', async () => {
+    for (const vis of ['PRIVATE', 'LINK', 'ORGANIZATION', 'COMMUNITY']) {
+      const fake = makeFakeFirestore([
+        {
+          path: 'lessonTemplates/t1',
+          data: { ...baseTemplate, currentPublishedVersionId: 'version-0', status: 'READY', visibility: vis },
+        },
+      ])
+      await publishLessonVersion(makeDeps(fake, ['version-1']), {
+        templateId: 't1', orgId: 'personal_teacher-a', uid: 'teacher-a', changeSummary: '改訂', idempotencyKey: `key-${vis}`,
+      })
+      expect(fake.docs.get('lessonTemplates/t1')?.visibility).toBe(vis)
+    }
   })
 })
