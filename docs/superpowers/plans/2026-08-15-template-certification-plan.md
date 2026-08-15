@@ -40,7 +40,7 @@
 - Modify: `src/lib/lessonTemplates/templateDerivatives.ts`
 - Modify: `src/lib/lessonTemplates/templateDerivatives.test.ts`
 - Modify: `firestore.rules`
-- Modify: existing Firestore rules test file covering `lessonTemplates` public reads.
+- Modify: `firestore.rules.test.ts`
 
 **Interfaces:**
 
@@ -88,7 +88,7 @@ npm run typecheck
 - [ ] **Step 11: commit。**
 
 ```bash
-git add functions/src/lessonTemplates/marketplaceVisibility.ts functions/src/lessonTemplates/marketplaceVisibility.test.ts src/lib/lessonTemplates/marketplaceVisibility.ts src/lib/lessonTemplates/marketplaceVisibility.test.ts src/lib/lessonTemplates/types.ts src/lib/lessonTemplates/communityTemplates.ts src/lib/lessonTemplates/communityTemplates.test.ts src/lib/lessonTemplates/templateDerivatives.ts src/lib/lessonTemplates/templateDerivatives.test.ts firestore.rules
+git add functions/src/lessonTemplates/marketplaceVisibility.ts functions/src/lessonTemplates/marketplaceVisibility.test.ts src/lib/lessonTemplates/marketplaceVisibility.ts src/lib/lessonTemplates/marketplaceVisibility.test.ts src/lib/lessonTemplates/types.ts src/lib/lessonTemplates/communityTemplates.ts src/lib/lessonTemplates/communityTemplates.test.ts src/lib/lessonTemplates/templateDerivatives.ts src/lib/lessonTemplates/templateDerivatives.test.ts firestore.rules firestore.rules.test.ts
 git commit -m "feat: add certified marketplace visibility levels"
 ```
 
@@ -171,7 +171,7 @@ git commit -m "feat: add template certification core"
 - Modify: `functions/src/lessonTemplates/onCall.test.ts`
 - Modify: `functions/src/index.ts`
 - Modify: `firestore.rules`
-- Modify: existing Firestore rules test file.
+- Modify: `firestore.rules.test.ts`
 
 **Interfaces:**
 
@@ -210,7 +210,7 @@ npm test --workspace=functions -- src/lessonTemplates/onCall.test.ts src/lessonT
 - [ ] **Step 8: Callable validation/auth を実装する。** order は auth→operator→scalar validation→template→version→OFFICIAL creator auth→core。
 - [ ] **Step 9: `functions/src/index.ts` から2 Callables を export する。**
 - [ ] **Step 10: Firestore Rules で `templateVersionCertifications` / `templateCertificationEvents` / `templateCertificationIdempotency` direct read/write を false にする。**
-- [ ] **Step 11: rules tests を追加して一般教師/operator client SDK の直接 write が両方拒否されることを固定する。** Admin SDK Callable のみが writer。
+- [ ] **Step 11: `firestore.rules.test.ts` に一般教師/operator client SDK の直接 write が両方拒否されるテストを追加する。** Admin SDK Callable のみが writer。
 - [ ] **Step 12: targeted tests/rules/typecheck を PASS させる。**
 
 ```bash
@@ -222,7 +222,7 @@ npm run typecheck --workspace=functions
 - [ ] **Step 13: commit。**
 
 ```bash
-git add functions/src/lessonTemplates/onCall.ts functions/src/lessonTemplates/onCall.test.ts functions/src/index.ts firestore.rules
+git add functions/src/lessonTemplates/onCall.ts functions/src/lessonTemplates/onCall.test.ts functions/src/index.ts firestore.rules firestore.rules.test.ts
 git commit -m "feat: expose operator template certification"
 ```
 
@@ -271,7 +271,6 @@ git commit -m "fix: reset certification on new lesson version"
 **Files:**
 - Modify: `functions/src/lessonTemplates/onCall.ts`
 - Modify: `functions/src/lessonTemplates/onCall.test.ts`
-- Modify: `functions/src/lessonTemplates/templateShares.ts` only if its current-public validation is centralized there after the Phase 5 move implementation; otherwise no change.
 
 **Interfaces:**
 - Consumes: Task 1 `isMarketplaceVisibility()`.
@@ -281,7 +280,7 @@ git commit -m "fix: reset certification on new lesson version"
 - [ ] **Step 2: report failing tests。** VERIFIED/OFFICIAL を通報可能、PRIVATE は引き続き `not-found`。
 - [ ] **Step 3: operator report `UNPUBLISH` failing test。** VERIFIED/OFFICIAL から PRIVATE になる。
 - [ ] **Step 4: creator unpublish failing test。** VERIFIED/OFFICIAL も PRIVATE へ戻せる。
-- [ ] **Step 5: `publishTemplateToCommunityCallable` が既に VERIFIED/OFFICIAL の教材を暗黙に COMMUNITY へ downgrade しない test を追加する。**同状態は `failed-precondition` または明示 no-op とし、実装時に1つへ固定する。推奨は `failed-precondition`。
+- [ ] **Step 5: `publishTemplateToCommunityCallable` が既に VERIFIED/OFFICIAL の教材を暗黙に COMMUNITY へ downgrade しない failing test を追加する。** VERIFIED/OFFICIAL では必ず `failed-precondition` とし、downgrade は certification Callable または explicit unpublish 経由に限定する。
 - [ ] **Step 6: failing tests を確認する。**
 
 ```bash
@@ -413,8 +412,9 @@ git commit -m "feat: show certified marketplace badges"
 ### Task 8: Security regression・backlog・full verification
 
 **Files:**
+- Modify: `firestore.rules.test.ts`
 - Modify: `docs/superpowers/scope-backlog.md`
-- Test: existing `functions/src/lessonTemplates/*.test.ts`, marketplace UI tests, Firestore Rules emulator tests.
+- Test: `functions/src/lessonTemplates/*.test.ts`, marketplace UI tests, Firestore Rules emulator tests.
 
 **Interfaces:**
 - Consumes: Tasks 1–7.
