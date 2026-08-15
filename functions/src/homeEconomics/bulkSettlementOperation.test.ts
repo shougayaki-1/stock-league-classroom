@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   acquireBulkSettlementLease,
+  BulkSettlementOperationNotCancellableError,
   cancelBulkSettlementOperation,
   cancelInactiveUnresolvedBulkSettlementOperation,
   createOrReplayBulkSettlementOperation,
@@ -519,6 +520,63 @@ describe('bulkSettlementOperation', () => {
       expect(fake.docs.has(controlPath)).toBe(false)
     })
 
+    it('throws BulkSettlementOperationNotCancellableError instead of overwriting an already-COMPLETED operation', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'COMPLETED', leaseExpiresAtServerMillis: null } as unknown as Record<string, unknown>,
+      )
+
+      await expect(
+        cancelBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, nowMillis: 2000 }),
+      ).rejects.toBeInstanceOf(BulkSettlementOperationNotCancellableError)
+
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('COMPLETED') // untouched
+    })
+
+    it('throws BulkSettlementOperationNotCancellableError instead of force-cancelling a RUNNING op with an active lease held by a different actor', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'RUNNING', actorUid: 'teacher-2', leaseExpiresAtServerMillis: 9000 } as unknown as Record<string, unknown>,
+      )
+
+      await expect(
+        cancelBulkSettlementOperation({
+          firestore: fake as never,
+          operationId: op.operationId,
+          nowMillis: 2000,
+          expectedActorUid: 'teacher-1',
+        }),
+      ).rejects.toBeInstanceOf(BulkSettlementOperationNotCancellableError)
+
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('RUNNING')
+      expect(stored.leaseExpiresAtServerMillis).toBe(9000)
+    })
+
+    it('allows cancelling a RUNNING op with an active lease when expectedActorUid matches the lease holder (preflight self-abort)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'RUNNING', actorUid: 'teacher-1', leaseExpiresAtServerMillis: 9000 } as unknown as Record<string, unknown>,
+      )
+
+      const cancelled = await cancelBulkSettlementOperation({
+        firestore: fake as never,
+        operationId: op.operationId,
+        nowMillis: 2000,
+        expectedActorUid: 'teacher-1',
+      })
+
+      expect(cancelled.status).toBe('CANCELLED')
+      expect(cancelled.leaseExpiresAtServerMillis).toBeNull()
+    })
+
     it('is unresolved: false and retryable: false after cancellation (terminal, not retryable)', () => {
       const op: HouseholdBulkSettlementOperation = {
         operationId: 'op-1', lessonRunId: 'run-1', actorUid: 'teacher-1', expectedRoundIndex: 1,
@@ -612,6 +670,87 @@ describe('bulkSettlementOperation', () => {
       expect(result).toBeNull()
       const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
       expect(stored.status).toBe('PENDING') // untouched — never wrote CANCELLED
+    })
+
+    it('does not force-cancel when the operation transitions to an active lease between the outer read and the cancel transaction (TOCTOU)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+
+      // The outer, non-transactional check (`cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk`'s
+      // `.get()`) observed this operation as PENDING with no lease — safe to
+      // cancel. This is the stale snapshot passed in as `candidate`.
+      const staleCandidate: HouseholdBulkSettlementOperation = { ...op, status: 'PENDING', leaseExpiresAtServerMillis: null }
+
+      // Between that outer read and `cancelBulkSettlementOperation`'s own
+      // transaction running, someone legitimately acquired the lease and
+      // started processing this SAME operation — simulated here by mutating
+      // the fake Firestore's stored doc directly, which is exactly what
+      // `cancelBulkSettlementOperation`'s `tx.get()` will observe.
+      const raceWinner: HouseholdBulkSettlementOperation = {
+        ...op, status: 'RUNNING', actorUid: 'teacher-2', leaseExpiresAtServerMillis: 9000,
+      }
+      fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, raceWinner as unknown as Record<string, unknown>)
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: staleCandidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull() // safe no-op — the stale pre-check does not propagate a hard failure
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('RUNNING') // legitimate progress preserved, not force-cancelled
+      expect(stored.leaseExpiresAtServerMillis).toBe(9000)
+    })
+
+    it('does not force-cancel or release the control lock when the operation transitions to COMPLETED between the outer read and the cancel transaction (TOCTOU, advanced format)', async () => {
+      const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+      const openControl: HouseholdRuntimeControl = {
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 5,
+        synchronizedRoundIndex: 2,
+        roundStatus: 'OPEN',
+        activeOperationId: null,
+        updatedAtServerMillis: 500,
+      }
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+
+      const staleCandidate: HouseholdBulkSettlementOperation = { ...op, status: 'PENDING', leaseExpiresAtServerMillis: null }
+
+      // The operation legitimately ran to completion (and, per
+      // `finalizeBulkSettlementOperation`, the control lock was already
+      // released and the round advanced) between the outer read and this
+      // cancel attempt.
+      const completed: HouseholdBulkSettlementOperation = { ...op, status: 'COMPLETED', leaseExpiresAtServerMillis: null }
+      fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, completed as unknown as Record<string, unknown>)
+      fake.docs.set(controlPath, {
+        ...openControl, roundStatus: 'OPEN', activeOperationId: null, synchronizedRoundIndex: 3,
+      } as unknown as Record<string, unknown>)
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: staleCandidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull()
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('COMPLETED') // not force-cancelled
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN') // untouched by this cancel — already correctly advanced
+      expect(control.synchronizedRoundIndex).toBe(3)
     })
 
     it('also releases the HouseholdRuntimeControl lock for an advanced-format candidate', async () => {

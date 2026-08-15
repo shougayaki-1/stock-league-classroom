@@ -158,6 +158,8 @@ export interface BulkSettlementDeps {
   cancelOperation: (input: {
     operationId: string
     nowMillis: number
+    /** The actor performing this preflight-cancel — passed through as `expectedActorUid` so `cancelBulkSettlementOperation`'s own transactional re-check allows cancelling the lease THIS actor just acquired. */
+    expectedActorUid?: string
   }) => Promise<HouseholdBulkSettlementOperation>
   getOperation: (operationId: string) => Promise<HouseholdBulkSettlementOperation | null>
   findUnresolvedOperation: (lessonRunId: string) => Promise<HouseholdBulkSettlementOperation | null>
@@ -251,7 +253,7 @@ export const processHouseholdRoundBatch = async (
   // operations are treated as already-resolved and would disappear silently.
   const preflightFail = async (reason: string): Promise<never> => {
     if (isAdvanced) {
-      await deps.cancelOperation({ operationId: op.operationId, nowMillis: input.nowMillis })
+      await deps.cancelOperation({ operationId: op.operationId, nowMillis: input.nowMillis, expectedActorUid: input.actorUid })
     } else {
       await deps.finalizeOperation({ operationId: op.operationId, status: 'FAILED', nowMillis: input.nowMillis })
     }

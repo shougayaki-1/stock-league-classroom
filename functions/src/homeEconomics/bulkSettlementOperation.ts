@@ -535,6 +535,37 @@ export interface CancelBulkSettlementOperationInput {
   firestore: HouseholdFirestoreDeps['firestore']
   operationId: string
   nowMillis: number
+  /**
+   * When set, identifies the actor performing THIS cancel call. If the
+   * transaction's own fresh read finds the operation `RUNNING` with an
+   * active lease held by exactly this actor, the cancel is still allowed —
+   * this is the "preflight-cancel" case (`bulkSettlement.ts`'s
+   * `preflightFail`), where the SAME call chain just acquired the lease for
+   * itself moments earlier and is now aborting its own attempt before any
+   * item ran. Any other active lease (held by a different actor, or when
+   * this is omitted — e.g. the restore-time cleanup path, which is not
+   * acting on behalf of a specific actor) is a hard block: see
+   * `BulkSettlementOperationNotCancellableError`.
+   */
+  expectedActorUid?: string
+}
+
+/**
+ * Thrown by `cancelBulkSettlementOperation` when its OWN transactional read
+ * finds the operation already terminal (`COMPLETED`/`CANCELLED`) or under an
+ * active lease not owned by `input.expectedActorUid` — i.e. it legitimately
+ * transitioned between an earlier, separate read (e.g. the restore path's
+ * outer `cancelInactiveUnresolvedBulkSettlementOperation` check) and this
+ * transaction actually running. Callers that only have a possibly-stale
+ * candidate (not a lease they hold themselves) should catch this and treat
+ * it as a safe no-op, exactly like their outer pre-check already does for
+ * the non-racy case — see `cancelInactiveUnresolvedBulkSettlementOperation`.
+ */
+export class BulkSettlementOperationNotCancellableError extends Error {
+  constructor(message = 'Operation already resolved or has an active lease') {
+    super(message)
+    this.name = 'BulkSettlementOperationNotCancellableError'
+  }
 }
 
 /**
@@ -553,6 +584,15 @@ export interface CancelBulkSettlementOperationInput {
  * nothing left to retry, and any lock must be released immediately") and
  * share this one function rather than diverging into a Common-only
  * `'FAILED'` special case.
+ *
+ * Re-validates terminal/active-lease state against its OWN transactional
+ * read (not a value the caller read earlier) before ever writing
+ * `CANCELLED` — see `BulkSettlementOperationNotCancellableError`. This
+ * closes a TOCTOU where an outer, non-transactional check (e.g. the
+ * restore-time cleanup's `cancelInactiveUnresolvedBulkSettlementOperation`)
+ * saw a safe-to-cancel snapshot, but by the time this transaction actually
+ * ran, the SAME operation had legitimately moved to `RUNNING`-with-active-
+ * lease or `COMPLETED` — which must never be silently overwritten.
  */
 export const cancelBulkSettlementOperation = (
   input: CancelBulkSettlementOperationInput,
@@ -563,6 +603,15 @@ export const cancelBulkSettlementOperation = (
     const existing = await tx.get(opPath)
     if (!existing.exists) throw new Error('Bulk settlement operation not found')
     const op = existing.data() as unknown as HouseholdBulkSettlementOperation
+
+    const isTerminal = op.status === 'COMPLETED' || op.status === 'CANCELLED'
+    const hasActiveLease = op.status === 'RUNNING' && (op.leaseExpiresAtServerMillis ?? 0) > input.nowMillis
+    const isOwnActiveLease = hasActiveLease
+      && input.expectedActorUid !== undefined
+      && op.actorUid === input.expectedActorUid
+    if (isTerminal || (hasActiveLease && !isOwnActiveLease)) {
+      throw new BulkSettlementOperationNotCancellableError()
+    }
 
     const isControlLocked = op.assignmentRevision !== null
     const controlPath = `lessonRuns/${op.lessonRunId}/householdRuntime/control`
@@ -674,6 +723,17 @@ export interface CancelInactiveUnresolvedBulkSettlementOperationInput {
  *     function, so this can legitimately observe an operation that someone
  *     else already finished/cancelled in the gap — that must be a safe no-op,
  *     not a re-open of a terminal operation.
+ *
+ * This function's own two checks above are a fast pre-filter on `candidate`
+ * (a snapshot that may itself already be stale by the time it's inspected
+ * here). The actual, authoritative guard is INSIDE `cancelBulkSettlementOperation`'s
+ * own transaction, which re-reads the operation fresh and throws
+ * `BulkSettlementOperationNotCancellableError` if ITS read finds a terminal
+ * status or an active lease — closing the remaining TOCTOU window between
+ * this pre-filter and that transaction actually running (e.g. the operation
+ * legitimately acquired a lease, or completed, in that gap). That error is
+ * caught here and treated exactly the same as the pre-filter's own null
+ * cases: a safe no-op, never a hard failure of the caller's restore flow.
  */
 export const cancelInactiveUnresolvedBulkSettlementOperation = async (
   input: CancelInactiveUnresolvedBulkSettlementOperationInput,
@@ -686,11 +746,16 @@ export const cancelInactiveUnresolvedBulkSettlementOperation = async (
     && (input.candidate.leaseExpiresAtServerMillis ?? 0) > input.nowMillis
   if (leaseActive) return null
 
-  return cancelBulkSettlementOperation({
-    firestore: input.firestore,
-    operationId: input.candidate.operationId,
-    nowMillis: input.nowMillis,
-  })
+  try {
+    return await cancelBulkSettlementOperation({
+      firestore: input.firestore,
+      operationId: input.candidate.operationId,
+      nowMillis: input.nowMillis,
+    })
+  } catch (err) {
+    if (err instanceof BulkSettlementOperationNotCancellableError) return null
+    throw err
+  }
 }
 
 /**
