@@ -7,22 +7,20 @@
 
 ---
 
-## Phase 0: 現行版の安全化と基準値計測 — 未着手
+## Phase 0: 現行版の安全化と基準値計測 — 実装済み(2026-08-15訂正)
 
-対応する日付付きスペックが1件も存在しない。
+> **訂正:** 「対応する日付付きスペックが1件も存在しない」ことを根拠に未着手と判定していたが誤り。旧RTDB直接公開モデル(`prices`/`companies`ノード)自体が現行アーキテクチャに存在せず、`database.rules.json`は`lessonRunPublic`/`lessonRunPrivate`/`lessonRunTeamState`等の権限分離ノードに置き換わっている。`functions/src/market/toPublicView.ts`が生徒向け公開ビューをサーバー側で一元生成し、`endPrice`/`seed`等のruntime内部値はクライアントに一切渡らない設計になっている。先読み脆弱性は個別修正ではなく、統合仕様書ベースの再設計によって構造的に解消済み。
 
-- `prices`のruntime(`endPrice`/`seed`)秘匿化・`companies.phases`の生徒非公開化(先読み脆弱性対応)
+## Phase 1: 授業エンジンv2 — 実装済み(6項目すべて、2026-08-15訂正)
 
-## Phase 1: 授業エンジンv2 — 未着手(6項目すべて)
+> **訂正:** 「対応する日付付きスペックが1件も存在しない」ことを根拠に未着手と判定していたが誤り。スペック文書を経由せず`functions/src/market/`・`functions/src/lessonRuns/`・`functions/src/organizations/`配下に直接実装されていた。
 
-対応する日付付きスペックが1件も存在しない。
-
-- 1.1 組織の器(個人組織自動生成、`orgId`/`createdByUid`強制ルール)
-- 1.2 LessonTemplate v2スキーマとバージョン管理
-- 1.3 Cloud Functions基盤(Blaze移行、`pricingCore`共有関数切り出し)
-- 1.4 ラウンド進行と一括約定(`settleRound`/`placeContinuousOrder`)
-- 1.5 銘柄別ニュースと需給連動
-- 1.6 予想・判断理由の記録と振り返り
+- 1.1 組織の器 — 実装済み。`functions/src/organizations/personalOrg.ts`の`ensurePersonalOrg`(冪等な個人組織自動生成)、`firestore.rules`の`createdByUid`/`orgId`強制ルール
+- 1.2 LessonTemplate v2スキーマとバージョン管理 — 実装済み。`functions/src/lessonTemplates/publishLessonVersion.ts`(不変LessonVersion、`currentPublishedVersionId`ポインタ管理)
+- 1.3 Cloud Functions基盤 — 実装済み。`functions/src/market/taskHandler.ts`(Cloud Tasks = Blaze機能)、`functions/packages/market-public-content`等の共有パッケージ切り出し
+- 1.4 ラウンド進行と一括約定 — 実装済み。`functions/src/market/engine/settleBatch.ts`、`submitOrder.ts`、`batchScheduler.ts`
+- 1.5 銘柄別ニュースと需給連動 — 実装済み。`functions/src/market/engine/informationImpact.ts`
+- 1.6 予想・判断理由の記録と振り返り — 実装済み。`functions/src/market/predictionCheckpoint.ts`、`functions/src/lessonRuns/responses/`・`surveys/`
 
 ## Phase 2: 授業運用の質 — 一部未着手
 
@@ -54,13 +52,21 @@
 
 - 利用者を運営者許可アカウントに限定するアクセス制御(ベータの「限定公開」そのもの)
 
-## Phase 4: 家庭科モード — 未着手(丸ごと)
+## Phase 4: 家庭科モード — 実装済み(バックエンド・基本UI)、教師UI作り込みは要拡充(2026-08-15訂正)
 
-資産クラス・生活プロフィール・収入支出積立・ライフイベント・保険モデル・目標達成型評価一式。ロードマップ内で「別スペックが必要」と明記されたまま、対応するスペックが1件も存在しない。
+> **訂正:** 「別スペックが必要」の初期メモ(旧ロードマップ文書)を根拠に丸ごと未着手と判定していたが誤り。統合仕様書§13(家庭科・生活設計シミュレーション)・§25「Phase D: 家庭科完成」・§26不変条件15項・§27.4受け入れテストに正式な仕様が存在し、`functions/src/homeEconomics/`配下にエンジン一式(`annualCashFlow.ts`・`assetReturn.ts`・`mortgage.ts`・`insurance.ts`・`lifeEvents.ts`・`publicSupport.ts`・`retirement.ts`・`shortfallOptions.ts`・`settleRound.ts`)、`goalPackage.ts`(目標達成型評価)、`checkpointRestore.ts`(人生段階をまたぐ保存・復元)が実装済み(テスト20件)。コミット履歴に「confirm Phase D completion conditions」「close the §27.4 acceptance-test gap」など仕様準拠検証コミットあり。
+
+**未着手として残る点:**
+
+- 教師用UI — `HouseholdRoundControlPanel.tsx`は直近コミットで追加された「最小限のコントロールパネル」にとどまり、作り込みが薄い
+- §13.3の役割・人物別/クラス段階分担など発展的な授業形式のUI対応 — コアプロフィール中心の実装で未確認
+- `src/lib/homeEconomics/`のクライアント側表示ロジック(engine群の可視化)が薄い可能性 — 要詳細確認
 
 ## Phase 5: 組織・ライセンス・決済 — 一部未着手
 
-最もスペック数が多いフェーズ(13件)。決済まわりは大部分実装済み。
+最もスペック数が多いフェーズ(13件)。決済まわりは大部分実装済み。「教材の移動」未着手は2026-08-15時点のコード調査で確認済み(`functions/src/lessonTemplates/onCall.ts`に`move`/`transfer`系コーラブルなし)。
+
+> **注記(2026-08-15):** 以下の「スコープ外項目」欄はサブプロジェクト単位のスナップショットであり、後続サブプロジェクト(08-11・08-12等)が先行サブプロジェクトのスコープ外項目を実質的に埋めているケースがある(3件を下記で訂正済み)。この欄全体を「現在も未実装」と読まないよう注意。
 
 **実装済みサブプロジェクトのスコープ外項目:**
 
@@ -76,14 +82,14 @@
   - 共通リンク・コードによる招待方式
   - ドメイン認証、ドメインなし利用者の管理者確認
 - Stripe Checkout決済(08-09)
-  - `INVOICE`/`BANK_TRANSFER`/`MANUAL`の支払い方法対応
+  - ~~`INVOICE`/`BANK_TRANSFER`/`MANUAL`の支払い方法対応~~ → **2026-08-15訂正: 実装済み**。`src/lib/billing/invoiceSubscription.ts`の`BillingOverview.paymentMethod`型に4種、`BillingSection.tsx`に表示あり(08-12で実装)
   - 自動更新・解約・支払い失敗リトライ等(`checkout.session.completed`以外のWebhook)
   - 契約期間(§18.5、月額/年額/イベント短期等)のデータモデル
-  - 教師向けの請求履歴閲覧UI — 申し込みボタンとリダイレクトのみ
+  - ~~教師向けの請求履歴閲覧UI — 申し込みボタンとリダイレクトのみ~~ → **2026-08-15訂正: 実装済み**。`BillingSection.tsx`に請求書一覧(状態・支払期限・Hosted Invoice Pageリンク)あり(08-12で実装)
 - Stripeサブスクリプションライフサイクル(08-09)
-  - Invoicing製品(請求書払い・Hosted Invoice Page)の導入 — 将来の別サブプロジェクトへ(後に08-12で実装)
+  - Invoicing製品(請求書払い・Hosted Invoice Page)の導入 — 将来の別サブプロジェクトへ(後に08-12で実装済み)
 - 教師席管理(08-09)
-  - 招待受諾時の`teacherSeats`上限の実際の強制(超過時拒否) — 他の制限軸とまとめて§18.9へ
+  - ~~招待受諾時の`teacherSeats`上限の実際の強制(超過時拒否) — 他の制限軸とまとめて§18.9へ~~ → **2026-08-15訂正: 実装済み**。`functions/src/organizations/invitations.ts:166-169`で`canIncreaseLimitedResource`チェック+`reserveTeacherSeat`予約(08-11で実装)
 - 上位組織の枠配分・共有プール(08-11)
   - concurrentLessonsAndMarkets・teacherSeats以外の5軸の計測
   - 上位契約終了後の学校単独契約移行(§19.4) — 後に08-12で実装
@@ -156,11 +162,14 @@
   - admin/owner別アクセス範囲制御(§21.5)
   - テンプレート・events・checkpoints — 生徒データそのものではないため対象外
 
+**実装済み(2026-08-15):**
+
+- 監査ログの実体 — `functions/src/privacy/auditLog.ts`(記録)・`listOrgAuditLogCallable`(閲覧、owner/admin限定)。現時点では`exportOrgStudentDataCallable`のみを記録対象とし、他の高リスク操作への拡張は追加のスコープとする。
+
 **未着手項目(生徒データの組織単位の統制、残り4項目):**
 
 - 保持期間の組織ポリシー設定(§21.2の入口部分)
 - 組織全体の一括削除
-- 監査ログの実体(閲覧・実行ログの記録と表示)
 - 管理者向けの生徒データ検索
 - 年度単位のアーカイブ
 
