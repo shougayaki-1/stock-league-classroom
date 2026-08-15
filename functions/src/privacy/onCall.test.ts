@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpsError } from 'firebase-functions/v2/https'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import {
+  exportOrgStudentDataCallable,
   exportPersonalDataCallable,
   isReauthFresh,
   normalizeResourcePath,
@@ -12,6 +13,7 @@ import {
 } from './onCall'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { requireActiveOrgMember } from '../organizations/authorization'
+import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -23,6 +25,7 @@ const orgDocGetMock = vi.fn()
 const resourceDocs = new Map<string, { exists: boolean; data?: Record<string, unknown> }>()
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
+vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
 vi.mock('./deletePersonalData', () => ({
   requestSoftDeleteWithAdminSdk: vi.fn(),
   restoreSoftDeletedWithAdminSdk: vi.fn(),
@@ -485,3 +488,46 @@ describe('purgePersonalOrganizationCallable', () => {
     await expect(purgePersonalOrganizationCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
   })
 })
+
+describe('exportOrgStudentDataCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW_MS)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('rejects an anonymous caller, never touching Firestore', async () => {
+    await expect(exportOrgStudentDataCallable.run(makeRequest({ noAuth: true }))).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(exportOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale auth_time before checking org membership', async () => {
+    const request = makeRequest({ authTime: NOW_SECONDS - 601, data: { orgId: 'school-1' } })
+    await expect(exportOrgStudentDataCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-owner (admin/teacher) member', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    const request = makeRequest({ data: { orgId: 'school-1' } })
+    await expect(exportOrgStudentDataCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(exportOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller who is not an active org member', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new Error('permission-denied'))
+    const request = makeRequest({ data: { orgId: 'school-1' } })
+    await expect(exportOrgStudentDataCallable.run(request)).rejects.toThrow('permission-denied')
+  })
+
+  it('returns the export for an owner with a fresh reauth', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(exportOrgStudentDataWithAdminSdk).mockResolvedValueOnce({ exportedAt: '2026-08-15T00:00:00.000Z', orgId: 'school-1', lessonRuns: [] })
+    const request = makeRequest({ data: { orgId: 'school-1' } })
+    await expect(exportOrgStudentDataCallable.run(request)).resolves.toMatchObject({ orgId: 'school-1' })
+    expect(exportOrgStudentDataWithAdminSdk).toHaveBeenCalledWith('school-1')
+  })
+})
+

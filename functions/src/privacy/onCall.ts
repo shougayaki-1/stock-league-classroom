@@ -4,6 +4,7 @@ import { personalOrgId } from '../lib/personalOrgId'
 import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
+import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -253,3 +254,21 @@ export const purgePersonalOrganizationCallable = onCall({ region: 'asia-northeas
     throw translateIdempotencyMismatchError(error)
   }
 })
+
+interface ExportOrgStudentDataRequest { orgId?: unknown }
+
+export const exportOrgStudentDataCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  if (!isReauthFresh(request.auth.token.auth_time as number | undefined, Date.now())) {
+    throw new HttpsError('failed-precondition', 'セキュリティのため、再度サインインしてからお試しください。')
+  }
+  const data = request.data as ExportOrgStudentDataRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  if (membership.role !== 'owner') throw new HttpsError('permission-denied', '組織のownerのみ生徒データを一括エクスポートできます。')
+
+  return exportOrgStudentDataWithAdminSdk(data.orgId)
+})
+

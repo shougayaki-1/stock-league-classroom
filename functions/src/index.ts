@@ -94,6 +94,7 @@ export { batchTaskQueue } from './market/taskHandler'
 export { resumeTaskQueue } from './market/resumeMarket'
 export { chainWatchdogScheduled } from './market/chainWatchdog'
 export {
+  exportOrgStudentDataCallable,
   exportPersonalDataCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
