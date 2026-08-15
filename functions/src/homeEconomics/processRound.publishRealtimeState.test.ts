@@ -61,7 +61,7 @@ const homeEconomics: HomeEconomicsContent = {
 
 const result: SettleRoundResult = {
   newHouseholdState: {
-    householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 600000,
+    householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 600000,
     assetHoldingsYen: { DOMESTIC_STOCK: 100000 }, activeInsuranceContracts: { 'ins-1': 9 },
     activeLiabilities: {}, lifeStage: 'CHILD_REARING', roundIndex: 3, goalDelayedRounds: 0,
     updatedAtServerMillis: 1000,

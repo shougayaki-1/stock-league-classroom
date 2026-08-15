@@ -13,6 +13,7 @@ describe('bulkSettlement', () => {
     householdId: teamId,
     lessonRunId: 'run-1',
     teamId,
+    profileId: teamId,
     cashYen: 1000000,
     assetHoldingsYen: {},
     activeInsuranceContracts: {},

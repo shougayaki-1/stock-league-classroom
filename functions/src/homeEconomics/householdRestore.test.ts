@@ -12,6 +12,7 @@ describe('householdRestore v2', () => {
     householdId: teamId,
     lessonRunId: 'run-1',
     teamId,
+    profileId: teamId,
     cashYen: cash,
     assetHoldingsYen: {},
     activeInsuranceContracts: {},

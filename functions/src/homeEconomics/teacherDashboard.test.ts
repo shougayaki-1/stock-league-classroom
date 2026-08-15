@@ -82,6 +82,7 @@ describe('buildHouseholdTeacherRow', () => {
     householdId: 'team-1',
     lessonRunId: 'run-1',
     teamId: 'team-1',
+    profileId: 'team-1',
     cashYen: 500000,
     assetHoldingsYen: { DOMESTIC_STOCK: 200000 },
     activeInsuranceContracts: { 'ins-1': 3 },
@@ -173,11 +174,11 @@ describe('buildHouseholdTeacherDashboard', () => {
       ],
       householdStates: {
         'team-1': {
-          householdId: 'team-1', lessonRunId: 'run-1', teamId: 'team-1', cashYen: 100, assetHoldingsYen: {},
+          householdId: 'team-1', lessonRunId: 'run-1', teamId: 'team-1', profileId: 'team-1', cashYen: 100, assetHoldingsYen: {},
           activeInsuranceContracts: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 0,
         },
         'team-2': {
-          householdId: 'team-2', lessonRunId: 'run-1', teamId: 'team-2', cashYen: 100, assetHoldingsYen: {},
+          householdId: 'team-2', lessonRunId: 'run-1', teamId: 'team-2', profileId: 'team-2', cashYen: 100, assetHoldingsYen: {},
           activeInsuranceContracts: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 0,
         },
       },
@@ -205,11 +206,11 @@ describe('buildHouseholdTeacherDashboard', () => {
       ],
       householdStates: {
         'team-1': {
-          householdId: 'team-1', lessonRunId: 'run-1', teamId: 'team-1', cashYen: 100, assetHoldingsYen: {},
+          householdId: 'team-1', lessonRunId: 'run-1', teamId: 'team-1', profileId: 'team-1', cashYen: 100, assetHoldingsYen: {},
           activeInsuranceContracts: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT', roundIndex: 1, goalDelayedRounds: 0, updatedAtServerMillis: 0,
         },
         'team-2': {
-          householdId: 'team-2', lessonRunId: 'run-1', teamId: 'team-2', cashYen: 100, assetHoldingsYen: {},
+          householdId: 'team-2', lessonRunId: 'run-1', teamId: 'team-2', profileId: 'team-2', cashYen: 100, assetHoldingsYen: {},
           activeInsuranceContracts: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 0,
         },
       },

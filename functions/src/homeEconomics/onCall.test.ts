@@ -128,7 +128,7 @@ const makeRequest = (
 } as unknown as CallableRequest<SubmitHouseholdDecisionRequestData>)
 
 const household = {
-  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 500000,
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 500000,
   assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
   lifeStage: 'INDEPENDENT', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
 }
@@ -238,7 +238,7 @@ describe('submitHouseholdDecisionCallable', () => {
       vi.mocked(getHouseholdStateWithAdminSdk).mockResolvedValue(null)
       lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { status: 'RUNNING', templateSnapshot: { homeEconomics: homeEconomicsContent } }))
       const initializedHousehold = {
-        householdId: 'case-b', lessonRunId: 'run-1', teamId: 'case-b', cashYen: 500000,
+        householdId: 'case-b', lessonRunId: 'run-1', teamId: 'case-b', profileId: 'case-b', cashYen: 500000,
         assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
         lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0, updatedAtServerMillis: 0,
       }

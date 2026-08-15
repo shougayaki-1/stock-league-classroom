@@ -3,7 +3,7 @@ import type { HouseholdState } from '../lessonRuns/households/repository'
 import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from './checkpointRestore'
 
 const household: HouseholdState = {
-  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', cashYen: 1500000,
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 1500000,
   assetHoldingsYen: { DOMESTIC_STOCK: 800000 }, activeInsuranceContracts: { 'ins-1': 7 },
   activeLiabilities: { 'loan-1': { remainingPrincipalYen: 18000000, remainingYears: 15, annualInterestRatePercent: 2 } },
   lifeStage: 'CHILD_REARING', roundIndex: 4, goalDelayedRounds: 1, updatedAtServerMillis: 1234,
