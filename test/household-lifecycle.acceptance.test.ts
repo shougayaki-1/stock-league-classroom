@@ -201,7 +201,11 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
 
     const dashboard1 = buildHouseholdTeacherDashboard({
       lessonRunId: 'run-accept-1',
+      courseFormat: 'COMMON_CONDITIONS',
+      assignment: null,
       restoreGeneration: 0,
+      synchronizedRoundIndex: null,
+      roundStatus: null,
       content: template,
       teams,
       householdStates: {
@@ -212,16 +216,18 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
       lastSettlementEvents: {},
       checkpoints: [],
       activeBulkOperation: null,
+      finalComparisonAvailable: false,
       nowMillis: 1000,
     })
 
-    expect(dashboard1.households).toHaveLength(2)
-    expect(dashboard1.households[0].teamDisplayName).toBe('チーム1')
-    expect(dashboard1.households[0].submittedForRoundIndex).toBe(false)
+    const dashboard1Households = dashboard1.teams.flatMap((t) => t.households)
+    expect(dashboard1Households).toHaveLength(2)
+    expect(dashboard1Households[0].teamDisplayName).toBe('チーム1')
+    expect(dashboard1Households[0].submittedForRoundIndex).toBe(false)
     expect(dashboard1.householdsAligned).toBe(true)
 
     // 2. Normal bulk rejects missing submissions
-    const unsubmitted = dashboard1.households.filter((h) => !h.submittedForRoundIndex)
+    const unsubmitted = dashboard1Households.filter((h) => !h.submittedForRoundIndex)
     expect(unsubmitted).toHaveLength(2)
     // When forceUnsubmitted is false, bulk preflight would reject with UNSUBMITTED_DECISIONS
     expect(unsubmitted.length > 0).toBe(true)
