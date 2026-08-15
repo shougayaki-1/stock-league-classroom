@@ -166,10 +166,10 @@
 
 - 監査ログの実体 — `functions/src/privacy/auditLog.ts`(記録)・`listOrgAuditLogCallable`(閲覧、owner/admin限定)。現時点では`exportOrgStudentDataCallable`のみを記録対象とし、他の高リスク操作への拡張は追加のスコープとする。
 - 保持期間の組織ポリシー設定(入口部分) — `setStudentDataRetentionPolicyCallable`(owner限定)。期限到来時の対応待ちキュー・匿名化/削除/延長の判断ワークフローは別スコープのまま。
+- 組織全体の一括削除 — `purgeSchoolOrgCallable`(owner限定、上位組織リンク・配下学校の有無を事前チェック)。監査ログは組織削除後も残るよう`orgDeletionAuditLog`(トップレベル)に記録。Stripeサブスクリプション解約・COMMUNITY公開テンプレートの取り扱いは別スコープのまま。
 
-**未着手項目(生徒データの組織単位の統制、残り3項目):**
+**未着手項目(生徒データの組織単位の統制、残り2項目):**
 
-- 組織全体の一括削除
 - 管理者向けの生徒データ検索
 - 年度単位のアーカイブ
 
