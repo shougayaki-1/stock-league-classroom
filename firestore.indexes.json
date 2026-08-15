@@ -41,6 +41,24 @@
         { "fieldPath": "sourceTemplateId", "order": "ASCENDING" },
         { "fieldPath": "visibility", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "lessonRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "templateId", "order": "ASCENDING" },
+        { "fieldPath": "primaryTeacherUid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lessonTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceTemplateId", "order": "ASCENDING" },
+        { "fieldPath": "sourceVersionId", "order": "ASCENDING" },
+        { "fieldPath": "createdByUid", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

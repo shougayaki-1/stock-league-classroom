@@ -1,3 +1,5 @@
+import { getFirestore } from 'firebase-admin/firestore'
+
 export interface TemplateReviewDeps {
   getCompletedRunTemplateVersionIds: (templateId: string, uid: string) => Promise<string[]>
   getOwnDuplicateTemplateIds: (sourceTemplateId: string, sourceVersionId: string, uid: string) => Promise<string[]>
@@ -68,3 +70,35 @@ export const listTemplateReviews = (
   deps: Pick<TemplateReviewDeps, 'listReviewsForVersion'>,
   versionId: string,
 ): Promise<Array<Record<string, unknown>>> => deps.listReviewsForVersion(versionId)
+
+const reviewDocId = (versionId: string, uid: string): string => `${versionId}_${uid}`
+
+/** Production wiring: Firestore Admin SDK. */
+export const getTemplateReviewDepsWithAdminSdk = (nowFn: () => unknown = () => new Date().toISOString()): TemplateReviewDeps => {
+  const db = getFirestore()
+  return {
+    getCompletedRunTemplateVersionIds: async (templateId, uid) => {
+      const snap = await db.collection('lessonRuns')
+        .where('templateId', '==', templateId).where('primaryTeacherUid', '==', uid).where('status', '==', 'COMPLETED')
+        .get()
+      return snap.docs.map((document) => (document.data() as { templateVersionId: string }).templateVersionId)
+    },
+    getOwnDuplicateTemplateIds: async (sourceTemplateId, sourceVersionId, uid) => {
+      const snap = await db.collection('lessonTemplates')
+        .where('sourceTemplateId', '==', sourceTemplateId).where('sourceVersionId', '==', sourceVersionId).where('createdByUid', '==', uid)
+        .get()
+      return snap.docs.map((document) => document.id)
+    },
+    getReview: async (versionId, uid) => {
+      const snap = await db.doc(`templateReviews/${reviewDocId(versionId, uid)}`).get()
+      return { exists: snap.exists, data: snap.exists ? (snap.data() as Record<string, unknown>) : undefined }
+    },
+    setReview: async (versionId, uid, data) => { await db.doc(`templateReviews/${reviewDocId(versionId, uid)}`).set(data) },
+    listReviewsForVersion: async (versionId) => {
+      const snap = await db.collection('templateReviews').where('versionId', '==', versionId).get()
+      return snap.docs.map((document) => document.data() as Record<string, unknown>)
+    },
+    updateTemplateAggregate: async (templateId, aggregate) => { await db.doc(`lessonTemplates/${templateId}`).update(aggregate) },
+    now: nowFn,
+  }
+}
