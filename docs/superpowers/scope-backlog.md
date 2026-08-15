@@ -121,22 +121,22 @@
 
 - なし
 
-## Phase 6: テンプレートマーケットプレイス — 一部未着手
+## Phase 6: テンプレートマーケットプレイス — 実装済み(2026-08-15更新)
 
-6サブプロジェクト全て実装済み。
+全7サブプロジェクト実装済み。
 
 **実装済みサブプロジェクトのスコープ外項目:**
 
 - マーケットプレイス検索・閲覧(08-15)
   - カーソルページネーション — v1では実装せず
   - 全文検索(Algolia等) — 必要になれば外部検索サービス追加を別サブプロジェクトで検討
-- 公開範囲の拡張(COMMUNITY公開)(08-15)
-  - `VERIFIED`/`OFFICIAL`区分 — 人手審査・運営側作成前提のため通報と審査の別サブプロジェクトへ
+- 公開範囲の拡張・認定制度(08-15)
+  - ~~`VERIFIED`/`OFFICIAL`区分~~ → **2026-08-15訂正: 実装済み**。`functions/src/lessonTemplates/templateCertification.ts`、`setTemplateCertificationCallable`、`listTemplateCertificationCandidatesCallable`、`OperatorTemplateCertificationsPage.tsx`、マーケットプレイスバッジ表示(COMMUNITY/VERIFIED/OFFICIAL)、新バージョン発行時の自動降格、監査イベント記録、Rules での直接操作禁止を実装完了。
   - 外部派生禁止の学校トグル(§17.3) — 対応する`organizations`フィールドが未存在
 - 派生関係の記録(08-15)
   - 非公開(PRIVATE)のままの複製先の逆引き表示 — プライバシー上の懸念、COMMUNITY公開済みの派生のみ表示
 - 通報と審査(運営者向け)(08-15)
-  - 公式認証(VERIFIED)の付与
+  - ~~公式認証(VERIFIED)の付与~~ → **2026-08-15訂正: 実装済み**。
   - 投稿者の利用停止
   - 審査履歴の高度な検索
   - §17.7の10項目チェックリストの構造化 — 簡易enum+自由記述に簡略化
@@ -146,7 +146,7 @@
 
 **未着手項目:**
 
-- 公開区分のうち「認証済み(VERIFIED)」「公式(OFFICIAL)」の実装本体
+- なし
 
 ## Phase 7: エンタープライズ管理者機能 — 一部未着手
 
