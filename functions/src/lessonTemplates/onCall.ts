@@ -1,5 +1,6 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { FieldValue, getFirestore } from 'firebase-admin/firestore'
+import { getAuth } from 'firebase-admin/auth'
 import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { publishLessonVersionWithAdminSdk, type PublishLessonVersionResult } from './publishLessonVersion'
@@ -315,6 +316,19 @@ export const resolveTemplateReportCallable = onCall({ region: 'asia-northeast1' 
   })
   return { resolved: true }
 })
+
+interface GrantOperatorCallableInput { targetUid?: unknown }
+
+export const grantOperatorCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+  const data = request.data as GrantOperatorCallableInput
+  if (typeof data.targetUid !== 'string' || data.targetUid.length === 0) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  await getAuth().setCustomUserClaims(data.targetUid, { operator: true })
+  return { granted: true }
+})
+
 
 
 

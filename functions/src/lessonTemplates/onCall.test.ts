@@ -4,6 +4,7 @@ import type { CallableRequest } from 'firebase-functions/v2/https'
 import {
   createTemplateShareCallable,
   duplicateLessonTemplateCallable,
+  grantOperatorCallable,
   isValidDuplicateLessonTemplateInput,
   isValidPublishLessonVersionInput,
   listPendingTemplateReportsCallable,
@@ -32,6 +33,7 @@ const reportAddMock = vi.fn()
 const reportGetMock = vi.fn()
 const reportUpdateMock = vi.fn()
 const reportsWhereGetMock = vi.fn()
+const setCustomUserClaimsMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./publishLessonVersion', () => ({ publishLessonVersionWithAdminSdk: vi.fn() }))
@@ -52,6 +54,7 @@ vi.mock('firebase-admin/firestore', () => ({
       : undefined,
   }),
 }))
+vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ setCustomUserClaims: setCustomUserClaimsMock }) }))
 
 describe('isValidPublishLessonVersionInput', () => {
   it('accepts a well-formed request payload', () => {
@@ -550,5 +553,25 @@ describe('resolveTemplateReportCallable', () => {
     expect(reportUpdateMock).toHaveBeenCalledWith({ status: 'RESOLVED', resolution: 'UNPUBLISHED', resolvedByUid: 'operator-a', resolvedAt: 'SERVER_TIMESTAMP' })
   })
 })
+
+describe('grantOperatorCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const operatorAuth = { uid: 'operator-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true } }
+  const makeRequest = (auth: typeof teacherAuth, data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects a non-operator caller', async () => {
+    await expect(grantOperatorCallable.run(makeRequest(teacherAuth, { targetUid: 'teacher-b' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(setCustomUserClaimsMock).not.toHaveBeenCalled()
+  })
+
+  it('grants the operator claim to the target user', async () => {
+    setCustomUserClaimsMock.mockResolvedValue(undefined)
+    await expect(grantOperatorCallable.run(makeRequest(operatorAuth, { targetUid: 'teacher-b' }))).resolves.toEqual({ granted: true })
+    expect(setCustomUserClaimsMock).toHaveBeenCalledWith('teacher-b', { operator: true })
+  })
+})
+
 
 
