@@ -1,7 +1,18 @@
-import { FieldValue, getFirestore } from 'firebase-admin/firestore'
+import { getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { personalOrgId } from '../lib/personalOrgId'
 import { isCallerTeacher } from '../organizations/onCall'
+import {
+  AiBetaIdempotencyMismatchError,
+  AiBetaTargetIneligibleError,
+  AiBetaTargetNotFoundError,
+  assertAiBetaApproved,
+  getAiBetaAccessApproved,
+  getAiBetaAccessDepsWithAdminSdk,
+  grantAiBetaAccess,
+  listApprovedAiBetaAccess,
+  revokeAiBetaAccess,
+} from './betaAccess'
 import { unconfiguredLlmProvider } from './llmProvider'
 import { assertNoForbiddenFields } from './piiFilter'
 import { buildLessonDraftPrompt, parseLessonDraftResponse, type LessonDraftPromptInput } from './lessonDraftPrompt'
@@ -14,16 +25,6 @@ const isValidRequest = (data: GenerateLessonDraftRequest): data is LessonDraftPr
 /** Mirrors firestore.rules' operator(): teacher() && request.auth.token.operator == true. */
 const isCallerOperator = (token: { email_verified?: boolean; firebase?: { sign_in_provider?: string }; operator?: boolean }): boolean =>
   isCallerTeacher(token) && token.operator === true
-
-/**
- * ベータ公開の入口ゲート。組織のaiEnabledとは独立に、運営者が個別に許可した
- * アカウントでなければAI機能を一切呼び出せないようにする(統合仕様書の前身である
- * ロードマップ文書 Phase 3「利用者は運営者が許可したアカウントに限定する」)。
- */
-const assertAiBetaApproved = async (db: FirebaseFirestore.Firestore, teacherUid: string): Promise<void> => {
-  const approval = await db.doc(`aiBetaAccess/${teacherUid}`).get()
-  if (!approval.exists) throw new HttpsError('permission-denied', 'AIベータ機能は運営者の許可が必要です。')
-}
 
 /**
  * キルスイッチ・利用枠超過エラーを HttpsError に変換して返す。
@@ -102,22 +103,85 @@ export const generateTeacherGuidanceCallable = onCall({ region: 'asia-northeast1
   return result
 })
 
-interface GrantAiBetaAccessCallableInput { targetUid?: unknown }
+export const getMyAiBetaAccessCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const approved = await getAiBetaAccessApproved(getFirestore(), request.auth.uid)
+  return { approved }
+})
+
+export const listAiBetaAccessCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+  const deps = getAiBetaAccessDepsWithAdminSdk()
+  return listApprovedAiBetaAccess(deps)
+})
 
 export const grantAiBetaAccessCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
-  const data = request.data as GrantAiBetaAccessCallableInput
-  if (typeof data.targetUid !== 'string' || data.targetUid.length === 0) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
-  await getFirestore().doc(`aiBetaAccess/${data.targetUid}`).set({ approvedByUid: request.auth.uid, approvedAt: FieldValue.serverTimestamp() })
-  return { granted: true }
+  const data = request.data as { email?: unknown; reason?: unknown; idempotencyKey?: unknown }
+  if (
+    typeof data.email !== 'string' ||
+    !data.email.trim() ||
+    typeof data.reason !== 'string' ||
+    !data.reason.trim() ||
+    typeof data.idempotencyKey !== 'string' ||
+    !data.idempotencyKey.trim()
+  ) {
+    throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  }
+  const deps = getAiBetaAccessDepsWithAdminSdk()
+  try {
+    const res = await grantAiBetaAccess(deps, {
+      email: data.email,
+      reason: data.reason,
+      idempotencyKey: data.idempotencyKey,
+      actorUid: request.auth.uid,
+    })
+    return res
+  } catch (error) {
+    if (error instanceof AiBetaTargetNotFoundError) {
+      throw new HttpsError('not-found', error.message)
+    }
+    if (
+      error instanceof AiBetaTargetIneligibleError ||
+      error instanceof AiBetaIdempotencyMismatchError
+    ) {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
 })
 
 export const revokeAiBetaAccessCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
-  const data = request.data as GrantAiBetaAccessCallableInput
-  if (typeof data.targetUid !== 'string' || data.targetUid.length === 0) throw new HttpsError('invalid-argument', 'リクエストが不正です。')
-  await getFirestore().doc(`aiBetaAccess/${data.targetUid}`).delete()
-  return { revoked: true }
+  const data = request.data as { teacherUid?: unknown; reason?: unknown; idempotencyKey?: unknown }
+  if (
+    typeof data.teacherUid !== 'string' ||
+    !data.teacherUid.trim() ||
+    typeof data.reason !== 'string' ||
+    !data.reason.trim() ||
+    typeof data.idempotencyKey !== 'string' ||
+    !data.idempotencyKey.trim()
+  ) {
+    throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  }
+  const deps = getAiBetaAccessDepsWithAdminSdk()
+  try {
+    const res = await revokeAiBetaAccess(deps, {
+      teacherUid: data.teacherUid,
+      reason: data.reason,
+      idempotencyKey: data.idempotencyKey,
+      actorUid: request.auth.uid,
+    })
+    return res
+  } catch (error) {
+    if (error instanceof AiBetaIdempotencyMismatchError) {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
 })
+

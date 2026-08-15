@@ -36,9 +36,14 @@ export {
   getSchoolEffectiveQuotaCallable,
   setSchoolQuotaAllocationCallable,
 } from './organizations/parentOrgQuotaOnCall'
-export { migrateSchoolFromEndedParentCallable } from './organizations/parentContractMigrationOnCall'
-export { generateLessonDraftCallable, generateTeacherGuidanceCallable, grantAiBetaAccessCallable, revokeAiBetaAccessCallable } from './ai/onCall'
-export { getTuningConstantsCallable } from './platformConfig/onCall'
+export {
+  generateLessonDraftCallable,
+  generateTeacherGuidanceCallable,
+  getMyAiBetaAccessCallable,
+  listAiBetaAccessCallable,
+  grantAiBetaAccessCallable,
+  revokeAiBetaAccessCallable,
+} from './ai/onCall'
 export {
   canReviewTemplateCallable, createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable,
   listPendingTemplateApprovalsCallable, listPendingTemplateReportsCallable, listTemplateReviewsCallable,
