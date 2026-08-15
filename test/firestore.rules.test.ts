@@ -171,6 +171,23 @@ describe('templateShares/{shareId}', () => {
   })
 })
 
+describe('templateReports/{reportId}', () => {
+  it('declares an explicit deny rule for the template reports collection', () => {
+    const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')
+    expect(rules).toMatch(
+      /match \/templateReports\/\{reportId\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+    )
+  })
+
+  it('denies all direct client reads and writes', async () => {
+    const context = environment.authenticatedContext('teacher-a', teacherToken)
+    const report = doc(context.firestore(), 'templateReports/report-1')
+    await assertFails(getDoc(report))
+    await assertFails(setDoc(report, { templateId: 't1' }))
+  })
+})
+
+
 describe('lessonTemplates COMMUNITY visibility', () => {
   beforeEach(async () => {
     await environment.withSecurityRulesDisabled(async (context) => {

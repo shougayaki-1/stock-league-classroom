@@ -77,6 +77,8 @@ service cloud.firestore {
 
     match /templateShares/{shareId} { allow read, write: if false; }
 
+    match /templateReports/{reportId} { allow read, write: if false; }
+
     match /systemConfig/{documentId} {
       allow get: if false;
       allow list: if false;
