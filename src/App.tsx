@@ -27,6 +27,7 @@ import { CommunityTemplatesPage } from './components/teacher/templates/Community
 import { listTemplateDerivatives } from './lib/lessonTemplates/templateDerivatives'
 import { listCommunityTemplates, type CommunityTemplate } from './lib/lessonTemplates/communityTemplates'
 import { duplicateLessonTemplate } from './lib/lessonTemplates/duplicateLessonTemplate'
+import { reportTemplate } from './lib/lessonTemplates/reportTemplate'
 import { SocialStudiesQuestionStep } from './components/teacher/templates/wizardSteps/socialStudies/QuestionSteps'
 import { HomeEconomicsQuestionStep } from './components/teacher/templates/wizardSteps/homeEconomics/QuestionSteps'
 import { getTuningConstants, type TuningConstantsResponse } from './lib/platformConfig/getTuningConstants'
@@ -325,6 +326,9 @@ function CommunityMarketplaceRoute({ services }: { services: FirebaseServices })
         sourceTemplateId: template.id, sourceVersionId: template.currentPublishedVersionId,
         targetOrgId: personalOrgId(uid), confirmedOverrides: {}, idempotencyKey: crypto.randomUUID(),
       })
+    }}
+    onReport={(template, reason, details) => {
+      void reportTemplate(services.functions, { templateId: template.id, versionId: template.currentPublishedVersionId, reason, details: details || undefined })
     }}
   />
 }

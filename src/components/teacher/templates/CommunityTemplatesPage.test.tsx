@@ -10,7 +10,7 @@ const templates = [
 describe('CommunityTemplatesPage', () => {
   it('lists templates and duplicates the selected one on click', () => {
     const onDuplicate = vi.fn()
-    render(<CommunityTemplatesPage templates={templates} loading={false} subject={undefined} onSubjectChange={vi.fn()} onDuplicate={onDuplicate} />)
+    render(<CommunityTemplatesPage templates={templates} loading={false} subject={undefined} onSubjectChange={vi.fn()} onDuplicate={onDuplicate} onReport={vi.fn()} />)
     expect(screen.getByText('公民の授業')).toBeInTheDocument()
     expect(screen.getByText('家計管理の授業')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: '自組織へ複製' })[0])
@@ -18,14 +18,23 @@ describe('CommunityTemplatesPage', () => {
   })
 
   it('shows an empty state with no templates', () => {
-    render(<CommunityTemplatesPage templates={[]} loading={false} subject={undefined} onSubjectChange={vi.fn()} onDuplicate={vi.fn()} />)
+    render(<CommunityTemplatesPage templates={[]} loading={false} subject={undefined} onSubjectChange={vi.fn()} onDuplicate={vi.fn()} onReport={vi.fn()} />)
     expect(screen.getByText('公開されている教材がまだありません。')).toBeInTheDocument()
   })
 
   it('calls onSubjectChange when a subject filter is selected', () => {
     const onSubjectChange = vi.fn()
-    render(<CommunityTemplatesPage templates={templates} loading={false} subject={undefined} onSubjectChange={onSubjectChange} onDuplicate={vi.fn()} />)
+    render(<CommunityTemplatesPage templates={templates} loading={false} subject={undefined} onSubjectChange={onSubjectChange} onDuplicate={vi.fn()} onReport={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '公民' }))
     expect(onSubjectChange).toHaveBeenCalledWith('SOCIAL_STUDIES')
+  })
+
+  it('opens a report dialog and submits the selected reason', () => {
+    const onReport = vi.fn()
+    render(<CommunityTemplatesPage templates={templates} loading={false} subject={undefined} onSubjectChange={vi.fn()} onDuplicate={vi.fn()} onReport={onReport} />)
+    fireEvent.click(screen.getAllByRole('button', { name: '通報' })[0])
+    fireEvent.click(screen.getByRole('button', { name: '著作権' }))
+    fireEvent.click(screen.getByRole('button', { name: '送信' }))
+    expect(onReport).toHaveBeenCalledWith(templates[0], 'COPYRIGHT', '')
   })
 })
