@@ -32,9 +32,11 @@ import { ensureAssignedHouseholdStateWithAdminSdk } from './assignedHousehold'
 import {
   readTeamViewWithAdminSdk,
   writeHouseholdCheckpointV2,
+  writeHouseholdCheckpointV3,
 } from './householdCheckpoint'
+import { resolveVisibleConcepts } from './goalPackage'
 import { processRoundWithAdminSdk, type ProcessRoundExecutionResult, type ProcessRoundInput } from './processRound'
-import { idempotencyDocumentId, requestDigest } from '../lib/idempotency'
+import { idempotencyDocumentId } from '../lib/idempotency'
 import type { AdvancedHouseholdCourseFormat, HouseholdAssignmentEntry } from './householdAssignment'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
 import type { HouseholdRuntimeControl } from './statusTransition'
@@ -110,12 +112,12 @@ export interface BulkSettlementDeps {
   readHouseholdDecision: (lessonRunId: string, householdId: string, roundIndex: number) => Promise<HouseholdDecisionRecord | null>
   /**
    * Task 7 checkpoint seam: Common keeps writing the REAL v2 checkpoint
-   * (`writeHouseholdCheckpointV2`). Advanced formats route through this SAME
-   * dependency slot (never skipped — see the doc comment on
-   * `bulkSettlementDepsWithAdminSdk`'s wiring below) so Task 7 can swap in
-   * the real v3 advanced writer without touching this call site or its
-   * orchestration logic; Task 6's own unit tests inject a fake advanced
-   * writer here to prove the seam is exercised.
+   * (`writeHouseholdCheckpointV2`). Advanced formats now route through this
+   * SAME dependency slot to the real v3 advanced writer
+   * (`writeHouseholdCheckpointV3`), replacing Task 6's interim placeholder;
+   * this task's own unit tests still inject a fake writer here to prove the
+   * seam is exercised without depending on the real Firestore-backed
+   * implementation.
    */
   writePreSettlementCheckpoint: (input: {
     lessonRunId: string
@@ -127,6 +129,15 @@ export interface BulkSettlementDeps {
     idempotencyKey: string
     nowMillis: number
     courseFormat: string
+    /**
+     * The `HouseholdRuntimeControl.assignmentRevision` `processHouseholdRoundBatch`
+     * observed when it created/replayed this operation — `null` for
+     * COMMON_CONDITIONS (no control document exists), always a number for
+     * the 3 advanced formats. Recorded into `HouseholdCheckpointSnapshotV3`
+     * so a v3 checkpoint's idempotency digest and restore-time comparisons
+     * can include it.
+     */
+    assignmentRevision: number | null
   }) => Promise<{ checkpointId: string; created: boolean }>
   setOperationCheckpointId: (operationId: string, checkpointId: string) => Promise<HouseholdBulkSettlementOperation>
   processRoundFn: (input: ProcessRoundInput) => Promise<ProcessRoundExecutionResult>
@@ -187,9 +198,11 @@ export const processHouseholdRoundBatch = async (
   targets.sort((a, b) => a.householdId.localeCompare(b.householdId))
 
   let op: HouseholdBulkSettlementOperation
+  let assignmentRevision: number | null = null
   if (isAdvanced) {
     const control = await deps.readRuntimeControl(input.lessonRunId)
     if (!control) throw new Error('HouseholdRuntimeControl not found')
+    assignmentRevision = control.assignmentRevision
     op = await deps.createOrReplayOperationWithControlLock({
       lessonRunId: input.lessonRunId,
       idempotencyKey: input.idempotencyKey,
@@ -269,6 +282,7 @@ export const processHouseholdRoundBatch = async (
       idempotencyKey: `pre-settlement:${op.operationId}`,
       nowMillis: input.nowMillis,
       courseFormat: run.courseFormat,
+      assignmentRevision,
     })
     op = await deps.setOperationCheckpointId(op.operationId, cpResult.checkpointId)
   }
@@ -441,82 +455,6 @@ const executeBulkItems = async (
   return toHouseholdBulkSettlementOperationView(op, Date.now())
 }
 
-/**
- * Task 6 interim advanced pre-settlement checkpoint writer. Deliberately
- * NOT `writeHouseholdCheckpointV2` reused as-is: that function's
- * `readTeamView` keys its `teamViews` map by `HouseholdState.teamId`
- * (`householdCheckpoint.ts`), which silently loses information for
- * MULTI_PERSON_PER_TEAM (several runtime households sharing one `teamId`
- * would overwrite each other's view). Rather than produce a checkpoint
- * that is subtly wrong for one of the three advanced formats, this writes
- * a minimal-but-real, idempotent placeholder checkpoint (same
- * idempotency-replay discipline, all reads before all writes) recording
- * which households it covers — enough to exist, be queryable, and keep
- * `preSettlementCheckpointId` a real id — WITHOUT claiming full v3
- * restore-fidelity. Task 7 replaces this with a proper v3 writer that
- * captures full per-household state, without changing this call site's
- * shape (`BulkSettlementDeps.writePreSettlementCheckpoint`).
- */
-const writeAdvancedPreSettlementCheckpointPlaceholderWithAdminSdk = async (input: {
-  lessonRunId: string
-  householdIds: string[]
-  kind: 'PRE_SETTLEMENT'
-  label: string
-  expectedRoundIndex: number
-  actorUid: string
-  idempotencyKey: string
-  nowMillis: number
-}): Promise<{ checkpointId: string; created: boolean }> => {
-  const db = getFirestore()
-  return db.runTransaction(async (tx) => {
-    const keyId = idempotencyDocumentId(input.lessonRunId, input.idempotencyKey)
-    const mappingPath = `lessonRuns/${input.lessonRunId}/householdCheckpointAdvancedPlaceholderIdempotency/${keyId}`
-    const digest = requestDigest({
-      kind: input.kind,
-      label: input.label,
-      expectedRoundIndex: input.expectedRoundIndex,
-      actorUid: input.actorUid,
-    })
-
-    // ---- ALL READS FIRST ----
-    const mappingRef = db.doc(mappingPath)
-    const mappingSnap = await tx.get(mappingRef)
-    if (mappingSnap.exists) {
-      const prior = mappingSnap.data() as { checkpointId: string; requestDigest: string }
-      if (prior.requestDigest !== digest) throw new Error('Idempotency key payload mismatch')
-      return { checkpointId: prior.checkpointId, created: false }
-    }
-
-    const runRef = db.doc(`lessonRuns/${input.lessonRunId}`)
-    const runSnap = await tx.get(runRef)
-    if (!runSnap.exists) throw new Error('LessonRun not found')
-    const runData = runSnap.data() as { restoreGeneration?: number } | undefined
-    const restoreGeneration = typeof runData?.restoreGeneration === 'number' ? runData.restoreGeneration : 0
-
-    // ---- ALL WRITES AFTER ----
-    const checkpointId = `hcp_${restoreGeneration}_${keyId.slice(0, 20)}`
-    const checkpointDoc = {
-      id: checkpointId,
-      lessonRunId: input.lessonRunId,
-      restoreGeneration,
-      requestDigest: digest,
-      createdAtServerMillis: input.nowMillis,
-      snapshot: {
-        version: 'v3-placeholder' as const,
-        kind: input.kind,
-        label: input.label,
-        expectedRoundIndex: input.expectedRoundIndex,
-        householdIds: [...input.householdIds].sort(),
-        createdByUid: input.actorUid,
-        createdAtServerMillis: input.nowMillis,
-      },
-    }
-    tx.set(db.doc(`lessonRuns/${input.lessonRunId}/checkpoints/${checkpointId}`), checkpointDoc)
-    tx.set(mappingRef, { checkpointId, requestDigest: digest })
-    return { checkpointId, created: true }
-  })
-}
-
 export const bulkSettlementDepsWithAdminSdk = (): BulkSettlementDeps => {
   const db = getFirestore()
   return {
@@ -588,14 +526,33 @@ export const bulkSettlementDepsWithAdminSdk = (): BulkSettlementDeps => {
     readHouseholdState: getHouseholdStateWithAdminSdk,
     readHouseholdDecision: getHouseholdDecisionForRoundWithAdminSdk,
     writePreSettlementCheckpoint: async (input) => {
-      if (input.courseFormat !== 'COMMON_CONDITIONS') {
-        return writeAdvancedPreSettlementCheckpointPlaceholderWithAdminSdk(input)
-      }
-
       const runSnap = await db.doc(`lessonRuns/${input.lessonRunId}`).get()
       const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
       const homeEconomics = templateSnapshot?.homeEconomics
       if (!homeEconomics) throw new Error('LessonRun has no homeEconomics content')
+
+      if (input.courseFormat !== 'COMMON_CONDITIONS') {
+        if (!isAdvancedHouseholdCourseFormat(input.courseFormat)) {
+          throw new Error(`Unsupported course format for advanced checkpoint: ${input.courseFormat}`)
+        }
+        if (input.assignmentRevision === null) {
+          throw new Error('assignmentRevision is required for advanced course format checkpoints')
+        }
+        return writeHouseholdCheckpointV3({
+          firestore: householdRepositoryWithAdminSdk(),
+          lessonRunId: input.lessonRunId,
+          courseFormat: input.courseFormat,
+          householdIds: input.householdIds,
+          assignmentRevision: input.assignmentRevision,
+          kind: input.kind,
+          label: input.label,
+          expectedRoundIndex: input.expectedRoundIndex,
+          actorUid: input.actorUid,
+          idempotencyKey: input.idempotencyKey,
+          nowMillis: input.nowMillis,
+          visibleConcepts: resolveVisibleConcepts(homeEconomics.goalPackage),
+        })
+      }
 
       return writeHouseholdCheckpointV2({
         ...input,

@@ -30,7 +30,10 @@ import {
   processHouseholdRoundBatchWithAdminSdk,
   retryHouseholdRoundBatchWithAdminSdk,
 } from './bulkSettlement'
-import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
+import {
+  saveManualAdvancedHouseholdCheckpointWithAdminSdk,
+  saveManualHouseholdCheckpointWithAdminSdk,
+} from './householdCheckpoint'
 import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
 import {
   buildHouseholdAssignmentView,
@@ -110,6 +113,7 @@ vi.mock('./bulkSettlement', () => ({
 }))
 vi.mock('./householdCheckpoint', () => ({
   saveManualHouseholdCheckpointWithAdminSdk: vi.fn(),
+  saveManualAdvancedHouseholdCheckpointWithAdminSdk: vi.fn(),
 }))
 vi.mock('./householdRestore', () => ({
   restoreHouseholdCheckpointV2WithAdminSdk: vi.fn(),
@@ -864,6 +868,55 @@ describe('writeHouseholdCheckpointCallable', () => {
     vi.mocked(writeCheckpointWithAdminSdk).mockRejectedValue(new Error('Idempotency key payload mismatch'))
     await expect(writeHouseholdCheckpointCallable.run(makeWriteCheckpointRequest()))
       .rejects.toMatchObject({ code: 'failed-precondition', message: 'Idempotency key payload mismatch' })
+  })
+
+  it('dispatches to saveManualAdvancedHouseholdCheckpointWithAdminSdk (v3) when the lesson courseFormat is advanced, not the Common v2 function', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      teacherRoles: { 'teacher-a': 'PRIMARY' },
+      templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
+    }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(saveManualAdvancedHouseholdCheckpointWithAdminSdk).mockResolvedValue({ checkpointId: 'hcp-v3-1', created: true })
+
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', label: '手動チェックポイント', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    const result = await writeHouseholdCheckpointCallable.run(req)
+    expect(result).toEqual({ checkpointId: 'hcp-v3-1', created: true })
+    expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk).toHaveBeenCalledWith({
+      lessonRunId: 'run-1',
+      label: '手動チェックポイント',
+      actorUid: 'teacher-a',
+      idempotencyKey: 'k-1',
+    })
+    expect(saveManualHouseholdCheckpointWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects an advanced manual checkpoint attempt while the round is SETTLING (a bulk operation is in progress)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+      orgId: 'org-1',
+      teacherRoles: { 'teacher-a': 'PRIMARY' },
+      templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
+    }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(saveManualAdvancedHouseholdCheckpointWithAdminSdk).mockRejectedValue(
+      new Error('HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)'),
+    )
+
+    const req = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', label: '手動チェックポイント', idempotencyKey: 'k-1' },
+      rawRequest: {},
+    } as never
+
+    await expect(writeHouseholdCheckpointCallable.run(req)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)',
+    })
   })
 })
 

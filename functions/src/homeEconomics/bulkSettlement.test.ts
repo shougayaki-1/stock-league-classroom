@@ -577,6 +577,29 @@ describe('bulkSettlement', () => {
         courseFormat: 'ROLE_VARIANT',
         householdIds: ['hh-a', 'hh-b'],
         kind: 'PRE_SETTLEMENT',
+        // Task 7: threaded from the control doc read earlier in this same
+        // call, never trusting a client-supplied value (same discipline as
+        // the assignmentRevision test above for createOrReplayOperationWithControlLock).
+        assignmentRevision: 7,
+      }))
+    })
+
+    it('passes assignmentRevision: null for COMMON_CONDITIONS (no control document exists to read one from)', async () => {
+      const fakeWriter = vi.fn().mockResolvedValue({ checkpointId: 'cp-common-1', created: true })
+      const deps = makeDeps({ writePreSettlementCheckpoint: fakeWriter })
+
+      await processHouseholdRoundBatch(deps, {
+        lessonRunId: 'run-1',
+        expectedRoundIndex: 1,
+        forceUnsubmitted: false,
+        actorUid: 'teacher-1',
+        idempotencyKey: 'key-1',
+        nowMillis: 1000,
+      })
+
+      expect(fakeWriter).toHaveBeenCalledWith(expect.objectContaining({
+        courseFormat: 'COMMON_CONDITIONS',
+        assignmentRevision: null,
       }))
     })
   })

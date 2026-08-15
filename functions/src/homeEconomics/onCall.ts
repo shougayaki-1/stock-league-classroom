@@ -26,7 +26,10 @@ import {
   processHouseholdRoundBatchWithAdminSdk,
   retryHouseholdRoundBatchWithAdminSdk,
 } from './bulkSettlement'
-import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
+import {
+  saveManualAdvancedHouseholdCheckpointWithAdminSdk,
+  saveManualHouseholdCheckpointWithAdminSdk,
+} from './householdCheckpoint'
 import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
 import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
 import {
@@ -792,9 +795,15 @@ export const retryHouseholdRoundBatchCallable = onCall({ region: 'asia-northeast
 })
 
 /**
- * Shared authorization for both checkpoint Callables below.
+ * Shared authorization for both checkpoint Callables below. Also returns the
+ * LessonRun's `courseFormat` (defaulting to `COMMON_CONDITIONS` when the
+ * template snapshot has none) — `writeHouseholdCheckpointCallable`'s manual
+ * checkpoint path uses this SAME read to dispatch Common -> v2, advanced ->
+ * v3 (Task 7), rather than reading the run doc a second time.
  */
-const requireCheckpointAuthority = async (lessonRunId: string, authUid: string): Promise<void> => {
+const requireCheckpointAuthority = async (
+  lessonRunId: string, authUid: string,
+): Promise<{ courseFormat: string }> => {
   const db = getFirestore()
   const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
   if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
@@ -805,6 +814,8 @@ const requireCheckpointAuthority = async (lessonRunId: string, authUid: string):
   }
   const orgId = runSnap.get('orgId') as string
   await requireActiveOrgMember(db, orgId, authUid)
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: { courseFormat?: string } } | undefined
+  return { courseFormat: templateSnapshot?.homeEconomics?.courseFormat ?? 'COMMON_CONDITIONS' }
 }
 
 interface WriteHouseholdCheckpointRequest {
@@ -826,6 +837,14 @@ const translateWriteHouseholdCheckpointError = (error: unknown): unknown => {
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('Label must be')) return new HttpsError('invalid-argument', error.message)
     if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
+    // Advanced (v3) manual-checkpoint path: same
+    // `HouseholdRuntimeControl` guard messages Task 5/6 established
+    // (`saveManualAdvancedHouseholdCheckpointWithAdminSdk`,
+    // `translateSubmitHouseholdDecisionError` above).
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)') {
+      return new HttpsError('failed-precondition', error.message)
+    }
   }
   return error
 }
@@ -856,11 +875,22 @@ export const writeHouseholdCheckpointCallable = onCall({ region: 'asia-northeast
     }
   }
 
-  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+  const { courseFormat } = await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
-  // v2 manual checkpoint path
+  // Manual checkpoint path — dispatch by courseFormat: Common (no
+  // per-team assignment, one household per team) -> v2; the 3 advanced
+  // formats (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) -> v3. Both
+  // share the SAME PRIMARY/ASSISTANT authority check above.
   if (typeof data.label === 'string') {
     try {
+      if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+        return await saveManualAdvancedHouseholdCheckpointWithAdminSdk({
+          lessonRunId: data.lessonRunId,
+          label: data.label,
+          actorUid: request.auth.uid,
+          idempotencyKey: data.idempotencyKey,
+        })
+      }
       return await saveManualHouseholdCheckpointWithAdminSdk({
         lessonRunId: data.lessonRunId,
         label: data.label,

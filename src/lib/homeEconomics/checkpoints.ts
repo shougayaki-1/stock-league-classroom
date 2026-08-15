@@ -9,6 +9,15 @@ export interface WriteHouseholdCheckpointInput {
 export interface WriteHouseholdCheckpointResult {
   checkpointId: string
   created: boolean
+  /**
+   * Which checkpoint codec the server used to write this checkpoint — `2`
+   * for a Common-only (COMMON_CONDITIONS) `HouseholdCheckpointSnapshotV2`,
+   * `3` for an advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+   * `HouseholdCheckpointSnapshotV3` — see `functions/src/homeEconomics/householdCheckpoint.ts`.
+   * Optional: legacy v1 writes and any caller that doesn't need to
+   * distinguish the two schemas can ignore it.
+   */
+  schemaVersion?: 2 | 3
 }
 
 export interface RestoreHouseholdCheckpointInput {
