@@ -23,3 +23,24 @@ export const recordAuditLogEntry = async (db: FirebaseFirestore.Firestore, entry
   if (after !== undefined) doc.after = after
   await db.collection(`organizations/${orgId}/auditLog`).add(doc)
 }
+
+export interface OrgDeletionAuditLogEntryInput {
+  orgId: string
+  actorUid: string
+  result: 'SUCCESS' | 'FAILURE'
+  reason?: string
+}
+
+/**
+ * organizations/{orgId}/auditLog とは別の、トップレベルの
+ * orgDeletionAuditLog コレクションに記録する。理由: 組織削除そのものを
+ * 記録する監査ログを削除対象の組織のサブコレクションに置くと、組織を
+ * 削除した瞬間に監査証跡ごと消えてしまい、spec §21.6の「監査ログは
+ * 改変不可」という要件を満たせない。
+ */
+export const recordOrgDeletionAuditLogEntry = async (db: FirebaseFirestore.Firestore, entry: OrgDeletionAuditLogEntryInput): Promise<void> => {
+  const doc: Record<string, unknown> = { orgId: entry.orgId, actorUid: entry.actorUid, result: entry.result, occurredAt: FieldValue.serverTimestamp() }
+  if (entry.reason !== undefined) doc.reason = entry.reason
+  await db.collection('orgDeletionAuditLog').add(doc)
+}
+

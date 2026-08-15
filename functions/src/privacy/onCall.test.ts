@@ -9,16 +9,18 @@ import {
   normalizeResourcePath,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
+  purgeSchoolOrgCallable,
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
 } from './onCall'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
-import { recordAuditLogEntry } from './auditLog'
+import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
+  purgeSchoolOrgWithAdminSdk,
   requestSoftDeleteWithAdminSdk,
   restoreSoftDeletedWithAdminSdk,
 } from './deletePersonalData'
@@ -29,12 +31,16 @@ const auditLogDocs: Array<{ id: string; data: Record<string, unknown> }> = []
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
 vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
-vi.mock('./auditLog', () => ({ recordAuditLogEntry: vi.fn() }))
+vi.mock('./auditLog', () => ({
+  recordAuditLogEntry: vi.fn(),
+  recordOrgDeletionAuditLogEntry: vi.fn(),
+}))
 vi.mock('./deletePersonalData', () => ({
   requestSoftDeleteWithAdminSdk: vi.fn(),
   restoreSoftDeletedWithAdminSdk: vi.fn(),
   purgeHardDeleteResourceWithAdminSdk: vi.fn(),
   purgePersonalOrganizationWithAdminSdk: vi.fn(),
+  purgeSchoolOrgWithAdminSdk: vi.fn(),
 }))
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('firebase-admin/firestore', () => ({
@@ -57,6 +63,12 @@ vi.mock('firebase-admin/firestore', () => ({
               ? auditLogDocs.map((entry) => ({ id: entry.id, data: () => entry.data }))
               : [],
           }),
+        }),
+      }),
+      limit: () => ({
+        get: async () => ({
+          empty: true,
+          docs: [],
         }),
       }),
     }),
@@ -577,4 +589,52 @@ describe('listOrgAuditLogCallable', () => {
     expect(response).toEqual({ entries: [{ id: 'log-1', actorUid: 'owner-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS', occurredAt: '2026-08-15T00:00:00.000Z' }] })
   })
 })
+
+describe('purgeSchoolOrgCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW_MS)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const validRequest = (overrides: Record<string, unknown> = {}) => makeRequest({
+    uid: 'owner-a', authTime: NOW_SECONDS,
+    data: { orgId: 'school-1', confirm: true, confirmOrgId: 'school-1', idempotencyKey: 'key-1', ...overrides },
+  })
+
+  it('rejects when confirmOrgId does not match orgId', async () => {
+    await expect(purgeSchoolOrgCallable.run(validRequest({ confirmOrgId: 'wrong-id' }))).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('rejects a stale sign-in', async () => {
+    await expect(purgeSchoolOrgCallable.run(makeRequest({ uid: 'owner-a', authTime: NOW_SECONDS - 3600, data: { orgId: 'school-1', confirm: true, confirmOrgId: 'school-1', idempotencyKey: 'key-1' } })))
+      .rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('rejects a personal org', async () => {
+    orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'personal' : undefined) })
+    await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('rejects an org still linked to a parent org', async () => {
+    orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'school' : field === 'parentOrgId' ? 'parent-1' : undefined) })
+    await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('rejects a non-owner', async () => {
+    orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'school' : undefined) })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    await expect(purgeSchoolOrgCallable.run(validRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('purges the org and records a SUCCESS deletion audit log entry for a valid owner request', async () => {
+    orgDocGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => (field === 'type' ? 'school' : undefined) })
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(purgeSchoolOrgWithAdminSdk).mockResolvedValueOnce({ operationId: 'op-1', completed: true, alreadyCompleted: false } as never)
+    await purgeSchoolOrgCallable.run(validRequest())
+    expect(recordOrgDeletionAuditLogEntry).toHaveBeenCalledWith(expect.anything(), { orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS' })
+  })
+})
+
 

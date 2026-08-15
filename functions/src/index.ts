@@ -100,6 +100,7 @@ export {
   listOrgAuditLogCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
+  purgeSchoolOrgCallable,
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
 } from './privacy/onCall'

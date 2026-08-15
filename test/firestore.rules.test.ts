@@ -199,6 +199,21 @@ describe('aiBetaAccess/{uid}', () => {
   })
 })
 
+describe('orgDeletionAuditLog/{logId}', () => {
+  it('lets the actor and an operator read an entry, but denies everyone else and all client writes', async () => {
+    await environment.withSecurityRulesDisabled(async (context) =>
+      setDoc(doc(context.firestore(), 'orgDeletionAuditLog/log-1'), { orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS' }),
+    )
+    const actor = environment.authenticatedContext('owner-a', teacherToken)
+    const operator = environment.authenticatedContext('operator-a', operatorToken)
+    const other = environment.authenticatedContext('teacher-b', teacherToken)
+    await assertSucceeds(getDoc(doc(actor.firestore(), 'orgDeletionAuditLog/log-1')))
+    await assertSucceeds(getDoc(doc(operator.firestore(), 'orgDeletionAuditLog/log-1')))
+    await assertFails(getDoc(doc(other.firestore(), 'orgDeletionAuditLog/log-1')))
+    await assertFails(setDoc(doc(actor.firestore(), 'orgDeletionAuditLog/log-2'), { orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS' }))
+  })
+})
+
 describe('templateShares/{shareId}', () => {
   it('declares an explicit deny rule for the template shares collection', () => {
     const rules = readFileSync(join(process.cwd(), 'firestore.rules'), 'utf8')

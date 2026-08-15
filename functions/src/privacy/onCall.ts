@@ -5,10 +5,11 @@ import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
-import { recordAuditLogEntry } from './auditLog'
+import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
+  purgeSchoolOrgWithAdminSdk,
   requestSoftDeleteWithAdminSdk,
   restoreSoftDeletedWithAdminSdk,
   type ResourceCollection,
@@ -314,4 +315,58 @@ export const listOrgAuditLogCallable = onCall({ region: 'asia-northeast1' }, asy
   })
   return { entries }
 })
+
+interface PurgeSchoolOrgRequest { orgId?: unknown; confirm?: unknown; confirmOrgId?: unknown; idempotencyKey?: unknown }
+
+/**
+ * Whole school-org deletion (spec §21.3 priority 1). Sibling to
+ * purgePersonalOrganizationCallable, but for multi-member school orgs:
+ * authorization is "active owner-role member" (requireActiveOrgMember),
+ * not a single ownerUid field, and confirmOrgId (not confirmUid) guards
+ * against a caller accidentally deleting the wrong org.
+ *
+ * Deliberately out of scope: Stripe subscription cancellation,
+ * COMMUNITY-published template handling (see plan's Global Constraints).
+ */
+export const purgeSchoolOrgCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isReauthFresh(request.auth.token.auth_time as number | undefined, Date.now())) {
+    throw new HttpsError('failed-precondition', 'セキュリティのため、再度サインインしてからお試しください。')
+  }
+  const data = request.data as PurgeSchoolOrgRequest
+  if (typeof data.orgId !== 'string' || data.confirm !== true || typeof data.confirmOrgId !== 'string' || typeof data.idempotencyKey !== 'string') {
+    throw new HttpsError('invalid-argument', 'orgId、confirm、confirmOrgId、idempotencyKey は必須です。')
+  }
+  if (data.confirmOrgId !== data.orgId) throw new HttpsError('invalid-argument', 'confirmOrgId が orgId と一致しません。')
+
+  const db = getFirestore()
+  const orgId = data.orgId
+  const actorUid = request.auth.uid
+
+  const orgSnap = await db.doc(`organizations/${orgId}`).get()
+  if (!orgSnap.exists || orgSnap.get('type') !== 'school') {
+    throw new HttpsError('invalid-argument', '学校組織のみ削除できます(個人組織は purgePersonalOrganizationCallable を使用してください)。')
+  }
+  if (orgSnap.get('parentOrgId')) {
+    throw new HttpsError('failed-precondition', '上位組織にリンクされたままでは削除できません。先に連携を解除してください。')
+  }
+  const allocationsSnap = await db.collection(`organizations/${orgId}/schoolAllocations`).limit(1).get()
+  if (!allocationsSnap.empty) {
+    throw new HttpsError('failed-precondition', 'この組織は配下に学校を持つため削除できません。先にすべての学校の連携を解除してください。')
+  }
+
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner') {
+    throw new HttpsError('permission-denied', '組織のownerのみ組織全体を削除できます。')
+  }
+
+  try {
+    await purgeSchoolOrgWithAdminSdk({ uid: actorUid, orgId, idempotencyKey: data.idempotencyKey })
+  } catch (error) {
+    await recordOrgDeletionAuditLogEntry(db, { orgId, actorUid, result: 'FAILURE' })
+    throw translateIdempotencyMismatchError(error)
+  }
+  await recordOrgDeletionAuditLogEntry(db, { orgId, actorUid, result: 'SUCCESS' })
+})
+
 

@@ -89,6 +89,14 @@ service cloud.firestore {
     // 付与・失効はgrantAiBetaAccessCallable/revokeAiBetaAccessCallable(Admin SDK)経由のみ。
     match /aiBetaAccess/{uid} { allow read: if request.auth != null && request.auth.uid == uid; allow write: if false; }
 
+    // 組織削除の監査ログ。actorUid本人または運営者のみ閲覧可能。
+    // 書き込みはrecordOrgDeletionAuditLogEntry(Admin SDK)経由のみ。
+    match /orgDeletionAuditLog/{logId} {
+      allow read: if request.auth != null &&
+        (resource.data.actorUid == request.auth.uid || operator());
+      allow write: if false;
+    }
+
     match /templateShares/{shareId} { allow read, write: if false; }
 
     match /templateReports/{reportId} { allow read, write: if false; }

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { recordAuditLogEntry } from './auditLog'
+import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
 
 vi.mock('firebase-admin/firestore', () => ({ FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' } }))
 
 const addMock = vi.fn()
-const makeDb = () => ({ collection: (_path: string) => ({ add: addMock }) }) as unknown as FirebaseFirestore.Firestore
+const collectionPathSpy = vi.fn()
+const makeDb = () => ({ collection: (path: string) => { collectionPathSpy(path); return { add: addMock } } }) as unknown as FirebaseFirestore.Firestore
 
 describe('recordAuditLogEntry', () => {
   it('writes to organizations/{orgId}/auditLog with all provided fields plus a server timestamp', async () => {
@@ -41,3 +42,14 @@ describe('recordAuditLogEntry', () => {
     }))
   })
 })
+
+describe('recordOrgDeletionAuditLogEntry', () => {
+  it('writes to the top-level orgDeletionAuditLog collection (NOT under organizations/{orgId}, which is about to be deleted)', async () => {
+    addMock.mockResolvedValueOnce({ id: 'log-1' })
+    const db = makeDb()
+    await recordOrgDeletionAuditLogEntry(db, { orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS' })
+    expect(collectionPathSpy).toHaveBeenCalledWith('orgDeletionAuditLog')
+    expect(addMock).toHaveBeenCalledWith(expect.objectContaining({ orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS', occurredAt: 'SERVER_TIMESTAMP' }))
+  })
+})
+
