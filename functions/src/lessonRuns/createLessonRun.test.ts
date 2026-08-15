@@ -143,6 +143,60 @@ describe('createLessonRun', () => {
     })).rejects.toThrow('Published version pointer mismatch')
   })
 
+  it('allows the template creator to use their own PENDING template', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-pending', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1', createdByUid: 'teacher-a', approvalStatus: 'PENDING' })
+    fake.docs.set('lessonTemplates/tpl-pending/versions/v1', { templateId: 'tpl-pending', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    const result = await createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-own-pending', orgId: 'personal_teacher-a', templateId: 'tpl-pending', primaryTeacherUid: 'teacher-a',
+    })
+    expect(result.created).toBe(true)
+  })
+
+  it('rejects another teacher using a PENDING template', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-pending', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1', createdByUid: 'teacher-a', approvalStatus: 'PENDING' })
+    fake.docs.set('lessonTemplates/tpl-pending/versions/v1', { templateId: 'tpl-pending', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-other-pending', orgId: 'personal_teacher-a', templateId: 'tpl-pending', primaryTeacherUid: 'teacher-b',
+    })).rejects.toThrow('Template is not approved for use by other teachers')
+  })
+
+  it('rejects another teacher using a REJECTED template', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-rejected', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1', createdByUid: 'teacher-a', approvalStatus: 'REJECTED' })
+    fake.docs.set('lessonTemplates/tpl-rejected/versions/v1', { templateId: 'tpl-rejected', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    await expect(createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-other-rejected', orgId: 'personal_teacher-a', templateId: 'tpl-rejected', primaryTeacherUid: 'teacher-b',
+    })).rejects.toThrow('Template is not approved for use by other teachers')
+  })
+
+  it('allows another teacher to use an APPROVED template', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-approved', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1', createdByUid: 'teacher-a', approvalStatus: 'APPROVED' })
+    fake.docs.set('lessonTemplates/tpl-approved/versions/v1', { templateId: 'tpl-approved', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    const result = await createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-other-approved', orgId: 'personal_teacher-a', templateId: 'tpl-approved', primaryTeacherUid: 'teacher-b',
+    })
+    expect(result.created).toBe(true)
+  })
+
+  it('allows another teacher to use a template with no approvalStatus set (pre-existing data)', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-legacy', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1', createdByUid: 'teacher-a' })
+    fake.docs.set('lessonTemplates/tpl-legacy/versions/v1', { templateId: 'tpl-legacy', orgId: 'personal_teacher-a', content: { subject: 'SOCIAL_STUDIES' } })
+    const result = await createLessonRun({
+      firestore: fake as never, generateRandomSeed: () => 'seed', generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-other-legacy', orgId: 'personal_teacher-a', templateId: 'tpl-legacy', primaryTeacherUid: 'teacher-b',
+    })
+    expect(result.created).toBe(true)
+  })
+
+
   it('rejects creating a SOCIAL_STUDIES run whose templateSnapshot has fewer than 3 companies', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonTemplates/tpl-2', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })

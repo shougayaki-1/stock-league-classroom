@@ -42,6 +42,7 @@ const translateCreateLessonRunError = (error: unknown): unknown => {
     if (error.message === 'LessonTemplate not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Template does not belong to this organization') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Template has no published version to snapshot') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'Template is not approved for use by other teachers') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Published version not found') return new HttpsError('not-found', error.message)
     if (error.message === 'Published version pointer mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)

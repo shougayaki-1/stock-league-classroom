@@ -121,6 +121,7 @@ describe('createLessonRunCallable', () => {
     ['Published version not found', 'not-found'],
     ['Published version pointer mismatch', 'failed-precondition'],
     ['Idempotency key payload mismatch', 'failed-precondition'],
+    ['Template is not approved for use by other teachers', 'failed-precondition'],
   ] as const)('translates a bare "%s" Error from createLessonRun into %s', async (message, code) => {
     templateGetMock.mockResolvedValue({
       exists: true,

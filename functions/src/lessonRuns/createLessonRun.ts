@@ -78,9 +78,12 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
     }
     const templateSnap = await tx.get(`lessonTemplates/${deps.templateId}`)
     if (!templateSnap.exists) throw new Error('LessonTemplate not found')
-    const template = templateSnap.data() as { orgId: string; currentPublishedVersionId: string | null }
+    const template = templateSnap.data() as { orgId: string; currentPublishedVersionId: string | null; createdByUid: string; approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' }
     if (template.orgId !== deps.orgId) throw new Error('Template does not belong to this organization')
     if (!template.currentPublishedVersionId) throw new Error('Template has no published version to snapshot')
+    if (template.createdByUid !== deps.primaryTeacherUid && (template.approvalStatus === 'PENDING' || template.approvalStatus === 'REJECTED')) {
+      throw new Error('Template is not approved for use by other teachers')
+    }
     const versionSnap = await tx.get(`lessonTemplates/${deps.templateId}/versions/${template.currentPublishedVersionId}`)
     if (!versionSnap.exists) throw new Error('Published version not found')
     const version = versionSnap.data() as { templateId: string; orgId: string; content: unknown }
