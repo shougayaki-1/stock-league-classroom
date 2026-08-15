@@ -103,5 +103,6 @@ export {
   purgeSchoolOrgCallable,
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
+  searchOrgStudentDataCallable,
 } from './privacy/onCall'
 export { purgeExpiredSoftDeletesScheduled } from './privacy/purgeExpiredSoftDeletes'

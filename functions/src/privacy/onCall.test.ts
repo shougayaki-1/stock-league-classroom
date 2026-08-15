@@ -12,10 +12,12 @@ import {
   purgeSchoolOrgCallable,
   requestSoftDeleteCallable,
   restoreSoftDeletedCallable,
+  searchOrgStudentDataCallable,
 } from './onCall'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
+import { searchOrgStudentDataWithAdminSdk } from './searchOrgStudentData'
 import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
@@ -31,6 +33,7 @@ const auditLogDocs: Array<{ id: string; data: Record<string, unknown> }> = []
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
 vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
+vi.mock('./searchOrgStudentData', () => ({ searchOrgStudentDataWithAdminSdk: vi.fn() }))
 vi.mock('./auditLog', () => ({
   recordAuditLogEntry: vi.fn(),
   recordOrgDeletionAuditLogEntry: vi.fn(),
@@ -638,5 +641,190 @@ describe('purgeSchoolOrgCallable', () => {
     expect(recordOrgDeletionAuditLogEntry).toHaveBeenCalledWith(expect.anything(), { orgId: 'school-1', actorUid: 'owner-a', result: 'SUCCESS' })
   })
 })
+
+describe('searchOrgStudentDataCallable', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW_MS)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const validData = {
+    orgId: 'school-1',
+    field: 'displayName',
+    query: '山田 太郎',
+    reason: '学籍照会のため',
+  }
+
+  it('rejects an anonymous caller, never checking membership or searching', async () => {
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ noAuth: true, data: validData }))).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(searchOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-teacher caller', async () => {
+    const request = {
+      auth: { uid: 'teacher-a', token: { email_verified: false, firebase: { sign_in_provider: 'google.com' } } },
+      data: validData,
+      rawRequest: {},
+    } as unknown as CallableRequest<unknown>
+    await expect(searchOrgStudentDataCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(searchOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid/missing arguments (orgId, field, query, reason)', async () => {
+    // Missing orgId
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: { ...validData, orgId: undefined } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    // Invalid field
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: { ...validData, field: 'authUid' } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    // Non-string query
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: { ...validData, query: 123 } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    // Empty reason
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: { ...validData, reason: '   ' } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    // Reason too long (> 500 chars)
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: { ...validData, reason: 'a'.repeat(501) } }))).rejects.toMatchObject({ code: 'invalid-argument' })
+
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(searchOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects when requireActiveOrgMember fails', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new HttpsError('permission-denied', '有効な組織メンバーではありません。'))
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: validData }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(searchOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('rejects active teacher role (only owner and admin are allowed)', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ data: validData }))).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: '組織のowner・adminのみ生徒データを検索できます。',
+    })
+    expect(searchOrgStudentDataWithAdminSdk).not.toHaveBeenCalled()
+  })
+
+  it('passes actorRole: owner to search service for owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockResolvedValueOnce({
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [{ lessonRunId: 'run-1', participantId: 'p-1', displayName: '山田 太郎' }],
+    })
+
+    const result = await searchOrgStudentDataCallable.run(makeRequest({ uid: 'owner-a', data: validData }))
+
+    expect(searchOrgStudentDataWithAdminSdk).toHaveBeenCalledWith({
+      orgId: 'school-1',
+      actorUid: 'owner-a',
+      actorRole: 'owner',
+      field: 'displayName',
+      query: '山田 太郎',
+    })
+    expect(result).toMatchObject({ truncated: false, matches: [{ participantId: 'p-1' }] })
+  })
+
+  it('passes actorRole: admin to search service for admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockResolvedValueOnce({
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [],
+    })
+
+    await searchOrgStudentDataCallable.run(makeRequest({ uid: 'admin-a', data: validData }))
+
+    expect(searchOrgStudentDataWithAdminSdk).toHaveBeenCalledWith({
+      orgId: 'school-1',
+      actorUid: 'admin-a',
+      actorRole: 'admin',
+      field: 'displayName',
+      query: '山田 太郎',
+    })
+  })
+
+  it('verifies requireActiveOrgMember is invoked strictly before search service', async () => {
+    const callOrder: string[] = []
+    vi.mocked(requireActiveOrgMember).mockImplementation(async () => {
+      callOrder.push('requireActiveOrgMember')
+      return { role: 'owner', membershipVersion: 1 }
+    })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockImplementation(async () => {
+      callOrder.push('searchOrgStudentDataWithAdminSdk')
+      return { expiresAt: '2026-08-15T12:10:00.000Z', truncated: false, matches: [] }
+    })
+    vi.mocked(recordAuditLogEntry).mockImplementation(async () => {
+      callOrder.push('recordAuditLogEntry')
+    })
+
+    await searchOrgStudentDataCallable.run(makeRequest({ uid: 'owner-a', data: validData }))
+
+    expect(callOrder).toEqual(['requireActiveOrgMember', 'searchOrgStudentDataWithAdminSdk', 'recordAuditLogEntry'])
+  })
+
+  it('records audit log without search query, displayName, or externalIdentifier', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockResolvedValueOnce({
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [
+        {
+          lessonRunId: 'run-1',
+          participantId: 'p-1',
+          displayName: '山田 太郎',
+          externalIdentifier: 'EXT-123',
+        },
+      ],
+    })
+
+    await searchOrgStudentDataCallable.run(makeRequest({ uid: 'owner-a', data: validData }))
+
+    expect(recordAuditLogEntry).toHaveBeenCalledWith(expect.anything(), {
+      orgId: 'school-1',
+      actorUid: 'owner-a',
+      action: 'SEARCH_ORG_STUDENT_DATA',
+      result: 'SUCCESS',
+      reason: '学籍照会のため',
+      after: {
+        field: 'displayName',
+        matchCount: 1,
+        matches: [{ lessonRunId: 'run-1', participantId: 'p-1' }],
+      },
+    })
+    const auditCallArg = vi.mocked(recordAuditLogEntry).mock.calls[0][1] as unknown as Record<string, unknown>
+    const serialized = JSON.stringify(auditCallArg)
+    expect(serialized).not.toContain('山田 太郎')
+    expect(serialized).not.toContain('EXT-123')
+  })
+
+  it('does not return search results if audit log recording rejects', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockResolvedValueOnce({
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [{ lessonRunId: 'run-1', participantId: 'p-1' }],
+    })
+    vi.mocked(recordAuditLogEntry).mockRejectedValueOnce(new Error('Audit log write failed'))
+
+    await expect(searchOrgStudentDataCallable.run(makeRequest({ uid: 'owner-a', data: validData }))).rejects.toThrow('Audit log write failed')
+  })
+
+  it('allows execution even with a stale auth_time (no fresh reauth requirement)', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(searchOrgStudentDataWithAdminSdk).mockResolvedValueOnce({
+      expiresAt: '2026-08-15T12:10:00.000Z',
+      truncated: false,
+      matches: [],
+    })
+
+    // auth_time is 2 hours ago (older than 10 minutes)
+    const request = makeRequest({ uid: 'owner-a', authTime: NOW_SECONDS - 7200, data: validData })
+    await expect(searchOrgStudentDataCallable.run(request)).resolves.toBeDefined()
+  })
+})
+
 
 

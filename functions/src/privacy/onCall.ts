@@ -5,6 +5,7 @@ import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
+import { searchOrgStudentDataWithAdminSdk, type OrgStudentSearchField } from './searchOrgStudentData'
 import { recordAuditLogEntry, recordOrgDeletionAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
@@ -373,5 +374,71 @@ export const purgeSchoolOrgCallable = onCall({ region: 'asia-northeast1' }, asyn
   }
   await recordOrgDeletionAuditLogEntry(db, { orgId, actorUid, result: 'SUCCESS' })
 })
+
+interface SearchOrgStudentDataRequest {
+  orgId?: unknown
+  field?: unknown
+  query?: unknown
+  reason?: unknown
+}
+
+export const searchOrgStudentDataCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+
+  const data = request.data as SearchOrgStudentDataRequest
+  if (
+    typeof data?.orgId !== 'string' ||
+    !data.orgId ||
+    (data?.field !== 'displayName' && data?.field !== 'externalIdentifier') ||
+    typeof data?.query !== 'string' ||
+    typeof data?.reason !== 'string'
+  ) {
+    throw new HttpsError('invalid-argument', 'orgId、field、query、reason は必須です。')
+  }
+
+  const reason = data.reason.trim()
+  if (reason.length < 1 || reason.length > 500) {
+    throw new HttpsError('invalid-argument', 'reason は1文字以上500文字以下で指定してください。')
+  }
+
+  const db = getFirestore()
+  const actorUid = request.auth.uid
+  const orgId = data.orgId
+  const field = data.field as OrgStudentSearchField
+  const query = data.query
+
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    throw new HttpsError('permission-denied', '組織のowner・adminのみ生徒データを検索できます。')
+  }
+
+  const result = await searchOrgStudentDataWithAdminSdk({
+    orgId,
+    actorUid,
+    actorRole: membership.role,
+    field,
+    query,
+  })
+
+  await recordAuditLogEntry(db, {
+    orgId,
+    actorUid,
+    action: 'SEARCH_ORG_STUDENT_DATA',
+    result: 'SUCCESS',
+    reason,
+    after: {
+      field,
+      matchCount: result.matches.length,
+      matches: result.matches.map((m) => ({
+        lessonRunId: m.lessonRunId,
+        participantId: m.participantId,
+      })),
+    },
+  })
+
+  return result
+})
+
 
 
