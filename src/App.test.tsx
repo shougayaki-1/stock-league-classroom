@@ -318,6 +318,34 @@ describe('Guided Lesson Builder routes', () => {
     expect(screen.getByText(/別の組織へ移動処理中/)).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
+
+  it('routes /operator/certifications to the operator template certification page', async () => {
+    window.history.pushState({}, '', '/operator/certifications')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'listTemplateCertificationCandidatesCallable') {
+        return vi.fn().mockResolvedValue({
+          data: [
+            {
+              templateId: 'tpl-op-1',
+              title: '審査対象教材',
+              currentPublishedVersionId: 'v1',
+              visibility: 'COMMUNITY',
+              createdByUid: 'teacher-1',
+            },
+          ],
+        })
+      }
+      return vi.fn().mockResolvedValue({ data: {} })
+    })
+
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'operator-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+
+    expect(await screen.findByRole('heading', { name: '公開教材の認定管理' })).toBeInTheDocument()
+    expect(await screen.findByText('審査対象教材')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
 })
 
 describe('School org creation and invitation routes', () => {
