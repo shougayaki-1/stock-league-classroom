@@ -25,6 +25,8 @@ import { TemplateOverviewPage } from './components/teacher/templates/TemplateOve
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
 import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
+import { CommunityTemplateDetailPage, type CommunityTemplateDetailPageProps } from './components/teacher/templates/CommunityTemplateDetailPage'
+import { canReviewTemplate, listTemplateReviews as listTemplateReviewsClient, submitTemplateReview as submitTemplateReviewClient, type TemplateReview } from './lib/lessonTemplates/templateReviews'
 import { listPendingTemplateReports, resolveTemplateReport, type PendingTemplateReport } from './lib/lessonTemplates/moderationQueue'
 import { listTemplateDerivatives } from './lib/lessonTemplates/templateDerivatives'
 import { listCommunityTemplates, type CommunityTemplate } from './lib/lessonTemplates/communityTemplates'
@@ -312,6 +314,7 @@ function TemplateListRoute({ services }: { services: FirebaseServices }) {
 }
 
 function CommunityMarketplaceRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
   const [templates, setTemplates] = useState<CommunityTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [subject, setSubject] = useState<'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined>(undefined)
@@ -331,6 +334,35 @@ function CommunityMarketplaceRoute({ services }: { services: FirebaseServices })
     }}
     onReport={(template, reason, details) => {
       void reportTemplate(services.functions, { templateId: template.id, versionId: template.currentPublishedVersionId, reason, details: details || undefined })
+    }}
+    onOpenDetail={(template) => navigate(`/teacher/marketplace/${template.id}`)}
+  />
+}
+
+function CommunityTemplateDetailRoute({ services }: { services: FirebaseServices }) {
+  const { templateId } = useParams<{ templateId: string }>()
+  const [template, setTemplate] = useState<CommunityTemplateDetailPageProps['template']>()
+  const [reviews, setReviews] = useState<TemplateReview[]>([])
+  const [eligible, setEligible] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const load = () => {
+    if (!templateId) return
+    setLoading(true)
+    getDoc(doc(services.firestore, 'lessonTemplates', templateId)).then((snapshot) => {
+      if (!snapshot.exists()) return
+      const data = snapshot.data() as CommunityTemplateDetailPageProps['template']
+      setTemplate(data)
+      void listTemplateReviewsClient(services.functions, { templateId, versionId: data.currentPublishedVersionId }).then(setReviews)
+      void canReviewTemplate(services.functions, { templateId, versionId: data.currentPublishedVersionId }).then((result) => setEligible(result.eligible))
+    }).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [services, templateId])
+  if (!template) return <GuardLoading />
+  return <CommunityTemplateDetailPage
+    template={template} reviews={reviews} loading={loading} eligible={eligible}
+    onSubmitReview={(input) => {
+      if (!templateId) return
+      void submitTemplateReviewClient(services.functions, { templateId, versionId: template.currentPublishedVersionId, ...input }).then(load)
     }}
   />
 }
@@ -773,6 +805,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />

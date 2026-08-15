@@ -18,9 +18,10 @@ export interface CommunityTemplatesPageProps {
   onSubjectChange: (subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined) => void
   onDuplicate: (template: CommunityTemplate) => void
   onReport: (template: CommunityTemplate, reason: TemplateReportReason, details: string) => void
+  onOpenDetail: (template: CommunityTemplate) => void
 }
 
-export function CommunityTemplatesPage({ templates, loading, subject, onSubjectChange, onDuplicate, onReport }: CommunityTemplatesPageProps) {
+export function CommunityTemplatesPage({ templates, loading, subject, onSubjectChange, onDuplicate, onReport, onOpenDetail }: CommunityTemplatesPageProps) {
   const [reportTarget, setReportTarget] = useState<CommunityTemplate>()
   const [reason, setReason] = useState<TemplateReportReason>()
   const [details, setDetails] = useState('')
@@ -32,7 +33,7 @@ export function CommunityTemplatesPage({ templates, loading, subject, onSubjectC
       <ToggleButton value="HOME_ECONOMICS">家庭科</ToggleButton>
     </ToggleButtonGroup>
     {loading ? <CircularProgress aria-label="読み込み中" /> : templates.length
-      ? <List>{templates.map((template) => <ListItem key={template.id} secondaryAction={<Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => onDuplicate(template)}>自組織へ複製</Button><Button color="error" onClick={() => setReportTarget(template)}>通報</Button></Stack>}><ListItemText primary={template.title} secondary={template.description} /></ListItem>)}</List>
+      ? <List>{templates.map((template) => <ListItem key={template.id} secondaryAction={<Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => onDuplicate(template)}>自組織へ複製</Button><Button color="error" onClick={() => setReportTarget(template)}>通報</Button></Stack>}><ListItemText primary={<Button variant="text" onClick={() => onOpenDetail(template)} sx={{ p: 0, textTransform: 'none' }}>{template.title}</Button>} secondary={template.description} /></ListItem>)}</List>
       : <Typography color="text.secondary">公開されている教材がまだありません。</Typography>}
     <Dialog open={!!reportTarget} onClose={closeDialog}>
       <DialogTitle>教材を通報</DialogTitle>
