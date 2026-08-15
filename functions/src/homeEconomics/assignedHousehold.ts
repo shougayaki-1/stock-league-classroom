@@ -1,5 +1,5 @@
 import { getFirestore } from 'firebase-admin/firestore'
-import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import type { HomeEconomicsContent, HouseholdProfile } from '@stock-league/household-authoring-content'
 import {
   buildInitialHouseholdState,
   householdRepositoryWithAdminSdk,
@@ -8,6 +8,39 @@ import {
 } from '../lessonRuns/households/repository'
 import type { HouseholdAssignmentEntry } from './householdAssignment'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
+
+export interface PreviewAssignedHouseholdStateInput {
+  lessonRunId: string
+  householdId: string
+  teamId: string
+  profile: HouseholdProfile
+  nowMillis: number
+}
+
+/**
+ * Pure, no-Firestore counterpart to `getOrInitAssignedHouseholdState`/
+ * `ensureAssignedHouseholdStateWithAdminSdk` below — the advanced-format
+ * analogue of `commonConditionsHousehold.ts`'s `previewCommonConditionsHouseholdState`.
+ * Used by the teacher dashboard (Task 10) to project what a household's
+ * INITIAL state would look like from its assigned profile before the
+ * assignment is FROZEN (or before its `HouseholdState` document has been
+ * created yet even after freezing) — WITHOUT calling
+ * `ensureAssignedHouseholdStateWithAdminSdk`, which requires a FROZEN
+ * assignment and persists a real document. Never used once a persisted
+ * `HouseholdState` document exists; callers should always prefer the real
+ * document when present.
+ */
+export const previewAssignedHouseholdState = (
+  input: PreviewAssignedHouseholdStateInput,
+): HouseholdState => buildInitialHouseholdState({
+  lessonRunId: input.lessonRunId,
+  teamId: input.teamId,
+  householdId: input.householdId,
+  profileId: input.profile.householdId,
+  startingCashYen: input.profile.cashSavingsYen,
+  startingLifeStage: input.profile.lifeStage,
+  nowMillis: input.nowMillis,
+})
 
 /**
  * Initializer for the 3 advanced-format households (ROLE_VARIANT/
