@@ -103,6 +103,7 @@ export interface ProcessBatchDeps {
   commitSettlement: (result: SettleBatchResult, lessonRunId: string, batchId: string) => Promise<void>
   appendBatchSettledEvent: (result: SettleBatchResult, lessonRunId: string, batchId: string) => Promise<void>
   publishRealtimeState: (result: SettleBatchResult, lessonRunId: string) => Promise<void>
+  publishResearchDeskProjection: (lessonRunId: string) => Promise<void>
   scheduleNextBatch: (lessonRunId: string, batchIndex: number) => Promise<void>
   /** Task 17 — `SocialStudiesMarketContent`'s lifecycle-event flags for
    * this lessonRun. Default (all flags false, empty trigger arrays) means
@@ -173,6 +174,7 @@ export const processBatch = async (deps: ProcessBatchDeps, input: ProcessBatchIn
 
   await deps.appendBatchSettledEvent(result, input.lessonRunId, input.batchId)
   await deps.publishRealtimeState(result, input.lessonRunId)
+  await deps.publishResearchDeskProjection(input.lessonRunId)
   // Task 9 Step 9 requires this call; see this file's doc comment item 9
   // for why the real Admin SDK wiring (processBatchDepsWithAdminSdk)
   // supplies a no-op here instead of the real enqueueNextBatch.
@@ -521,6 +523,8 @@ export const publishRealtimeStateWithAdminSdk: ProcessBatchDeps['publishRealtime
  */
 const scheduleNextBatchNoOp: ProcessBatchDeps['scheduleNextBatch'] = async () => {}
 
+import { publishResearchDeskProjectionWithAdminSdk } from './researchDeskProjection'
+
 export const processBatchDepsWithAdminSdk = (): ProcessBatchDeps => ({
   readLessonRunState: readLessonRunStateWithAdminSdk,
   listPendingOrders: (lessonRunId, batchId) =>
@@ -532,6 +536,7 @@ export const processBatchDepsWithAdminSdk = (): ProcessBatchDeps => ({
   commitSettlement: commitSettlementWithAdminSdk,
   appendBatchSettledEvent: appendBatchSettledEventWithAdminSdk,
   publishRealtimeState: publishRealtimeStateWithAdminSdk,
+  publishResearchDeskProjection: publishResearchDeskProjectionWithAdminSdk,
   scheduleNextBatch: scheduleNextBatchNoOp,
   readLifecycleConfig: readLifecycleConfigWithAdminSdk,
   applyLifecycleDividends: applyLifecycleDividendsWithAdminSdk,

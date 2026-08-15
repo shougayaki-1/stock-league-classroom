@@ -50,6 +50,7 @@ export interface TransitionPhaseDeps {
    * (`transitionPhaseWithAdminSdk` below) supplies `writeCheckpointWithAdminSdk`.
    */
   writeCheckpoint: WriteCheckpointFn
+  publishResearchDeskProjection?: (lessonRunId: string) => Promise<void>
   now?: () => unknown
 }
 
@@ -295,14 +296,19 @@ export const transitionPhase = async (
     })
   }
 
+  if (deps.publishResearchDeskProjection) {
+    await deps.publishResearchDeskProjection(input.lessonRunId)
+  }
+
   return { status: outcome.status, currentPhaseId: outcome.currentPhaseId, deduplicated: outcome.deduplicated }
 }
 
 /** Production wiring: Firestore Admin SDK transaction + real checkpoint writer. `stopActiveOperations` is left unset (no-op) — Phase C/D will pass their own implementation once the market/home-economics engines exist. */
-export const transitionPhaseWithAdminSdk = (
+export const transitionPhaseWithAdminSdk = async (
   input: TransitionPhaseInput & { actorId: string; actorType?: 'TEACHER' | 'SYSTEM' },
 ): Promise<TransitionPhaseResult> => {
   const db = getFirestore()
+  const { publishResearchDeskProjectionWithAdminSdk } = await import('../../market/researchDeskProjection')
   const { actorId, actorType, ...rest } = input
   return transitionPhase({
     firestore: {
@@ -315,5 +321,7 @@ export const transitionPhaseWithAdminSdk = (
     actorId,
     actorType,
     writeCheckpoint: writeCheckpointWithAdminSdk,
+    publishResearchDeskProjection: publishResearchDeskProjectionWithAdminSdk,
   }, rest)
 }
+

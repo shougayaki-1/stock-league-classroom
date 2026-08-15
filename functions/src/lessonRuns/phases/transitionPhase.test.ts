@@ -437,4 +437,44 @@ describe('transitionPhase', () => {
       expect(run.startedAt).toBe('2026-08-15T10:00:00Z')
     })
   })
+
+  describe('publishResearchDeskProjection hook', () => {
+    it('calls publishResearchDeskProjection after successful transition commit', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const publishResearchDeskProjection = vi.fn().mockResolvedValue(undefined)
+      const deps = {
+        firestore: fake as never,
+        actorId: 'teacher-1',
+        writeCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false }),
+        publishResearchDeskProjection,
+      }
+
+      await transitionPhase(deps, {
+        lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-pub-1',
+      })
+
+      expect(publishResearchDeskProjection).toHaveBeenCalledTimes(1)
+      expect(publishResearchDeskProjection).toHaveBeenCalledWith('run-1')
+    })
+
+    it('does NOT call publishResearchDeskProjection when transaction fails', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'COMPLETED' })
+      const publishResearchDeskProjection = vi.fn().mockResolvedValue(undefined)
+      const deps = {
+        firestore: fake as never,
+        actorId: 'teacher-1',
+        writeCheckpoint: vi.fn(),
+        publishResearchDeskProjection,
+      }
+
+      await expect(transitionPhase(deps, {
+        lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '無効', idempotencyKey: 'tx-pub-2',
+      })).rejects.toThrow()
+
+      expect(publishResearchDeskProjection).not.toHaveBeenCalled()
+    })
+  })
 })
+

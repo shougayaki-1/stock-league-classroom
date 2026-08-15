@@ -26,6 +26,7 @@ describe('processBatch', () => {
     commitSettlement: vi.fn().mockResolvedValue(undefined),
     appendBatchSettledEvent: vi.fn().mockResolvedValue(undefined),
     publishRealtimeState: vi.fn().mockResolvedValue(undefined),
+    publishResearchDeskProjection: vi.fn().mockResolvedValue(undefined),
     scheduleNextBatch: vi.fn().mockResolvedValue(undefined),
     readLifecycleConfig: vi.fn().mockResolvedValue({
       bankruptcyEnabled: false, dividendEnabled: false, stockSplitEnabled: false,
@@ -65,7 +66,14 @@ describe('processBatch', () => {
     const commitSettlement = vi.fn().mockResolvedValue(undefined)
     const appendBatchSettledEvent = vi.fn().mockResolvedValue(undefined)
     const publishRealtimeState = vi.fn().mockResolvedValue(undefined)
-    const deps = makeDeps({ settleBatchFn, commitSettlement, appendBatchSettledEvent, publishRealtimeState })
+    const publishResearchDeskProjection = vi.fn().mockResolvedValue(undefined)
+    const deps = makeDeps({
+      settleBatchFn,
+      commitSettlement,
+      appendBatchSettledEvent,
+      publishRealtimeState,
+      publishResearchDeskProjection,
+    })
 
     await processBatch(deps, { lessonRunId: 'run-1', batchId: 'run-1_batch_1', batchIndex: 1 })
 
@@ -75,6 +83,7 @@ describe('processBatch', () => {
     expect(commitSettlement).toHaveBeenCalledWith(emptyResult, 'run-1', 'run-1_batch_1')
     expect(appendBatchSettledEvent).toHaveBeenCalledWith(emptyResult, 'run-1', 'run-1_batch_1')
     expect(publishRealtimeState).toHaveBeenCalledWith(emptyResult, 'run-1')
+    expect(publishResearchDeskProjection).toHaveBeenCalledWith('run-1')
   })
 
   it('calls scheduleNextBatch as the last step, per the fixed ProcessBatchDeps interface (Task 9 Step 9)', async () => {
