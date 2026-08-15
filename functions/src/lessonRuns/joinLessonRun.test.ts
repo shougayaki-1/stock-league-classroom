@@ -327,5 +327,53 @@ describe('joinLessonRun', () => {
       const teamB = fake.docs.get('lessonRuns/run-1/teams/team-b') as { memberParticipantIds: string[] }
       expect(teamB.memberParticipantIds.filter((id) => id === first.participantId)).toHaveLength(1)
     })
+
+    // Regression test (task-3 review finding): the RUNNING+advanced+FROZEN
+    // gate above (`lateJoinTeamIds`) only decides whether the transaction is
+    // allowed to proceed past the READY/WAITING check — it does NOT bypass
+    // the separate `authIndexSnap.exists` branch that follows. An EXISTING
+    // participant (one who already has a `participantsByAuthUid` index
+    // entry — e.g. they joined earlier while the run was READY/WAITING, or
+    // reconnected before) hitting this gate while RUNNING must fall through
+    // to the ordinary reconnect logic: reuse their real `existing.teamId`,
+    // bump `sessionVersion`, and never touch any team doc or run the
+    // new-participant `assignBalancedTeam` assignment meant only for a
+    // genuinely new latecomer. `lateJoinTeam` (the only local that drives a
+    // team-doc write) is set exclusively inside the `else` (new-participant)
+    // branch, so a reconnect can never double-append to a team roster or
+    // have its real prior team silently reassigned to the "least full"
+    // team — this test proves that end-to-end.
+    it('lets an EXISTING participant reconnect during RUNNING for an advanced-format FROZEN lesson through the ordinary reconnect path, not the new-participant team-assignment path', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs)
+      // Simulate student-a already being a participant on team-a (e.g. they
+      // joined before the lesson went RUNNING) who is now reconnecting.
+      fake.docs.set('lessonRuns/run-1/participants/existing-1', {
+        id: 'existing-1', lessonRunId: 'run-1', orgId: 'org-1', authUid: 'student-a',
+        identityMode: 'QUICK_JOIN', displayName: 'たろう', teamId: 'team-a',
+        status: 'TEMPORARILY_DISCONNECTED', sessionVersion: 0, joinedAt: 'fixed-now', lastSeenAt: 'fixed-now',
+      })
+      fake.docs.set('lessonRuns/run-1/participantsByAuthUid/student-a', { participantId: 'existing-1' })
+      const deps = makeDeps(fake)
+
+      const result = await joinLessonRun(deps, baseInput({ idempotencyKey: 'reconnect-1' }))
+
+      expect(result.participantId).toBe('existing-1')
+      // Preserves the real prior team — must NOT be reassigned via
+      // assignBalancedTeam to team-b (the least-full team, which is what a
+      // brand-new joiner would get).
+      expect(result.teamId).toBe('team-a')
+      expect(result.deduplicated).toBe(false)
+      const participant = fake.docs.get('lessonRuns/run-1/participants/existing-1')
+      expect(participant).toMatchObject({ status: 'ACTIVE', sessionVersion: 1, teamId: 'team-a' })
+      const teamA = fake.docs.get('lessonRuns/run-1/teams/team-a') as { memberParticipantIds: string[]; version: number }
+      expect(teamA.memberParticipantIds).toEqual(['existing-1', 'existing-2']) // unchanged: no double-append
+      expect(teamA.version).toBe(1) // unchanged: reconnect never rewrites the team doc
+      const teamB = fake.docs.get('lessonRuns/run-1/teams/team-b') as { memberParticipantIds: string[] }
+      expect(teamB.memberParticipantIds).toEqual(['existing-3']) // untouched
+      expect(deps.syncMembership).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 'team-a', status: 'ACTIVE', sessionVersion: 1 }),
+      )
+    })
   })
 })
