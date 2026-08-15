@@ -44,3 +44,21 @@ export const recordOrgDeletionAuditLogEntry = async (db: FirebaseFirestore.Fires
   await db.collection('orgDeletionAuditLog').add(doc)
 }
 
+/**
+ * Transaction-safe version of recordAuditLogEntry for atomicity with state transitions.
+ */
+export const recordAuditLogInTransaction = (
+  tx: FirebaseFirestore.Transaction | { set: (ref: FirebaseFirestore.DocumentReference | string, data: Record<string, unknown>) => void },
+  db: FirebaseFirestore.Firestore | { collection: (path: string) => { doc: () => FirebaseFirestore.DocumentReference | string } },
+  entry: AuditLogEntryInput,
+): void => {
+  const { orgId, actorUid, action, result, reason, before, after } = entry
+  const docRef = (db as FirebaseFirestore.Firestore).collection(`organizations/${orgId}/auditLog`).doc()
+  const doc: Record<string, unknown> = { orgId, actorUid, action, result, occurredAt: FieldValue.serverTimestamp() }
+  if (reason !== undefined) doc.reason = reason
+  if (before !== undefined) doc.before = before
+  if (after !== undefined) doc.after = after
+  tx.set(docRef as never, doc)
+}
+
+

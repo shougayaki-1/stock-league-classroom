@@ -53,3 +53,39 @@ describe('recordOrgDeletionAuditLogEntry', () => {
   })
 })
 
+describe('recordAuditLogInTransaction', () => {
+  it('sets document in transaction on organizations/{orgId}/auditLog with serverTimestamp', async () => {
+    const { recordAuditLogInTransaction } = await import('./auditLog')
+    const setMock = vi.fn()
+    const docRefMock = { id: 'auto-doc-id' }
+    const db = {
+      collection: (path: string) => {
+        collectionPathSpy(path)
+        return { doc: () => docRefMock }
+      },
+    } as unknown as FirebaseFirestore.Firestore
+    const tx = { set: setMock } as unknown as FirebaseFirestore.Transaction
+
+    recordAuditLogInTransaction(tx, db, {
+      orgId: 'org-1',
+      actorUid: 'owner-1',
+      action: 'SCHEDULE_ANNUAL_ARCHIVE',
+      result: 'SUCCESS',
+      reason: '2025年度アーカイブ',
+      after: { jobId: 'job-1', academicYear: 2025 },
+    })
+
+    expect(collectionPathSpy).toHaveBeenCalledWith('organizations/org-1/auditLog')
+    expect(setMock).toHaveBeenCalledWith(docRefMock, {
+      orgId: 'org-1',
+      actorUid: 'owner-1',
+      action: 'SCHEDULE_ANNUAL_ARCHIVE',
+      result: 'SUCCESS',
+      occurredAt: 'SERVER_TIMESTAMP',
+      reason: '2025年度アーカイブ',
+      after: { jobId: 'job-1', academicYear: 2025 },
+    })
+  })
+})
+
+

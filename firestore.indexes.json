@@ -9,6 +9,15 @@
       ]
     },
     {
+      "collectionGroup": "lessonRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orgId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "endedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "templateShares",
       "queryScope": "COLLECTION",
       "fields": [
