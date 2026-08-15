@@ -28,7 +28,7 @@
 **Interfaces:**
 - Produces: `Invitation.status`に`'REVOKED'`を追加。`interface RevokeInvitationDeps { getInvitation: (orgId: string, invitationId: string) => Promise<Invitation | null>; markInvitationRevoked: (orgId: string, invitationId: string) => Promise<void> }`、`revokeInvitation(deps: RevokeInvitationDeps, input: { orgId: string; invitationId: string }): Promise<void>`(`PENDING`以外は`Error('この招待は失効できません')`)、`revokeInvitationWithAdminSdk(input: { orgId: string; invitationId: string }): Promise<void>`。Task 4のCallableが`revokeInvitationWithAdminSdk`を呼ぶ。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/organizations/invitations.test.ts`の末尾に追記する(既存のimport・`describe`ブロック群の末尾)。
 
@@ -86,12 +86,12 @@ import {
 } from './invitations'
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/invitations.test.ts`
 Expected: FAIL(`revokeInvitation`が存在しない)。
 
-- [ ] **Step 3: 実装を追加する**
+- [x] **Step 3: 実装を追加する**
 
 `functions/src/organizations/invitations.ts`の`export interface Invitation { ... status: 'PENDING' | 'ACCEPTED' ... }`を以下に置き換える。
 
@@ -139,17 +139,17 @@ export const revokeInvitationWithAdminSdk = (input: RevokeInvitationInput): Prom
 }
 ```
 
-- [ ] **Step 4: テストを実行して成功を確認する**
+- [x] **Step 4: テストを実行して成功を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/invitations.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 5: 型チェックとfunctions全体のテストを実行する**
+- [x] **Step 5: 型チェックとfunctions全体のテストを実行する**
 
 Run: `cd functions && npx tsc --noEmit && npx vitest run`
 Expected: エラーなし、全テストPASS(`Invitation.status`にunion値を追加しただけなので既存の網羅的分岐があれば型エラーになるが、`STATUS_LABEL`のような網羅チェックはフロント側にありfunctions側には影響しない見込み)。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add functions/src/organizations/invitations.ts functions/src/organizations/invitations.test.ts
@@ -167,7 +167,7 @@ git commit -m "feat: 招待の失効(revokeInvitation)を実装する"
 **Interfaces:**
 - Produces: `interface ListOrgInvitationsDeps { getInvitationDocs: (orgId: string) => Promise<Invitation[]> }`、`listOrgInvitations(deps: ListOrgInvitationsDeps, input: { orgId: string }): Promise<Invitation[]>`、`listOrgInvitationsWithAdminSdk(orgId: string): Promise<Invitation[]>`。Task 4のCallableが呼ぶ。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 Task 1で更新した`functions/src/organizations/invitations.test.ts`のimportに`listOrgInvitations`を追加する。
 
@@ -197,12 +197,12 @@ describe('listOrgInvitations', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/invitations.test.ts`
 Expected: FAIL(`listOrgInvitations`が存在しない)。
 
-- [ ] **Step 3: 実装を追加する**
+- [x] **Step 3: 実装を追加する**
 
 `functions/src/organizations/invitations.ts`の`RevokeInvitationInput`/`revokeInvitation`関連コードの直後に追記する。
 
@@ -228,17 +228,17 @@ export const listOrgInvitationsWithAdminSdk = (orgId: string): Promise<Invitatio
 }
 ```
 
-- [ ] **Step 4: テストを実行して成功を確認する**
+- [x] **Step 4: テストを実行して成功を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/invitations.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 5: 型チェックを実行する**
+- [x] **Step 5: 型チェックを実行する**
 
 Run: `cd functions && npx tsc --noEmit`
 Expected: エラーなし。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add functions/src/organizations/invitations.ts functions/src/organizations/invitations.test.ts
@@ -257,7 +257,7 @@ git commit -m "feat: 組織向けの招待一覧取得(listOrgInvitations)を実
 - Consumes: `functions/src/organizations/membershipSync.ts`の`syncOrganizationMembershipChange`(既存)
 - Produces: `interface ChangeOrgMemberRoleDeps { getMember: (orgId: string, uid: string) => Promise<{ role: 'owner' | 'admin' | 'teacher'; status: 'active' | 'suspended'; membershipVersion: number } | null>; countActiveOwners: (orgId: string) => Promise<number>; syncMembership: (change: MembershipChange) => Promise<void> }`、`changeOrgMemberRole(deps, input: { orgId: string; uid: string; newRole: 'owner' | 'admin' | 'teacher' }): Promise<void>`、`changeOrgMemberRoleWithAdminSdk(input): Promise<void>`。Task 4のCallableが呼ぶ。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/organizations/changeRole.test.ts`を新規作成する。
 
@@ -317,12 +317,12 @@ describe('changeOrgMemberRole', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/changeRole.test.ts`
 Expected: FAIL(`./changeRole`モジュールが存在しない)。
 
-- [ ] **Step 3: 実装を追加する**
+- [x] **Step 3: 実装を追加する**
 
 `functions/src/organizations/changeRole.ts`を新規作成する。
 
@@ -405,17 +405,17 @@ export const changeOrgMemberRoleWithAdminSdk = (input: ChangeOrgMemberRoleInput)
 }
 ```
 
-- [ ] **Step 4: テストを実行して成功を確認する**
+- [x] **Step 4: テストを実行して成功を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/changeRole.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 5: 型チェックとfunctions全体のテストを実行する**
+- [x] **Step 5: 型チェックとfunctions全体のテストを実行する**
 
 Run: `cd functions && npx tsc --noEmit && npx vitest run`
 Expected: エラーなし、全テストPASS。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add functions/src/organizations/changeRole.ts functions/src/organizations/changeRole.test.ts
@@ -435,7 +435,7 @@ git commit -m "feat: メンバーのロール変更(changeOrgMemberRole)を実�
 - Consumes: Task 1〜3の`revokeInvitationWithAdminSdk`/`listOrgInvitationsWithAdminSdk`/`changeOrgMemberRoleWithAdminSdk`
 - Produces: `revokeInvitationCallable`/`listOrgInvitationsCallable`/`changeOrgMemberRoleCallable`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/organizations/onCall.test.ts`のimportに追記する。
 
@@ -578,12 +578,12 @@ describe('changeOrgMemberRoleCallable', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/onCall.test.ts`
 Expected: FAIL(3つのCallableが存在しない)。
 
-- [ ] **Step 3: `onCall.ts`に実装を追加する**
+- [x] **Step 3: `onCall.ts`に実装を追加する**
 
 冒頭のimportに追記する。
 
@@ -656,7 +656,7 @@ export const changeOrgMemberRoleCallable = onCall({ region: 'asia-northeast1' },
 })
 ```
 
-- [ ] **Step 4: `functions/src/index.ts`にエクスポートを追加する**
+- [x] **Step 4: `functions/src/index.ts`にエクスポートを追加する**
 
 既存の以下のブロックを:
 
@@ -699,17 +699,17 @@ export {
 } from './organizations/onCall'
 ```
 
-- [ ] **Step 5: テストを実行して成功を確認する**
+- [x] **Step 5: テストを実行して成功を確認する**
 
 Run: `cd functions && npx vitest run src/organizations/onCall.test.ts`
 Expected: 全件PASS。
 
-- [ ] **Step 6: 型チェックとfunctions全体のテストを実行する**
+- [x] **Step 6: 型チェックとfunctions全体のテストを実行する**
 
 Run: `cd functions && npx tsc --noEmit && npx vitest run`
 Expected: エラーなし、全テストPASS。
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add functions/src/organizations/onCall.ts functions/src/organizations/onCall.test.ts functions/src/index.ts
@@ -730,7 +730,7 @@ git commit -m "feat: 招待一覧取得・失効・ロール変更Callableを追
 **Interfaces:**
 - Consumes: Task 4の`listOrgInvitationsCallable`/`revokeInvitationCallable`/`changeOrgMemberRoleCallable`(Callable名)
 
-- [ ] **Step 1: クライアントlibを実装する**
+- [x] **Step 1: クライアントlibを実装する**
 
 `src/lib/organizations/invitations.ts`の`export interface Invitation { ... status: 'PENDING' | 'ACCEPTED' ... }`を以下に置き換える。
 
@@ -767,7 +767,7 @@ export const changeOrgMemberRole = async (functions: Functions, input: ChangeOrg
 }
 ```
 
-- [ ] **Step 2: 失敗するコンポーネントテストを書く**
+- [x] **Step 2: 失敗するコンポーネントテストを書く**
 
 `src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`には単一の共有`props`フィクスチャは無く、`memberProps`(スプレッドで使われる部分フィクスチャ)と、各テストが個別に列挙する`<SchoolOrgSettingsPage ... />`呼び出しが混在している。`onRevokeInvitation`/`onChangeRole`を新たに必須propとして追加すると、これらすべての呼び出しに影響する。
 
@@ -896,12 +896,12 @@ const memberProps = {
   })
 ```
 
-- [ ] **Step 3: テストを実行して失敗を確認する**
+- [x] **Step 3: テストを実行して失敗を確認する**
 
 Run: `npx vitest run src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
 Expected: FAIL(`onRevokeInvitation`/`onChangeRole`propsが存在しない、「失効」ボタン・ロールセレクトが無い)。
 
-- [ ] **Step 4: `SchoolOrgSettingsPage.tsx`を修正する**
+- [x] **Step 4: `SchoolOrgSettingsPage.tsx`を修正する**
 
 `const STATUS_LABEL: Record<Invitation['status'], string> = { PENDING: '招待中', ACCEPTED: '参加済み' }`を以下に置き換える。
 
@@ -973,12 +973,12 @@ export function SchoolOrgSettingsPage({
             </ListItem>
 ```
 
-- [ ] **Step 5: テストを実行して成功を確認する**
+- [x] **Step 5: テストを実行して成功を確認する**
 
 Run: `npx vitest run src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
 Expected: 全件PASS。
 
-- [ ] **Step 6: `App.tsx`の`SchoolOrgSettingsRoute`を修正する**
+- [x] **Step 6: `App.tsx`の`SchoolOrgSettingsRoute`を修正する**
 
 `src/App.tsx`44行目の以下を:
 
@@ -1039,12 +1039,12 @@ import { changeOrgMemberRole, listOrgMembers, suspendOrgMember, type OrgMember }
       }}
 ```
 
-- [ ] **Step 7: プロジェクト全体の型チェックとテストを実行する**
+- [x] **Step 7: プロジェクト全体の型チェックとテストを実行する**
 
 Run: `npx tsc -b && npx tsc -p tsconfig.rules.json && npx vitest run`
 Expected: エラーなし、全テストPASS。
 
-- [ ] **Step 8: コミット**
+- [x] **Step 8: コミット**
 
 ```bash
 git add src/lib/organizations/invitations.ts src/lib/organizations/orgMembers.ts src/components/teacher/organizations/SchoolOrgSettingsPage.tsx src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx src/App.tsx
