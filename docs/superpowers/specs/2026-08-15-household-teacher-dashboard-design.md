@@ -103,6 +103,8 @@ Firestore の `lessonRuns/{lessonRunId}/households/{householdId}` が家庭の�
 
 `LessonControlRoom` は LessonRun の subject が `HOME_ECONOMICS` の場合だけ `HouseholdTeacherDashboard` を表示する。社会科ではレンダリングしない。
 
+`HOME_ECONOMICS` でも `COMMON_CONDITIONS` 以外の場合は、未対応形式であることを明示し、家庭科の操作ボタンを表示しない。
+
 ### 4.1 ラウンド状況
 
 画面上部に教師が最初に確認すべき情報を表示する。
@@ -115,6 +117,8 @@ Firestore の `lessonRuns/{lessonRunId}/households/{householdId}` が家庭の�
 - 資金不足等の要対応件数
 - 最終更新時刻
 - 「最新状態に更新」
+
+家庭間の `roundIndex` がずれている場合、単一の現在ラウンドは表示せず「家庭ごとに進行位置が異なる」と表示する。
 
 ### 4.2 次の操作
 
@@ -216,6 +220,8 @@ interface HouseholdTeacherDashboard {
 }
 ```
 
+`currentRoundIndex` は全家庭の `roundIndex` が一致する場合だけその値を返し、不一致なら `null` とする。
+
 `HouseholdTeacherRow` には次を含める。
 
 - householdId
@@ -223,9 +229,9 @@ interface HouseholdTeacherDashboard {
 - teamDisplayName
 - lifeStage
 - roundIndex
-- submittedForCurrentRound
-- settledForCurrentRound
+- submittedForRoundIndex: 当該 row の `roundIndex` に対する提出有無
 - submittedAtServerMillis または null
+- lastSettledRoundIndex または null
 - cashYen
 - assetHoldingsYen
 - totalAssetsYen
@@ -236,6 +242,8 @@ interface HouseholdTeacherDashboard {
 - revealedEvents
 - warnings
 
+画面上の「決算済み」は `lastSettledRoundIndex` と row の `roundIndex` から導出する。部分失敗等で家庭ごとの `roundIndex` が分かれた場合でも、単一の `currentRound` を仮定しない。
+
 `lastSettlementSummary` は `ROUND_SETTLED` の公開可能な payload から構成する。
 
 - roundIndex
@@ -244,6 +252,8 @@ interface HouseholdTeacherDashboard {
 - netCashFlowYen
 - shortfallYen
 - insuranceBenefitsYen
+
+`revealedEvents` は raw `occurredEventIds` をそのまま教師UIへ出さず、生徒へ公開済みの disclosure だけから構成する。
 
 返してはならないもの:
 
@@ -311,7 +321,7 @@ interface ProcessHouseholdRoundBatchRequest {
 8. courseFormat === `COMMON_CONDITIONS`
 9. 現在の全家庭が同一 roundIndex
 10. その roundIndex === expectedRoundIndex
-11. 同一 LessonRun に競合する RUNNING bulk operation がない
+11. 同一 LessonRun に有効な lease を持つ競合 bulk operation がない
 
 ### 7.3 未初期化家庭
 
@@ -332,6 +342,8 @@ interface ProcessHouseholdRoundBatchRequest {
 `forceUnsubmitted === true` は教師が専用確認操作を行った場合だけ送る。
 
 未提出家庭では既存の `forceSettle` セマンティクスを利用する。提出済み家庭まで強制モードで別挙動にしない。
+
+`ROUND_SETTLED` event には、その家庭が通常決算か強制決算かを監査できる boolean を追加する。推奨名は `forcedSettlement`。既存の actorUid と合わせ、誰が未提出を含めて進めたかを Firestore event で追跡可能にする。
 
 ## 8. 一括決算 Operation
 
@@ -361,6 +373,9 @@ interface HouseholdBulkSettlementOperation {
   status: HouseholdBulkOperationStatus
   preSettlementCheckpointId: string | null
   requestDigest: string
+  attempt: number
+  leaseExpiresAtServerMillis: number | null
+  lastHeartbeatAtServerMillis: number | null
   households: Record<string, {
     status: HouseholdBulkItemStatus
     errorCode?: string
@@ -373,18 +388,33 @@ interface HouseholdBulkSettlementOperation {
 
 同一 `idempotencyKey` + 同一 payload は同じ operation を返す。同じ key で payload が異なる場合は `failed-precondition`。
 
+### 8.1 Lease と異常終了
+
+Callable の途中終了、ネットワーク切断、Functions timeout 等で operation が永続的に `RUNNING` へ滞留しないよう lease を持つ。
+
+- operation 実行開始時に lease を取得する
+- 処理継続中は heartbeat を更新する
+- lease 未失効の `RUNNING` operation は他の一括・個別決算と競合する
+- lease が失効していれば、同一 operation の retry が lease を再取得して継続できる
+- lease 失効だけを理由に成功済み item を再処理しない
+
+別 idempotencyKey の新規 operation が、失効済みの古い operation を暗黙に横取りして新しいラウンド処理を開始してはならない。まず古い operation を retry/解消するか、既に current round が変化して継続不能なら明示的に失敗状態へ確定させる。
+
 ## 9. 一括決算の実行順序
 
 1. 前提確認
 2. operation の冪等性確認/作成
-3. 未作成 HouseholdState の初期化
-4. 全家庭の roundIndex と提出状況を再確認
-5. 通常決算で未提出があれば mutation 前に拒否
-6. `PRE_SETTLEMENT` 全家庭 checkpoint を1回だけ作成
-7. 各家庭を決算
-8. 家庭単位に `SUCCEEDED | FAILED` を保存
-9. 全成功なら `COMPLETED`
-10. 1件以上失敗なら `FAILED`
+3. lease 取得
+4. 未作成 HouseholdState の初期化
+5. 全家庭の roundIndex と提出状況を再確認
+6. 通常決算で未提出があれば mutation 前に拒否
+7. `PRE_SETTLEMENT` 全家庭 checkpoint を1回だけ作成
+8. 各家庭を決算
+9. 家庭単位に `SUCCEEDED | FAILED` を保存
+10. 全成功なら `COMPLETED`
+11. 1件以上失敗なら `FAILED`
+
+家庭はサーバー側で決定した安定した順序で処理し、各 item の結果を逐次 operation record へ保存する。プロセスが途中で終了しても、再試行時に最後に確定した item status から再開できるようにする。
 
 部分失敗時、成功済み家庭を再処理しない。
 
@@ -392,7 +422,17 @@ interface HouseholdBulkSettlementOperation {
 
 再試行前に `restoreGeneration` と対象 round を再確認する。checkpoint restore 等で generation が変わっていた場合、古い operation は継続しない。
 
-## 10. 既存単体決算の冪等性修正
+## 10. 個別決算と既存単体決算の安全化
+
+### 10.1 Bulk operation との競合
+
+通常の `processRoundCallable` は、同一 LessonRun に lease 未失効の bulk operation がある場合は `failed-precondition` とする。
+
+この競合チェックは client-facing Callable 境界に置く。bulk orchestrator 自身は lease を保有した状態で内部 `processRoundWithAdminSdk` を呼ぶため、自分自身をブロックしない。
+
+同様に、教師による手動 checkpoint と restore は bulk operation の有効 lease 中に開始しない。`PRE_SETTLEMENT` checkpoint だけは bulk orchestrator の内部処理として許可する。
+
+### 10.2 Duplicate settlement の RTDB 再投影防止
 
 現行 `commitRoundSettlement` は、同一 round が既に決算済みの場合に transaction 内で no-op する。しかし上位の `processRound` は commit が実際に行われたかを認識せず、その後に計算結果を RTDB へ publish する。
 
@@ -426,6 +466,7 @@ interface HouseholdCheckpointSnapshotV2 {
   kind: 'MANUAL' | 'PRE_SETTLEMENT' | 'PRE_RESTORE'
   label: string
   createdAtServerMillis: number
+  createdByUid: string
   expectedRoundIndex: number | null
   householdIds: string[]
   households: HouseholdState[]
@@ -438,6 +479,8 @@ interface HouseholdCheckpointSnapshotV2 {
 `HouseholdStateTeamView` には、生徒へ既に公開されたイベント disclosure、visible concepts、shortfall options 等の安全な派生情報が含まれる。
 
 復元時に現在の教材から再計算すると、当時の生徒表示と一致しない可能性がある。このため checkpoint 時点で公開済みだった safe projection を保存する。
+
+`teamViews` は checkpoint 作成時に server-side で現在の `lessonRunTeamState` から対象チーム分を取得し、既存の safe shape として保存する。クライアントから投影値を受け取らない。
 
 private calculation log は snapshot に含めない。
 
@@ -453,6 +496,8 @@ private calculation log は snapshot に含めない。
 
 PRIMARY / ASSISTANT が任意時点で全家庭を保存できる。
 
+有効な bulk operation lease 中は手動保存を拒否する。部分決算中の状態を「授業全体の安全な復元点」として保存しないためである。
+
 ### 12.2 一括決算前
 
 一括 operation ごとに1つだけ `PRE_SETTLEMENT` checkpoint を作る。
@@ -462,6 +507,8 @@ PRIMARY / ASSISTANT が任意時点で全家庭を保存できる。
 ### 12.3 復元前
 
 復元開始前に、現在状態を `PRE_RESTORE` checkpoint として自動保存する。
+
+`PRE_RESTORE` の idempotency key は restore request の idempotency key から決定的に導出し、同一 restore retry で退避 checkpoint を増殖させない。
 
 これにより、教師は復元後に「復元直前の状態」へ再度戻せる。
 
@@ -474,7 +521,7 @@ PRIMARY / ASSISTANT が任意時点で全家庭を保存できる。
 - v2
 - `scope === 'ALL_HOUSEHOLDS'`
 - 現在の全家庭と snapshot.householdIds が一致
-- 同一 LessonRun に競合する RUNNING bulk settlement がない
+- 同一 LessonRun に有効な lease を持つ bulk settlement がない
 
 ### 13.2 Firestore の原子性
 
@@ -492,18 +539,36 @@ PRIMARY / ASSISTANT が任意時点で全家庭を保存できる。
 
 全 read を write より前に行う。
 
+家庭科 restore の idempotency record には少なくとも次を保持する。
+
+```ts
+interface HouseholdRestoreIdempotencyRecord {
+  checkpointId: string
+  requestDigest: string
+  newRestoreGeneration: number
+  eventId: string
+  preRestoreCheckpointId: string
+  projectionStatus: 'PENDING' | 'SYNCED'
+}
+```
+
 ### 13.3 RTDB 再投影
 
 Firestore commit 後、snapshot に保存した `teamViews` を `lessonRunTeamState/{lessonRunId}/{teamId}` へ再投影する。
 
-RTDB と Firestore は同一 transaction にできないため、RTDB publish は再試行可能にする。
+同時に、復元対象家庭の `lessonRunPrivate/{lessonRunId}/householdComputationLog/{householdId}` は削除する。private calculation log は checkpoint に保存しておらず、復元前の将来ラウンドのログを「現在の計算ログ」として残すと誤解を生むためである。新しい決算が行われれば通常の settlement publish により再生成される。
+
+`lessonRunPublic` の economic factors は教材版に固定された授業共通設定であり、家庭 checkpoint 復元では変更しない。
+
+RTDB と Firestore は同一 transaction にできないため、team projection の復元と stale private log の削除を1つの再試行可能な projection sync として扱う。
 
 同一 restore request の再送では HouseholdState を再度巻き戻さない。
 
 - 既に同一 restore が commit 済み
 - 現在の `restoreGeneration` がその restore result と一致
+- `projectionStatus === 'PENDING'`
 
-の場合のみ、RTDB publish の再試行を許可する。
+の場合のみ、RTDB projection sync を再試行する。成功後に `projectionStatus = 'SYNCED'` とする。
 
 その後さらに授業が進み generation が変化していた場合は `failed-precondition` とする。
 
@@ -519,6 +584,15 @@ RTDB と Firestore は同一 transaction にできないため、RTDB publish �
 - 暗黙に進んでいる家庭へ追いつかせない
 
 教師が状況を確認した上で個別操作または checkpoint restore を選ぶ。
+
+次の操作同士は同一 LessonRun 上で同時実行しない。
+
+- bulk settlement
+- individual settlement
+- manual checkpoint
+- checkpoint restore
+
+bulk settlement の lease が排他の基準となる。個別決算・手動checkpoint・restore は client-facing Callable 側で active lease を検査する。
 
 ## 15. エラー処理
 
@@ -537,14 +611,15 @@ RTDB と Firestore は同一 transaction にできないため、RTDB publish �
 - 通常決算で未提出あり: `failed-precondition` + safe details
 - 同じ idempotency key で payload mismatch: `failed-precondition`
 - restoreGeneration mismatch: `failed-precondition`
+- 有効な競合 lease: `failed-precondition`
 
 家庭単位の失敗は operation record に保持し、全操作を「成功」として隠さない。
 
 ### 15.3 Restore
 
-Firestore commit 後の RTDB publish failure は restore operation の「投影再試行待ち」として扱う。Firestore の restore 自体をもう一度実行しない。
+Firestore commit 後の RTDB projection sync failure は `projectionStatus = 'PENDING'` として扱う。Firestore の restore 自体をもう一度実行しない。
 
-## 16. セキュリティ
+## 16. セキュリティと監査
 
 今回の機能のために次を行わない。
 
@@ -557,7 +632,16 @@ Firestore commit 後の RTDB publish failure は restore operation の「投影�
 
 Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境界を維持する。
 
-新しい operation record も client direct write は禁止する。
+新しい operation record も client direct read/write を許可しない。教師画面へ必要な operation view は dashboard Callable から返す。
+
+監査可能性は次で確保する。
+
+- settlement: `ROUND_SETTLED` event の actorUid + `forcedSettlement`
+- restore: `CHECKPOINT_RESTORED` event
+- checkpoint: snapshot の `createdByUid` と checkpoint の `createdBy`
+- bulk operation: operation record の `actorUid`
+
+監査情報は削除対象 HouseholdState の中だけへ置かない。
 
 ## 17. テスト戦略
 
@@ -568,8 +652,12 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - inactive org member を拒否
 - HOME_ECONOMICS 以外を拒否
 - COMMON_CONDITIONS 以外を拒否
-- current round submitted/settled が正しく投影される
+- aligned の場合だけ currentRoundIndex を返す
+- misaligned の場合 currentRoundIndex が null
+- row ごとの submittedForRoundIndex が正しい
+- lastSettledRoundIndex が正しい
 - latest `ROUND_SETTLED` summary が正しく投影される
+- revealedEvents が公開済み disclosure だけ
 - `internalRiskFactors` を返さない
 - `internalClaimProbability` を返さない
 - randomSeed を返さない
@@ -580,6 +668,7 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - 全提出で全件成功
 - 未提出ありの通常決算は mutation 前に拒否
 - 強制決算で未提出家庭を処理
+- forcedSettlement が event に記録される
 - 未初期化家庭を初期化
 - round mismatch を拒否
 - households round misalignment を拒否
@@ -590,9 +679,13 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - failed households のみ再試行
 - restoreGeneration mismatch で古い再試行を拒否
 - PRE_SETTLEMENT checkpoint が operation ごとに1回だけ
+- active lease 中の競合 operation を拒否
+- stale lease を同一 operation retry が再取得できる
+- process interruption 後も item status から再開できる
 
 ### 17.3 Single-round settlement
 
+- active bulk lease 中の client-facing 個別決算を拒否
 - duplicate settlement が `ALREADY_SETTLED`
 - `ALREADY_SETTLED` では RTDB publish しない
 - `COMMITTED` のみ RTDB publish
@@ -603,10 +696,13 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - MANUAL
 - PRE_SETTLEMENT
 - PRE_RESTORE
+- createdByUid
 - householdIds 完全性
-- teamViews 保存
+- teamViews を server-side RTDB safe projection から保存
 - private data 非保存
 - v1 は新UIの通常復元候補に出さない
+- active bulk lease 中の manual checkpoint を拒否
+- 同一 restore retry で PRE_RESTORE が増殖しない
 
 ### 17.5 Restore
 
@@ -614,14 +710,17 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - Firestore の restoreGeneration + states + event + idempotency が原子的
 - transaction failure で一部 household だけ戻らない
 - RTDB teamViews 再投影
-- RTDB publish failure 後の安全な再試行
+- stale householdComputationLog 削除
+- RTDB projection sync failure 後の安全な再試行
+- projectionStatus PENDING → SYNCED
 - 同一 restore で HouseholdState を二重上書きしない
 - restore 後に授業が進んだ古い retry を拒否
-- bulk operation RUNNING 中の restore を拒否
+- bulk operation active lease 中の restore を拒否
 
 ### 17.6 React
 
 - HOME_ECONOMICS のみ dashboard 表示
+- COMMON_CONDITIONS 以外では未対応表示 + 操作非表示
 - SOCIAL_STUDIES では非表示
 - PRIMARY の操作
 - ASSISTANT の checkpoint 操作
@@ -630,6 +729,7 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - 強制決算確認
 - 家庭行展開
 - warning 表示
+- round misalignment 表示
 - 部分失敗結果
 - retry UI
 - checkpoint restore 確認
@@ -639,7 +739,7 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - 新機能のために client read grant が拡大していない
 - `lessonRunPrivate` の既存境界を維持
 - student が他チーム HouseholdState を読めない
-- operation record へ client direct write できない
+- operation record へ client direct read/write できない
 
 ## 18. 受け入れ条件
 
@@ -650,24 +750,28 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 3. 通常一括決算は全提出・同一 roundIndex のときだけ動く
 4. 一括処理の部分失敗を安全に再試行できる
 5. 再試行で成功済み家庭を二重決算しない
-6. 一括決算直前に全家庭 checkpoint が自動保存される
-7. 教師は任意時点で全家庭 checkpoint を保存できる
-8. 復元前に現在状態が自動保存される
-9. 復元は全家庭 Firestore 状態を原子的に戻す
-10. 復元後、生徒向け RTDB household view も同じ時点へ戻る
-11. 通常教師UIへ内部リスク係数・内部保険確率・seed を露出しない
-12. 社会科 Control Room の既存挙動を壊さない
-13. `COMMON_CONDITIONS` 以外を未対応のまま明示的に拒否する
+6. Functions 異常終了後も stale lease から同一 operation を安全に再開できる
+7. 個別決算・checkpoint・restore が active bulk operation と競合しない
+8. 一括決算直前に全家庭 checkpoint が自動保存される
+9. 教師は任意時点で全家庭 checkpoint を保存できる
+10. 復元前に現在状態が自動保存される
+11. 復元は全家庭 Firestore 状態を原子的に戻す
+12. 復元後、生徒向け RTDB household view も同じ時点へ戻る
+13. 復元後、古い private household computation log が現状態として残らない
+14. 通常教師UIへ内部リスク係数・内部保険確率・seed を露出しない
+15. 強制決算は actor と forced flag を監査できる
+16. 社会科 Control Room の既存挙動を壊さない
+17. `COMMON_CONDITIONS` 以外を未対応のまま明示的に拒否する
 
 ## 19. 実装時の境界
 
 設計書の次の implementation plan では、最低限以下を別タスク境界として扱う。
 
 - Dashboard server projection
-- Bulk settlement operation + idempotency
-- Single settlement duplicate-publish fix
+- Bulk settlement operation + idempotency + lease
+- Single settlement duplicate-publish/competition fix
 - Checkpoint v2 + creation helpers
-- Atomic household restore + RTDB retry
+- Atomic household restore + RTDB projection sync retry
 - Client wrappers
 - HouseholdTeacherDashboard UI
 - LessonControlRoom integration
@@ -684,6 +788,7 @@ Firestore/RTDB Rules は既存の deny-by-default と server-write-only の境�
 - `lessonRunPrivate` の内部計算ログを通常ダッシュボードへ出さない
 - 家庭科画面は既存 `LessonControlRoom` へ統合する
 - 読み取りは教師専用 safe Callable を正規境界とする
-- 一括決算は server-side operation とする
+- 一括決算は server-side operation とし、lease で途中終了からの安全な再開を可能にする
 - checkpoint restore は Firestore の全家庭状態を原子的に戻し、RTDB safe projection も再同期する
+- 復元後は stale private household computation log を削除する
 - 今回は `COMMON_CONDITIONS` のみ対応する
