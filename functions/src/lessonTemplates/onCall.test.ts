@@ -8,6 +8,7 @@ import {
   grantOperatorCallable,
   isValidDuplicateLessonTemplateInput,
   isValidPublishLessonVersionInput,
+  listPendingTemplateApprovalsCallable,
   listPendingTemplateReportsCallable,
   listTemplateReviewsCallable,
   publishLessonVersionCallable,
@@ -15,6 +16,7 @@ import {
   reportTemplateCallable,
   resolveTemplateReportCallable,
   resolveTemplateShareCallable,
+  reviewTemplateApprovalCallable,
   revokeTemplateShareCallable,
   submitTemplateReviewCallable,
   unpublishTemplateFromCommunityCallable,
@@ -41,6 +43,7 @@ const reportAddMock = vi.fn()
 const reportGetMock = vi.fn()
 const reportUpdateMock = vi.fn()
 const reportsWhereGetMock = vi.fn()
+const templatesWhereGetMock = vi.fn()
 const setCustomUserClaimsMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
@@ -63,9 +66,11 @@ vi.mock('firebase-admin/firestore', () => ({
     doc: (path: string) => path.startsWith('templateReports/')
       ? { get: reportGetMock, update: reportUpdateMock }
       : { get: templateGetMock, update: templateUpdateMock },
-    collection: (path: string) => path === 'templateReports'
-      ? { add: reportAddMock, where: () => ({ get: reportsWhereGetMock }) }
-      : undefined,
+    collection: (path: string) => {
+      if (path === 'templateReports') return { add: reportAddMock, where: () => ({ get: reportsWhereGetMock }) }
+      if (path === 'lessonTemplates') return { where: () => ({ where: () => ({ get: templatesWhereGetMock }) }) }
+      return undefined
+    },
   }),
 }))
 vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ setCustomUserClaims: setCustomUserClaimsMock }) }))
@@ -643,6 +648,61 @@ describe('listTemplateReviewsCallable', () => {
     await expect(listTemplateReviewsCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).resolves.toEqual([{ comment: 'よかった' }])
   })
 })
+
+describe('listPendingTemplateApprovalsCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('requires owner or admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(listPendingTemplateApprovalsCallable.run(request)).rejects.toThrow('owner または admin')
+  })
+
+  it('returns PENDING templates for the org', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    templatesWhereGetMock.mockResolvedValueOnce({
+      docs: [{ id: 'tpl-1', data: () => ({ title: '株式市場入門', createdByUid: 'teacher-a', updatedAt: 'ts-1' }) }],
+    })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(listPendingTemplateApprovalsCallable.run(request)).resolves.toEqual([
+      { id: 'tpl-1', title: '株式市場入門', createdByUid: 'teacher-a', updatedAt: 'ts-1' },
+    ])
+  })
+})
+
+describe('reviewTemplateApprovalCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('requires owner or admin', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'APPROVED' } } as unknown as CallableRequest
+    await expect(reviewTemplateApprovalCallable.run(request)).rejects.toThrow('owner または admin')
+  })
+
+  it('rejects when the template is not PENDING', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => ({ orgId: 'org-1', approvalStatus: 'APPROVED' } as Record<string, unknown>)[field] })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'APPROVED' } } as unknown as CallableRequest
+    await expect(reviewTemplateApprovalCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('approves a PENDING template and records the reviewer', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => ({ orgId: 'org-1', approvalStatus: 'PENDING' } as Record<string, unknown>)[field] })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'APPROVED' } } as unknown as CallableRequest
+    await reviewTemplateApprovalCallable.run(request)
+    expect(templateUpdateMock).toHaveBeenCalledWith({ approvalStatus: 'APPROVED', reviewedByUid: 'teacher-a', reviewedAt: 'SERVER_TIMESTAMP' })
+  })
+
+  it('rejects a PENDING template', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    templateGetMock.mockResolvedValueOnce({ exists: true, get: (field: string) => ({ orgId: 'org-1', approvalStatus: 'PENDING' } as Record<string, unknown>)[field] })
+    const request = { auth: { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }, data: { orgId: 'org-1', templateId: 'tpl-1', decision: 'REJECTED' } } as unknown as CallableRequest
+    await reviewTemplateApprovalCallable.run(request)
+    expect(templateUpdateMock).toHaveBeenCalledWith({ approvalStatus: 'REJECTED', reviewedByUid: 'teacher-a', reviewedAt: 'SERVER_TIMESTAMP' })
+  })
+})
+
 
 
 

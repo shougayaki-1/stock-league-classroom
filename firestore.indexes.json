@@ -21,6 +21,14 @@
       "collectionGroup": "lessonTemplates",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "orgId", "order": "ASCENDING" },
+        { "fieldPath": "approvalStatus", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lessonTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "visibility", "order": "ASCENDING" },
         { "fieldPath": "publishedToCommunityAt", "order": "DESCENDING" }
       ]

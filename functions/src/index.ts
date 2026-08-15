@@ -40,9 +40,10 @@ export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export {
   canReviewTemplateCallable, createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable,
-  listPendingTemplateReportsCallable, listTemplateReviewsCallable, publishLessonVersionCallable, publishTemplateToCommunityCallable,
-  reportTemplateCallable, resolveTemplateReportCallable, resolveTemplateShareCallable, revokeTemplateShareCallable,
-  submitTemplateReviewCallable, unpublishTemplateFromCommunityCallable,
+  listPendingTemplateApprovalsCallable, listPendingTemplateReportsCallable, listTemplateReviewsCallable,
+  publishLessonVersionCallable, publishTemplateToCommunityCallable, reportTemplateCallable, resolveTemplateReportCallable,
+  resolveTemplateShareCallable, reviewTemplateApprovalCallable, revokeTemplateShareCallable, submitTemplateReviewCallable,
+  unpublishTemplateFromCommunityCallable,
 } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
 export {

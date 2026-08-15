@@ -392,6 +392,49 @@ export const listTemplateReviewsCallable = onCall({ region: 'asia-northeast1' },
   return listTemplateReviews(getTemplateReviewDepsWithAdminSdk(), data.versionId)
 })
 
+const requireManager = (membership: { role: string }, message: string) => {
+  if (membership.role !== 'owner' && membership.role !== 'admin') throw new HttpsError('permission-denied', message)
+}
+
+interface ListPendingTemplateApprovalsRequest { orgId?: unknown }
+
+export const listPendingTemplateApprovalsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ListPendingTemplateApprovalsRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+  requireManager(await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid), 'owner または admin のみ承認待ち一覧を確認できます。')
+
+  const snapshot = await getFirestore().collection('lessonTemplates').where('orgId', '==', data.orgId).where('approvalStatus', '==', 'PENDING').get()
+  return snapshot.docs.map((doc) => {
+    const templateData = doc.data() as { title: string; createdByUid: string; updatedAt: unknown }
+    return { id: doc.id, title: templateData.title, createdByUid: templateData.createdByUid, updatedAt: templateData.updatedAt }
+  })
+})
+
+interface ReviewTemplateApprovalRequest { orgId?: unknown; templateId?: unknown; decision?: unknown }
+const isValidApprovalDecision = (value: unknown): value is 'APPROVED' | 'REJECTED' => value === 'APPROVED' || value === 'REJECTED'
+
+export const reviewTemplateApprovalCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ReviewTemplateApprovalRequest
+  if (typeof data.orgId !== 'string' || typeof data.templateId !== 'string' || !isValidApprovalDecision(data.decision)) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+  requireManager(await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid), 'owner または admin のみ承認・却下できます。')
+
+  const templateRef = getFirestore().doc(`lessonTemplates/${data.templateId}`)
+  const templateSnap = await templateRef.get()
+  if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+  if (templateSnap.get('orgId') !== data.orgId) throw new HttpsError('failed-precondition', 'このテンプレートは対象組織のものではありません。')
+  if (templateSnap.get('approvalStatus') !== 'PENDING') throw new HttpsError('failed-precondition', 'このテンプレートは承認待ちではありません。')
+
+  await templateRef.update({ approvalStatus: data.decision, reviewedByUid: request.auth.uid, reviewedAt: FieldValue.serverTimestamp() })
+  return { approvalStatus: data.decision }
+})
+
+
 
 
 
