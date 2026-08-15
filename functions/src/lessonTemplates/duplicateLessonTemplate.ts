@@ -102,6 +102,12 @@ export const duplicateLessonTemplate = (deps: DuplicateLessonTemplateDeps, input
       throw new Error('Source lesson version does not belong to the expected template')
     }
 
+    // Snapshotted at copy time so display never depends on being able to
+    // read the source template later — it may since become unpublished,
+    // deleted, or renamed.
+    const sourceTemplateSnap = await tx.get(`lessonTemplates/${input.sourceTemplateId}`)
+    const sourceTemplateTitle = sourceTemplateSnap.exists ? ((sourceTemplateSnap.data?.title as string | undefined) ?? null) : null
+
     // ScheduleSensitiveSettings is currently an empty placeholder (see its
     // JSDoc above), so there is nothing in `confirmedOverrides` to apply to
     // the draft yet — the clone below already carries every field
@@ -123,6 +129,7 @@ export const duplicateLessonTemplate = (deps: DuplicateLessonTemplateDeps, input
       visibility: 'PRIVATE',
       sourceTemplateId: input.sourceTemplateId,
       sourceVersionId: input.sourceVersionId,
+      sourceTemplateTitle,
       createdAt: now,
       updatedAt: now,
     })

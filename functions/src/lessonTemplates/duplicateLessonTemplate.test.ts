@@ -48,7 +48,10 @@ const sourceVersion = {
 
 describe('duplicateLessonTemplate', () => {
   it('carries over title/description/subject from the source version into a new PRIVATE DRAFT template owned by the target org/caller', async () => {
-    const fake = makeFakeFirestore([{ path: 'lessonTemplates/source-template-1/versions/version-1', data: sourceVersion }])
+    const fake = makeFakeFirestore([
+      { path: 'lessonTemplates/source-template-1/versions/version-1', data: sourceVersion },
+      { path: 'lessonTemplates/source-template-1', data: { title: '元の授業', orgId: 'org-source' } },
+    ])
     const result = await duplicateLessonTemplate(makeDeps(fake), {
       sourceTemplateId: 'source-template-1',
       sourceVersionId: 'version-1',
@@ -70,6 +73,7 @@ describe('duplicateLessonTemplate', () => {
       currentPublishedVersionId: null,
       sourceTemplateId: 'source-template-1',
       sourceVersionId: 'version-1',
+      sourceTemplateTitle: '元の授業',
       draft: sourceContent,
     })
   })
@@ -151,5 +155,15 @@ describe('duplicateLessonTemplate', () => {
       sourceTemplateId: 'wrong-template', sourceVersionId: 'version-1', targetOrgId: 'org-target',
       uid: 'teacher-target', confirmedOverrides: {}, idempotencyKey: 'key-1',
     })).rejects.toThrow('Source lesson version does not belong to the expected template')
+  })
+
+  it('records sourceTemplateTitle as null when the source template document itself is missing', async () => {
+    const fake = makeFakeFirestore([{ path: 'lessonTemplates/source-template-1/versions/version-1', data: sourceVersion }])
+    await duplicateLessonTemplate(makeDeps(fake), {
+      sourceTemplateId: 'source-template-1', sourceVersionId: 'version-1', targetOrgId: 'org-target',
+      uid: 'teacher-target', confirmedOverrides: {}, idempotencyKey: 'key-1',
+    })
+    const newTemplate = fake.docs.get('lessonTemplates/template-copy-1')
+    expect(newTemplate?.sourceTemplateTitle).toBeNull()
   })
 })
