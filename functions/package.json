@@ -14,7 +14,9 @@
     "pretest": "npm --prefix packages/deterministic-random run build && npm --prefix packages/lesson-runtime-types run build && npm --prefix packages/lesson-inputs run build && npm --prefix packages/market-public-content run build && npm --prefix packages/market-authoring-content run build && npm --prefix packages/household-public-content run build && npm --prefix packages/household-authoring-content run build",
     "test": "vitest run",
     "test:market-concurrency": "vitest run --config vitest.concurrent.config.mts",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build",
+    "migrate:ai-beta-legacy:dry-run": "npm run build && node lib/ai/migrateLegacyBetaAccess.js --dry-run",
+    "migrate:ai-beta-legacy:apply": "npm run build && node lib/ai/migrateLegacyBetaAccess.js --apply"
   },
   "dependencies": {
     "@stock-league/deterministic-random": "file:packages/deterministic-random",
