@@ -103,6 +103,8 @@ service cloud.firestore {
 
     match /templateReviews/{reviewId} { allow read, write: if false; }
 
+    match /lessonTemplateMoveOperations/{operationId} { allow read, write: if false; }
+
     match /systemConfig/{documentId} {
       allow get: if false;
       allow list: if false;
@@ -128,6 +130,7 @@ service cloud.firestore {
         && request.resource.data.createdByUid == resource.data.createdByUid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['draft', 'updatedAt'])
         && resource.data.get('pendingDeletion', null) == null
+        && resource.data.get('moveOperationId', null) == null
         && activeMember(resource.data.orgId);
       // All deletion goes through Task 12 so recovery/audit semantics cannot
       // be bypassed by a direct client delete.
@@ -150,6 +153,7 @@ service cloud.firestore {
       match /materials/{materialId} {
         allow get, list, create, delete: if teacher()
           && activeMember(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)
+          && get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.get('moveOperationId', null) == null
           && get(/databases/$(database)/documents/organizations/$(get(/databases/$(database)/documents/lessonTemplates/$(templateId)).data.orgId)).data.materialsUploadEnabled == true;
         allow update: if false;
       }
