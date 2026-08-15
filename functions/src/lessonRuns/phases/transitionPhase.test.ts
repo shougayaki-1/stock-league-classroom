@@ -348,4 +348,93 @@ describe('transitionPhase', () => {
       expect(result.currentPhaseId).toBe('phase-b')
     })
   })
+
+  describe('lifecycle timestamps (startedAt / endedAt)', () => {
+    it('sets startedAt when transitioning into RUNNING if startedAt is null/absent', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING', startedAt: null, endedAt: null })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, now: () => '2026-08-15T10:00:00Z',
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-start-1' })
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.startedAt).toBe('2026-08-15T10:00:00Z')
+      expect(run.endedAt).toBeNull()
+    })
+
+    it('does not overwrite an existing startedAt when resuming RUNNING from PAUSED', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'PAUSED', startedAt: '2026-08-15T09:00:00Z', endedAt: null })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, now: () => '2026-08-15T10:00:00Z',
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '再開', idempotencyKey: 'tx-start-2' })
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.startedAt).toBe('2026-08-15T09:00:00Z')
+      expect(run.endedAt).toBeNull()
+    })
+
+    it('sets endedAt when transitioning from REFLECTION to COMPLETED', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'REFLECTION', startedAt: '2026-08-15T09:00:00Z', endedAt: null })
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(), now: () => '2026-08-15T11:00:00Z',
+      }, { lessonRunId: 'run-1', targetStatus: 'COMPLETED', reason: '完了', idempotencyKey: 'tx-end-1' })
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.startedAt).toBe('2026-08-15T09:00:00Z')
+      expect(run.endedAt).toBe('2026-08-15T11:00:00Z')
+    })
+
+    it.each(['WAITING', 'RUNNING', 'PAUSED', 'INTERRUPTED'] as const)(
+      'sets endedAt when transitioning from %s to ABORTED',
+      async (fromStatus) => {
+        const fake = makeFakeFirestore()
+        setUpRun(fake.docs, { status: fromStatus, startedAt: fromStatus === 'WAITING' ? null : '2026-08-15T09:00:00Z', endedAt: null })
+
+        await transitionPhase({
+          firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(), now: () => '2026-08-15T12:00:00Z',
+        }, { lessonRunId: 'run-1', targetStatus: 'ABORTED', reason: '中止', idempotencyKey: `tx-abort-${fromStatus}` })
+
+        const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+        expect(run.endedAt).toBe('2026-08-15T12:00:00Z')
+      },
+    )
+
+    it('does not set startedAt or endedAt on other transitions (e.g. RUNNING -> PAUSED, PAUSED -> INTERRUPTED, RUNNING -> REFLECTION)', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'RUNNING', startedAt: '2026-08-15T09:00:00Z', endedAt: null })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, now: () => '2026-08-15T09:30:00Z',
+      }, { lessonRunId: 'run-1', targetStatus: 'PAUSED', reason: '一時停止', idempotencyKey: 'tx-pause-1' })
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.startedAt).toBe('2026-08-15T09:00:00Z')
+      expect(run.endedAt).toBeNull()
+    })
+
+    it('does not re-update timestamps on idempotency retry', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING', startedAt: null, endedAt: null })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+      let currentTime = '2026-08-15T10:00:00Z'
+
+      const deps = { firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, now: () => currentTime }
+      const input = { lessonRunId: 'run-1', targetStatus: 'RUNNING' as const, reason: '開始', idempotencyKey: 'tx-idem-time' }
+
+      await transitionPhase(deps, input)
+      currentTime = '2026-08-15T10:05:00Z'
+      await transitionPhase(deps, input)
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.startedAt).toBe('2026-08-15T10:00:00Z')
+    })
+  })
 })

@@ -232,6 +232,16 @@ export const transitionPhase = async (
     const newStatus = input.targetStatus ?? run.status
     const newPhaseId = input.targetPhaseId ?? run.currentPhaseId
 
+    const startedAt =
+      newStatus === 'RUNNING' && run.startedAt == null
+        ? nowValue
+        : (run.startedAt ?? null)
+
+    const endedAt =
+      (newStatus === 'COMPLETED' || newStatus === 'ABORTED')
+        ? nowValue
+        : (run.endedAt ?? null)
+
     // ---- WRITE PHASE ----
     let lastSequence = -1
     if (input.targetStatus) {
@@ -263,7 +273,7 @@ export const transitionPhase = async (
       if (!tx.delete) throw new Error('Firestore transaction delete is required for terminal quota release')
       tx.delete(quotaReservationPathToDelete)
     }
-    tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId })
+    tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId, startedAt, endedAt })
     const stored: StoredTransition = { requestDigest, status: newStatus, currentPhaseId: newPhaseId, sequence: lastSequence }
     tx.set(idempotencyPath, stored as unknown as Record<string, unknown>)
 
