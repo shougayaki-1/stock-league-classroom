@@ -118,6 +118,80 @@ describe('HouseholdTeacherDashboard', () => {
     expect(screen.getByText('第2ラウンド 一括決算の確認')).toBeInTheDocument()
   })
 
+  it('disables 個別決算 for an unsubmitted household and never sends forceSettle=true from the individual path', () => {
+    const dashboard = makeDashboard()
+    const onProcessIndividual = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        onRefresh={vi.fn()}
+        onProcessRoundBatch={vi.fn()}
+        onRetryRoundBatch={vi.fn()}
+        onProcessIndividualRound={onProcessIndividual}
+        onSaveManualCheckpoint={vi.fn()}
+        onRestoreCheckpoint={vi.fn()}
+      />,
+    )
+
+    const individualButtons = screen.getAllByRole('button', { name: '個別決算' })
+    // team-a submitted (index 0) is enabled; team-b unsubmitted (index 1) is disabled.
+    expect(individualButtons[0]).not.toBeDisabled()
+    expect(individualButtons[1]).toBeDisabled()
+
+    // Clicking the disabled button does nothing.
+    fireEvent.click(individualButtons[1])
+    expect(screen.queryByText('チーム B の個別決算')).not.toBeInTheDocument()
+    expect(onProcessIndividual).not.toHaveBeenCalled()
+
+    // The submitted row's confirm flow calls through with forceSettle=false.
+    fireEvent.click(individualButtons[0])
+    const confirmBtn = screen.getByRole('button', { name: '個別決算を実行' })
+    fireEvent.click(confirmBtn)
+    expect(onProcessIndividual).toHaveBeenCalledWith('team-a', false)
+  })
+
+  it('disables 個別決算・チェックポイント・復元 while a bulk operation lease is active', () => {
+    const dashboard = makeDashboard({
+      activeBulkOperation: {
+        operationId: 'op-1',
+        lessonRunId: 'run-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 1,
+        restoreGeneration: 0,
+        forceUnsubmitted: false,
+        status: 'RUNNING',
+        preSettlementCheckpointId: 'cp-1',
+        attempt: 1,
+        leaseActive: true,
+        retryable: false,
+        households: {},
+        createdAtServerMillis: 1000,
+        updatedAtServerMillis: 2000,
+      },
+    })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        onRefresh={vi.fn()}
+        onProcessRoundBatch={vi.fn()}
+        onRetryRoundBatch={vi.fn()}
+        onProcessIndividualRound={vi.fn()}
+        onSaveManualCheckpoint={vi.fn()}
+        onRestoreCheckpoint={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'チェックポイント・復元' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '一括決算' })).toBeDisabled()
+    for (const btn of screen.getAllByRole('button', { name: '個別決算' })) {
+      expect(btn).toBeDisabled()
+    }
+  })
+
   it('shows retry banner and allows retry when active bulk operation is FAILED', () => {
     const dashboard = makeDashboard({
       activeBulkOperation: {

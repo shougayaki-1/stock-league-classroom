@@ -35,6 +35,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   const [selectedIndividualHousehold, setSelectedIndividualHousehold] = useState<HouseholdTeacherRow | null>(null)
 
   const isBusy = isActionInProgress || isLocalSubmitting
+  const isLeaseActive = dashboard.activeBulkOperation?.leaseActive ?? false
 
   const households = dashboard.households ?? []
   const checkpoints = dashboard.checkpoints ?? []
@@ -82,9 +83,10 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   }
 
   const handleIndividualProcess = async (household: HouseholdTeacherRow) => {
+    if (!household.submittedForRoundIndex) return
     setIsLocalSubmitting(true)
     try {
-      await onProcessIndividualRound(household.householdId, !household.submittedForRoundIndex)
+      await onProcessIndividualRound(household.householdId, false)
       setSelectedIndividualHousehold(null)
     } finally {
       setIsLocalSubmitting(false)
@@ -135,7 +137,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
             <button
               type="button"
               onClick={() => setIsCheckpointModalOpen(true)}
-              disabled={isBusy}
+              disabled={isBusy || isLeaseActive}
               className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition"
             >
               チェックポイント・復元
@@ -144,7 +146,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               <button
                 type="button"
                 onClick={() => setIsSettlementModalOpen(true)}
-                disabled={isBusy || dashboard.currentRoundIndex === null || dashboard.activeBulkOperation?.leaseActive}
+                disabled={isBusy || dashboard.currentRoundIndex === null || isLeaseActive}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
               >
                 一括決算
@@ -306,8 +308,9 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
                         <button
                           type="button"
                           onClick={() => setSelectedIndividualHousehold(row)}
-                          disabled={isBusy}
-                          className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition border border-indigo-200"
+                          disabled={isBusy || isLeaseActive || !row.submittedForRoundIndex}
+                          title={!row.submittedForRoundIndex ? '意思決定が未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。' : undefined}
+                          className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition border border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           個別決算
                         </button>
@@ -348,12 +351,13 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               {selectedIndividualHousehold.teamDisplayName} の個別決算
             </h3>
             <p className="text-sm text-gray-600">
-              第{selectedIndividualHousehold.roundIndex + 1}ラウンドの決算を実行します。
-              {!selectedIndividualHousehold.submittedForRoundIndex && (
-                <span className="block mt-2 font-semibold text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
-                  ⚠️ このチームは意思決定を未提出ですが、強制決算として実行されます。
-                </span>
-              )}
+              {selectedIndividualHousehold.submittedForRoundIndex
+                ? `第${selectedIndividualHousehold.roundIndex + 1}ラウンドの決算を実行します。`
+                : (
+                  <span className="block font-semibold text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
+                    ⚠️ このチームは意思決定を未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。
+                  </span>
+                )}
             </p>
             <div className="flex justify-end gap-3 pt-2">
               <button
@@ -367,7 +371,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               <button
                 type="button"
                 onClick={() => handleIndividualProcess(selectedIndividualHousehold)}
-                disabled={isBusy}
+                disabled={isBusy || !selectedIndividualHousehold.submittedForRoundIndex}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg shadow-sm"
               >
                 {isBusy ? '処理中...' : '個別決算を実行'}

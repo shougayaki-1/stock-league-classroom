@@ -167,6 +167,61 @@ describe('householdRestore v2', () => {
     expect(syncAttempt).toBe(2)
   })
 
+  it('retries RTDB sync after the restore already committed, without re-invoking savePreRestoreCheckpoint', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonRuns/run-1', { orgId: 'org-1', restoreGeneration: 0, currentPhaseId: 'phase-1' })
+    fake.docs.set('lessonRuns/run-1/meta/eventCounter', { value: 10 })
+    fake.docs.set('lessonRuns/run-1/checkpoints/hcp-1', {
+      id: 'hcp-1',
+      lessonRunId: 'run-1',
+      snapshot: v2Snapshot,
+    })
+    fake.docs.set('lessonRuns/run-1/households/team-a', makeBaseHousehold('team-a', 500000, 3) as unknown as Record<string, unknown>)
+    fake.docs.set('lessonRuns/run-1/households/team-b', makeBaseHousehold('team-b', 600000, 3) as unknown as Record<string, unknown>)
+
+    // Mimics production's savePreRestoreCheckpoint: its idempotency digest is
+    // derived from the *current* household round indices at call time, which
+    // change once the restore transaction below has committed households to
+    // round 1. If restoreHouseholdCheckpointV2 called this unconditionally on
+    // every attempt, a retry after the restore committed (but RTDB sync
+    // failed) would recompute a digest from the now-different round index and
+    // throw here instead of resuming — this stub reproduces that check.
+    let savePreRestoreCallCount = 0
+    let syncAttempt = 0
+    const roundIndexSeenByKey = new Map<string, number>()
+    const deps: HouseholdRestoreDeps = {
+      firestore: fake as never,
+      checkActiveBulkLease: vi.fn().mockResolvedValue(false),
+      listTeamIds: vi.fn().mockResolvedValue(['team-a', 'team-b']),
+      savePreRestoreCheckpoint: vi.fn().mockImplementation(async (input) => {
+        savePreRestoreCallCount++
+        const currentRoundIndex = (fake.docs.get('lessonRuns/run-1/households/team-a') as unknown as HouseholdState).roundIndex
+        const priorRoundIndex = roundIndexSeenByKey.get(input.idempotencyKey)
+        if (priorRoundIndex !== undefined && priorRoundIndex !== currentRoundIndex) {
+          throw new Error('Idempotency key payload mismatch')
+        }
+        roundIndexSeenByKey.set(input.idempotencyKey, currentRoundIndex)
+        return { checkpointId: 'hcp-pre-restore', created: priorRoundIndex === undefined }
+      }),
+      syncRtdbProjections: vi.fn().mockImplementation(async () => {
+        syncAttempt++
+        if (syncAttempt === 1) throw new Error('RTDB network error')
+      }),
+    }
+
+    // First attempt: the restore transaction commits households to round 1,
+    // then RTDB sync fails.
+    await expect(restoreHouseholdCheckpointV2(deps, baseInput)).rejects.toThrow('RTDB network error')
+    expect(savePreRestoreCallCount).toBe(1)
+
+    // Second attempt (retry): household round index is now 1 (post-restore),
+    // not 3. savePreRestoreCheckpoint must not be called again — if it were,
+    // this stub would detect the round-index change and throw a digest
+    // mismatch, same as the real implementation would.
+    await expect(restoreHouseholdCheckpointV2(deps, { ...baseInput, nowMillis: 6000 })).resolves.toMatchObject({ newRestoreGeneration: 1 })
+    expect(savePreRestoreCallCount).toBe(1)
+  })
+
   it('rejects v1 checkpoint snapshot', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonRuns/run-1', { orgId: 'org-1', restoreGeneration: 0, currentPhaseId: 'phase-1' })

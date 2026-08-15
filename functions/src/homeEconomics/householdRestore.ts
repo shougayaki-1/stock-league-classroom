@@ -71,27 +71,46 @@ export const restoreHouseholdCheckpointV2 = async (
   }
 
   const keyId = idempotencyDocumentId(input.lessonRunId, input.idempotencyKey)
-  const preRestoreIdempotencyKey = `pre-restore:${keyId}`
-  const preRestore = await deps.savePreRestoreCheckpoint({
-    lessonRunId: input.lessonRunId,
-    actorUid: input.actorUid,
-    idempotencyKey: preRestoreIdempotencyKey,
-    nowMillis: input.nowMillis,
-  })
-
+  const idempotencyPath = `lessonRuns/${input.lessonRunId}/householdCheckpointRestoreIdempotency/${keyId}`
   const digest = requestDigest({
     checkpointId: input.checkpointId,
     reason: trimmedReason,
     actorUid: input.actorUid,
   })
 
+  // Look up any prior attempt for this idempotency key BEFORE calling
+  // savePreRestoreCheckpoint: that helper derives its own idempotency digest
+  // from the *current* household round indices, which change once the
+  // restore transaction below has committed. Calling it again unconditionally
+  // on a retry (e.g. one that only failed at the RTDB sync step, after the
+  // Firestore restore already succeeded) would compute a different digest
+  // than the first attempt and throw 'Idempotency key payload mismatch'
+  // instead of resuming the pending RTDB sync.
+  const existingRecord = await deps.firestore.runTransaction(async (tx) => {
+    const snap = await tx.get(idempotencyPath)
+    if (!snap.exists) return null
+    return snap.data() as unknown as HouseholdRestoreIdempotencyRecord
+  })
+
+  if (existingRecord && existingRecord.requestDigest !== digest) {
+    throw new Error('Idempotency key payload mismatch')
+  }
+
+  const preRestoreIdempotencyKey = `pre-restore:${keyId}`
+  const preRestore = existingRecord
+    ? { checkpointId: existingRecord.preRestoreCheckpointId, created: false }
+    : await deps.savePreRestoreCheckpoint({
+        lessonRunId: input.lessonRunId,
+        actorUid: input.actorUid,
+        idempotencyKey: preRestoreIdempotencyKey,
+        nowMillis: input.nowMillis,
+      })
+
   const txResult = await deps.firestore.runTransaction(async (tx) => {
     const txAdapter: FirestoreTx = {
       get: async (path) => tx.get(path),
       set: (path, data) => tx.set(path, data),
     }
-
-    const idempotencyPath = `lessonRuns/${input.lessonRunId}/householdCheckpointRestoreIdempotency/${keyId}`
 
     // ---- ALL READS FIRST ----
     const idempSnap = await tx.get(idempotencyPath)
