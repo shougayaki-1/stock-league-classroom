@@ -594,6 +594,27 @@ describe('lessonRuns participant/team/response/result subcollections are teacher
   }
 })
 
+// Research Desk team notes are Firestore's system of record for
+// lessonRunTeamState's researchNote RTDB mirror, written only via
+// saveTeamResearchNoteCallable (Admin SDK transaction). No client — student
+// or teacher — ever reads or writes this collection directly.
+describe('lessonRuns/{lessonRunId}/teamNotes/{teamId} is server-internal only', () => {
+  it('rejects direct client read/write from both the owning teacher and a student', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'RUNNING' })
+      await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', 'teamNotes', 'team-a'), { text: 'seeded note', revision: 1 })
+    })
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const student = environment.authenticatedContext('student-a').firestore()
+
+    await assertFails(getDoc(doc(owner, 'lessonRuns', 'run-1', 'teamNotes', 'team-a')))
+    await assertFails(getDoc(doc(student, 'lessonRuns', 'run-1', 'teamNotes', 'team-a')))
+    await assertFails(setDoc(doc(owner, 'lessonRuns', 'run-1', 'teamNotes', 'team-a'), { text: 'edited' }))
+    await assertFails(setDoc(doc(student, 'lessonRuns', 'run-1', 'teamNotes', 'team-a'), { text: 'edited' }))
+  })
+})
+
 // Task 7: saveResponseDraft/submitProposal/decideProposal/confirmResponse
 // each keep their own idempotency subcollection under a response doc, same
 // deny-by-default shape as eventIdempotency/checkpointRestoreIdempotency

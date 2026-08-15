@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
 import { get, ref, set } from 'firebase/database'
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const projectId = 'demo-stock-league-classroom'
 const teacherToken = { email_verified: true, firebase: { sign_in_provider: 'google.com' as const } }
@@ -367,6 +367,22 @@ describe('lessonRunPublic/lessonRunTeamState: student OR-branch added without we
     await assertSucceeds(get(ref(studentA, 'lessonRunTeamState/run-1/team-a')))
     await assertFails(get(ref(studentA, 'lessonRunTeamState/run-1/team-b')))
     await assertFails(get(ref(studentA, 'lessonRunPrivate/run-1')))
+  })
+
+  it('lets an active participant read their own team\'s researchNote but not another team\'s', async () => {
+    await seedMembership('run-notes', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunTeamState/run-notes/team-a').set({
+        researchNote: { text: 'team-aのノート', revision: 1, updatedAtMillis: 1 },
+      })
+      await context.database().ref('lessonRunTeamState/run-notes/team-b').set({
+        researchNote: { text: 'team-bのノート', revision: 1, updatedAtMillis: 1 },
+      })
+    })
+    const studentA = environment.authenticatedContext('student-a').database()
+    const ownNote = await get(ref(studentA, 'lessonRunTeamState/run-notes/team-a/researchNote'))
+    expect(ownNote.val()).toEqual({ text: 'team-aのノート', revision: 1, updatedAtMillis: 1 })
+    await assertFails(get(ref(studentA, 'lessonRunTeamState/run-notes/team-b/researchNote')))
   })
 
   it('fails closed when the membership mirror is absent entirely', async () => {
