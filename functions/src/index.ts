@@ -45,7 +45,9 @@ export {
   publishLessonVersionCallable, publishTemplateToCommunityCallable, reportTemplateCallable, resolveTemplateReportCallable,
   resolveTemplateShareCallable, reviewTemplateApprovalCallable, revokeTemplateShareCallable, submitTemplateReviewCallable,
   unpublishTemplateFromCommunityCallable,
+  previewLessonTemplateMoveCallable, moveLessonTemplateCallable, getLessonTemplateMoveOperationCallable,
 } from './lessonTemplates/onCall'
+export { lessonTemplateMoveScheduled } from './lessonTemplates/moveLessonTemplateScheduled'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
 export {
   assignParticipantToTeamCallable,

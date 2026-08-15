@@ -11,6 +11,9 @@ import {
   listPendingTemplateApprovalsCallable,
   listPendingTemplateReportsCallable,
   listTemplateReviewsCallable,
+  previewLessonTemplateMoveCallable,
+  moveLessonTemplateCallable,
+  getLessonTemplateMoveOperationCallable,
   publishLessonVersionCallable,
   publishTemplateToCommunityCallable,
   reportTemplateCallable,
@@ -799,6 +802,126 @@ describe('reviewTemplateApprovalCallable', () => {
     expect(templateUpdateMock).toHaveBeenCalledWith({ approvalStatus: 'REJECTED', reviewedByUid: 'teacher-a', reviewedAt: 'SERVER_TIMESTAMP' })
   })
 })
+
+describe('previewLessonTemplateMoveCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (auth: any, data: any) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects unauthenticated and non-teacher callers without reading membership or template', async () => {
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest(undefined, { templateId: 't1', sourceOrgId: 'org-1', targetOrgId: 'org-2' }))).rejects.toMatchObject({ code: 'unauthenticated' })
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest({ uid: 's1', token: {} }, { templateId: 't1', sourceOrgId: 'org-1', targetOrgId: 'org-2' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed scalar input without reading membership', async () => {
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest(teacherAuth, { templateId: '', sourceOrgId: 'org-1', targetOrgId: 'org-2' }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest(teacherAuth, { templateId: 't1', sourceOrgId: 'org-1', targetOrgId: 'org-1' }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+  })
+
+  it('rejects if caller is not owner in source organization without reading template', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest(teacherAuth, { templateId: 't1', sourceOrgId: 'org-1', targetOrgId: 'org-2' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects if caller is not owner in target organization without reading template', async () => {
+    vi.mocked(requireActiveOrgMember)
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      .mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    await expect(previewLessonTemplateMoveCallable.run(makeRequest(teacherAuth, { templateId: 't1', sourceOrgId: 'org-1', targetOrgId: 'org-2' }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('moveLessonTemplateCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (auth: any, data: any) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects if confirmationText does not match targetOrgId', async () => {
+    const request = makeRequest(teacherAuth, {
+      templateId: 't1',
+      sourceOrgId: 'org-1',
+      targetOrgId: 'org-2',
+      reason: '理由',
+      confirmationText: 'wrong-org',
+      idempotencyKey: 'idem-1',
+    })
+    await expect(moveLessonTemplateCallable.run(request)).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+  })
+
+  it('rejects if reason length is invalid', async () => {
+    const request = makeRequest(teacherAuth, {
+      templateId: 't1',
+      sourceOrgId: 'org-1',
+      targetOrgId: 'org-2',
+      reason: '',
+      confirmationText: 'org-2',
+      idempotencyKey: 'idem-1',
+    })
+    await expect(moveLessonTemplateCallable.run(request)).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(requireActiveOrgMember).not.toHaveBeenCalled()
+  })
+})
+
+describe('getLessonTemplateMoveOperationCallable', () => {
+  const teacherAuth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (auth: any, data: any) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    templateGetMock.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'RUNNING',
+        phase: 'MIGRATING_VERSIONS',
+        versionCount: 2,
+        materialCount: 1,
+        lastError: null,
+      }),
+      get: (_field: string) => undefined,
+    })
+  })
+
+  it('rejects if caller is not owner in both organizations', async () => {
+    vi.mocked(requireActiveOrgMember)
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      .mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    const request = makeRequest(teacherAuth, {
+      operationId: 'op-1',
+      sourceOrgId: 'org-1',
+      targetOrgId: 'org-2',
+    })
+    await expect(getLessonTemplateMoveOperationCallable.run(request)).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('returns operation status without sensitive fields', async () => {
+    vi.mocked(requireActiveOrgMember)
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+      .mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    const request = makeRequest(teacherAuth, {
+      operationId: 'op-1',
+      sourceOrgId: 'org-1',
+      targetOrgId: 'org-2',
+    })
+    const result = await getLessonTemplateMoveOperationCallable.run(request)
+    expect(result).toEqual({
+      operationId: 'op-1',
+      status: 'RUNNING',
+      phase: 'MIGRATING_VERSIONS',
+      versionCount: 2,
+      materialCount: 1,
+      lastError: undefined,
+    })
+  })
+})
+
 
 
 

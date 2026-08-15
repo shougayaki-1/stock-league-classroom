@@ -454,6 +454,160 @@ export const reviewTemplateApprovalCallable = onCall({ region: 'asia-northeast1'
   return { approvalStatus: data.decision }
 })
 
+const requireOwner = (membership: { role: string }, message = '所有者 (owner) のみ実行できます。') => {
+  if (membership.role !== 'owner') throw new HttpsError('permission-denied', message)
+}
+
+interface PreviewLessonTemplateMoveCallableInput {
+  templateId?: unknown
+  sourceOrgId?: unknown
+  targetOrgId?: unknown
+}
+
+export const previewLessonTemplateMoveCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as PreviewLessonTemplateMoveCallableInput
+  if (
+    typeof data.templateId !== 'string' || data.templateId.length === 0
+    || typeof data.sourceOrgId !== 'string' || data.sourceOrgId.length === 0
+    || typeof data.targetOrgId !== 'string' || data.targetOrgId.length === 0
+    || data.sourceOrgId === data.targetOrgId
+  ) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+
+  const firestore = getFirestore()
+  requireOwner(await requireActiveOrgMember(firestore, data.sourceOrgId, request.auth.uid), '移転元組織の所有者 (owner) のみ実行できます。')
+  requireOwner(await requireActiveOrgMember(firestore, data.targetOrgId, request.auth.uid), '移転先組織の所有者 (owner) のみ実行できます。')
+
+  const { previewLessonTemplateMove, createAdminSdkMoveDb } = await import('./moveLessonTemplate')
+  try {
+    return await previewLessonTemplateMove(
+      { db: createAdminSdkMoveDb() },
+      {
+        templateId: data.templateId,
+        sourceOrgId: data.sourceOrgId,
+        targetOrgId: data.targetOrgId,
+      },
+    )
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'Lesson template not found') throw new HttpsError('not-found', error.message)
+      if (error.message === 'Lesson template does not belong to the source organization') throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
+})
+
+interface MoveLessonTemplateCallableInput {
+  templateId?: unknown
+  sourceOrgId?: unknown
+  targetOrgId?: unknown
+  reason?: unknown
+  confirmationText?: unknown
+  idempotencyKey?: unknown
+}
+
+export const moveLessonTemplateCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as MoveLessonTemplateCallableInput
+  if (
+    typeof data.templateId !== 'string' || data.templateId.length === 0
+    || typeof data.sourceOrgId !== 'string' || data.sourceOrgId.length === 0
+    || typeof data.targetOrgId !== 'string' || data.targetOrgId.length === 0
+    || data.sourceOrgId === data.targetOrgId
+    || typeof data.reason !== 'string' || data.reason.trim().length === 0 || data.reason.trim().length > 500
+    || typeof data.confirmationText !== 'string' || data.confirmationText !== data.targetOrgId
+    || typeof data.idempotencyKey !== 'string' || data.idempotencyKey.length === 0
+  ) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+
+  const firestore = getFirestore()
+  requireOwner(await requireActiveOrgMember(firestore, data.sourceOrgId, request.auth.uid), '移転元組織の所有者 (owner) のみ実行できます。')
+  requireOwner(await requireActiveOrgMember(firestore, data.targetOrgId, request.auth.uid), '移転先組織の所有者 (owner) のみ実行できます。')
+
+  const { createLessonTemplateMoveOperation, createAdminSdkMoveDb, runLessonTemplateMoveOperation, createAdminSdkMoveStorage } = await import('./moveLessonTemplate')
+
+  try {
+    const result = await createLessonTemplateMoveOperation(
+      { db: createAdminSdkMoveDb() },
+      {
+        templateId: data.templateId,
+        sourceOrgId: data.sourceOrgId,
+        targetOrgId: data.targetOrgId,
+        requestedByUid: request.auth.uid,
+        reason: data.reason,
+        idempotencyKey: data.idempotencyKey,
+      },
+    )
+
+    // Trigger execution in background (won't block callable response)
+    const db = createAdminSdkMoveDb()
+    const storage = createAdminSdkMoveStorage()
+    runLessonTemplateMoveOperation({ db, storage }, result.operation.id).catch(() => undefined)
+
+    return {
+      operationId: result.operation.id,
+      status: result.operation.status,
+      alreadyRequested: result.alreadyRequested,
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'Lesson template not found') throw new HttpsError('not-found', error.message)
+      if (error.message === 'Idempotency key payload mismatch' || error.message.includes('cannot be transferred') || error.message.includes('currently being moved')) {
+        throw new HttpsError('failed-precondition', error.message)
+      }
+    }
+    throw error
+  }
+})
+
+interface GetLessonTemplateMoveOperationCallableInput {
+  operationId?: unknown
+  sourceOrgId?: unknown
+  targetOrgId?: unknown
+}
+
+export const getLessonTemplateMoveOperationCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as GetLessonTemplateMoveOperationCallableInput
+  if (
+    typeof data.operationId !== 'string' || data.operationId.length === 0
+    || typeof data.sourceOrgId !== 'string' || data.sourceOrgId.length === 0
+    || typeof data.targetOrgId !== 'string' || data.targetOrgId.length === 0
+  ) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+
+  const firestore = getFirestore()
+  requireOwner(await requireActiveOrgMember(firestore, data.sourceOrgId, request.auth.uid), '移転元組織の所有者 (owner) のみ実行できます。')
+  requireOwner(await requireActiveOrgMember(firestore, data.targetOrgId, request.auth.uid), '移転先組織の所有者 (owner) のみ実行できます。')
+
+  const snap = await firestore.doc(`lessonTemplateMoveOperations/${data.operationId}`).get()
+  if (!snap.exists) throw new HttpsError('not-found', '操作が見つかりません。')
+  const op = snap.data() as {
+    status: string
+    phase: string
+    versionCount: number
+    materialCount: number
+    lastError?: string | null
+  }
+
+  return {
+    operationId: data.operationId,
+    status: op.status,
+    phase: op.phase,
+    versionCount: op.versionCount,
+    materialCount: op.materialCount,
+    lastError: op.lastError ?? undefined,
+  }
+})
+
+
 
 
 
