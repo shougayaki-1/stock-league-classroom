@@ -668,11 +668,12 @@ export const getHouseholdTeacherDashboardCallable = onCall({ region: 'asia-north
   if (subject !== 'HOME_ECONOMICS') {
     throw new HttpsError('failed-precondition', 'LessonRun subject is not HOME_ECONOMICS')
   }
-  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
-  if (templateSnapshot?.homeEconomics?.courseFormat !== 'COMMON_CONDITIONS') {
-    throw new HttpsError('failed-precondition', 'LessonRun course format must be COMMON_CONDITIONS')
-  }
 
+  // Task 10: the dashboard projection is now generalized to a team-primary
+  // shape that covers all 4 course formats (COMMON_CONDITIONS plus the 3
+  // advanced formats) — the course-format restriction that used to live
+  // here has been removed. `loadHouseholdTeacherDashboardWithAdminSdk`
+  // itself now branches internally by `courseFormat`.
   try {
     return await loadHouseholdTeacherDashboardWithAdminSdk(data.lessonRunId, Date.now())
   } catch (error) {

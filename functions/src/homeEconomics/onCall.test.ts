@@ -41,6 +41,7 @@ import {
   prepareHouseholdAssignment,
   updateHouseholdAssignment,
 } from './householdAssignmentRepository'
+import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
 
 const participantGetMock = vi.fn()
 const teamGetMock = vi.fn()
@@ -1022,7 +1023,7 @@ describe('getHouseholdTeacherDashboardCallable', () => {
   })
 
   it('loads dashboard for any teacher role including VIEWER', async () => {
-    const mockDashboard = { lessonRunId: 'run-1', households: [] }
+    const mockDashboard = { lessonRunId: 'run-1', teams: [] }
     vi.mocked(loadHouseholdTeacherDashboardWithAdminSdk).mockResolvedValue(mockDashboard as never)
 
     const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
@@ -1031,6 +1032,32 @@ describe('getHouseholdTeacherDashboardCallable', () => {
     expect(result).toEqual(mockDashboard)
     expect(loadHouseholdTeacherDashboardWithAdminSdk).toHaveBeenCalledWith('run-1', expect.any(Number))
   })
+
+  // Task 10: this Callable used to reject any non-COMMON_CONDITIONS course
+  // format outright (`LessonRun course format must be COMMON_CONDITIONS`).
+  // The dashboard projection is now generalized to cover all 4 formats, so
+  // an advanced-format LessonRun must load successfully instead of being
+  // rejected — teacher/HOME_ECONOMICS auth is still enforced (see the
+  // preceding tests in this describe block).
+  it.each<AdvancedHouseholdCourseFormat>(['ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM'])(
+    'no longer rejects the %s course format (non-Common Callable rejection removed)',
+    async (courseFormat) => {
+      lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, {
+        orgId: 'org-1',
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: { homeEconomics: { courseFormat } },
+        teacherRoles: { 'teacher-a': 'VIEWER' },
+      }))
+      const mockDashboard = { lessonRunId: 'run-1', courseFormat, teams: [] }
+      vi.mocked(loadHouseholdTeacherDashboardWithAdminSdk).mockResolvedValue(mockDashboard as never)
+
+      const req = { auth: { uid: 'teacher-a' }, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+      const result = await getHouseholdTeacherDashboardCallable.run(req)
+
+      expect(result).toEqual(mockDashboard)
+      expect(loadHouseholdTeacherDashboardWithAdminSdk).toHaveBeenCalledWith('run-1', expect.any(Number))
+    },
+  )
 })
 
 describe('processHouseholdRoundBatchCallable', () => {

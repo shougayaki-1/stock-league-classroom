@@ -13,13 +13,17 @@ describe('getHouseholdTeacherDashboard (client)', () => {
       lessonRunId: 'run-1',
       subject: 'HOME_ECONOMICS',
       courseFormat: 'COMMON_CONDITIONS',
+      assignment: null,
       restoreGeneration: 0,
+      synchronizedRoundIndex: null,
+      roundStatus: null,
       currentRoundIndex: 1,
       householdsAligned: true,
       updatedAtServerMillis: 1000,
-      households: [],
+      teams: [],
       checkpoints: [],
       activeBulkOperation: null,
+      finalComparisonAvailable: false,
     }
     callable.mockResolvedValue({ data: mockDashboard })
     const functions = {} as Functions
