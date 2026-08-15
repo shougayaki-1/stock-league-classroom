@@ -1,4 +1,5 @@
 import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import { distinctLifeStagesInOrder } from './householdAssignment'
 
 export type ValidationResult = { valid: true } | { valid: false; errors: string[] }
 
@@ -39,4 +40,34 @@ export const validateHomeEconomicsContent = (content: HomeEconomicsContent): Val
   }
 
   return errors.length === 0 ? { valid: true } : { valid: false, errors }
+}
+
+/**
+ * Advisory (non-blocking) warnings about a template's fit for its selected
+ * `courseFormat`. Deliberately kept separate from
+ * `validateHomeEconomicsContent()` above — these never affect save/publish
+ * pass/fail semantics, they only surface a heads-up to the teacher when the
+ * chosen advanced format won't actually produce any variation given the
+ * current household profile set (e.g. ROLE_VARIANT with just one profile
+ * behaves identically to COMMON_CONDITIONS).
+ */
+export const getHomeEconomicsContentWarnings = (content: HomeEconomicsContent): string[] => {
+  const warnings: string[] = []
+
+  if (content.courseFormat === 'ROLE_VARIANT' && content.households.length === 1) {
+    warnings.push('役割ばらけモードですが担当プロフィールが1件のみのため、全チームが同じ条件になります。')
+  }
+
+  if (content.courseFormat === 'STAGE_SPLIT') {
+    const stageCount = distinctLifeStagesInOrder(content.households).length
+    if (stageCount === 1) {
+      warnings.push('ライフステージ別モードですが異なるライフステージが1種類しかないため、ステージによる分岐が発生しません。')
+    }
+  }
+
+  if (content.courseFormat === 'MULTI_PERSON_PER_TEAM' && content.households.length === 1) {
+    warnings.push('複数人同時プレイモードですが担当プロフィールが1件のみのため、複数人で担当する意味がありません。')
+  }
+
+  return warnings
 }

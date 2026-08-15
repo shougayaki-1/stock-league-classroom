@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
-import { validateHomeEconomicsContent } from './templateValidation'
+import { getHomeEconomicsContentWarnings, validateHomeEconomicsContent } from './templateValidation'
 
 const baseContent = (overrides: Partial<HomeEconomicsContent> = {}): HomeEconomicsContent => ({
   households: [{
@@ -99,6 +99,60 @@ describe('asset catalog must have at most one entry per assetType (Task 17: sett
         { assetType: 'FOREIGN_STOCK', valueYen: 0, expectedReturnPercent: 6, volatilityPercent: 12 },
       ],
     }))
+    expect(result.valid).toBe(true)
+  })
+})
+
+describe('getHomeEconomicsContentWarnings — advisory warnings (do not affect validateHomeEconomicsContent pass/fail)', () => {
+  it('returns exactly one warning for ROLE_VARIANT with only one household profile', () => {
+    const warnings = getHomeEconomicsContentWarnings(baseContent({ courseFormat: 'ROLE_VARIANT' }))
+    expect(warnings).toHaveLength(1)
+  })
+
+  it('returns no warning for ROLE_VARIANT with multiple household profiles', () => {
+    const one = baseContent().households[0]
+    const warnings = getHomeEconomicsContentWarnings(baseContent({
+      courseFormat: 'ROLE_VARIANT', households: [one, { ...one, householdId: 'case-c' }],
+    }))
+    expect(warnings).toHaveLength(0)
+  })
+
+  it('returns exactly one warning for STAGE_SPLIT with only one distinct lifeStage', () => {
+    const one = baseContent().households[0]
+    const warnings = getHomeEconomicsContentWarnings(baseContent({
+      courseFormat: 'STAGE_SPLIT', households: [one, { ...one, householdId: 'case-c' }],
+    }))
+    expect(warnings).toHaveLength(1)
+  })
+
+  it('returns no warning for STAGE_SPLIT with multiple distinct lifeStages', () => {
+    const one = baseContent().households[0]
+    const warnings = getHomeEconomicsContentWarnings(baseContent({
+      courseFormat: 'STAGE_SPLIT',
+      households: [one, { ...one, householdId: 'case-c', lifeStage: 'RETIRED' }],
+    }))
+    expect(warnings).toHaveLength(0)
+  })
+
+  it('returns exactly one warning for MULTI_PERSON_PER_TEAM with only one household profile', () => {
+    const warnings = getHomeEconomicsContentWarnings(baseContent({ courseFormat: 'MULTI_PERSON_PER_TEAM' }))
+    expect(warnings).toHaveLength(1)
+  })
+
+  it('returns no warning for MULTI_PERSON_PER_TEAM with multiple household profiles', () => {
+    const one = baseContent().households[0]
+    const warnings = getHomeEconomicsContentWarnings(baseContent({
+      courseFormat: 'MULTI_PERSON_PER_TEAM', households: [one, { ...one, householdId: 'case-c' }],
+    }))
+    expect(warnings).toHaveLength(0)
+  })
+
+  it('returns no warnings for COMMON_CONDITIONS content', () => {
+    expect(getHomeEconomicsContentWarnings(baseContent())).toHaveLength(0)
+  })
+
+  it('does not change validateHomeEconomicsContent pass/fail behavior for content that would trigger warnings', () => {
+    const result = validateHomeEconomicsContent(baseContent({ courseFormat: 'ROLE_VARIANT' }))
     expect(result.valid).toBe(true)
   })
 })
