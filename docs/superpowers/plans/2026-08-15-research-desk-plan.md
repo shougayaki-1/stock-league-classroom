@@ -347,8 +347,8 @@ git commit -m "feat: wire Research Desk student route"
 ### Task 7: Security regression・Rules・backlog 統合検証
 
 **Files:**
-- Modify: `database.rules.test.ts` or the repository's existing RTDB rules test file that asserts `lessonRunPublic` / `lessonRunTeamState` isolation.
-- Modify: `firestore.rules.test.ts` or the repository's existing Firestore rules test file for `lessonRuns` subcollections.
+- Modify: `database.rules.test.ts`
+- Modify: `firestore.rules.test.ts`
 - Modify: `docs/superpowers/scope-backlog.md`
 
 **Interfaces:**
