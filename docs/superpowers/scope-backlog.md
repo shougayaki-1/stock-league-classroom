@@ -22,11 +22,9 @@
 - 1.5 銘柄別ニュースと需給連動 — 実装済み。`functions/src/market/engine/informationImpact.ts`
 - 1.6 予想・判断理由の記録と振り返り — 実装済み。`functions/src/market/predictionCheckpoint.ts`、`functions/src/lessonRuns/responses/`・`surveys/`
 
-## Phase 2: 授業運用の質 — 一部未着手
+## Phase 2: 授業運用の質 — 実装済み
 
-コントロールルーム(08-04系2件)・Guided Builder・試運転モードは実装済み。
-
-- 未着手: Research Desk(生徒側、授業フェーズに応じた画面出し分け)
+コントロールルーム(08-04系2件)・Guided Builder・試運転モード・Research Desk(生徒側、授業フェーズに応じた画面出し分け)は実装済み。Research Desk は `docs/superpowers/plans/2026-08-15-research-desk-plan.md` に基づき実装(2026-08-15)。企業・ニュース・統計・チームノート・注文の5画面をサーバー投影(`buildResearchDeskPublicView`)と server-authoritative な `submitOrderCallable` で構成。
 
 ## Phase 3: AI Lesson Studio ベータ — 一部未着手
 
