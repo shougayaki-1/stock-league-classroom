@@ -248,4 +248,61 @@ describe('LessonControlRoom', () => {
     const list = screen.getByRole('list', { name: '未対応の問題' })
     expect(within(list).getByText(/切断/)).toBeInTheDocument()
   })
+
+  it('renders HouseholdTeacherDashboard when subject is HOME_ECONOMICS and courseFormat is COMMON_CONDITIONS', () => {
+    render(
+      <LessonControlRoom
+        lessonRunId="run-1"
+        role="PRIMARY"
+        subject="HOME_ECONOMICS"
+        homeEconomicsCourseFormat="COMMON_CONDITIONS"
+        functions={functions}
+        firestore={firestore}
+        database={database}
+      />,
+    )
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    expect(screen.getByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
+  })
+
+  it('renders unsupported format alert when subject is HOME_ECONOMICS and courseFormat is not COMMON_CONDITIONS', () => {
+    render(
+      <LessonControlRoom
+        lessonRunId="run-1"
+        role="PRIMARY"
+        subject="HOME_ECONOMICS"
+        homeEconomicsCourseFormat="ROLE_VARIANT"
+        functions={functions}
+        firestore={firestore}
+        database={database}
+      />,
+    )
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    expect(screen.getByText(/このコース形式の家庭科ダッシュボード表示には未対応です/)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '家庭科管理ダッシュボード' })).not.toBeInTheDocument()
+  })
+
+  it('does not render HouseholdTeacherDashboard when subject is SOCIAL_STUDIES', () => {
+    render(
+      <LessonControlRoom
+        lessonRunId="run-1"
+        role="PRIMARY"
+        subject="SOCIAL_STUDIES"
+        functions={functions}
+        firestore={firestore}
+        database={database}
+      />,
+    )
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    expect(screen.queryByRole('region', { name: '家庭科管理ダッシュボード' })).not.toBeInTheDocument()
+  })
 })

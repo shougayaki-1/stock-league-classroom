@@ -62,8 +62,25 @@ vi.mock('firebase/database', () => ({
   off: (...args: unknown[]) => offMock(...args),
 }))
 
+const defaultDashboardData = {
+  lessonRunId: 'run-1',
+  subject: 'HOME_ECONOMICS',
+  courseFormat: 'COMMON_CONDITIONS',
+  restoreGeneration: 0,
+  currentRoundIndex: 0,
+  householdsAligned: true,
+  updatedAtServerMillis: 1000,
+  households: [],
+  checkpoints: [],
+  activeBulkOperation: null,
+}
 const callableMock = vi.fn().mockResolvedValue({ data: {} })
-const httpsCallableMock = vi.fn((_functions: unknown, _name: string) => callableMock)
+const httpsCallableMock = vi.fn((_functions: unknown, name: string) => {
+  if (name === 'getHouseholdTeacherDashboardCallable') {
+    return vi.fn().mockResolvedValue({ data: defaultDashboardData })
+  }
+  return callableMock
+})
 vi.mock('firebase/functions', () => ({
   httpsCallable: (...args: Parameters<typeof httpsCallableMock>) => httpsCallableMock(...args),
 }))
@@ -196,6 +213,40 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
     expect(await screen.findByRole('heading', { name: '次にすること' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('renders HouseholdTeacherDashboard in control room when subject is HOME_ECONOMICS and courseFormat is COMMON_CONDITIONS', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        orgId: 'org-1',
+        teacherRoles: { 'teacher-uid': 'PRIMARY' },
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS' } },
+      }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    expect(await screen.findByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('renders unsupported notice in control room when subject is HOME_ECONOMICS and courseFormat is not COMMON_CONDITIONS', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        orgId: 'org-1',
+        teacherRoles: { 'teacher-uid': 'PRIMARY' },
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: { homeEconomics: { courseFormat: 'CUSTOM_VARIANT' } },
+      }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    expect(await screen.findByText(/このコース形式の家庭科ダッシュボード表示には未対応です/)).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 

@@ -14,6 +14,7 @@ import { ParticipantMonitor } from './ParticipantMonitor'
 import { InterventionPanel, type InterventionApplyInput } from './InterventionPanel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { TeacherGuidanceDialog } from './TeacherGuidanceDialog'
+import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 
 const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
   START: '開始待機画面',
@@ -59,6 +60,8 @@ export interface LessonControlRoomProps {
   lessonRunId: string
   /** This teacher's role for THIS lesson run — resolved by the caller from LessonRun.teacherRoles (no client wrapper exists to fetch a single doc; out of this task's scope, see task-11-report.md). */
   role: LessonRunRole
+  subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  homeEconomicsCourseFormat?: string
   functions: Functions
   firestore: Firestore
   database: Database
@@ -97,6 +100,8 @@ export interface LessonControlRoomProps {
 export function LessonControlRoom({
   lessonRunId,
   role,
+  subject,
+  homeEconomicsCourseFormat,
   functions,
   firestore,
   database,
@@ -254,6 +259,22 @@ export function LessonControlRoom({
       </Box>
 
       <ParticipantMonitor participants={participants} expectedParticipantCount={expectedParticipantCount} />
+
+      {subject === 'HOME_ECONOMICS' && homeEconomicsCourseFormat === 'COMMON_CONDITIONS' && (
+        <Box component="section" aria-label="家庭科管理ダッシュボード">
+          <HouseholdTeacherDashboard
+            lessonRunId={lessonRunId}
+            role={role}
+            functions={functions}
+          />
+        </Box>
+      )}
+
+      {subject === 'HOME_ECONOMICS' && homeEconomicsCourseFormat !== 'COMMON_CONDITIONS' && (
+        <Alert severity="info">
+          このコース形式の家庭科ダッシュボード表示には未対応です（共通条件モードのみ対応）。
+        </Alert>
+      )}
 
       <InterventionPanel
         open={interventionOpen}

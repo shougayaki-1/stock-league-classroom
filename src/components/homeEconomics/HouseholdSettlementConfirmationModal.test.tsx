@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import {
   HouseholdSettlementConfirmationModal,
-  type HouseholdSettlementConfirmationModalProps,
 } from './HouseholdSettlementConfirmationModal'
 import type { HouseholdTeacherRow } from '../../lib/homeEconomics/teacherDashboard'
 

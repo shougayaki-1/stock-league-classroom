@@ -129,7 +129,12 @@ const TrailingSlashRedirect = () => {
 // ---------------------------------------------------------------------------
 
 type AccessStatus = 'LOADING' | 'DENIED' | 'GRANTED'
-interface TeacherAccess { status: AccessStatus; role?: LessonRunRole }
+interface TeacherAccess {
+  status: AccessStatus
+  role?: LessonRunRole
+  subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  homeEconomicsCourseFormat?: string
+}
 interface StudentAccess { status: AccessStatus; teamId?: string }
 
 /**
@@ -159,9 +164,19 @@ function useTeacherLessonAccess(runId: string, services: FirebaseServices): Teac
             setAccess({ status: 'DENIED' })
             return
           }
-          const data = snapshot.data() as { teacherRoles?: Record<string, LessonRunRole> }
+          const data = snapshot.data() as {
+            teacherRoles?: Record<string, LessonRunRole>
+            subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+            templateSnapshot?: { homeEconomics?: { courseFormat?: string } }
+          }
           const role = data.teacherRoles?.[user.uid]
-          setAccess(role ? { status: 'GRANTED', role } : { status: 'DENIED' })
+          const subject = data.subject
+          const homeEconomicsCourseFormat = data.templateSnapshot?.homeEconomics?.courseFormat
+          setAccess(
+            role
+              ? { status: 'GRANTED', role, subject, homeEconomicsCourseFormat }
+              : { status: 'DENIED' },
+          )
         })
         // A permission-denied error (not an active org member) or a
         // not-found error is treated identically: no access.
@@ -240,6 +255,8 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
   return <LessonControlRoom
     lessonRunId={runId ?? ''}
     role={access.role ?? 'VIEWER'}
+    subject={access.subject}
+    homeEconomicsCourseFormat={access.homeEconomicsCourseFormat}
     functions={services.functions}
     firestore={services.firestore}
     database={services.database}

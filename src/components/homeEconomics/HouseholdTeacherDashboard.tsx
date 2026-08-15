@@ -36,8 +36,10 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
 
   const isBusy = isActionInProgress || isLocalSubmitting
 
-  const submittedCount = dashboard.households.filter((h) => h.submittedForRoundIndex).length
-  const totalCount = dashboard.households.length
+  const households = dashboard.households ?? []
+  const checkpoints = dashboard.checkpoints ?? []
+  const submittedCount = households.filter((h) => h.submittedForRoundIndex).length
+  const totalCount = households.length
 
   const handleBatchConfirm = async (forceUnsubmitted: boolean) => {
     if (dashboard.currentRoundIndex === null) return
@@ -235,7 +237,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {dashboard.households.map((row) => {
+              {households.map((row) => {
                 const isNegative = row.cashYen < 0
                 return (
                   <tr key={row.householdId} className="hover:bg-gray-50/80 transition">
@@ -324,7 +326,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         isOpen={isSettlementModalOpen}
         onClose={() => setIsSettlementModalOpen(false)}
         currentRoundIndex={dashboard.currentRoundIndex}
-        households={dashboard.households}
+        households={households}
         onConfirm={handleBatchConfirm}
         isSubmitting={isLocalSubmitting}
       />
@@ -332,7 +334,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       <HouseholdCheckpointModal
         isOpen={isCheckpointModalOpen}
         onClose={() => setIsCheckpointModalOpen(false)}
-        checkpoints={dashboard.checkpoints}
+        checkpoints={checkpoints}
         onSaveManualCheckpoint={handleSaveManualCheckpoint}
         onRestoreCheckpoint={handleRestoreCheckpoint}
         isSubmitting={isLocalSubmitting}
