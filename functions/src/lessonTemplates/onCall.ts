@@ -20,6 +20,14 @@ import {
   listTemplateReviews,
   submitTemplateReview,
 } from './templateReviews'
+import {
+  isMarketplaceVisibility,
+  MARKETPLACE_VISIBILITIES,
+} from './marketplaceVisibility'
+import {
+  setTemplateCertificationWithAdminSdk,
+  type SetTemplateCertificationResult,
+} from './templateCertification'
 
 export interface PublishLessonVersionCallableInput {
   templateId: string
@@ -606,6 +614,156 @@ export const getLessonTemplateMoveOperationCallable = onCall({ region: 'asia-nor
     lastError: op.lastError ?? undefined,
   }
 })
+
+export interface CertificationCandidate {
+  templateId: string
+  title: string
+  currentPublishedVersionId: string
+  visibility: 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL'
+  createdByUid: string
+}
+
+export const listTemplateCertificationCandidatesCallable = onCall(
+  { region: 'asia-northeast1' },
+  async (request): Promise<CertificationCandidate[]> => {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+    if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+
+    const snapshot = await getFirestore()
+      .collection('lessonTemplates')
+      .where('visibility', 'in', MARKETPLACE_VISIBILITIES)
+      .orderBy('publishedToCommunityAt', 'desc')
+      .limit(50)
+      .get()
+
+    return snapshot.docs.map((docSnap) => {
+      const data = docSnap.data() as {
+        title: string
+        currentPublishedVersionId: string
+        visibility: 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL'
+        createdByUid: string
+      }
+      return {
+        templateId: docSnap.id,
+        title: data.title,
+        currentPublishedVersionId: data.currentPublishedVersionId,
+        visibility: data.visibility,
+        createdByUid: data.createdByUid,
+      }
+    })
+  },
+)
+
+export interface SetTemplateCertificationCallableInput {
+  templateId: string
+  versionId: string
+  level: 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL'
+  reason: string
+  idempotencyKey: string
+}
+
+const isValidCertificationLevel = (value: unknown): value is 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL' =>
+  value === 'COMMUNITY' || value === 'VERIFIED' || value === 'OFFICIAL'
+
+export const isValidSetTemplateCertificationInput = (
+  data: unknown,
+): data is SetTemplateCertificationCallableInput => {
+  if (typeof data !== 'object' || data === null) return false
+  const record = data as Record<string, unknown>
+  if (typeof record.templateId !== 'string' || record.templateId.length === 0) return false
+  if (typeof record.versionId !== 'string' || record.versionId.length === 0) return false
+  if (!isValidCertificationLevel(record.level)) return false
+  if (typeof record.reason !== 'string' || record.reason.trim().length === 0 || record.reason.trim().length > 500) return false
+  if (typeof record.idempotencyKey !== 'string' || record.idempotencyKey.length === 0) return false
+  return true
+}
+
+export const setTemplateCertificationCallable = onCall(
+  { region: 'asia-northeast1' },
+  async (request): Promise<SetTemplateCertificationResult> => {
+    // 1. Auth check
+    if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+    // 2. Operator check
+    if (!isCallerOperator(request.auth.token)) throw new HttpsError('permission-denied', '運営者アカウントのみ利用できます。')
+    // 3. Scalar input validation
+    if (!isValidSetTemplateCertificationInput(request.data)) {
+      throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+    }
+
+    const firestore = getFirestore()
+    // 4. Template read
+    const templateSnap = await firestore.doc(`lessonTemplates/${request.data.templateId}`).get()
+    if (!templateSnap.exists) throw new HttpsError('not-found', 'レッスンテンプレートが見つかりません。')
+    const templateData = templateSnap.data() as {
+      visibility?: string
+      currentPublishedVersionId?: string
+      createdByUid?: string
+    }
+    if (!isMarketplaceVisibility(templateData.visibility)) {
+      throw new HttpsError('failed-precondition', '公開中の教材ではありません。')
+    }
+    if (templateData.currentPublishedVersionId !== request.data.versionId) {
+      throw new HttpsError('failed-precondition', '対象バージョンが現在公開中の版と一致しません。')
+    }
+
+    // 5. Version read
+    const versionSnap = await firestore
+      .doc(`lessonTemplates/${request.data.templateId}/versions/${request.data.versionId}`)
+      .get()
+    if (!versionSnap.exists) throw new HttpsError('not-found', 'バージョンが見つかりません。')
+
+    // 6. OFFICIAL creator check
+    if (request.data.level === 'OFFICIAL') {
+      const creatorUid = templateData.createdByUid
+      if (!creatorUid) {
+        throw new HttpsError('failed-precondition', '公式教材の認定は運営者が作成した教材のみ可能です。')
+      }
+      try {
+        const creatorUser = await getAuth().getUser(creatorUid)
+        if (creatorUser.customClaims?.operator !== true) {
+          throw new HttpsError('failed-precondition', '公式教材の認定は運営者が作成した教材のみ可能です。')
+        }
+      } catch (err) {
+        if (err instanceof HttpsError) throw err
+        throw new HttpsError('failed-precondition', '公式教材の認定は運営者が作成した教材のみ可能です。')
+      }
+    }
+
+    // 7. Core execution
+    try {
+      return await setTemplateCertificationWithAdminSdk({
+        templateId: request.data.templateId,
+        versionId: request.data.versionId,
+        level: request.data.level,
+        reason: request.data.reason,
+        idempotencyKey: request.data.idempotencyKey,
+        actorUid: request.auth.uid,
+      })
+    } catch (error) {
+      throw translateSetTemplateCertificationError(error)
+    }
+  },
+)
+
+const translateSetTemplateCertificationError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'Lesson template not found' || error.message === 'Lesson version not found') {
+      return new HttpsError('not-found', error.message)
+    }
+    if (
+      error.message === 'Idempotency key payload mismatch' ||
+      error.message === 'Target version is not current published version' ||
+      error.message === 'Lesson template is not published to marketplace'
+    ) {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'reason must be between 1 and 500 characters') {
+      return new HttpsError('invalid-argument', error.message)
+    }
+  }
+  return error
+}
 
 
 

@@ -42,6 +42,7 @@ export { getTuningConstantsCallable } from './platformConfig/onCall'
 export {
   canReviewTemplateCallable, createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable,
   listPendingTemplateApprovalsCallable, listPendingTemplateReportsCallable, listTemplateReviewsCallable,
+  listTemplateCertificationCandidatesCallable, setTemplateCertificationCallable,
   publishLessonVersionCallable, publishTemplateToCommunityCallable, reportTemplateCallable, resolveTemplateReportCallable,
   resolveTemplateShareCallable, reviewTemplateApprovalCallable, revokeTemplateShareCallable, submitTemplateReviewCallable,
   unpublishTemplateFromCommunityCallable,

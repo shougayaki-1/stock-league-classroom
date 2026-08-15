@@ -10,6 +10,7 @@ import {
   isValidPublishLessonVersionInput,
   listPendingTemplateApprovalsCallable,
   listPendingTemplateReportsCallable,
+  listTemplateCertificationCandidatesCallable,
   listTemplateReviewsCallable,
   previewLessonTemplateMoveCallable,
   moveLessonTemplateCallable,
@@ -21,6 +22,8 @@ import {
   resolveTemplateShareCallable,
   reviewTemplateApprovalCallable,
   revokeTemplateShareCallable,
+  setTemplateCertificationCallable,
+  isValidSetTemplateCertificationInput,
   submitTemplateReviewCallable,
   unpublishTemplateFromCommunityCallable,
   type DuplicateLessonTemplateCallableInput,
@@ -48,10 +51,15 @@ const reportUpdateMock = vi.fn()
 const reportsWhereGetMock = vi.fn()
 const templatesWhereGetMock = vi.fn()
 const setCustomUserClaimsMock = vi.fn()
+const getUserMock = vi.fn()
+const setTemplateCertificationWithAdminSdkMock = vi.fn()
 
 vi.mock('../organizations/authorization', () => ({ requireActiveOrgMember: vi.fn() }))
 vi.mock('./publishLessonVersion', () => ({ publishLessonVersionWithAdminSdk: vi.fn() }))
 vi.mock('./duplicateLessonTemplate', () => ({ duplicateLessonTemplateWithAdminSdk: vi.fn() }))
+vi.mock('./templateCertification', () => ({
+  setTemplateCertificationWithAdminSdk: (...args: unknown[]) => setTemplateCertificationWithAdminSdkMock(...args),
+}))
 vi.mock('./templateShares', () => ({
   createTemplateShareWithAdminSdk: vi.fn(),
   resolveTemplateShareWithAdminSdk: vi.fn(),
@@ -71,12 +79,24 @@ vi.mock('firebase-admin/firestore', () => ({
       : { get: templateGetMock, update: templateUpdateMock },
     collection: (path: string) => {
       if (path === 'templateReports') return { add: reportAddMock, where: () => ({ get: reportsWhereGetMock }) }
-      if (path === 'lessonTemplates') return { where: () => ({ where: () => ({ get: templatesWhereGetMock }) }) }
+      if (path === 'lessonTemplates') {
+        const queryObj: Record<string, unknown> = {}
+        queryObj.where = vi.fn(() => queryObj)
+        queryObj.orderBy = vi.fn(() => queryObj)
+        queryObj.limit = vi.fn(() => queryObj)
+        queryObj.get = templatesWhereGetMock
+        return queryObj
+      }
       return undefined
     },
   }),
 }))
-vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ setCustomUserClaims: setCustomUserClaimsMock }) }))
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: () => ({
+    setCustomUserClaims: setCustomUserClaimsMock,
+    getUser: getUserMock,
+  }),
+}))
 
 describe('isValidPublishLessonVersionInput', () => {
   it('accepts a well-formed request payload', () => {
@@ -919,6 +939,249 @@ describe('getLessonTemplateMoveOperationCallable', () => {
       materialCount: 1,
       lastError: undefined,
     })
+  })
+})
+
+describe('isValidSetTemplateCertificationInput', () => {
+  it('accepts valid input payloads', () => {
+    expect(
+      isValidSetTemplateCertificationInput({
+        templateId: 't1',
+        versionId: 'v1',
+        level: 'VERIFIED',
+        reason: '良好な教材です。',
+        idempotencyKey: 'key-1',
+      }),
+    ).toBe(true)
+    expect(
+      isValidSetTemplateCertificationInput({
+        templateId: 't1',
+        versionId: 'v1',
+        level: 'COMMUNITY',
+        reason: '通常公開へ戻す',
+        idempotencyKey: 'key-1',
+      }),
+    ).toBe(true)
+    expect(
+      isValidSetTemplateCertificationInput({
+        templateId: 't1',
+        versionId: 'v1',
+        level: 'OFFICIAL',
+        reason: '公式教材として認定',
+        idempotencyKey: 'key-1',
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects invalid fields', () => {
+    expect(isValidSetTemplateCertificationInput(null)).toBe(false)
+    expect(isValidSetTemplateCertificationInput({})).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: '', versionId: 'v1', level: 'VERIFIED', reason: 'ok', idempotencyKey: 'k' })).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: 't1', versionId: '', level: 'VERIFIED', reason: 'ok', idempotencyKey: 'k' })).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: 't1', versionId: 'v1', level: 'INVALID', reason: 'ok', idempotencyKey: 'k' })).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: 't1', versionId: 'v1', level: 'VERIFIED', reason: '   ', idempotencyKey: 'k' })).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: 't1', versionId: 'v1', level: 'VERIFIED', reason: 'a'.repeat(501), idempotencyKey: 'k' })).toBe(false)
+    expect(isValidSetTemplateCertificationInput({ templateId: 't1', versionId: 'v1', level: 'VERIFIED', reason: 'ok', idempotencyKey: '' })).toBe(false)
+  })
+})
+
+describe('listTemplateCertificationCandidatesCallable', () => {
+  beforeEach(() => {
+    templateGetMock.mockReset()
+    templatesWhereGetMock.mockReset()
+  })
+
+  it('rejects unauthenticated and non-operator callers before touching Firestore', async () => {
+    const unauthRequest = { auth: null, data: {} } as unknown as CallableRequest<unknown>
+    await expect(listTemplateCertificationCandidatesCallable.run(unauthRequest)).rejects.toMatchObject({ code: 'unauthenticated' })
+
+    const teacherRequest = {
+      auth: { uid: 't1', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } },
+      data: {},
+    } as unknown as CallableRequest<unknown>
+    await expect(listTemplateCertificationCandidatesCallable.run(teacherRequest)).rejects.toMatchObject({ code: 'permission-denied' })
+
+    expect(templatesWhereGetMock).not.toHaveBeenCalled()
+  })
+
+  it('returns candidate marketplace templates for operator caller', async () => {
+    templatesWhereGetMock.mockResolvedValueOnce({
+      docs: [
+        {
+          id: 'tpl-1',
+          data: () => ({
+            title: '教材1',
+            currentPublishedVersionId: 'v1',
+            visibility: 'COMMUNITY',
+            createdByUid: 'teacher-1',
+          }),
+        },
+      ],
+    })
+
+    const operatorRequest = {
+      auth: { uid: 'op-1', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true } },
+      data: {},
+    } as unknown as CallableRequest<unknown>
+
+    const result = await listTemplateCertificationCandidatesCallable.run(operatorRequest)
+    expect(result).toEqual([
+      {
+        templateId: 'tpl-1',
+        title: '教材1',
+        currentPublishedVersionId: 'v1',
+        visibility: 'COMMUNITY',
+        createdByUid: 'teacher-1',
+      },
+    ])
+  })
+})
+
+describe('setTemplateCertificationCallable', () => {
+  beforeEach(() => {
+    templateGetMock.mockReset()
+    templateUpdateMock.mockReset()
+    getUserMock.mockReset()
+    setTemplateCertificationWithAdminSdkMock.mockReset()
+  })
+
+  const operatorAuth = {
+    uid: 'op-1',
+    token: { email_verified: true, firebase: { sign_in_provider: 'google.com' }, operator: true },
+  }
+  const teacherAuth = {
+    uid: 'teacher-1',
+    token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } },
+  }
+
+  const validInput = {
+    templateId: 'tpl-1',
+    versionId: 'v1',
+    level: 'VERIFIED' as const,
+    reason: '内容審査完了',
+    idempotencyKey: 'idemp-1',
+  }
+
+  it('enforces authorization order: rejects unauthenticated / non-operator before Firestore read', async () => {
+    const unauthReq = { auth: null, data: validInput } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(unauthReq)).rejects.toMatchObject({ code: 'unauthenticated' })
+
+    const teacherReq = { auth: teacherAuth, data: validInput } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(teacherReq)).rejects.toMatchObject({ code: 'permission-denied' })
+
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+
+  it('enforces scalar validation before reading Firestore', async () => {
+    const invalidReq = { auth: operatorAuth, data: { ...validInput, templateId: '' } } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(invalidReq)).rejects.toMatchObject({ code: 'invalid-argument' })
+
+    expect(templateGetMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when template is not found or not in marketplace', async () => {
+    templateGetMock.mockResolvedValueOnce({ exists: false })
+    const req = { auth: operatorAuth, data: validInput } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(req)).rejects.toMatchObject({ code: 'not-found' })
+
+    templateGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ visibility: 'PRIVATE', currentPublishedVersionId: 'v1', createdByUid: 'teacher-1' }),
+    })
+    await expect(setTemplateCertificationCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('rejects when target version is not the currentPublishedVersionId', async () => {
+    templateGetMock.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ visibility: 'COMMUNITY', currentPublishedVersionId: 'v2', createdByUid: 'teacher-1' }),
+    })
+    const req = { auth: operatorAuth, data: validInput } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+
+  it('rejects when version document does not exist', async () => {
+    templateGetMock
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({ visibility: 'COMMUNITY', currentPublishedVersionId: 'v1', createdByUid: 'teacher-1' }),
+      })
+      .mockResolvedValueOnce({ exists: false }) // version read
+
+    const req = { auth: operatorAuth, data: validInput } as unknown as CallableRequest<unknown>
+    await expect(setTemplateCertificationCallable.run(req)).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('grants VERIFIED even when creator is a regular teacher', async () => {
+    templateGetMock
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({ visibility: 'COMMUNITY', currentPublishedVersionId: 'v1', createdByUid: 'teacher-1' }),
+      })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ schemaVersion: 1 }) }) // version read
+
+    setTemplateCertificationWithAdminSdkMock.mockResolvedValueOnce({
+      visibility: 'VERIFIED',
+      changed: true,
+      deduplicated: false,
+    })
+
+    const req = { auth: operatorAuth, data: validInput } as unknown as CallableRequest<unknown>
+    const result = await setTemplateCertificationCallable.run(req)
+    expect(result).toEqual({ visibility: 'VERIFIED', changed: true, deduplicated: false })
+    expect(setTemplateCertificationWithAdminSdkMock).toHaveBeenCalledWith({
+      templateId: 'tpl-1',
+      versionId: 'v1',
+      level: 'VERIFIED',
+      reason: '内容審査完了',
+      idempotencyKey: 'idemp-1',
+      actorUid: 'op-1',
+    })
+    expect(getUserMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects OFFICIAL when creator does not have operator custom claim', async () => {
+    templateGetMock
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({ visibility: 'COMMUNITY', currentPublishedVersionId: 'v1', createdByUid: 'teacher-1' }),
+      })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ schemaVersion: 1 }) }) // version read
+
+    getUserMock.mockResolvedValueOnce({ uid: 'teacher-1', customClaims: {} })
+
+    const req = {
+      auth: operatorAuth,
+      data: { ...validInput, level: 'OFFICIAL' },
+    } as unknown as CallableRequest<unknown>
+
+    await expect(setTemplateCertificationCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
+    expect(setTemplateCertificationWithAdminSdkMock).not.toHaveBeenCalled()
+  })
+
+  it('allows OFFICIAL when creator is an operator', async () => {
+    templateGetMock
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({ visibility: 'COMMUNITY', currentPublishedVersionId: 'v1', createdByUid: 'op-creator' }),
+      })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ schemaVersion: 1 }) }) // version read
+
+    getUserMock.mockResolvedValueOnce({ uid: 'op-creator', customClaims: { operator: true } })
+    setTemplateCertificationWithAdminSdkMock.mockResolvedValueOnce({
+      visibility: 'OFFICIAL',
+      changed: true,
+      deduplicated: false,
+    })
+
+    const req = {
+      auth: operatorAuth,
+      data: { ...validInput, level: 'OFFICIAL' },
+    } as unknown as CallableRequest<unknown>
+
+    const result = await setTemplateCertificationCallable.run(req)
+    expect(result).toEqual({ visibility: 'OFFICIAL', changed: true, deduplicated: false })
+    expect(setTemplateCertificationWithAdminSdkMock).toHaveBeenCalled()
   })
 })
 
