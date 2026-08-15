@@ -39,6 +39,7 @@ import { TuningDashboardPage } from './components/teacher/tuning/TuningDashboard
 import { SchoolOrgSettingsPage } from './components/teacher/organizations/SchoolOrgSettingsPage'
 import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPage'
 import { UsageDashboardPage } from './components/teacher/organizations/UsageDashboardPage'
+import { exportOrgStudentData, downloadAsJsonFile } from './lib/privacy/orgStudentDataExport'
 import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
 import { listPendingTemplateApprovals, reviewTemplateApproval, type PendingTemplateApproval } from './lib/lessonTemplates/templateApprovals'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
@@ -461,6 +462,7 @@ function SchoolOrgNewRoute({ services }: { services: FirebaseServices }) {
 
 function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const { orgId } = useParams<{ orgId: string }>()
+  const [exportingStudentData, setExportingStudentData] = useState(false)
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [inviting, setInviting] = useState(false)
   const [members, setMembers] = useState<OrgMember[]>([])
@@ -500,6 +502,13 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const viewerMembership = members.find((member) => member.uid === uid)
   const canManageMembers = viewerMembership?.role === 'owner' || viewerMembership?.role === 'admin'
 
+  const onExportStudentData = () => {
+    setExportingStudentData(true)
+    void exportOrgStudentData(services.functions, { orgId })
+      .then((data) => downloadAsJsonFile(data, `student-data-${orgId}.json`))
+      .finally(() => setExportingStudentData(false))
+  }
+
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
@@ -534,6 +543,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
           setInviting(false)
         }
       }}
+      onExportStudentData={onExportStudentData}
+      exportingStudentData={exportingStudentData}
     />
   )
 }

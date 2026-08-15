@@ -17,6 +17,8 @@ const memberProps = {
   teacherSeatLimit: undefined,
   onRevokeInvitation: vi.fn(),
   onChangeRole: vi.fn(),
+  onExportStudentData: vi.fn(),
+  exportingStudentData: false,
 }
 
 describe('SchoolOrgSettingsPage', () => {
@@ -108,7 +110,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     expect(screen.getByText('教師席: 使用中 2 / 上限 5')).toBeInTheDocument()
@@ -121,7 +123,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     expect(screen.getAllByRole('button', { name: '解除' })).toHaveLength(1)
@@ -132,7 +134,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     expect(screen.queryByRole('button', { name: '解除' })).not.toBeInTheDocument()
@@ -144,7 +146,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={onSuspendMember} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     fireEvent.click(screen.getByRole('button', { name: '解除' }))
@@ -156,7 +158,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     expect(screen.getByRole('option', { name: 'owner' })).toBeInTheDocument()
@@ -165,7 +167,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     expect(screen.queryByRole('option', { name: 'owner' })).not.toBeInTheDocument()
@@ -177,7 +179,7 @@ describe('member list', () => {
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
           members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
-          onRevokeInvitation={vi.fn()} onChangeRole={onChangeRole} />
+          onRevokeInvitation={vi.fn()} onChangeRole={onChangeRole} onExportStudentData={vi.fn()} exportingStudentData={false} />
       </MemoryRouter>,
     )
     fireEvent.change(screen.getByLabelText('uid-teacherのロール'), { target: { value: 'admin' } })
@@ -211,4 +213,25 @@ describe('parent organization display', () => {
     rerender(<MemoryRouter><SchoolOrgSettingsPage {...props} parentOrgName="桜丘市教育委員会" /></MemoryRouter>)
     expect(screen.getByText('所属する上位組織: 桜丘市教育委員会')).toBeInTheDocument()
   })
+
+  it('shows an export-student-data button to an owner and calls onExportStudentData on click', () => {
+    const onExportStudentData = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-owner" members={members} onExportStudentData={onExportStudentData} exportingStudentData={false} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '生徒データを一括エクスポート' }))
+    expect(onExportStudentData).toHaveBeenCalled()
+  })
+
+  it('hides the export-student-data button from a teacher', () => {
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false} {...memberProps} viewerUid="uid-teacher" members={members} onExportStudentData={vi.fn()} exportingStudentData={false} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('button', { name: '生徒データを一括エクスポート' })).not.toBeInTheDocument()
+  })
 })
+

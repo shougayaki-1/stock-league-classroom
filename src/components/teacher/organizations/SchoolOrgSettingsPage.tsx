@@ -23,10 +23,12 @@ export interface SchoolOrgSettingsPageProps {
   parentOrgName?: string | null
   onRevokeInvitation: (invitationId: string) => void
   onChangeRole: (uid: string, newRole: 'owner' | 'admin' | 'teacher') => void
+  onExportStudentData: () => void
+  exportingStudentData: boolean
 }
 
 export function SchoolOrgSettingsPage({
-  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole,
+  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole, onExportStudentData, exportingStudentData,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -42,6 +44,7 @@ export function SchoolOrgSettingsPage({
       <Link to={`/teacher/organizations/${orgId}/plan-limits`}>利用枠を確認</Link>
       <Link to={`/teacher/organizations/${orgId}/usage-dashboard`}>利用状況ダッシュボードを見る</Link>
       {(viewerRole === 'owner' || viewerRole === 'admin') && <Link to={`/teacher/organizations/${orgId}/template-approvals`}>承認待ちテンプレートを確認</Link>}
+      {viewerRole === 'owner' && <Button variant="outlined" disabled={exportingStudentData} onClick={onExportStudentData}>生徒データを一括エクスポート</Button>}
       <Typography variant="body2">所属する上位組織: {parentOrgName ?? 'なし'}</Typography>
       <Stack spacing={2}>
         <Typography variant="subtitle1">教師を招待</Typography>
