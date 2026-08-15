@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CommunityTemplateDetailPage } from './CommunityTemplateDetailPage'
 
 const template = {
-  id: 't1', title: '公民の授業', description: '説明', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v1',
+  id: 't1', title: '公民の授業', description: '説明', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v1', visibility: 'COMMUNITY' as const,
   reviewCount: 2, averageClarityRating: 4, averageEaseOfImplementationRating: 3.5, averageStudentResponseRating: 5,
 }
 const reviews = [{ templateId: 't1', versionId: 'v1', reviewedByUid: 'teacher-x', clarityRating: 4, easeOfImplementationRating: 3, studentResponseRating: 5, comment: 'とても分かりやすかった' }]

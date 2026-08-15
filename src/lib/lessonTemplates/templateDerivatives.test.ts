@@ -15,18 +15,18 @@ vi.mock('firebase/firestore', () => ({
 const { listTemplateDerivatives } = await import('./templateDerivatives')
 
 describe('listTemplateDerivatives', () => {
-  it('queries by sourceTemplateId and visibility together', async () => {
+  it('queries by sourceTemplateId and visibility in 3 marketplace levels together', async () => {
     getDocsMock.mockResolvedValue({ docs: [] })
     await listTemplateDerivatives({} as never, 'source-1')
     expect(whereMock).toHaveBeenCalledWith('sourceTemplateId', '==', 'source-1')
-    expect(whereMock).toHaveBeenCalledWith('visibility', '==', 'COMMUNITY')
+    expect(whereMock).toHaveBeenCalledWith('visibility', 'in', ['COMMUNITY', 'VERIFIED', 'OFFICIAL'])
   })
 
-  it('maps Firestore docs into CommunityTemplate objects', async () => {
+  it('maps Firestore docs into CommunityTemplate objects including visibility', async () => {
     getDocsMock.mockResolvedValue({
-      docs: [{ id: 't2', data: () => ({ title: '派生教材', description: '説明', subject: 'HOME_ECONOMICS', currentPublishedVersionId: 'v2' }) }],
+      docs: [{ id: 't2', data: () => ({ title: '派生教材', description: '説明', subject: 'HOME_ECONOMICS', currentPublishedVersionId: 'v2', visibility: 'OFFICIAL' }) }],
     })
     const result = await listTemplateDerivatives({} as never, 'source-1')
-    expect(result).toEqual([{ id: 't2', title: '派生教材', description: '説明', subject: 'HOME_ECONOMICS', currentPublishedVersionId: 'v2' }])
+    expect(result).toEqual([{ id: 't2', title: '派生教材', description: '説明', subject: 'HOME_ECONOMICS', currentPublishedVersionId: 'v2', visibility: 'OFFICIAL' }])
   })
 })

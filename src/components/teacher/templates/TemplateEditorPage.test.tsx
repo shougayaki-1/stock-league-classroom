@@ -48,7 +48,7 @@ describe('TemplateEditorPage', () => {
 
   it('lists derivative templates when present', () => {
     render(<TemplateEditorPage {...props} aiEnabled={false} onSaveDraft={vi.fn()} derivatives={[
-      { id: 'd1', title: '派生教材A', description: '説明A', subject: 'SOCIAL_STUDIES', currentPublishedVersionId: 'v1' },
+      { id: 'd1', title: '派生教材A', description: '説明A', subject: 'SOCIAL_STUDIES', currentPublishedVersionId: 'v1', visibility: 'COMMUNITY' },
     ]} />)
     expect(screen.getByText('この教材から派生した公開教材')).toBeInTheDocument()
     expect(screen.getByText('派生教材A')).toBeInTheDocument()

@@ -263,7 +263,7 @@ describe('templateReviews/{reviewId}', () => {
 })
 
 
-describe('lessonTemplates COMMUNITY visibility', () => {
+describe('lessonTemplates COMMUNITY, VERIFIED, OFFICIAL visibility', () => {
   beforeEach(async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const firestore = context.firestore()
@@ -272,25 +272,57 @@ describe('lessonTemplates COMMUNITY visibility', () => {
         orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
         visibility: 'COMMUNITY', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
       })
+      await setDoc(doc(firestore, 'lessonTemplates/verified-template'), {
+        orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
+        visibility: 'VERIFIED', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
+      })
+      await setDoc(doc(firestore, 'lessonTemplates/official-template'), {
+        orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
+        visibility: 'OFFICIAL', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
+      })
       await setDoc(doc(firestore, 'lessonTemplates/private-template'), {
         orgId: 'personal_teacher-a', createdByUid: 'teacher-a', currentPublishedVersionId: 'v-current',
         visibility: 'PRIVATE', status: 'PUBLISHED', draft: {}, createdAt: 'now', updatedAt: 'now',
       })
       await setDoc(doc(firestore, 'lessonTemplates/community-template/versions/v-current'), { templateId: 'community-template', orgId: 'personal_teacher-a', content: {} })
       await setDoc(doc(firestore, 'lessonTemplates/community-template/versions/v-old'), { templateId: 'community-template', orgId: 'personal_teacher-a', content: {} })
+      await setDoc(doc(firestore, 'lessonTemplates/verified-template/versions/v-current'), { templateId: 'verified-template', orgId: 'personal_teacher-a', content: {} })
+      await setDoc(doc(firestore, 'lessonTemplates/verified-template/versions/v-old'), { templateId: 'verified-template', orgId: 'personal_teacher-a', content: {} })
+      await setDoc(doc(firestore, 'lessonTemplates/official-template/versions/v-current'), { templateId: 'official-template', orgId: 'personal_teacher-a', content: {} })
     })
   })
 
-  it('lets a non-member teacher read a COMMUNITY template but not a PRIVATE one', async () => {
+  it('lets a non-member teacher read COMMUNITY, VERIFIED, OFFICIAL templates but not a PRIVATE one', async () => {
     const outsider = environment.authenticatedContext('teacher-b', teacherToken).firestore()
     await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/community-template')))
+    await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/verified-template')))
+    await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/official-template')))
     await assertFails(getDoc(doc(outsider, 'lessonTemplates/private-template')))
   })
 
-  it('lets a non-member teacher read only the currently published version of a COMMUNITY template', async () => {
+  it('lets a non-member teacher read only the currently published version of a marketplace template', async () => {
     const outsider = environment.authenticatedContext('teacher-b', teacherToken).firestore()
     await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/community-template/versions/v-current')))
     await assertFails(getDoc(doc(outsider, 'lessonTemplates/community-template/versions/v-old')))
+    await assertSucceeds(getDoc(doc(outsider, 'lessonTemplates/verified-template/versions/v-current')))
+    await assertFails(getDoc(doc(outsider, 'lessonTemplates/verified-template/versions/v-old')))
+  })
+
+  it('denies direct client read/write to certification collections for both teachers and operators', async () => {
+    const teacherDb = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    const operatorDb = environment.authenticatedContext('operator-a', operatorToken).firestore()
+
+    const certRef = doc(teacherDb, 'templateVersionCertifications/community-template__v-current')
+    await assertFails(getDoc(certRef))
+    await assertFails(setDoc(certRef, { level: 'VERIFIED' }))
+
+    const eventRef = doc(operatorDb, 'templateCertificationEvents/event-1')
+    await assertFails(getDoc(eventRef))
+    await assertFails(setDoc(eventRef, { level: 'VERIFIED' }))
+
+    const idempotencyRef = doc(teacherDb, 'templateCertificationIdempotency/key-1')
+    await assertFails(getDoc(idempotencyRef))
+    await assertFails(setDoc(idempotencyRef, { result: true }))
   })
 })
 

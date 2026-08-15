@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { CommunityTemplatesPage } from './CommunityTemplatesPage'
 
 const templates = [
-  { id: 't1', title: '公民の授業', description: '説明1', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v1' },
-  { id: 't2', title: '家計管理の授業', description: '説明2', subject: 'HOME_ECONOMICS' as const, currentPublishedVersionId: 'v2' },
+  { id: 't1', title: '公民の授業', description: '説明1', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v1', visibility: 'COMMUNITY' as const },
+  { id: 't2', title: '家計管理の授業', description: '説明2', subject: 'HOME_ECONOMICS' as const, currentPublishedVersionId: 'v2', visibility: 'COMMUNITY' as const },
 ]
 
 describe('CommunityTemplatesPage', () => {

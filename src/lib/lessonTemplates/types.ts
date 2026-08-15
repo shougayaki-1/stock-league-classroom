@@ -30,6 +30,14 @@ export interface LessonContent {
   homeEconomics?: HomeEconomicsContent
 }
 
+export type LessonTemplateVisibility =
+  | 'PRIVATE'
+  | 'LINK'
+  | 'ORGANIZATION'
+  | 'COMMUNITY'
+  | 'VERIFIED'
+  | 'OFFICIAL'
+
 export interface LessonTemplate {
   id: string
   orgId: string
@@ -37,7 +45,7 @@ export interface LessonTemplate {
   draft: LessonContent
   currentPublishedVersionId: string | null
   status: 'DRAFT' | 'READY' | 'ARCHIVED'
-  visibility: 'PRIVATE' | 'LINK' | 'ORGANIZATION' | 'PUBLIC'
+  visibility: LessonTemplateVisibility
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
   moveOperationId?: string
   createdAt: Timestamp
