@@ -37,4 +37,30 @@ describe('CommunityTemplatesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '送信' }))
     expect(onReport).toHaveBeenCalledWith(templates[0], 'COPYRIGHT', '')
   })
+
+  it('displays certification badges (通常公開, 認証済み, 公式) and no mutation controls for teachers', () => {
+    const certifiedTemplates = [
+      { id: 't1', title: '一般教材', description: '説明1', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v1', visibility: 'COMMUNITY' as const },
+      { id: 't2', title: '認証教材', description: '説明2', subject: 'SOCIAL_STUDIES' as const, currentPublishedVersionId: 'v2', visibility: 'VERIFIED' as const },
+      { id: 't3', title: '公式教材', description: '説明3', subject: 'HOME_ECONOMICS' as const, currentPublishedVersionId: 'v3', visibility: 'OFFICIAL' as const },
+    ]
+    render(
+      <CommunityTemplatesPage
+        templates={certifiedTemplates}
+        loading={false}
+        subject={undefined}
+        onSubjectChange={vi.fn()}
+        onDuplicate={vi.fn()}
+        onReport={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('通常公開')).toBeInTheDocument()
+    expect(screen.getByText('認証済み')).toBeInTheDocument()
+    expect(screen.getByText('公式')).toBeInTheDocument()
+
+    // No operator certification mutation controls
+    expect(screen.queryByRole('button', { name: /VERIFIED にする/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /OFFICIAL にする/ })).not.toBeInTheDocument()
+  })
 })

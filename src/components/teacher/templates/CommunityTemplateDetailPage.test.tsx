@@ -26,4 +26,41 @@ describe('CommunityTemplateDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'レビューを送信' }))
     expect(onSubmitReview).toHaveBeenCalled()
   })
+
+  it('displays visibility badge and contains no operator certification controls', () => {
+    const { rerender } = render(
+      <CommunityTemplateDetailPage
+        template={{ ...template, visibility: 'VERIFIED' }}
+        reviews={reviews}
+        loading={false}
+        eligible={false}
+        onSubmitReview={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('認証済み')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /VERIFIED にする/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /OFFICIAL にする/ })).not.toBeInTheDocument()
+
+    rerender(
+      <CommunityTemplateDetailPage
+        template={{ ...template, visibility: 'OFFICIAL' }}
+        reviews={reviews}
+        loading={false}
+        eligible={false}
+        onSubmitReview={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('公式')).toBeInTheDocument()
+
+    rerender(
+      <CommunityTemplateDetailPage
+        template={{ ...template, visibility: 'COMMUNITY' }}
+        reviews={reviews}
+        loading={false}
+        eligible={false}
+        onSubmitReview={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('通常公開')).toBeInTheDocument()
+  })
 })

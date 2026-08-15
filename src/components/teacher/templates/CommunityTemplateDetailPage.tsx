@@ -1,7 +1,19 @@
 import { useState } from 'react'
-import { Button, List, ListItem, ListItemText, Rating, Stack, TextField, Typography } from '@mui/material'
+import { Button, Chip, List, ListItem, ListItemText, Rating, Stack, TextField, Typography } from '@mui/material'
 import type { CommunityTemplate } from '../../../lib/lessonTemplates/communityTemplates'
 import type { TemplateReview } from '../../../lib/lessonTemplates/templateReviews'
+
+const VISIBILITY_LABELS: Record<string, string> = {
+  COMMUNITY: '通常公開',
+  VERIFIED: '認証済み',
+  OFFICIAL: '公式',
+}
+
+const VISIBILITY_COLORS: Record<string, 'default' | 'primary' | 'secondary'> = {
+  COMMUNITY: 'default',
+  VERIFIED: 'primary',
+  OFFICIAL: 'secondary',
+}
 
 export interface CommunityTemplateDetailPageProps {
   template: CommunityTemplate & { reviewCount: number; averageClarityRating: number; averageEaseOfImplementationRating: number; averageStudentResponseRating: number }
@@ -17,7 +29,14 @@ export function CommunityTemplateDetailPage({ template, reviews, eligible, onSub
   const [studentResponseRating, setStudentResponseRating] = useState(5)
   const [comment, setComment] = useState('')
   return <Stack spacing={2} sx={{ p: 2 }}>
-    <Typography variant="h5">{template.title}</Typography>
+    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+      <Typography variant="h5">{template.title}</Typography>
+      <Chip
+        label={VISIBILITY_LABELS[template.visibility ?? 'COMMUNITY'] ?? '通常公開'}
+        color={VISIBILITY_COLORS[template.visibility ?? 'COMMUNITY'] ?? 'default'}
+        size="small"
+      />
+    </Stack>
     <Typography color="text.secondary">{template.description}</Typography>
     <Typography variant="body2">評価({template.reviewCount ?? 0}件): 分かりやすさ {(template.averageClarityRating ?? 0).toFixed(1)} / 実施のしやすさ {(template.averageEaseOfImplementationRating ?? 0).toFixed(1)} / 生徒の反応 {(template.averageStudentResponseRating ?? 0).toFixed(1)}</Typography>
     {eligible && <Stack spacing={1}>

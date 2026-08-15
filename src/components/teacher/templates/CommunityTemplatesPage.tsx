@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItem, ListItemText, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItem, ListItemText, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import type { CommunityTemplate } from '../../../lib/lessonTemplates/communityTemplates'
 
 export type TemplateReportReason = 'PERSONAL_INFO' | 'COPYRIGHT' | 'INAPPROPRIATE' | 'MISINFORMATION' | 'OTHER'
@@ -10,6 +10,18 @@ const REPORT_REASONS: Array<{ value: TemplateReportReason; label: string }> = [
   { value: 'MISINFORMATION', label: '誤った情報' },
   { value: 'OTHER', label: 'その他' },
 ]
+
+const VISIBILITY_LABELS: Record<string, string> = {
+  COMMUNITY: '通常公開',
+  VERIFIED: '認証済み',
+  OFFICIAL: '公式',
+}
+
+const VISIBILITY_COLORS: Record<string, 'default' | 'primary' | 'secondary'> = {
+  COMMUNITY: 'default',
+  VERIFIED: 'primary',
+  OFFICIAL: 'secondary',
+}
 
 export interface CommunityTemplatesPageProps {
   templates: CommunityTemplate[]
@@ -33,7 +45,7 @@ export function CommunityTemplatesPage({ templates, loading, subject, onSubjectC
       <ToggleButton value="HOME_ECONOMICS">家庭科</ToggleButton>
     </ToggleButtonGroup>
     {loading ? <CircularProgress aria-label="読み込み中" /> : templates.length
-      ? <List>{templates.map((template) => <ListItem key={template.id} secondaryAction={<Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => onDuplicate(template)}>自組織へ複製</Button><Button color="error" onClick={() => setReportTarget(template)}>通報</Button></Stack>}><ListItemText primary={<Button variant="text" onClick={() => onOpenDetail(template)} sx={{ p: 0, textTransform: 'none' }}>{template.title}</Button>} secondary={template.description} /></ListItem>)}</List>
+      ? <List>{templates.map((template) => <ListItem key={template.id} secondaryAction={<Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => onDuplicate(template)}>自組織へ複製</Button><Button color="error" onClick={() => setReportTarget(template)}>通報</Button></Stack>}><ListItemText primary={<Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Button variant="text" onClick={() => onOpenDetail(template)} sx={{ p: 0, textTransform: 'none' }}>{template.title}</Button><Chip label={VISIBILITY_LABELS[template.visibility ?? 'COMMUNITY'] ?? '通常公開'} color={VISIBILITY_COLORS[template.visibility ?? 'COMMUNITY'] ?? 'default'} size="small" /></Stack>} secondary={template.description} /></ListItem>)}</List>
       : <Typography color="text.secondary">公開されている教材がまだありません。</Typography>}
     <Dialog open={!!reportTarget} onClose={closeDialog}>
       <DialogTitle>教材を通報</DialogTitle>
