@@ -5,6 +5,7 @@ import { isCallerTeacher } from '../organizations/onCall'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
+import { recordAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -266,9 +267,19 @@ export const exportOrgStudentDataCallable = onCall({ region: 'asia-northeast1' }
   const data = request.data as ExportOrgStudentDataRequest
   if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
 
-  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
-  if (membership.role !== 'owner') throw new HttpsError('permission-denied', '組織のownerのみ生徒データを一括エクスポートできます。')
+  const db = getFirestore()
+  const actorUid = request.auth.uid
+  const orgId = data.orgId
+  const logResult = (result: 'SUCCESS' | 'FAILURE') => recordAuditLogEntry(db, { orgId, actorUid, action: 'EXPORT_ORG_STUDENT_DATA', result })
 
-  return exportOrgStudentDataWithAdminSdk(data.orgId)
+  const membership = await requireActiveOrgMember(db, orgId, actorUid)
+  if (membership.role !== 'owner') {
+    await logResult('FAILURE')
+    throw new HttpsError('permission-denied', '組織のownerのみ生徒データを一括エクスポートできます。')
+  }
+
+  const result = await exportOrgStudentDataWithAdminSdk(orgId)
+  await logResult('SUCCESS')
+  return result
 })
 

@@ -4,7 +4,7 @@ import { recordAuditLogEntry } from './auditLog'
 vi.mock('firebase-admin/firestore', () => ({ FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' } }))
 
 const addMock = vi.fn()
-const makeDb = () => ({ collection: (path: string) => ({ add: addMock }) }) as unknown as FirebaseFirestore.Firestore
+const makeDb = () => ({ collection: (_path: string) => ({ add: addMock }) }) as unknown as FirebaseFirestore.Firestore
 
 describe('recordAuditLogEntry', () => {
   it('writes to organizations/{orgId}/auditLog with all provided fields plus a server timestamp', async () => {

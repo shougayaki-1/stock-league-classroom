@@ -14,6 +14,7 @@ import {
 import { exportPersonalDataWithAdminSdk } from './exportPersonalData'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { exportOrgStudentDataWithAdminSdk } from './exportOrgStudentData'
+import { recordAuditLogEntry } from './auditLog'
 import {
   purgeHardDeleteResourceWithAdminSdk,
   purgePersonalOrganizationWithAdminSdk,
@@ -26,6 +27,7 @@ const resourceDocs = new Map<string, { exists: boolean; data?: Record<string, un
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
 vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
+vi.mock('./auditLog', () => ({ recordAuditLogEntry: vi.fn() }))
 vi.mock('./deletePersonalData', () => ({
   requestSoftDeleteWithAdminSdk: vi.fn(),
   restoreSoftDeletedWithAdminSdk: vi.fn(),
@@ -528,6 +530,19 @@ describe('exportOrgStudentDataCallable', () => {
     const request = makeRequest({ data: { orgId: 'school-1' } })
     await expect(exportOrgStudentDataCallable.run(request)).resolves.toMatchObject({ orgId: 'school-1' })
     expect(exportOrgStudentDataWithAdminSdk).toHaveBeenCalledWith('school-1')
+  })
+
+  it('records a SUCCESS audit log entry after a successful export', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    vi.mocked(exportOrgStudentDataWithAdminSdk).mockResolvedValueOnce({ exportedAt: '2026-08-15T00:00:00.000Z', orgId: 'org-1', lessonRuns: [] })
+    await exportOrgStudentDataCallable.run(makeRequest({ uid: 'owner-a', authTime: NOW_SECONDS, data: { orgId: 'org-1' } }))
+    expect(recordAuditLogEntry).toHaveBeenCalledWith(expect.anything(), { orgId: 'org-1', actorUid: 'owner-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS' })
+  })
+
+  it('records a FAILURE audit log entry when the caller is not an owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    await expect(exportOrgStudentDataCallable.run(makeRequest({ uid: 'admin-a', authTime: NOW_SECONDS, data: { orgId: 'org-1' } }))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(recordAuditLogEntry).toHaveBeenCalledWith(expect.anything(), { orgId: 'org-1', actorUid: 'admin-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'FAILURE' })
   })
 })
 
