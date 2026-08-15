@@ -538,6 +538,251 @@ describe('student data search', () => {
   })
 })
 
+describe('annual archive section', () => {
+  const adminMembers = [
+    { uid: 'uid-admin', email: 'admin@example.com', role: 'admin' as const, status: 'active' as const, membershipVersion: 1 },
+    { uid: 'uid-teacher', email: 'teacher@example.com', role: 'teacher' as const, status: 'active' as const, membershipVersion: 1 },
+  ]
+
+  it('shows the annual archive section only to an owner and hides from admin/teacher', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('年度アーカイブ')).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-admin"
+          members={adminMembers}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('年度アーカイブ')).not.toBeInTheDocument()
+  })
+
+  it('calls onPreviewAnnualArchive when clicking 対象を確認', () => {
+    const onPreviewAnnualArchive = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          onPreviewAnnualArchive={onPreviewAnnualArchive}
+        />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(screen.getByLabelText('対象年度'), { target: { value: '2024' } })
+    fireEvent.click(screen.getByRole('button', { name: '対象を確認' }))
+    expect(onPreviewAnnualArchive).toHaveBeenCalledWith(2024)
+  })
+
+  it('displays preview details and enables scheduling when reason and datetime are provided', () => {
+    const onScheduleAnnualArchive = vi.fn()
+    const preview = {
+      academicYear: 2025,
+      periodStart: '2025-04-01T00:00:00+09:00',
+      periodEnd: '2026-04-01T00:00:00+09:00',
+      eligibleCount: 5,
+      missingEndedAtCount: 2,
+    }
+
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          annualArchivePreview={preview}
+          onScheduleAnnualArchive={onScheduleAnnualArchive}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/2025年度/)).toBeInTheDocument()
+    expect(screen.getByText(/5件/)).toBeInTheDocument()
+    expect(screen.getByText(/2件/)).toBeInTheDocument()
+
+    const scheduleButton = screen.getByRole('button', { name: '予約する' })
+    expect(scheduleButton).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/実行予定日時/), { target: { value: '2026-08-20T10:00' } })
+    expect(scheduleButton).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText(/予約理由/), { target: { value: '年度末アーカイブ' } })
+    expect(scheduleButton).toBeEnabled()
+
+    fireEvent.click(scheduleButton)
+    expect(onScheduleAnnualArchive).toHaveBeenCalledWith({
+      academicYear: 2025,
+      scheduledFor: '2026-08-20T10:00',
+      reason: '年度末アーカイブ',
+    })
+  })
+
+  it('displays jobs list with localized status and cancellation actions', () => {
+    const onCancelAnnualArchive = vi.fn()
+    const jobs = [
+      {
+        id: 'job-1',
+        orgId: 'org-1',
+        academicYear: 2025,
+        periodStart: '2025-04-01T00:00:00+09:00',
+        periodEnd: '2026-04-01T00:00:00+09:00',
+        status: 'SCHEDULED' as const,
+        scheduledFor: '2026-08-20T00:00:00Z',
+        reason: '予約理由1',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-15T00:00:00Z',
+        archivedCount: 0,
+        restoredCount: 0,
+      },
+      {
+        id: 'job-2',
+        orgId: 'org-1',
+        academicYear: 2025,
+        periodStart: '2025-04-01T00:00:00+09:00',
+        periodEnd: '2026-04-01T00:00:00+09:00',
+        status: 'RUNNING' as const,
+        scheduledFor: '2026-08-15T00:00:00Z',
+        reason: '実行中ジョブ',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-15T00:00:00Z',
+        archivedCount: 1,
+        restoredCount: 0,
+      },
+      {
+        id: 'job-3',
+        orgId: 'org-1',
+        academicYear: 2024,
+        periodStart: '2024-04-01T00:00:00+09:00',
+        periodEnd: '2025-04-01T00:00:00+09:00',
+        status: 'FAILED' as const,
+        scheduledFor: '2026-08-10T00:00:00Z',
+        reason: '失敗ジョブ',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-10T00:00:00Z',
+        archivedCount: 1,
+        restoredCount: 0,
+      },
+      {
+        id: 'job-4',
+        orgId: 'org-1',
+        academicYear: 2023,
+        periodStart: '2023-04-01T00:00:00+09:00',
+        periodEnd: '2024-04-01T00:00:00+09:00',
+        status: 'CANCELLING' as const,
+        scheduledFor: '2026-08-05T00:00:00Z',
+        reason: '取消中',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-05T00:00:00Z',
+        archivedCount: 1,
+        restoredCount: 0,
+      },
+      {
+        id: 'job-5',
+        orgId: 'org-1',
+        academicYear: 2022,
+        periodStart: '2022-04-01T00:00:00+09:00',
+        periodEnd: '2023-04-01T00:00:00+09:00',
+        status: 'COMPLETED' as const,
+        scheduledFor: '2026-08-01T00:00:00Z',
+        reason: '完了ジョブ',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-08-01T00:00:00Z',
+        archivedCount: 10,
+        restoredCount: 0,
+      },
+      {
+        id: 'job-6',
+        orgId: 'org-1',
+        academicYear: 2021,
+        periodStart: '2021-04-01T00:00:00+09:00',
+        periodEnd: '2022-04-01T00:00:00+09:00',
+        status: 'CANCELLED' as const,
+        scheduledFor: '2026-07-01T00:00:00Z',
+        reason: '取消済みジョブ',
+        requestedByUid: 'owner-1',
+        createdAt: '2026-07-01T00:00:00Z',
+        archivedCount: 0,
+        restoredCount: 5,
+      },
+    ]
+
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          viewerUid="uid-owner"
+          members={members}
+          annualArchiveJobs={jobs}
+          onCancelAnnualArchive={onCancelAnnualArchive}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/状態: 予約中/)).toBeInTheDocument()
+    expect(screen.getByText(/状態: 処理中/)).toBeInTheDocument()
+    expect(screen.getByText(/状態: 失敗（再試行中）/)).toBeInTheDocument()
+    expect(screen.getByText(/状態: 取消処理中/)).toBeInTheDocument()
+    expect(screen.getByText(/状態: 完了/)).toBeInTheDocument()
+    expect(screen.getByText(/状態: 取消済み/)).toBeInTheDocument()
+
+    // SCHEDULED has '取消' button
+    const cancelButtons = screen.getAllByRole('button', { name: '取消' })
+    expect(cancelButtons.length).toBeGreaterThanOrEqual(1)
+
+    // RUNNING has '取消要求' button
+    expect(screen.getByRole('button', { name: '取消要求' })).toBeInTheDocument()
+
+    // Open cancel reason form for SCHEDULED job
+    fireEvent.click(cancelButtons[0])
+    expect(screen.getByLabelText('取消理由')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('取消理由'), { target: { value: '予約中止' } })
+    fireEvent.click(screen.getByRole('button', { name: '確定' }))
+    expect(onCancelAnnualArchive).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      reason: '予約中止',
+    })
+  })
+})
+
+
 
 
 

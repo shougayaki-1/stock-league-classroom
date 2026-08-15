@@ -43,6 +43,14 @@ import { exportOrgStudentData, downloadAsJsonFile } from './lib/privacy/orgStude
 import { searchOrgStudentData, type OrgStudentDataSearchResult, type OrgStudentSearchField } from './lib/privacy/orgStudentDataSearch'
 import { listOrgAuditLog, type OrgAuditLogEntry } from './lib/privacy/orgAuditLog'
 import { purgeSchoolOrg } from './lib/privacy/purgeSchoolOrg'
+import {
+  cancelAnnualArchive,
+  listAnnualArchiveJobs,
+  previewAnnualArchive,
+  scheduleAnnualArchive,
+  type AnnualArchiveJob,
+  type PreviewAnnualArchiveResult,
+} from './lib/privacy/annualArchive'
 import { TemplateApprovalsPage } from './components/teacher/organizations/TemplateApprovalsPage'
 import { listPendingTemplateApprovals, reviewTemplateApproval, type PendingTemplateApproval } from './lib/lessonTemplates/templateApprovals'
 import { BillingSection } from './components/teacher/organizations/BillingSection'
@@ -480,6 +488,12 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
   const [searchingStudentData, setSearchingStudentData] = useState(false)
   const [studentDataSearchResult, setStudentDataSearchResult] = useState<OrgStudentDataSearchResult | undefined>(undefined)
   const [purgingOrg, setPurgingOrg] = useState(false)
+  const [annualArchiveJobs, setAnnualArchiveJobs] = useState<AnnualArchiveJob[]>([])
+  const [loadingAnnualArchiveJobs, setLoadingAnnualArchiveJobs] = useState(false)
+  const [annualArchivePreview, setAnnualArchivePreview] = useState<PreviewAnnualArchiveResult | undefined>(undefined)
+  const [previewingAnnualArchive, setPreviewingAnnualArchive] = useState(false)
+  const [schedulingAnnualArchive, setSchedulingAnnualArchive] = useState(false)
+  const [cancellingAnnualArchive, setCancellingAnnualArchive] = useState(false)
   const navigate = useNavigate()
   const uid = services.auth.currentUser?.uid
 
@@ -497,6 +511,22 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .catch(() => setInvitations([]))
   }, [orgId, services.functions])
   useEffect(() => { loadInvitations() }, [loadInvitations])
+
+  const loadAnnualArchiveJobs = useCallback(() => {
+    if (!orgId) return
+    setLoadingAnnualArchiveJobs(true)
+    void listAnnualArchiveJobs(services.functions, { orgId })
+      .then((result) => {
+        if (result && Array.isArray(result.jobs)) {
+          setAnnualArchiveJobs(result.jobs)
+        } else {
+          setAnnualArchiveJobs([])
+        }
+      })
+      .catch(() => setAnnualArchiveJobs([]))
+      .finally(() => setLoadingAnnualArchiveJobs(false))
+  }, [orgId, services.functions])
+  useEffect(() => { loadAnnualArchiveJobs() }, [loadAnnualArchiveJobs])
 
   useEffect(() => { loadMembers() }, [loadMembers])
   useEffect(() => {
@@ -589,6 +619,48 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       .finally(() => setPurgingOrg(false))
   }
 
+  const onPreviewAnnualArchive = (academicYear: number) => {
+    if (!orgId) return
+    setPreviewingAnnualArchive(true)
+    void previewAnnualArchive(services.functions, { orgId, academicYear })
+      .then((res) => setAnnualArchivePreview(res))
+      .catch(() => setAnnualArchivePreview(undefined))
+      .finally(() => setPreviewingAnnualArchive(false))
+  }
+
+  const onScheduleAnnualArchive = (input: { academicYear: number; scheduledFor: string; reason: string }) => {
+    if (!orgId) return
+    setSchedulingAnnualArchive(true)
+    const isoScheduledFor = new Date(input.scheduledFor).toISOString()
+    void scheduleAnnualArchive(services.functions, {
+      orgId,
+      academicYear: input.academicYear,
+      scheduledFor: isoScheduledFor,
+      reason: input.reason,
+      idempotencyKey: crypto.randomUUID(),
+    })
+      .then(() => {
+        setAnnualArchivePreview(undefined)
+        loadAnnualArchiveJobs()
+      })
+      .finally(() => setSchedulingAnnualArchive(false))
+  }
+
+  const onCancelAnnualArchive = (input: { jobId: string; reason: string }) => {
+    if (!orgId) return
+    setCancellingAnnualArchive(true)
+    void cancelAnnualArchive(services.functions, {
+      orgId,
+      jobId: input.jobId,
+      reason: input.reason,
+      idempotencyKey: crypto.randomUUID(),
+    })
+      .then(() => {
+        loadAnnualArchiveJobs()
+      })
+      .finally(() => setCancellingAnnualArchive(false))
+  }
+
   return (
     <SchoolOrgSettingsPage
       orgName={orgId}
@@ -610,6 +682,15 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
       searchingStudentData={searchingStudentData}
       studentDataSearchResult={studentDataSearchResult}
       onClearStudentDataSearch={onClearStudentDataSearch}
+      annualArchiveJobs={annualArchiveJobs}
+      loadingAnnualArchiveJobs={loadingAnnualArchiveJobs}
+      onPreviewAnnualArchive={onPreviewAnnualArchive}
+      previewingAnnualArchive={previewingAnnualArchive}
+      annualArchivePreview={annualArchivePreview}
+      onScheduleAnnualArchive={onScheduleAnnualArchive}
+      schedulingAnnualArchive={schedulingAnnualArchive}
+      onCancelAnnualArchive={onCancelAnnualArchive}
+      cancellingAnnualArchive={cancellingAnnualArchive}
       onSuspendMember={(targetUid) => {
         setSuspending(true)
         void suspendOrgMember(services.functions, { orgId, uid: targetUid })

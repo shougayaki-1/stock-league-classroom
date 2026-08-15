@@ -8,10 +8,24 @@ import type {
   OrgStudentDataSearchResult,
   OrgStudentSearchField,
 } from '../../../lib/privacy/orgStudentDataSearch'
+import type {
+  AnnualArchiveJob,
+  AnnualArchiveJobStatus,
+  PreviewAnnualArchiveResult,
+} from '../../../lib/privacy/annualArchive'
 
 const STATUS_LABEL: Record<Invitation['status'], string> = { PENDING: '招待中', ACCEPTED: '参加済み', REVOKED: '失効済み' }
 const ROLE_LABEL: Record<OrgMember['role'], string> = { owner: 'owner', admin: '管理者', teacher: '教師' }
 const SEAT_ROLES: OrgMember['role'][] = ['owner', 'admin', 'teacher']
+
+const ARCHIVE_JOB_STATUS_LABEL: Record<AnnualArchiveJobStatus, string> = {
+  SCHEDULED: '予約中',
+  RUNNING: '処理中',
+  CANCELLING: '取消処理中',
+  COMPLETED: '完了',
+  CANCELLED: '取消済み',
+  FAILED: '失敗（再試行中）',
+}
 
 export interface SchoolOrgSettingsPageProps {
   orgName: string
@@ -41,6 +55,15 @@ export interface SchoolOrgSettingsPageProps {
   searchingStudentData?: boolean
   studentDataSearchResult?: OrgStudentDataSearchResult
   onClearStudentDataSearch?: () => void
+  annualArchiveJobs?: AnnualArchiveJob[]
+  loadingAnnualArchiveJobs?: boolean
+  onPreviewAnnualArchive?: (academicYear: number) => void
+  previewingAnnualArchive?: boolean
+  annualArchivePreview?: PreviewAnnualArchiveResult
+  onScheduleAnnualArchive?: (input: { academicYear: number; scheduledFor: string; reason: string }) => void
+  schedulingAnnualArchive?: boolean
+  onCancelAnnualArchive?: (input: { jobId: string; reason: string }) => void
+  cancellingAnnualArchive?: boolean
 }
 
 function ConfirmDeleteOrgForm({ orgId, purging, onConfirm }: { orgId: string; purging: boolean; onConfirm?: () => void }) {
@@ -55,6 +78,222 @@ function ConfirmDeleteOrgForm({ orgId, purging, onConfirm }: { orgId: string; pu
         {purging ? '削除中…' : '完全に削除する'}
       </button>
     </div>
+  )
+}
+
+function AnnualArchiveSection({
+  jobs = [],
+  loadingJobs,
+  onPreview,
+  previewing,
+  preview,
+  onSchedule,
+  scheduling,
+  onCancel,
+  cancelling,
+}: {
+  jobs?: AnnualArchiveJob[]
+  loadingJobs?: boolean
+  onPreview?: (academicYear: number) => void
+  previewing?: boolean
+  preview?: PreviewAnnualArchiveResult
+  onSchedule?: (input: { academicYear: number; scheduledFor: string; reason: string }) => void
+  scheduling?: boolean
+  onCancel?: (input: { jobId: string; reason: string }) => void
+  cancelling?: boolean
+}) {
+  const [academicYear, setAcademicYear] = useState<number>(2025)
+  const [scheduledFor, setScheduledFor] = useState('')
+  const [reason, setReason] = useState('')
+  const [cancelJobId, setCancelJobId] = useState<string | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+
+  const handlePreview = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (onPreview && !Number.isNaN(academicYear)) {
+      onPreview(academicYear)
+    }
+  }
+
+  const handleSchedule = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (
+      onSchedule &&
+      preview &&
+      scheduledFor &&
+      reason.trim().length > 0 &&
+      !scheduling
+    ) {
+      onSchedule({
+        academicYear: preview.academicYear,
+        scheduledFor,
+        reason: reason.trim(),
+      })
+    }
+  }
+
+  const handleCancelSubmit = (jobId: string) => {
+    if (onCancel && cancelReason.trim().length > 0 && !cancelling) {
+      onCancel({
+        jobId,
+        reason: cancelReason.trim(),
+      })
+      setCancelJobId(null)
+      setCancelReason('')
+    }
+  }
+
+  const canSchedule =
+    !!preview &&
+    scheduledFor.length > 0 &&
+    reason.trim().length > 0 &&
+    !scheduling
+
+  return (
+    <section>
+      <Typography variant="h6" component="h3">年度アーカイブ</Typography>
+      <Typography variant="body2" color="text.secondary">
+        指定した年度に終了した授業（完了・中断）をアーカイブします。
+      </Typography>
+
+      <form onSubmit={handlePreview} style={{ marginTop: 8 }}>
+        <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+          <TextField
+            label="対象年度"
+            type="number"
+            value={academicYear}
+            onChange={(e) => setAcademicYear(Number(e.target.value))}
+            size="small"
+            sx={{ width: 120 }}
+            disabled={previewing}
+          />
+          <Button
+            type="submit"
+            variant="outlined"
+            size="small"
+            disabled={previewing || Number.isNaN(academicYear)}
+          >
+            {previewing ? '確認中…' : '対象を確認'}
+          </Button>
+        </Stack>
+      </form>
+
+      {preview && (
+        <Stack spacing={1} sx={{ mt: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+          <Typography variant="subtitle2">確認結果 ({preview.academicYear}年度)</Typography>
+          <Typography variant="body2">
+            対象期間: {preview.periodStart} 〜 {preview.periodEnd}
+          </Typography>
+          <Typography variant="body2">
+            アーカイブ対象件数: {preview.eligibleCount}件
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            終了日時未記録で除外される件数: {preview.missingEndedAtCount}件
+          </Typography>
+
+          <form onSubmit={handleSchedule} style={{ marginTop: 8 }}>
+            <Stack spacing={2} sx={{ maxWidth: 500 }}>
+              <TextField
+                label="実行予定日時"
+                type="datetime-local"
+                slotProps={{ inputLabel: { shrink: true } }}
+                value={scheduledFor}
+                onChange={(e) => setScheduledFor(e.target.value)}
+                size="small"
+                disabled={scheduling}
+              />
+              <TextField
+                label="予約理由"
+                placeholder="予約理由を入力してください（必須）"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                size="small"
+                multiline
+                rows={2}
+                disabled={scheduling}
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={!canSchedule}
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                {scheduling ? '予約中…' : '予約する'}
+              </Button>
+            </Stack>
+          </form>
+        </Stack>
+      )}
+
+      <Stack spacing={1} sx={{ mt: 3 }}>
+        <Typography variant="subtitle1">アーカイブ予約ジョブ一覧</Typography>
+        {loadingJobs ? (
+          <Typography variant="body2">読み込み中…</Typography>
+        ) : jobs.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">予約されたジョブはありません。</Typography>
+        ) : (
+          <List>
+            {jobs.map((job) => {
+              const canCancel = job.status === 'SCHEDULED' || job.status === 'RUNNING' || job.status === 'FAILED'
+              const cancelLabel = job.status === 'RUNNING' ? '取消要求' : '取消'
+
+              return (
+                <ListItem
+                  key={job.id}
+                  sx={{ borderBottom: 1, borderColor: 'divider', flexDirection: 'column', alignItems: 'flex-start' }}
+                >
+                  <Stack direction="row" spacing={2} sx={{ width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <ListItemText
+                      primary={`${job.academicYear}年度アーカイブ — 状態: ${ARCHIVE_JOB_STATUS_LABEL[job.status] ?? job.status}`}
+                      secondary={`予定日時: ${job.scheduledFor} / アーカイブ済み: ${job.archivedCount}件 / 復元済み: ${job.restoredCount}件 / 理由: ${job.reason}`}
+                    />
+                    {canCancel && (
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="outlined"
+                        disabled={cancelling}
+                        onClick={() => setCancelJobId(cancelJobId === job.id ? null : job.id)}
+                      >
+                        {cancelLabel}
+                      </Button>
+                    )}
+                    {job.status === 'CANCELLING' && (
+                      <Typography variant="body2" color="text.secondary">取消処理中</Typography>
+                    )}
+                  </Stack>
+
+                  {cancelJobId === job.id && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1, width: '100%', alignItems: 'center' }}>
+                      <TextField
+                        size="small"
+                        label="取消理由"
+                        value={cancelReason}
+                        onChange={(e) => setCancelReason(e.target.value)}
+                        placeholder="取消理由を入力（必須）"
+                        sx={{ flexGrow: 1 }}
+                      />
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="error"
+                        disabled={cancelling || cancelReason.trim().length === 0}
+                        onClick={() => handleCancelSubmit(job.id)}
+                      >
+                        {cancelling ? '処理中…' : '確定'}
+                      </Button>
+                      <Button size="small" variant="text" onClick={() => setCancelJobId(null)}>
+                        閉じる
+                      </Button>
+                    </Stack>
+                  )}
+                </ListItem>
+              )
+            })}
+          </List>
+        )}
+      </Stack>
+    </section>
   )
 }
 
@@ -173,6 +412,11 @@ export function SchoolOrgSettingsPage({
   studentDataRetentionDays = null, settingRetentionPolicy = false, onSetStudentDataRetentionDays,
   purgingOrg = false, onPurgeOrg,
   onSearchStudentData, searchingStudentData = false, studentDataSearchResult, onClearStudentDataSearch,
+  annualArchiveJobs = [], loadingAnnualArchiveJobs = false,
+  onPreviewAnnualArchive, previewingAnnualArchive = false,
+  annualArchivePreview,
+  onScheduleAnnualArchive, schedulingAnnualArchive = false,
+  onCancelAnnualArchive, cancellingAnnualArchive = false,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
@@ -196,6 +440,19 @@ export function SchoolOrgSettingsPage({
           searching={searchingStudentData}
           result={studentDataSearchResult}
           onClear={onClearStudentDataSearch}
+        />
+      )}
+      {isOwner && (
+        <AnnualArchiveSection
+          jobs={annualArchiveJobs}
+          loadingJobs={loadingAnnualArchiveJobs}
+          onPreview={onPreviewAnnualArchive}
+          previewing={previewingAnnualArchive}
+          preview={annualArchivePreview}
+          onSchedule={onScheduleAnnualArchive}
+          scheduling={schedulingAnnualArchive}
+          onCancel={onCancelAnnualArchive}
+          cancelling={cancellingAnnualArchive}
         />
       )}
       {isOwner && (

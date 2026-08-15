@@ -168,10 +168,11 @@
 - 保持期間の組織ポリシー設定(入口部分) — `setStudentDataRetentionPolicyCallable`(owner限定)。期限到来時の対応待ちキュー・匿名化/削除/延長の判断ワークフローは別スコープのまま。
 - 組織全体の一括削除 — `purgeSchoolOrgCallable`(owner限定、上位組織リンク・配下学校の有無を事前チェック)。監査ログは組織削除後も残るよう`orgDeletionAuditLog`(トップレベル)に記録。Stripeサブスクリプション解約・COMMUNITY公開テンプレートの取り扱いは別スコープのまま。
 - 管理者向けの生徒データ検索 — `functions/src/privacy/searchOrgStudentData.ts` / `searchOrgStudentDataCallable`(ownerは組織全体、adminは自身がteacherRolesに含まれる授業のみ、閲覧理由入力・完全一致検索・監査ログ記録・10分自動破棄)。
+- 年度単位のアーカイブ — `functions/src/privacy/annualArchive.ts`, `annualArchiveScheduled.ts`, `previewAnnualArchiveCallable`, `scheduleAnnualArchiveCallable`, `cancelAnnualArchiveCallable`, `listAnnualArchiveJobsCallable`(owner限定、事前プレビュー、予約・取消・ロールバック・監査ログ、Cloud Scheduler連携)。
 
-**未着手項目(生徒データの組織単位の統制、残り1項目):**
+**未着手項目(生徒データの組織単位の統制):**
 
-- 年度単位のアーカイブ
+- なし（Phase 7の生徒データ組織単位統制の全主要項目が実装完了）
 
 ## UI刷新トラック(フェーズ番号外)
 
