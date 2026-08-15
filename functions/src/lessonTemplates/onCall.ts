@@ -14,6 +14,12 @@ import {
   resolveTemplateShareWithAdminSdk,
   revokeTemplateSharesWithAdminSdk,
 } from './templateShares'
+import {
+  getTemplateReviewDepsWithAdminSdk,
+  isEligibleToReviewTemplate,
+  listTemplateReviews,
+  submitTemplateReview,
+} from './templateReviews'
 
 export interface PublishLessonVersionCallableInput {
   templateId: string
@@ -328,6 +334,64 @@ export const grantOperatorCallable = onCall({ region: 'asia-northeast1' }, async
   await getAuth().setCustomUserClaims(data.targetUid, { operator: true })
   return { granted: true }
 })
+
+interface CanReviewTemplateCallableInput { templateId?: unknown; versionId?: unknown }
+
+export const canReviewTemplateCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as CanReviewTemplateCallableInput
+  if (typeof data.templateId !== 'string' || typeof data.versionId !== 'string') throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  const eligible = await isEligibleToReviewTemplate(getTemplateReviewDepsWithAdminSdk(), { templateId: data.templateId, versionId: data.versionId, uid: request.auth.uid })
+  return { eligible }
+})
+
+interface SubmitTemplateReviewCallableInput {
+  templateId?: unknown; versionId?: unknown
+  clarityRating?: unknown; easeOfImplementationRating?: unknown; studentResponseRating?: unknown
+  comment?: unknown
+}
+const isValidRating = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5
+
+export const submitTemplateReviewCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as SubmitTemplateReviewCallableInput
+  if (
+    typeof data.templateId !== 'string' || typeof data.versionId !== 'string'
+    || !isValidRating(data.clarityRating) || !isValidRating(data.easeOfImplementationRating) || !isValidRating(data.studentResponseRating)
+    || (data.comment !== undefined && typeof data.comment !== 'string')
+  ) {
+    throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+  }
+
+  try {
+    await submitTemplateReview(getTemplateReviewDepsWithAdminSdk(), {
+      templateId: data.templateId, versionId: data.versionId, uid: request.auth.uid,
+      clarityRating: data.clarityRating, easeOfImplementationRating: data.easeOfImplementationRating, studentResponseRating: data.studentResponseRating,
+      comment: (data.comment as string | undefined) ?? null,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Not eligible to review this template version') {
+      throw new HttpsError('permission-denied', 'この教材を実際に授業で使用した教師のみレビューできます。')
+    }
+    throw error
+  }
+  return { submitted: true }
+})
+
+interface ListTemplateReviewsCallableInput { templateId?: unknown; versionId?: unknown }
+
+export const listTemplateReviewsCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ListTemplateReviewsCallableInput
+  if (typeof data.templateId !== 'string' || typeof data.versionId !== 'string') throw new HttpsError('invalid-argument', 'リクエストが不正です。')
+
+  return listTemplateReviews(getTemplateReviewDepsWithAdminSdk(), data.versionId)
+})
+
 
 
 

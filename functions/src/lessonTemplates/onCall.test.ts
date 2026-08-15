@@ -2,18 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpsError } from 'firebase-functions/v2/https'
 import type { CallableRequest } from 'firebase-functions/v2/https'
 import {
+  canReviewTemplateCallable,
   createTemplateShareCallable,
   duplicateLessonTemplateCallable,
   grantOperatorCallable,
   isValidDuplicateLessonTemplateInput,
   isValidPublishLessonVersionInput,
   listPendingTemplateReportsCallable,
+  listTemplateReviewsCallable,
   publishLessonVersionCallable,
   publishTemplateToCommunityCallable,
   reportTemplateCallable,
   resolveTemplateReportCallable,
   resolveTemplateShareCallable,
   revokeTemplateShareCallable,
+  submitTemplateReviewCallable,
   unpublishTemplateFromCommunityCallable,
   type DuplicateLessonTemplateCallableInput,
   type PublishLessonVersionCallableInput,
@@ -26,6 +29,11 @@ import {
   resolveTemplateShareWithAdminSdk,
   revokeTemplateSharesWithAdminSdk,
 } from './templateShares'
+import {
+  isEligibleToReviewTemplate,
+  listTemplateReviews,
+  submitTemplateReview,
+} from './templateReviews'
 
 const templateGetMock = vi.fn()
 const templateUpdateMock = vi.fn()
@@ -42,6 +50,12 @@ vi.mock('./templateShares', () => ({
   createTemplateShareWithAdminSdk: vi.fn(),
   resolveTemplateShareWithAdminSdk: vi.fn(),
   revokeTemplateSharesWithAdminSdk: vi.fn(),
+}))
+vi.mock('./templateReviews', () => ({
+  getTemplateReviewDepsWithAdminSdk: vi.fn(() => ({})),
+  isEligibleToReviewTemplate: vi.fn(),
+  submitTemplateReview: vi.fn(),
+  listTemplateReviews: vi.fn(),
 }))
 vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
@@ -572,6 +586,64 @@ describe('grantOperatorCallable', () => {
     expect(setCustomUserClaimsMock).toHaveBeenCalledWith('teacher-b', { operator: true })
   })
 })
+
+describe('canReviewTemplateCallable', () => {
+  const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('returns the eligibility check result', async () => {
+    vi.mocked(isEligibleToReviewTemplate).mockResolvedValue(true)
+    await expect(canReviewTemplateCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).resolves.toEqual({ eligible: true })
+    expect(isEligibleToReviewTemplate).toHaveBeenCalledWith(expect.anything(), { templateId: 't1', versionId: 'v1', uid: 'teacher-a' })
+  })
+})
+
+describe('submitTemplateReviewCallable', () => {
+  const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('rejects ratings outside 1-5', async () => {
+    await expect(submitTemplateReviewCallable.run(makeRequest({
+      templateId: 't1', versionId: 'v1', clarityRating: 0, easeOfImplementationRating: 3, studentResponseRating: 3,
+    }))).rejects.toMatchObject({ code: 'invalid-argument' })
+    expect(submitTemplateReview).not.toHaveBeenCalled()
+  })
+
+  it('translates the pure layer\'s not-eligible error into permission-denied', async () => {
+    vi.mocked(submitTemplateReview).mockRejectedValue(new Error('Not eligible to review this template version'))
+    await expect(submitTemplateReviewCallable.run(makeRequest({
+      templateId: 't1', versionId: 'v1', clarityRating: 3, easeOfImplementationRating: 3, studentResponseRating: 3,
+    }))).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('submits a valid review, defaulting comment to null', async () => {
+    vi.mocked(submitTemplateReview).mockResolvedValue(undefined)
+    await expect(submitTemplateReviewCallable.run(makeRequest({
+      templateId: 't1', versionId: 'v1', clarityRating: 5, easeOfImplementationRating: 4, studentResponseRating: 3,
+    }))).resolves.toEqual({ submitted: true })
+    expect(submitTemplateReview).toHaveBeenCalledWith(expect.anything(), {
+      templateId: 't1', versionId: 'v1', uid: 'teacher-a',
+      clarityRating: 5, easeOfImplementationRating: 4, studentResponseRating: 3, comment: null,
+    })
+  })
+})
+
+describe('listTemplateReviewsCallable', () => {
+  const auth = { uid: 'teacher-a', token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+  const makeRequest = (data: Record<string, unknown>) => ({ auth, data, rawRequest: {} } as unknown as CallableRequest)
+
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('returns the review list', async () => {
+    vi.mocked(listTemplateReviews).mockResolvedValue([{ comment: 'よかった' }])
+    await expect(listTemplateReviewsCallable.run(makeRequest({ templateId: 't1', versionId: 'v1' }))).resolves.toEqual([{ comment: 'よかった' }])
+  })
+})
+
 
 
 

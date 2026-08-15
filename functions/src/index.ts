@@ -34,9 +34,10 @@ export { migrateSchoolFromEndedParentCallable } from './organizations/parentCont
 export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export {
-  createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable, listPendingTemplateReportsCallable,
-  publishLessonVersionCallable, publishTemplateToCommunityCallable, reportTemplateCallable, resolveTemplateReportCallable,
-  resolveTemplateShareCallable, revokeTemplateShareCallable, unpublishTemplateFromCommunityCallable,
+  canReviewTemplateCallable, createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable,
+  listPendingTemplateReportsCallable, listTemplateReviewsCallable, publishLessonVersionCallable, publishTemplateToCommunityCallable,
+  reportTemplateCallable, resolveTemplateReportCallable, resolveTemplateShareCallable, revokeTemplateShareCallable,
+  submitTemplateReviewCallable, unpublishTemplateFromCommunityCallable,
 } from './lessonTemplates/onCall'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
 export {
