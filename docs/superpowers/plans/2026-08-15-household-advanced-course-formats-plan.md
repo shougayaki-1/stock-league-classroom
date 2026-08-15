@@ -4,28 +4,28 @@
 
 **Goal:** `ROLE_VARIANT`、`STAGE_SPLIT`、`MULTI_PERSON_PER_TEAM` を、Run-scoped assignment、同期一括決算、v3 checkpoint/restore、教師・生徒UI、REFLECTION時の安全なクラス比較まで含めて実装し、既存 `COMMON_CONDITIONS` の外部契約を壊さない。
 
-**Architecture:** 既存の household-centered runtime を維持し、その前段に LessonRun-scoped assignment を置く。教材の `HouseholdProfile.householdId` は論理的 `profileId`、実行単位は opaque な runtime `householdId`、認可単位は `teamId` として分離する。発展3形式は `householdRuntime/control` の `OPEN | SETTLING` と `synchronizedRoundIndex` でクラス全体を同期し、各 household の settlement は既存 `processRound` を内部 primitive として再利用する。`COMMON_CONDITIONS` は `householdId === teamId`、RTDB `.household`、個別決算、checkpoint v2 を維持する。
+**Architecture:** 既存の household-centered runtime を維持し、その前段に LessonRun-scoped assignment を置く。教材の `HouseholdProfile.householdId` は論理的 `profileId`、実行単位は opaque な runtime `householdId`、認可単位は `teamId` として分離する。発展3形式は `lessonRuns/{lessonRunId}/householdRuntime/control` の `OPEN | SETTLING` と `synchronizedRoundIndex` でクラス全体を同期し、各 household の settlement は既存 `processRound` を内部 primitive として再利用する。`COMMON_CONDITIONS` は `householdId === teamId`、RTDB `.household`、個別決算、checkpoint v2 を維持する。
 
 **Tech Stack:** Firebase Cloud Functions v2 / Firebase Admin SDK / Firestore / Realtime Database / TypeScript / React 19 / Vite / Vitest / Testing Library / Firebase Rules Unit Testing.
 
 ## Global Constraints
 
-- 正本は `docs/superpowers/specs/2026-08-15-household-advanced-course-formats-design.md`。実装時に仕様判断を追加しない。
-- 各 task 開始前に `docs/superpowers/scope-backlog.md` を読み直し、Phase 4 の対象が変わっていないことを確認する。
+- 正本は `docs/superpowers/specs/2026-08-15-household-advanced-course-formats-design.md`。実装中に新しい授業仕様を追加しない。
+- 各 task 開始前に `docs/superpowers/scope-backlog.md` を読み直す。
 - Firestore transaction は **全 read を全 write より先に完了**する。transaction 内で RTDB / 外部I/Oを行わない。
-- Callable の認可順は `auth -> LessonRun -> org/role/team ownership -> dependent assignment/profile/state reads -> mutation`。認可前に他teamのassignment詳細を返さない。
-- 発展形式の学生認可では client-supplied `teamId` / `profileId` を信用しない。保存済み `HouseholdState.teamId`、state未作成時だけ FROZEN assignment の `teamId` を正本にする。
+- 教師Callableの認可順は `auth -> LessonRun -> active org membership -> LessonRun role/action -> dependent assignment/profile/state reads -> mutation`。
+- 学生Callableは `auth -> participant/auth index -> LessonRun -> requested HouseholdState（未作成なら FROZEN assignment）から server-side teamId を導出 -> team membership確認 -> profile/decision等の依存read -> mutation`。client-supplied `teamId` / `profileId` を認可根拠にしない。
 - 発展3形式は通常の個別決算を server-side で拒否する。`processRound` は bulk からだけ内部利用する。
-- advanced decision と bulk lock は同じ `householdRuntime/control` document を transaction 内で読む/更新し、`OPEN -> SETTLING` を競合点にする。
-- bulk の partial failure は正常な回復可能状態。barrier は進めず、成功済み item を再settleしない。
+- advanced decision と bulk lock は同じ runtime-control document を transaction 内で読む/更新し、`OPEN -> SETTLING` を競合点にする。
+- bulk の partial failure は回復可能状態。barrier は進めず、成功済み item を再settleしない。
 - restore は inactive な未完了 bulk を `CANCELLED` に終端化し、`restoreGeneration` を進める。active lease 中は restore を拒否する。
 - `COMMON_CONDITIONS` の legacy state/checkpoint に `profileId` が無くても sole-profile fallback で動作させ、一括migrationを前提にしない。
 - 学生向け profile / comparison は明示 allow-list のみ。`eventProbabilityOverrides`、`internalRiskFactors`、random seed、claim probability、runtime householdId、生徒氏名/UID/participantId を class-wide projection に出さない。
-- 新しい application code の commit は task ごとに分ける。共有ファイルを触る task は後述の順序を守る。
+- 新しい application code の commit は task ごとに分ける。共有ファイルは末尾の serialization order を守る。
 
 ---
 
-### Task 1: Advisory validation と assignment pure domain を作る
+### Task 1: Advisory validation と assignment pure domain
 
 **Files:**
 - Create: `functions/src/homeEconomics/householdAssignment.ts`
@@ -35,22 +35,11 @@
 
 **Interfaces:**
 
-Consumes:
-
-```ts
-import type { CourseFormat, HomeEconomicsContent, HouseholdProfile } from '@stock-league/household-authoring-content'
-```
-
-Produces:
-
 ```ts
 export type AdvancedHouseholdCourseFormat =
   | 'ROLE_VARIANT'
   | 'STAGE_SPLIT'
   | 'MULTI_PERSON_PER_TEAM'
-
-export type HouseholdAssignmentState = 'DRAFT' | 'STALE' | 'FROZEN'
-export type HouseholdAssignmentValidationStatus = 'READY' | 'INVALID'
 
 export interface HouseholdAssignmentEntry {
   householdId: string
@@ -67,7 +56,7 @@ export interface HouseholdAssignmentWarning {
 }
 
 export interface HouseholdAssignmentValidation {
-  status: HouseholdAssignmentValidationStatus
+  status: 'READY' | 'INVALID'
   warnings: HouseholdAssignmentWarning[]
 }
 
@@ -91,12 +80,15 @@ export const validateHouseholdAssignmentEntries = (input: {
   entries: HouseholdAssignmentEntry[]
 }): HouseholdAssignmentValidation
 
+export const teamSetFingerprint = (teamIds: string[]): string =>
+  requestDigest([...teamIds].sort())
+
 export const getHomeEconomicsContentWarnings = (
   content: HomeEconomicsContent,
 ): string[]
 ```
 
-- [ ] Write failing tests for deterministic ROLE_VARIANT round-robin, stable `runtimeHouseholdId`, and profile reuse when teams outnumber profiles.
+- [ ] Add failing tests for deterministic ROLE round-robin and stable opaque runtime IDs.
 
 ```ts
 expect(buildDefaultHouseholdAssignmentEntries({
@@ -111,18 +103,18 @@ expect(buildDefaultHouseholdAssignmentEntries({
 ])
 ```
 
-- [ ] Write failing tests for STAGE_SPLIT: every distinct snapshot `lifeStage` gets one team first; insufficient teams returns `INVALID`; extra teams remain balanced; same-stage multiple profiles rotate deterministically.
-- [ ] Write failing tests for MULTI: every team gets the exact complete profile set in snapshot order; runtime IDs differ across teams for the same profile; one-profile assignment validates `INVALID` for LessonRun start.
-- [ ] Write failing tests for advisory template warnings: ROLE one profile warning only, STAGE one distinct stage warning only, MULTI one profile warning only; existing hard validation behavior remains unchanged.
-- [ ] Run the focused tests and verify RED.
+- [ ] Add failing STAGE tests: each distinct snapshot `lifeStage` gets one team first; too few teams => `INVALID`; extra teams remain balanced; same-stage profiles rotate deterministically.
+- [ ] Add failing MULTI tests: every team gets the complete profile set in snapshot order; same source profile yields different runtime IDs across teams; one-profile run validation is `INVALID`.
+- [ ] Add failing advisory-warning tests: ROLE one profile warning only, STAGE one distinct stage warning only, MULTI one profile warning only; current hard validator behavior is unchanged.
+- [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- householdAssignment templateValidation
 ```
 
-- [ ] Implement the pure assignment algorithms using sorted `teamId`, snapshot profile order, and `idempotencyDocumentId()` from `functions/src/lib/idempotency.ts`. Do not read Firestore in this module.
-- [ ] Implement `getHomeEconomicsContentWarnings()` separately from `validateHomeEconomicsContent()` so warnings never become publish-blocking errors.
-- [ ] Run focused tests and verify GREEN.
+- [ ] Implement pure algorithms using sorted `teamId`, snapshot profile order, `idempotencyDocumentId()` and `requestDigest()`; no Firestore reads.
+- [ ] Keep warnings separate from `validateHomeEconomicsContent()` so save/publish semantics do not change.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- householdAssignment templateValidation
@@ -135,7 +127,7 @@ git add functions/src/homeEconomics/householdAssignment.ts functions/src/homeEco
 git commit -m "feat: add household assignment domain"
 ```
 
-### Task 2: Assignment persistence、PRIMARY callables、client wrapper を追加する
+### Task 2: Assignment persistence、PRIMARY callables、client wrapper
 
 **Files:**
 - Create: `functions/src/homeEconomics/householdAssignmentRepository.ts`
@@ -169,7 +161,7 @@ export interface HouseholdAssignmentView {
   state: 'UNPREPARED' | 'DRAFT' | 'STALE' | 'FROZEN'
   validationStatus: 'READY' | 'INVALID'
   assignmentRevision: number | null
-  warnings: Array<{ code: string; message: string }>
+  warnings: HouseholdAssignmentWarning[]
   teams: Array<{
     teamId: string
     teamDisplayName: string
@@ -197,26 +189,22 @@ export interface UpdateHouseholdAssignmentInput {
   }>
   idempotencyKey: string
 }
-```
 
-Callables:
-
-```ts
 export const getHouseholdAssignmentCallable
 export const prepareHouseholdAssignmentCallable
 export const updateHouseholdAssignmentCallable
 ```
 
-- [ ] Write repository tests for initial prepare, replay with same idempotency key, payload mismatch rejection, revision increment, and STALE reconciliation preserving valid `MANUAL` entries.
-- [ ] Add a fake transaction that throws if a `get()` occurs after the first `set()`/`delete()` and verify all assignment mutations obey read-before-write ordering.
-- [ ] Write failing tests that `update` rejects FROZEN assignment and that MULTI rejects any `profileId` change but accepts display-order-only changes.
-- [ ] Run repository tests and verify RED.
+- [ ] Write repository tests for first prepare, idempotent replay, changed-payload rejection, revision increment, and STALE reconciliation retaining valid MANUAL entries.
+- [ ] Add a fake transaction that rejects `get()` after first `set()`/`delete()`; all assignment mutations must pass it.
+- [ ] Add tests: FROZEN update rejected; MULTI rejects source-set/profile changes but accepts display-order changes.
+- [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- householdAssignmentRepository
 ```
 
-- [ ] Implement paths exactly as:
+- [ ] Implement exact server-owned paths:
 
 ```text
 lessonRuns/{lessonRunId}/householdAssignment/config
@@ -224,12 +212,10 @@ lessonRuns/{lessonRunId}/householdAssignment/config/entries/{runtimeHouseholdId}
 lessonRuns/{lessonRunId}/householdAssignmentIdempotency/{idempotencyDocumentId}
 ```
 
-Use `requestDigest()` for request payloads; digest `entryIds` from sorted runtime IDs plus team/profile/order/source content.
-- [ ] Implement `prepare` as both first-generation and STALE reconciliation. Do not create `HouseholdState` here.
-- [ ] Add Callable tests proving: unauthenticated rejected; ASSISTANT/VIEWER cannot mutate; PRIMARY can mutate only a HOME_ECONOMICS run before RUNNING; teacher read projection is available to all teacher roles with `VIEW_PROGRESS`.
-- [ ] Wire Cloud Functions exports in `functions/src/index.ts`.
-- [ ] Add typed Firebase client wrappers using `httpsCallable` and matching server contracts exactly.
-- [ ] Run focused server/client tests.
+- [ ] Implement `prepare` for the 3 advanced formats only: first generation and STALE reconciliation. Do not create `HouseholdState`. For Common, `get` may return an implicit compatibility view; `prepare/update` must not persist a new Common assignment.
+- [ ] Add Callable tests: unauthenticated rejected; ASSISTANT/VIEWER mutation rejected; PRIMARY may prepare/update only advanced HOME_ECONOMICS before FROZEN; all teacher roles with `VIEW_PROGRESS` may read the teacher projection.
+- [ ] Export callables from `functions/src/index.ts` and add exact `httpsCallable` client wrappers.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- householdAssignmentRepository onCall
@@ -243,7 +229,7 @@ git add functions/src/homeEconomics/householdAssignmentRepository.ts functions/s
 git commit -m "feat: add household assignment management"
 ```
 
-### Task 3: RUNNING transition と assignment FROZEN を原子的に結合し、advanced late join を既存teamへ入れる
+### Task 3: First RUNNING transition と FROZEN を原子的に結合し、advanced late join を既存teamへ入れる
 
 **Files:**
 - Create: `functions/src/homeEconomics/statusTransition.ts`
@@ -254,8 +240,6 @@ git commit -m "feat: add household assignment management"
 - Modify: `functions/src/lessonRuns/joinLessonRun.test.ts`
 
 **Interfaces:**
-
-Add to `TransitionPhaseDeps`:
 
 ```ts
 export interface StatusTransitionPreparation {
@@ -278,15 +262,7 @@ afterStatusTransition?: (input: {
   targetStatus?: LessonRunStatus
   deduplicated: boolean
 }) => Promise<void>
-```
 
-Runtime control persisted at:
-
-```text
-lessonRuns/{lessonRunId}/householdRuntime/control
-```
-
-```ts
 export interface HouseholdRuntimeControl {
   courseFormat: AdvancedHouseholdCourseFormat
   assignmentRevision: number
@@ -297,20 +273,22 @@ export interface HouseholdRuntimeControl {
 }
 ```
 
-- [ ] Write failing transition tests proving the preparation hook runs during `targetStatus: RUNNING`, all preparation reads finish before `appendLessonEventInTransaction`, and returned writes are committed in the same transaction as `LessonRun.status = RUNNING`.
-- [ ] Write `statusTransition.test.ts` for ROLE/STAGE/MULTI start validation: current `meta/teamsIndex` must match `teamSetFingerprint`; assignment must not be STALE/INVALID; all entries/profiles valid; STAGE coverage complete; MULTI profile count >= 2 and complete set per team.
+Persist control at `lessonRuns/{lessonRunId}/householdRuntime/control`.
+
+- [ ] Add transition tests proving preparation reads occur before event/write and returned writes commit atomically with `LessonRun.status`.
+- [ ] Add start-validation tests: `meta/teamsIndex` matches config fingerprint; config not STALE/INVALID; entry/profile references valid; STAGE coverage complete; MULTI has >=2 profiles and exact full set per team.
+- [ ] Add regression test: **only first lesson start** (`WAITING -> RUNNING` with `startedAt == null`) freezes/initializes control. `PAUSED -> RUNNING` must preserve FROZEN assignment, assignmentRevision, synchronizedRoundIndex, roundStatus, and activeOperationId; it must never reset round to 0.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- statusTransition transitionPhase
 ```
 
-- [ ] Implement the read-only preparation hook: read `teamsIndex`, config, every config `entryId`, validate, then return writes that set assignment `FROZEN` and initialize runtime control at round 0 / `OPEN`. Do not perform a write inside the hook itself.
-- [ ] Modify `transitionPhase` so event/idempotency reads still occur before any preparation write is applied. Apply preparation writes only in the existing write phase.
-- [ ] Ensure deduplicated transition calls still invoke `afterStatusTransition` so later RTDB repair can be retried without repeating Firestore transition writes.
-- [ ] Write failing `joinLessonRun` tests: normal RUNNING join remains rejected; RUNNING join is allowed only when `subject === 'HOME_ECONOMICS'`, course format is one of the 3 advanced formats, assignment is FROZEN, and at least one existing team exists.
-- [ ] Implement RUNNING advanced late join in the existing `joinLessonRun` transaction: read `meta/teamsIndex` and team docs, use existing `assignBalancedTeam`, create participant with `status: 'LATE_JOIN'` and `teamId`, and append participant to that team. Never create a new team.
-- [ ] Run focused tests GREEN.
+- [ ] Implement preparation as read-only analysis returning writes. Apply returned writes only after the existing transaction read phase/event reads complete.
+- [ ] Keep `afterStatusTransition` post-commit and invoke it even for a deduplicated transition so RTDB repair remains retryable.
+- [ ] Add late-join tests: ordinary RUNNING join remains rejected; new RUNNING join is allowed only for advanced HOME_ECONOMICS with FROZEN assignment and at least one existing team.
+- [ ] In `joinLessonRun` transaction read `meta/teamsIndex` and existing team docs, use existing `assignBalancedTeam`, write participant as `LATE_JOIN` with selected `teamId`, append member to that team, and never create a new team.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- statusTransition transitionPhase joinLessonRun
@@ -323,7 +301,7 @@ git add functions/src/homeEconomics/statusTransition.ts functions/src/homeEconom
 git commit -m "feat: freeze household assignments at lesson start"
 ```
 
-### Task 4: `HouseholdState.profileId`、legacy COMMON normalization、assigned initializer を実装する
+### Task 4: `HouseholdState.profileId`、legacy COMMON normalization、assigned initializer
 
 **Files:**
 - Create: `functions/src/homeEconomics/assignedHousehold.ts`
@@ -357,9 +335,7 @@ export interface HouseholdState {
   updatedAtServerMillis: number
 }
 
-export type StoredHouseholdState = Omit<HouseholdState, 'profileId'> & {
-  profileId?: string
-}
+export type StoredHouseholdState = Omit<HouseholdState, 'profileId'> & { profileId?: string }
 
 export const resolveStoredHouseholdState = (input: {
   stored: StoredHouseholdState
@@ -372,21 +348,20 @@ export const ensureAssignedHouseholdStateWithAdminSdk = (
 ): Promise<HouseholdState>
 ```
 
-- [ ] Write failing repository/normalization tests: new state requires `profileId`; legacy COMMON state with no profileId resolves to the only snapshot profile; advanced missing profileId fails closed.
-- [ ] Update existing Common initialization tests to expect `profileId` while preserving `householdId === teamId`.
-- [ ] Write assigned initializer tests: requires FROZEN entry; resolves source profile by `profileId`; creates state idempotently; existing state team/profile mismatch throws.
-- [ ] Write processRound tests where runtime `householdId !== profileId` and verify the source profile is found via `HouseholdState.profileId`. Add STAGE test asserting lifeStage is unchanged after settlement.
+- [ ] Add failing normalization tests: new state has profileId; legacy Common without profileId resolves to sole profile; advanced missing profileId fails closed.
+- [ ] Update Common initialization expectations to include profileId while retaining `householdId === teamId`.
+- [ ] Add assigned initializer tests: requires FROZEN assignment; uses profileId; idempotent create; existing team/profile mismatch throws.
+- [ ] Add processRound test where runtime householdId differs from profileId; add STAGE test proving lifeStage stays fixed after settlement.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- repository commonConditionsHousehold assignedHousehold processRound
 ```
 
-- [ ] Implement `StoredHouseholdState` decoding at repository boundaries rather than making the business-domain `profileId` optional everywhere.
-- [ ] Implement Common fallback only under `courseFormat === 'COMMON_CONDITIONS' && households.length === 1`; optionally backfill `profileId` on the next server write.
-- [ ] Implement assigned initializer from FROZEN assignment; no client-derived team/profile input.
-- [ ] Replace processRound's `householdId`-to-profile lookup with normalized `household.profileId`.
-- [ ] Run focused tests GREEN.
+- [ ] Decode old persistence through `StoredHouseholdState`; do not make business-domain profileId optional globally.
+- [ ] Apply sole-profile fallback only to Common. Optional backfill is permitted on the next server write.
+- [ ] Resolve processRound profile from normalized `household.profileId`.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- repository commonConditionsHousehold assignedHousehold processRound
@@ -399,7 +374,7 @@ git add functions/src/homeEconomics/assignedHousehold.ts functions/src/homeEcono
 git commit -m "feat: separate household runtime and profile identity"
 ```
 
-### Task 5: Advanced decision 認可と `OPEN | SETTLING` transaction guard を実装する
+### Task 5: Advanced decision 認可と `OPEN | SETTLING` transaction guard
 
 **Files:**
 - Modify: `functions/src/lessonRuns/households/repository.ts`
@@ -409,9 +384,7 @@ git commit -m "feat: separate household runtime and profile identity"
 - Modify: `functions/src/homeEconomics/submitDecision.ts`
 - Modify: `functions/src/homeEconomics/submitDecision.test.ts`
 
-**Interfaces:**
-
-Add an advanced guarded persistence function without weakening Common:
+**Interface:**
 
 ```ts
 export const saveAdvancedHouseholdDecisionWithAdminSdk = async (input: {
@@ -425,20 +398,19 @@ export const saveAdvancedHouseholdDecisionWithAdminSdk = async (input: {
 }): Promise<HouseholdDecisionRecord>
 ```
 
-- [ ] Write transaction tests proving advanced decision persistence reads idempotency, runtime control, and household state before any write; requires `roundStatus === 'OPEN'`, matching assignment revision, and `state.roundIndex === control.synchronizedRoundIndex === expectedSynchronizedRoundIndex`.
-- [ ] Write replay test proving same idempotency key/payload returns prior decision; changed payload rejects.
-- [ ] Write Callable tests: existing state derives team ownership from `HouseholdState.teamId`; missing state derives team only from FROZEN assignment, verifies membership, then calls assigned initializer; other-team household ID is rejected.
-- [ ] Write tests that `SETTLING` rejects new/updated decisions and Common continues through existing save behavior.
+- [ ] Add transaction tests: read idempotency, runtime control, household before write; require `OPEN`, matching assignmentRevision, and `state.roundIndex === control.synchronizedRoundIndex === expected...`.
+- [ ] Add idempotency replay/payload mismatch tests.
+- [ ] Add Callable tests: existing state -> stored `teamId` -> membership; missing state -> FROZEN assignment `teamId` -> membership -> ensure; another team's runtime household rejected.
+- [ ] Add `SETTLING` rejection and Common regression tests.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- repository submitDecision onCall
 ```
 
-- [ ] Implement advanced decision guard in a single Firestore transaction sharing the runtime-control contention point with bulk lock.
-- [ ] In `submitHouseholdDecisionCallable`, read LessonRun/course format after auth, branch Common vs advanced, and never accept a client team/profile identifier.
-- [ ] Preserve all existing input validation in `submitDecision.ts`.
-- [ ] Run focused tests GREEN.
+- [ ] Implement guarded advanced decision write in one Firestore transaction sharing the same control document as bulk lock.
+- [ ] Preserve current decision field validation and Common save path.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- repository submitDecision onCall
@@ -451,7 +423,7 @@ git add functions/src/lessonRuns/households/repository.ts functions/src/lessonRu
 git commit -m "feat: guard advanced household decisions"
 ```
 
-### Task 6: Bulk operation を runtime household target と同期barrierへ一般化する
+### Task 6: Bulk operation を runtime targets と同期barrierへ一般化
 
 **Files:**
 - Modify: `functions/src/homeEconomics/bulkSettlementOperation.ts`
@@ -495,30 +467,29 @@ export interface HouseholdBulkSettlementOperation {
   restoreGeneration: number
   assignmentRevision: number | null
   forceUnsubmitted: boolean
-  households: Record<string, HouseholdBulkItem>
+  households: Record<string, HouseholdBulkItem> // key = runtime householdId
   status: HouseholdBulkSettlementStatus
-  // retain existing lease/checkpoint/timestamp fields
+  // retain current lease/checkpoint/timestamp fields
 }
 ```
 
-- [ ] Write failing operation tests for target digest including sorted `{householdId, teamId, profileId}`, `assignmentRevision`, expected round, restoreGeneration, force flag, actor; same key with changed target set rejects.
-- [ ] Write tests for `CANCELLED` as terminal and excluded by unresolved-operation finder/retryable view.
-- [ ] Write advanced bulk-start transaction test: requires control `OPEN`, matching assignmentRevision/expected round; atomically creates operation and writes `SETTLING + activeOperationId`.
-- [ ] Write preflight-cancel test: if any required decision is missing and `forceUnsubmitted === false`, operation is changed to `CANCELLED` and runtime control returns to `OPEN` before the API reports the validation error.
-- [ ] Write partial failure tests: item settlement may leave some states at N+1, but control remains `SETTLING` and synchronized round remains N; retry skips `SUCCEEDED` items.
-- [ ] Write completion transaction test: all items successful -> operation `COMPLETED` and control `OPEN`, `activeOperationId = null`, `synchronizedRoundIndex = N + 1` atomically.
+- [ ] Add failing digest tests including sorted target triples, assignmentRevision, expectedRound, restoreGeneration, force flag, actor.
+- [ ] Add `CANCELLED` terminal/unresolved/retryable tests.
+- [ ] Add advanced bulk-start transaction test: `OPEN` + matching revision/round -> atomically create operation and set `SETTLING + activeOperationId`.
+- [ ] Add preflight-cancel test: missing required decision with force=false -> operation `CANCELLED`, control `OPEN`, activeOperationId null before API reports validation failure.
+- [ ] Add partial-failure test: some states may be N+1 but control stays SETTLING/N; retry skips SUCCEEDED.
+- [ ] Add completion test: all items successful -> operation COMPLETED + control OPEN + activeOperationId null + synchronizedRoundIndex N+1 atomically.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- bulkSettlementOperation bulkSettlement onCall
 ```
 
-- [ ] Generalize target enumeration: Common creates `{householdId: teamId, teamId, profileId}` targets through the compatibility resolver; advanced enumerates FROZEN assignment entries.
-- [ ] Ensure all target households before preflight. For advanced use `ensureAssignedHouseholdStateWithAdminSdk`; Common keeps legacy-compatible ensure.
-- [ ] Preserve existing pre-settlement checkpoint behavior for Common; advanced checkpoint call is supplied by Task 7. Until Task 7 lands, keep advanced pre-settlement checkpoint dependency injectable and make Task 6 tests use a fake v3 writer rather than bypassing checkpoint creation.
-- [ ] Make `processRoundCallable` explicitly reject all 3 advanced formats while leaving internal `processRoundWithAdminSdk` available to bulk.
-- [ ] Update client operation types without changing existing Common UI contract.
-- [ ] Run focused tests GREEN.
+- [ ] Enumerate Common compatibility targets from team IDs and advanced targets from FROZEN assignment entries. Ensure every target state before preflight.
+- [ ] Keep Common v2 pre-settlement checkpoint. Until Task 7 lands, inject a fake advanced checkpoint writer in Task 6 unit tests rather than skipping checkpoint semantics.
+- [ ] Make `processRoundCallable` reject advanced formats; bulk alone calls internal `processRoundWithAdminSdk`.
+- [ ] Update client operation types.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- bulkSettlementOperation bulkSettlement onCall
@@ -532,7 +503,7 @@ git add functions/src/homeEconomics/bulkSettlementOperation.ts functions/src/hom
 git commit -m "feat: synchronize advanced household settlements"
 ```
 
-### Task 7: Advanced checkpoint v3 を追加する
+### Task 7: Advanced checkpoint v3
 
 **Files:**
 - Modify: `functions/src/homeEconomics/householdCheckpoint.ts`
@@ -564,27 +535,23 @@ export interface HouseholdCheckpointSnapshotV3 {
   teamViews: Record<string, HouseholdCheckpointTeamViewV3>
   createdAtServerMillis: number
 }
-
-export type HouseholdCheckpointManifest =
-  | HouseholdCheckpointManifestV2
-  | HouseholdCheckpointManifestV3
 ```
 
-- [ ] Write failing tests that v3 snapshot stores every runtime household exactly once and groups RTDB-safe views under `teamId -> households` without overwriting MULTI entries.
-- [ ] Write test that v3 idempotency digest includes assignmentRevision, expectedRoundIndex, restoreGeneration, and sorted runtime household IDs.
-- [ ] Write test that a manual advanced checkpoint is rejected while `roundStatus === 'SETTLING'`.
-- [ ] Write test that Common still writes schema v2 and existing manifest parsing remains valid.
+- [ ] Add v3 snapshot tests: all runtime households exactly once; MULTI team views do not overwrite siblings.
+- [ ] Add idempotency test including revision/round/generation/sorted IDs.
+- [ ] Add advanced manual-checkpoint rejection while SETTLING.
+- [ ] Add Common schema-v2 regression.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- householdCheckpoint bulkSettlement onCall
 ```
 
-- [ ] Implement v3 writer. Load current RTDB team projections before the Firestore snapshot transaction; inside the transaction read run/idempotency/all household states, validate projected round indices against state, then write snapshot+manifest. Never call RTDB from inside the retryable transaction.
-- [ ] Wire advanced bulk PRE_SETTLEMENT checkpoint to v3 and remove the fake dependency used in Task 6 tests.
-- [ ] Make manual checkpoint dispatch v2 for Common, v3 for advanced; keep current PRIMARY/ASSISTANT permission and add the advanced SETTLING guard.
-- [ ] Update client manifest union and modal-facing metadata (`schemaVersion`, `assignmentRevision`, `householdCount`, `expectedRoundIndex`).
-- [ ] Run focused tests GREEN.
+- [ ] Load RTDB team views before the retryable Firestore snapshot transaction; inside transaction read run/idempotency/states and verify projection rounds match state before writing snapshot/manifest.
+- [ ] Wire advanced PRE_SETTLEMENT bulk checkpoint to v3.
+- [ ] Dispatch manual Common -> v2, advanced -> v3; preserve current PRIMARY/ASSISTANT checkpoint permission.
+- [ ] Update client manifest union/metadata.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- householdCheckpoint bulkSettlement onCall
@@ -598,7 +565,7 @@ git add functions/src/homeEconomics/householdCheckpoint.ts functions/src/homeEco
 git commit -m "feat: add advanced household checkpoints"
 ```
 
-### Task 8: v3 restore と unresolved bulk cancellation を実装する
+### Task 8: v3 restore と unresolved bulk cancellation
 
 **Files:**
 - Modify: `functions/src/homeEconomics/householdRestore.ts`
@@ -610,7 +577,7 @@ git commit -m "feat: add advanced household checkpoints"
 - Modify: `src/lib/homeEconomics/checkpoints.ts`
 - Modify: `src/lib/homeEconomics/checkpoints.test.ts`
 
-**Interfaces:**
+**Interface:** retain the current external restore callable shape; dispatch internally by checkpoint schema version.
 
 ```ts
 export const restoreHouseholdCheckpointWithAdminSdk = (input: {
@@ -623,21 +590,20 @@ export const restoreHouseholdCheckpointWithAdminSdk = (input: {
 }): Promise<HouseholdRestoreOperationView>
 ```
 
-- [ ] Write v3 restore test: checkpoint assignmentRevision must equal current FROZEN assignment revision; all state docs restore; `restoreGeneration` increments; runtime control restores `synchronizedRoundIndex = checkpoint.expectedRoundIndex`, `roundStatus = OPEN`, `activeOperationId = null` in the same Firestore transaction.
-- [ ] Write crash-safe projection test: Firestore commit succeeds but RTDB publish fails -> restore operation remains `projectionStatus: PENDING`; retry with same idempotency key republishes without re-incrementing generation.
-- [ ] Write test that active bulk lease blocks restore.
-- [ ] Write regression test for both v2 Common and v3 advanced: an inactive unresolved `PENDING/RUNNING/FAILED` bulk operation is atomically set `CANCELLED` during restore, so old retry fails and a new bulk can be created afterward.
+- [ ] Add v3 restore test: assignmentRevision must equal current FROZEN revision; states restore; generation increments; control becomes checkpoint round / OPEN / no active op in same transaction.
+- [ ] Add crash-safe projection retry test; generation must not increment twice.
+- [ ] Add active-lease rejection.
+- [ ] Add Common v2 and advanced v3 regression: inactive unresolved PENDING/RUNNING/FAILED operation is atomically `CANCELLED` during restore; old retry fails and next new bulk can start.
 - [ ] Verify RED.
 
 ```bash
 npm test --workspace=functions -- householdRestore bulkSettlementOperation onCall
 ```
 
-- [ ] Extend restore dispatcher by checkpoint schema version; preserve existing v2 semantics for Common.
-- [ ] For v3 RTDB phase, restore `lessonRunTeamState/{run}/{teamId}.households` and `householdOrder`; clear/rebuild private computation logs for runtime IDs from the checkpoint set.
-- [ ] Add `cancelUnresolvedBulkForRestoreInTransaction()` helper that only cancels operations with no live lease and is used by both v2 and v3 paths.
-- [ ] Keep restore audit operation top-level/server-owned so it survives restored target writes.
-- [ ] Run focused tests GREEN.
+- [ ] Extend restore dispatcher; retain existing v2 semantics.
+- [ ] v3 post-commit RTDB restore writes `households` + order and clears stale private computation log entries for restored runtime IDs.
+- [ ] Add transaction helper for cancelling inactive unresolved operation; active lease remains a hard block.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- householdRestore bulkSettlementOperation onCall
@@ -651,7 +617,7 @@ git add functions/src/homeEconomics/householdRestore.ts functions/src/homeEconom
 git commit -m "feat: restore advanced household checkpoints"
 ```
 
-### Task 9: Advanced RTDB team projection と initial publication を追加する
+### Task 9: Advanced RTDB team projection と initial publication
 
 **Files:**
 - Modify: `functions/src/homeEconomics/realtimeProjection.ts`
@@ -665,7 +631,7 @@ git commit -m "feat: restore advanced household checkpoints"
 - Modify: `src/lib/lessonRuns/liveTypes.ts`
 - Modify: `src/lib/lessonRuns/liveTypes.test.ts`
 
-**Interfaces:**
+**Interface:**
 
 ```ts
 export interface AdvancedHouseholdTeamStateView {
@@ -682,10 +648,10 @@ export interface AdvancedHouseholdTeamStateView {
 }
 ```
 
-- [ ] Write projection tests proving profile projection uses `toHouseholdProfilePublicView()` and excludes `eventProbabilityOverrides` / `internalRiskFactors`.
-- [ ] Write processRound tests: Common continues updating `.household`; advanced updates only `households/{runtimeHouseholdId}` within its own team node and never overwrites sibling households.
-- [ ] Write RUNNING post-transition test: after Firestore FROZEN commit, `afterStatusTransition` ensures all assigned states and publishes initial team projections, so `/play` can detect HOME_ECONOMICS before the first settlement.
-- [ ] Write generic public-projection regression test: publishing ordinary `LessonRunPublicState` uses RTDB `update`, not `set`, so subject-specific fields such as `economicFactors` and later `householdClassComparison` survive timer/status refreshes.
+- [ ] Add projection privacy tests using `toHouseholdProfilePublicView()`; hidden profile fields absent.
+- [ ] Add processRound projection tests: Common updates `.household`; advanced updates only its runtime entry and preserves sibling households.
+- [ ] Add first-RUNNING post-transition test: after FROZEN commit, ensure all assigned states and publish initial team nodes so `/play` can detect household mode before settlement.
+- [ ] Add public-projection regression: generic public state publication uses RTDB `update`, not whole-node `set`, preserving `economicFactors` and future comparison field.
 - [ ] Verify RED.
 
 ```bash
@@ -693,12 +659,12 @@ npm test --workspace=functions -- realtimeProjection processRound statusTransiti
 npm test -- src/lib/lessonRuns/liveTypes.test.ts
 ```
 
-- [ ] Implement `AdvancedHouseholdTeamStateView`; keep legacy Common `.household` path untouched.
-- [ ] Extend processRound publication with course-format branch and update team-level `synchronizedRoundIndex`/`roundStatus` from persisted runtime control.
-- [ ] Implement post-RUNNING initial publication as idempotent repair work outside the Firestore transition transaction.
-- [ ] Change `publishLessonRunPublicStateWithAdminSdk` from whole-node `.set(state)` to `.update(state)` and preserve its explicit allow-list builder.
+- [ ] Implement advanced team view; keep Common `.household` unchanged.
+- [ ] Extend processRound publication with course-format branch and server-read runtime control.
+- [ ] Implement idempotent post-start initial projection outside Firestore transaction.
+- [ ] Change generic public publication to `.update(state)` while retaining explicit allow-list builder.
 - [ ] Hand-sync client live types.
-- [ ] Run focused tests GREEN.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- realtimeProjection processRound statusTransition publicProjection
@@ -712,7 +678,7 @@ git add functions/src/homeEconomics/realtimeProjection.ts functions/src/homeEcon
 git commit -m "feat: project advanced household team state"
 ```
 
-### Task 10: Teacher dashboard projection を team-primary DTO へ一般化する
+### Task 10: Teacher dashboard projection を team-primary DTO へ一般化
 
 **Files:**
 - Modify: `functions/src/homeEconomics/teacherDashboard.ts`
@@ -753,10 +719,10 @@ export interface HouseholdTeacherDashboard {
 }
 ```
 
-- [ ] Write failing DTO tests for Common mapping to one household/team, ROLE/STAGE one household/team, and MULTI multiple households/team with `submittedCount/totalHouseholds` aggregation.
-- [ ] Add partial failure health tests: `SETTLING + householdsAligned=false` is informational/recoverable; `OPEN + householdsAligned=false` produces `ACTION_REQUIRED`.
-- [ ] Add active-bulk item error mapping by runtime household ID, not team ID.
-- [ ] Add Callable test removing current non-Common rejection while preserving HOME_ECONOMICS and teacher auth checks.
+- [ ] Add DTO tests: Common 1/team, ROLE/STAGE 1/team, MULTI many/team with x/y aggregation.
+- [ ] Add health tests: SETTLING+misaligned is recoverable/info; OPEN+misaligned is ACTION_REQUIRED.
+- [ ] Map active bulk errors by runtime household ID.
+- [ ] Remove current non-Common Callable rejection in a failing test while retaining teacher/HOME_ECONOMICS auth.
 - [ ] Verify RED.
 
 ```bash
@@ -764,10 +730,10 @@ npm test --workspace=functions -- teacherDashboard onCall
 npm test -- src/lib/homeEconomics/teacherDashboard.test.ts
 ```
 
-- [ ] Generalize loader to enumerate Common compatibility assignment or FROZEN advanced assignment, load states/decisions/events by runtime household ID, then group by team.
-- [ ] For pre-RUNNING advanced dashboard, return assignment preview even when simulation state does not exist; do not persist states from dashboard reads.
-- [ ] Update client mapper/types exactly.
-- [ ] Run focused tests GREEN.
+- [ ] Generalize loader through compatibility/frozen assignment, runtime IDs, decisions/events, then group by team.
+- [ ] Before RUNNING, return assignment preview without persisting simulation state.
+- [ ] Update client mapper exactly.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=functions -- teacherDashboard onCall
@@ -781,7 +747,7 @@ git add functions/src/homeEconomics/teacherDashboard.ts functions/src/homeEconom
 git commit -m "feat: generalize household teacher dashboard"
 ```
 
-### Task 11: Assignment panel と advanced teacher controls を実装する
+### Task 11: Assignment panel と advanced teacher controls
 
 **Files:**
 - Create: `src/components/homeEconomics/HouseholdAssignmentPanel.tsx`
@@ -797,7 +763,7 @@ git commit -m "feat: generalize household teacher dashboard"
 - Modify: `src/components/homeEconomics/HouseholdCheckpointModal.tsx`
 - Modify: `src/components/homeEconomics/HouseholdCheckpointModal.test.tsx`
 
-**Interfaces:**
+**Interface:**
 
 ```ts
 export interface HouseholdAssignmentPanelProps {
@@ -809,23 +775,23 @@ export interface HouseholdAssignmentPanelProps {
 }
 ```
 
-- [ ] Write assignment-panel tests for `UNPREPARED`, `STALE`, `READY`, `INVALID`, `FROZEN`; PRIMARY sees mutation controls, ASSISTANT/VIEWER do not.
-- [ ] Write ROLE edit UI test with profile selector and unused-profile warning; STAGE coverage UI with missing-stage warning; MULTI display-order controls with no profile-removal control.
-- [ ] Write dashboard tests for team cards/accordion, MULTI `2 / 3` team submission progress, class household submission totals, per-household errors.
-- [ ] Write tests that advanced formats never render individual settlement, while Common still does.
-- [ ] Write confirmation modal tests showing team/household counts and exact unsubmitted team/profile labels; force option remains PRIMARY-only.
-- [ ] Write checkpoint modal test disabling assignmentRevision-incompatible v3 restore entries.
+- [ ] Add assignment-panel tests for UNPREPARED/STALE/READY/INVALID/FROZEN and role-gated controls.
+- [ ] Add ROLE profile-selector/unused warning, STAGE coverage warning, MULTI display-order/no-removal tests.
+- [ ] Add team-card tests for MULTI x/y progress and household errors.
+- [ ] Add regression: advanced never renders individual settlement; Common still does.
+- [ ] Add settlement modal tests for class target counts and exact missing team/profile labels.
+- [ ] Add checkpoint modal test disabling incompatible assignmentRevision v3 restore.
 - [ ] Verify RED.
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/components/teacher/HouseholdTeacherDashboard.test.tsx src/components/teacher/LessonControlRoom.test.tsx src/components/homeEconomics/HouseholdSettlementConfirmationModal.test.tsx src/components/homeEconomics/HouseholdCheckpointModal.test.tsx
 ```
 
-- [ ] Wire teacher controller to assignment client APIs and generalized dashboard.
-- [ ] Replace `LessonControlRoom`'s non-Common unsupported alert with the same household dashboard entry for all four course formats.
-- [ ] Disable advanced manual checkpoint/new bulk controls while `SETTLING`; expose retry/restore according to operation lease state.
-- [ ] Keep Common visual behavior and individual settlement action available.
-- [ ] Run focused UI tests GREEN.
+- [ ] Wire assignment APIs and generalized dashboard.
+- [ ] Replace LessonControlRoom's non-Common unsupported alert with household dashboard for all four formats.
+- [ ] Disable advanced manual checkpoint/new bulk during SETTLING; expose retry/restore according to lease state.
+- [ ] Preserve Common individual action.
+- [ ] Verify GREEN.
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/components/teacher/HouseholdTeacherDashboard.test.tsx src/components/teacher/LessonControlRoom.test.tsx src/components/homeEconomics/HouseholdSettlementConfirmationModal.test.tsx src/components/homeEconomics/HouseholdCheckpointModal.test.tsx
@@ -838,7 +804,7 @@ git add src/components/homeEconomics/HouseholdAssignmentPanel.tsx src/components
 git commit -m "feat: add advanced household teacher controls"
 ```
 
-### Task 12: REFLECTION gate と安全な final comparison を実装する
+### Task 12: REFLECTION gate と安全な final comparison
 
 **Files:**
 - Modify: `functions/packages/household-public-content/src/index.ts`
@@ -850,6 +816,7 @@ git commit -m "feat: add advanced household teacher controls"
 - Modify: `functions/src/lessonRuns/phases/transitionPhase.ts`
 - Modify: `functions/src/lessonRuns/phases/transitionPhase.test.ts`
 - Modify: `src/lib/lessonRuns/liveTypes.ts`
+- Modify: `src/lib/lessonRuns/liveTypes.test.ts`
 
 **Interfaces:**
 
@@ -877,17 +844,13 @@ export interface HouseholdClassComparisonPublicView {
 }
 ```
 
-Persist server-owned snapshot at:
+Persist source at `lessonRuns/{lessonRunId}/householdFinalComparison/result`.
 
-```text
-lessonRuns/{lessonRunId}/householdFinalComparison/result
-```
-
-- [ ] Write public-content tests ensuring the class comparison type/projection does not contain runtime household ID, participant/student identity, risk/probability/seed fields.
-- [ ] Write final-comparison pure tests using `computeLifeGoalAchievementScore()`; liabilities and assets are totals; team display names are preserved; ROLE grouping metadata can be derived by profile, STAGE by lifeStage, MULTI by profile/team.
-- [ ] Write REFLECTION preparation tests: reject when runtime control is SETTLING, activeOperationId exists, synchronizedRoundIndex is 0, unresolved bulk exists, or any household round differs from synchronizedRoundIndex.
-- [ ] Write transition test proving final comparison snapshot is written in the same transaction as successful RUNNING -> REFLECTION status change, but RTDB publication happens only after commit.
-- [ ] Write post-transition retry test: deduplicated REFLECTION request republishes persisted safe snapshot without re-running settlement or rewriting final state.
+- [ ] Add public-content/privacy tests; no runtime household ID, participant identity, risk/probability/seed fields.
+- [ ] Add pure comparison tests using `computeLifeGoalAchievementScore()` and safe totals/team display names.
+- [ ] Add REFLECTION gate tests: reject SETTLING, active operation, synchronizedRoundIndex=0, unresolved bulk, or misaligned household rounds.
+- [ ] Add transition test: final safe snapshot writes in the same transaction as RUNNING->REFLECTION; RTDB publication occurs only after commit.
+- [ ] Add deduplicated transition repair test: persisted snapshot republishes without settlement/state rewrite.
 - [ ] Verify RED.
 
 ```bash
@@ -895,25 +858,26 @@ npm test --workspace=@stock-league/household-public-content
 npm test --workspace=functions -- finalComparison statusTransition transitionPhase
 ```
 
-- [ ] Implement explicit allow-list builder using `toHouseholdProfilePublicView()` and existing evaluation function. Never spread internal profile/state objects into the public view.
-- [ ] Extend status transition preparation for REFLECTION to read FROZEN assignment, runtime control, team display names, all household states, and unresolved bulk state before any write; return final snapshot write only when gate passes.
-- [ ] Implement `afterStatusTransition` REFLECTION publication with RTDB `update({ householdClassComparison: safeView })`.
-- [ ] Add optional `householdClassComparison` to client `LessonRunPublicState`.
-- [ ] Run focused tests GREEN.
+- [ ] Build comparison through explicit allow-list and `toHouseholdProfilePublicView()`; never spread internal profile/state objects.
+- [ ] Extend REFLECTION preparation to read assignment/control/team display names/states/unresolved bulk before write and return final snapshot write.
+- [ ] Post-commit publication uses RTDB `update({ householdClassComparison: safeView })`.
+- [ ] Add optional comparison field to client public live state.
+- [ ] Verify GREEN.
 
 ```bash
 npm test --workspace=@stock-league/household-public-content
 npm test --workspace=functions -- finalComparison statusTransition transitionPhase
+npm test -- src/lib/lessonRuns/liveTypes.test.ts
 ```
 
 - [ ] Commit.
 
 ```bash
-git add functions/packages/household-public-content/src/index.ts functions/packages/household-public-content/src/index.test.ts functions/src/homeEconomics/finalComparison.ts functions/src/homeEconomics/finalComparison.test.ts functions/src/homeEconomics/statusTransition.ts functions/src/homeEconomics/statusTransition.test.ts functions/src/lessonRuns/phases/transitionPhase.ts functions/src/lessonRuns/phases/transitionPhase.test.ts src/lib/lessonRuns/liveTypes.ts
+git add functions/packages/household-public-content/src/index.ts functions/packages/household-public-content/src/index.test.ts functions/src/homeEconomics/finalComparison.ts functions/src/homeEconomics/finalComparison.test.ts functions/src/homeEconomics/statusTransition.ts functions/src/homeEconomics/statusTransition.test.ts functions/src/lessonRuns/phases/transitionPhase.ts functions/src/lessonRuns/phases/transitionPhase.test.ts src/lib/lessonRuns/liveTypes.ts src/lib/lessonRuns/liveTypes.test.ts
 git commit -m "feat: publish household class comparison"
 ```
 
-### Task 13: Advanced student screen と classroom comparison display を実装する
+### Task 13: Advanced student screen と classroom comparison display
 
 **Files:**
 - Create: `src/components/homeEconomics/HouseholdClassComparisonView.tsx`
@@ -927,6 +891,8 @@ git commit -m "feat: publish household class comparison"
 - Modify: `functions/src/lessonRuns/projections/displayProjection.test.ts`
 - Modify: `src/components/display/ClassroomDisplayPage.tsx`
 - Modify: `src/components/display/ClassroomDisplayPage.test.tsx`
+- Modify: `src/components/teacher/LessonControlRoom.tsx`
+- Modify: `src/components/teacher/LessonControlRoom.test.tsx`
 - Modify: `functions/src/homeEconomics/onCall.ts`
 - Modify: `functions/src/homeEconomics/onCall.test.ts`
 - Modify: `functions/src/index.ts`
@@ -937,8 +903,6 @@ git commit -m "feat: publish household class comparison"
 
 **Interfaces:**
 
-Extend display mode:
-
 ```ts
 export type LessonRunDisplayMode =
   | 'START'
@@ -946,11 +910,7 @@ export type LessonRunDisplayMode =
   | 'END'
   | 'EXPLANATION'
   | 'HOUSEHOLD_COMPARISON'
-```
 
-Callable/client:
-
-```ts
 export interface ShowHouseholdComparisonOnDisplayInput {
   lessonRunId: string
 }
@@ -962,38 +922,39 @@ export const showHouseholdComparisonOnDisplay: (
 ) => Promise<void>
 ```
 
-- [ ] Write `HouseholdTeamScreen` tests: ROLE/STAGE render one assigned case; MULTI renders stable tabs/cards in `householdOrder`; selected household ID is passed to `submitHouseholdDecision`; all team members see all team households; `SETTLING` makes inputs read-only.
-- [ ] Write automatic comparison test: when `LessonRun.status === 'REFLECTION'` and public comparison exists, advanced student screen switches its primary content to `HouseholdClassComparisonView` without a student publish/reveal action.
-- [ ] Write privacy/UI test proving comparison renders team display name and safe profile/result values but has no member names or runtime household IDs.
-- [ ] Write `App` route tests: `/play` detects HOME_ECONOMICS from own team state containing `.household` or `.households`, renders `HouseholdTeamScreen`, and leaves the existing non-household/social-studies fallback unchanged. Do not add a new public `subject` field solely for routing.
-- [ ] Write display projection/page tests for `HOUSEHOLD_COMPARISON` using the persisted safe comparison only.
-- [ ] Write Callable auth tests: authenticated teacher with display-switch authority can show an existing final comparison; student/unauthenticated/no-comparison requests reject.
+- [ ] Add student tests: ROLE/STAGE one case; MULTI stable tabs/order; selected runtime ID sent to decision API; all team members see team households; SETTLING read-only.
+- [ ] Add automatic comparison test: REFLECTION + public comparison -> advanced student screen makes comparison the primary view without publish/reveal action.
+- [ ] Add privacy rendering test: team display names and safe values visible; no member names/runtime household IDs.
+- [ ] Add App route tests: `/play` detects household mode from own team state containing `.household` or `.households`; non-household fallback remains. Do not add a public `subject` field solely for routing.
+- [ ] Add display server/client tests for `HOUSEHOLD_COMPARISON`. Update the exhaustive `DISPLAY_MODE_LABEL` in `LessonControlRoom` so typecheck remains exhaustive.
+- [ ] Add Callable auth test: teacher with display-switch authority + existing final snapshot succeeds; student/unauthenticated/no snapshot rejects.
 - [ ] Verify RED.
 
 ```bash
-npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/App.test.tsx src/components/display/ClassroomDisplayPage.test.tsx src/lib/homeEconomics/finalComparison.test.ts
+npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/App.test.tsx src/components/display/ClassroomDisplayPage.test.tsx src/components/teacher/LessonControlRoom.test.tsx src/lib/homeEconomics/finalComparison.test.ts
 npm test --workspace=functions -- displayProjection onCall
 ```
 
-- [ ] Generalize `HouseholdTeamScreen` to consume legacy Common single-household and advanced multi-household team state without changing Common submit behavior.
-- [ ] Add comparison component and auto-switch on REFLECTION.
-- [ ] Wire `/play` to the household screen when own team state proves a household run; preserve other subject routes/fallbacks.
-- [ ] Add display mode, server Callable, client wrapper, teacher `クラス比較を見る / 教室画面に表示` actions. The server reads `householdFinalComparison/result`; it never accepts comparison payload from the client.
-- [ ] Run focused tests GREEN.
+- [ ] Generalize HouseholdTeamScreen over legacy Common single-household and advanced multi-household state.
+- [ ] Add comparison component and automatic REFLECTION switch.
+- [ ] Wire `/play` to HouseholdTeamScreen when own team state proves household mode.
+- [ ] Add display mode to server/client types, ClassroomDisplayPage, and LessonControlRoom label. `showHouseholdComparisonOnDisplayCallable` reads `householdFinalComparison/result` server-side and writes only the persisted safe view; it never accepts comparison payload from client.
+- [ ] Add teacher actions `クラス比較を見る` / `教室画面に表示`.
+- [ ] Verify GREEN.
 
 ```bash
-npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/App.test.tsx src/components/display/ClassroomDisplayPage.test.tsx src/lib/homeEconomics/finalComparison.test.ts
+npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/App.test.tsx src/components/display/ClassroomDisplayPage.test.tsx src/components/teacher/LessonControlRoom.test.tsx src/lib/homeEconomics/finalComparison.test.ts
 npm test --workspace=functions -- displayProjection onCall
 ```
 
 - [ ] Commit.
 
 ```bash
-git add src/components/homeEconomics/HouseholdClassComparisonView.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/components/homeEconomics/HouseholdTeamScreen.tsx src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/App.tsx src/App.test.tsx src/lib/lessonRuns/liveTypes.ts functions/src/lessonRuns/projections/displayProjection.ts functions/src/lessonRuns/projections/displayProjection.test.ts src/components/display/ClassroomDisplayPage.tsx src/components/display/ClassroomDisplayPage.test.tsx functions/src/homeEconomics/onCall.ts functions/src/homeEconomics/onCall.test.ts functions/src/index.ts src/lib/homeEconomics/finalComparison.ts src/lib/homeEconomics/finalComparison.test.ts src/components/homeEconomics/HouseholdTeacherDashboard.tsx src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx
+git add src/components/homeEconomics/HouseholdClassComparisonView.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx src/components/homeEconomics/HouseholdTeamScreen.tsx src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/App.tsx src/App.test.tsx src/lib/lessonRuns/liveTypes.ts functions/src/lessonRuns/projections/displayProjection.ts functions/src/lessonRuns/projections/displayProjection.test.ts src/components/display/ClassroomDisplayPage.tsx src/components/display/ClassroomDisplayPage.test.tsx src/components/teacher/LessonControlRoom.tsx src/components/teacher/LessonControlRoom.test.tsx functions/src/homeEconomics/onCall.ts functions/src/homeEconomics/onCall.test.ts functions/src/index.ts src/lib/homeEconomics/finalComparison.ts src/lib/homeEconomics/finalComparison.test.ts src/components/homeEconomics/HouseholdTeacherDashboard.tsx src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx
 git commit -m "feat: add advanced household student comparison UI"
 ```
 
-### Task 14: Security Rules、acceptance regression、全体verification を完了する
+### Task 14: Security Rules、acceptance regression、全体verification
 
 **Files:**
 - Modify: `firestore.rules`
@@ -1001,60 +962,48 @@ git commit -m "feat: add advanced household student comparison UI"
 - Modify: `test/database.rules.test.ts`
 - Modify: `test/household-lifecycle.acceptance.test.ts`
 - Modify: `test/lesson-lifecycle.acceptance.test.ts`
-- Modify as required by integration failures: files touched in Tasks 1–13 only
+- Modify only if integration requires it: files already touched in Tasks 1–13
 
-**Security rule intent:**
+**Rule intent:** add explicit deny matches for new/expanded Firestore server-owned household data under `lessonRuns/{lessonRunId}` (`householdAssignment/{document=**}`, `householdAssignmentIdempotency/{document=**}`, `householdRuntime/{document=**}`, `householdFinalComparison/{document=**}`, `households/{document=**}`). Do not widen RTDB visibility classes.
 
-Under `lessonRuns/{lessonRunId}`, add explicit deny matches for the new/expanded server-owned runtime data so future broad lessonRun rules cannot accidentally expose them:
-
-```text
-householdAssignment/{document=**}
-householdAssignmentIdempotency/{document=**}
-householdRuntime/{document=**}
-householdFinalComparison/{document=**}
-households/{document=**}
-```
-
-Do not widen Realtime Database visibility classes; comparison lives under already participant-readable `lessonRunPublic`, and multi-household private team state remains under already own-team-scoped `lessonRunTeamState/{runId}/{teamId}`.
-
-- [ ] Add Firestore rules tests proving students and ordinary client teachers cannot directly read/write assignment config/entries, runtime control, final-comparison source document, household state/decisions/idempotency. Verify server-side code remains Admin SDK only.
-- [ ] Add RTDB rules tests proving a participant can read own advanced team node but not another team's `households`; all lesson participants can read the sanitized public comparison; clients still cannot write server-owned lesson public/team nodes.
-- [ ] Run rules tests and verify GREEN.
+- [ ] Add Firestore Rules tests: student/client teacher cannot directly read/write assignment config/entries, runtime control, final source, household states/decisions/idempotency.
+- [ ] Add RTDB Rules tests: participant reads own advanced team node but not another team's `households`; lesson participant can read sanitized public comparison; clients cannot write server-owned public/team nodes.
+- [ ] Verify rules GREEN.
 
 ```bash
 npm run test:rules
 ```
 
-- [ ] Extend `test/household-lifecycle.acceptance.test.ts` with an advanced happy path: deterministic assignment -> RUNNING/FROZEN -> two-team decisions -> bulk -> next synchronized round -> v3 checkpoint -> restore -> bulk again -> REFLECTION -> public comparison.
-- [ ] Add acceptance cases for MULTI two profiles/team, STAGE fixed `lifeStage`, partial bulk retry, other-team decision denial, and Common legacy regression.
-- [ ] Extend `test/lesson-lifecycle.acceptance.test.ts` only where RUNNING/REFLECTION preparation hooks change lifecycle expectations; retain all non-household lifecycle cases unchanged.
-- [ ] Run household/lifecycle acceptance tests.
+- [ ] Extend `test/household-lifecycle.acceptance.test.ts`: deterministic assignment -> first RUNNING/FROZEN -> decisions -> bulk -> next synchronized round -> v3 checkpoint -> restore -> bulk again -> REFLECTION -> automatic public comparison.
+- [ ] Add acceptance cases for MULTI 2 profiles/team, STAGE fixed lifeStage, partial bulk retry, other-team denial, and Common legacy regression.
+- [ ] Extend `test/lesson-lifecycle.acceptance.test.ts` only for first-start/resume/REFLECTION preparation behavior; explicitly cover `PAUSED -> RUNNING` preserving advanced control state.
+- [ ] Run acceptance tests.
 
 ```bash
 npm test -- test/household-lifecycle.acceptance.test.ts test/lesson-lifecycle.acceptance.test.ts
 ```
 
-- [ ] Run Functions tests and typecheck.
+- [ ] Run Functions tests/typecheck.
 
 ```bash
 npm test --workspace=functions
 npm run typecheck --workspace=functions
 ```
 
-- [ ] Run root unit tests and typecheck.
+- [ ] Run root unit tests/typecheck.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-- [ ] Run full repository verification. Do not claim completion unless this exits 0.
+- [ ] Run full repository verification; completion requires exit 0.
 
 ```bash
 npm run verify
 ```
 
-- [ ] Inspect `git diff --check`, `git status`, and commits. No generated build artifacts, emulator data, or unrelated files should remain.
+- [ ] Inspect repository cleanliness.
 
 ```bash
 git diff --check
@@ -1062,14 +1011,14 @@ git status --short
 git log --oneline --decorate -15
 ```
 
-- [ ] Commit only integration/rules fixes that are not already committed in prior tasks.
+- [ ] Commit any remaining rules/integration test changes.
 
 ```bash
 git add firestore.rules test/firestore.rules.test.ts test/database.rules.test.ts test/household-lifecycle.acceptance.test.ts test/lesson-lifecycle.acceptance.test.ts
 git commit -m "test: verify advanced household course formats"
 ```
 
-- [ ] Push the completed implementation branch.
+- [ ] Push.
 
 ```bash
 git push origin codex/classroom
@@ -1077,13 +1026,13 @@ git push origin codex/classroom
 
 ## Agent Assignment and Parallelism
 
-- **Agent A — assignment/runtime foundation:** Tasks 1–5. These are sequential because persistence, transition freeze, runtime identity, and decision locking share contracts.
-- **Agent B — settlement/recovery:** Tasks 6–8 after Task 5. Task 8 depends on Task 7 and the `CANCELLED` operation semantics from Task 6.
-- **Agent C — projection/teacher UI:** Task 10 can begin after Tasks 2 and 4 once DTO identity is stable; Task 9 must wait for Tasks 5–6. Task 11 waits for Tasks 2 and 10.
-- **Agent D — reflection/student UI:** Task 12 waits for Tasks 3, 6, 8, 9. Task 13 waits for Tasks 9 and 12.
+- **Agent A — assignment/runtime foundation:** Tasks 1–5 sequentially.
+- **Agent B — settlement/recovery:** Tasks 6–8 after Task 5; Task 8 waits for Tasks 6–7.
+- **Agent C — projection/teacher:** Task 10 can start after Tasks 2+4; Task 9 waits for Tasks 5+6; Task 11 waits for Tasks 2+10.
+- **Agent D — reflection/student:** Task 12 waits for Tasks 3+6+8+9; Task 13 waits for Tasks 9+12.
 - **Integration owner:** Task 14 after all feature tasks.
 
-Safe parallel window after Task 5: Task 7's v3 snapshot domain and Task 10's generalized teacher DTO may proceed in parallel, provided neither edits shared `functions/src/homeEconomics/onCall.ts` until serial integration. Task 11's pure UI tests may also start after Task 10 DTO is frozen.
+Safe parallel window after Task 5: Task 7's v3 snapshot domain and Task 10's generalized teacher DTO may proceed in parallel, provided shared `functions/src/homeEconomics/onCall.ts` changes are integrated serially. Pure UI work for Task 11 may start after the Task 10 client DTO is frozen.
 
 Shared-file serialization order:
 
@@ -1100,24 +1049,26 @@ Task 3 -> 9 -> 12
 src/lib/lessonRuns/liveTypes.ts:
 Task 9 -> 12 -> 13
 
+src/components/teacher/LessonControlRoom.tsx:
+Task 11 -> 13
+
 src/components/homeEconomics/HouseholdTeacherDashboard.tsx:
 Task 11 -> 13
 ```
 
-Do not merge parallel work by blindly resolving conflicts. Re-run the focused tests named in both conflicting tasks after integration.
+Do not resolve shared-file conflicts blindly. Re-run the focused tests from every conflicting task after integration.
 
 ## Completion Criteria
 
-Implementation is complete only when all of the following are true:
-
-- All three advanced formats can prepare, validate, freeze, and render assignments according to the approved deterministic rules.
-- FROZEN assignment is immutable during RUNNING; RUNNING late join only joins an existing team.
-- Runtime `householdId`, template `profileId`, and ownership `teamId` are distinct and enforced server-side.
-- Advanced decisions are rejected during SETTLING and cannot target another team.
-- Advanced rounds advance only by class-wide bulk; partial failure is resumable and never advances the class barrier early.
-- v3 checkpoint/restore works for MULTI and cancels stale unresolved bulk operations safely.
-- ROLE/STAGE/MULTI teacher dashboard and student UI are operational; Common external behavior remains compatible.
-- RUNNING -> REFLECTION is blocked until an advanced run is settled/aligned, then automatically persists and publishes a sanitized comparison.
-- All student devices automatically show comparison in REFLECTION; projector uses the same safe snapshot.
-- Direct client access to server-owned assignment/runtime/final-source data is denied, and RTDB team isolation remains intact.
+- All 3 advanced formats prepare/validate/freeze/render according to approved deterministic rules.
+- First RUNNING start freezes assignment; PAUSED->RUNNING never resets runtime control.
+- FROZEN assignment is immutable; RUNNING late join only joins an existing team.
+- Runtime householdId / source profileId / teamId are distinct and server-enforced.
+- Advanced decisions cannot target another team and are rejected during SETTLING.
+- Advanced rounds advance only by class-wide bulk; partial failure is resumable and never advances barrier early.
+- v3 checkpoint/restore handles MULTI and safely cancels stale unresolved bulk.
+- ROLE/STAGE/MULTI teacher dashboard and student UI work; Common external behavior remains compatible.
+- RUNNING->REFLECTION is blocked until settled/aligned, then atomically persists a sanitized comparison and post-commit publishes it.
+- Student devices automatically show comparison during REFLECTION; classroom display uses the same safe snapshot.
+- Direct client access to server-owned assignment/runtime/final-source data is denied; RTDB team isolation remains intact.
 - `npm run verify` passes and `codex/classroom` is pushed to origin.
