@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildHouseholdCheckpointSnapshotV2,
   buildHouseholdCheckpointSnapshotV3,
   isHouseholdCheckpointSnapshotV2,
   isHouseholdCheckpointSnapshotV3,
   listHouseholdCheckpointManifests,
+  saveManualAdvancedHouseholdCheckpointWithAdminSdk,
   writeHouseholdCheckpointV2,
   writeHouseholdCheckpointV3,
   type HouseholdCheckpointSnapshotV2,
@@ -12,6 +13,49 @@ import {
 } from './householdCheckpoint'
 import type { HouseholdState } from '../lessonRuns/households/repository'
 import type { HouseholdStateTeamView } from './realtimeProjection'
+
+/**
+ * Backing store for `saveManualAdvancedHouseholdCheckpointWithAdminSdk`'s
+ * production wiring (`firebase-admin/firestore`'s `getFirestore()`, used
+ * both directly inside `householdCheckpoint.ts` and transitively via
+ * `../lessonRuns/households/repository`'s `getHouseholdRuntimeControlWithAdminSdk`
+ * / `householdRepositoryWithAdminSdk`, which also call `getFirestore()`).
+ * Mocking the module means all three call sites share one fake store, so a
+ * doc written via one surface (e.g. `.doc(...).get()`) is visible to
+ * another (`.runTransaction(...)`), same as real Firestore.
+ */
+const { adminDocs, adminCollectionDocs, adminDb, findActiveBulkSettlementLeaseMock } = vi.hoisted(() => {
+  const adminDocs = new Map<string, Record<string, unknown>>()
+  const adminCollectionDocs = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+  const adminDb = {
+    doc: (path: string) => ({
+      path,
+      get: async () => ({
+        exists: adminDocs.has(path),
+        data: () => adminDocs.get(path),
+        get: (field: string) => (adminDocs.get(path) as Record<string, unknown> | undefined)?.[field],
+      }),
+    }),
+    collection: (path: string) => ({
+      get: async () => {
+        const list = adminCollectionDocs.get(path) ?? []
+        return { empty: list.length === 0, docs: list.map((d) => ({ id: d.id, data: () => d.data })) }
+      },
+    }),
+    runTransaction: async (fn: (tx: {
+      get: (ref: { path: string }) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      set: (ref: { path: string }, data: Record<string, unknown>) => void
+    }) => Promise<unknown>) => fn({
+      get: async (ref: { path: string }) => ({ exists: adminDocs.has(ref.path), data: () => adminDocs.get(ref.path) }),
+      set: (ref: { path: string }, data: Record<string, unknown>) => { adminDocs.set(ref.path, data) },
+    }),
+  }
+  const findActiveBulkSettlementLeaseMock = vi.fn(async () => null as unknown)
+  return { adminDocs, adminCollectionDocs, adminDb, findActiveBulkSettlementLeaseMock }
+})
+
+vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => adminDb }))
+vi.mock('./bulkSettlementOperation', () => ({ findActiveBulkSettlementLeaseWithAdminSdk: findActiveBulkSettlementLeaseMock }))
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -325,6 +369,54 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
       expect(teamView.households['hh-b'].householdId).toBe('hh-b')
       expect(teamView.households['hh-c'].householdId).toBe('hh-c')
     })
+
+    it('MULTI_PERSON_PER_TEAM with 2+ teams: every household appears exactly once, teamViews has one entry per team, and no team\'s households leak into a sibling team\'s entry', () => {
+      // Realistic production shape: every team gets the full MULTI profile
+      // set, and there are normally multiple teams — the two prior tests
+      // each cover only one half of this (single-team-multi-household, or
+      // multi-team-single-household via ROLE_VARIANT above).
+      const households = [
+        makeHousehold('team1-hh-a', 'team-1'),
+        makeHousehold('team1-hh-b', 'team-1'),
+        makeHousehold('team2-hh-a', 'team-2'),
+        makeHousehold('team2-hh-b', 'team-2'),
+      ]
+      const snapshot = buildHouseholdCheckpointSnapshotV3({
+        courseFormat: 'MULTI_PERSON_PER_TEAM',
+        assignmentRevision: 4,
+        restoreGeneration: 0,
+        expectedRoundIndex: 2,
+        householdIds: households.map((h) => h.householdId),
+        householdStates: households,
+        visibleConcepts: [],
+        createdAtServerMillis: 4000,
+      })
+
+      // All 4 households appear exactly once in the top-level lists.
+      expect(snapshot.householdIds).toEqual(['team1-hh-a', 'team1-hh-b', 'team2-hh-a', 'team2-hh-b'])
+      expect(snapshot.householdStates).toHaveLength(4)
+
+      // Exactly 2 teams, each with exactly its own 2 households.
+      expect(Object.keys(snapshot.teamViews).sort()).toEqual(['team-1', 'team-2'])
+
+      const team1View = snapshot.teamViews['team-1']
+      expect(Object.keys(team1View.households).sort()).toEqual(['team1-hh-a', 'team1-hh-b'])
+      expect(team1View.householdOrder).toEqual(['team1-hh-a', 'team1-hh-b'])
+      expect(team1View.households['team1-hh-a'].householdId).toBe('team1-hh-a')
+      expect(team1View.households['team1-hh-b'].householdId).toBe('team1-hh-b')
+
+      const team2View = snapshot.teamViews['team-2']
+      expect(Object.keys(team2View.households).sort()).toEqual(['team2-hh-a', 'team2-hh-b'])
+      expect(team2View.householdOrder).toEqual(['team2-hh-a', 'team2-hh-b'])
+      expect(team2View.households['team2-hh-a'].householdId).toBe('team2-hh-a')
+      expect(team2View.households['team2-hh-b'].householdId).toBe('team2-hh-b')
+
+      // Team 1's households did not leak into team 2's entry, or vice versa.
+      expect(team1View.households['team2-hh-a']).toBeUndefined()
+      expect(team1View.households['team2-hh-b']).toBeUndefined()
+      expect(team2View.households['team1-hh-a']).toBeUndefined()
+      expect(team2View.households['team1-hh-b']).toBeUndefined()
+    })
   })
 
   describe('isHouseholdCheckpointSnapshotV3', () => {
@@ -440,5 +532,144 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
       expect(second.created).toBe(false)
       expect(second.checkpointId).toBe(first.checkpointId)
     })
+  })
+})
+
+/**
+ * Direct coverage of `saveManualAdvancedHouseholdCheckpointWithAdminSdk`'s
+ * REAL production wiring (`onCall.test.ts` only mocks this function to
+ * verify the Callable layer's error translation — it never exercises the
+ * function body itself). Reading the current implementation, its checks
+ * run in this order:
+ *   1. label length (1-80 trimmed chars)
+ *   2. `findActiveBulkSettlementLeaseWithAdminSdk` — rejects if an active
+ *      bulk-settlement lease exists (same guard Common's
+ *      `saveManualHouseholdCheckpointWithAdminSdk` performs)
+ *   3. `getHouseholdRuntimeControlWithAdminSdk` — rejects if the
+ *      `HouseholdRuntimeControl` doc does not exist, or if it exists with
+ *      `roundStatus === 'SETTLING'`
+ *   4. the LessonRun doc must exist and carry `templateSnapshot.homeEconomics`
+ *   5. the frozen `householdAssignment/config/entries` collection must be
+ *      non-empty
+ *   6. on success, dispatches into `writeHouseholdCheckpointV3` using the
+ *      control doc's `courseFormat`/`assignmentRevision`/`synchronizedRoundIndex`
+ */
+describe('saveManualAdvancedHouseholdCheckpointWithAdminSdk (production wiring)', () => {
+  const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+  const runPath = 'lessonRuns/run-1'
+  const entriesPath = 'lessonRuns/run-1/householdAssignment/config/entries'
+
+  const openControl = {
+    courseFormat: 'ROLE_VARIANT',
+    assignmentRevision: 3,
+    synchronizedRoundIndex: 2,
+    roundStatus: 'OPEN',
+    activeOperationId: null,
+    updatedAtServerMillis: 0,
+  }
+
+  const validRunDoc = {
+    templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [], goalPackage: 'EMERGENCY_FUND' } },
+  }
+
+  const entryDoc = (householdId: string, teamId: string) => ({
+    householdId, teamId, profileId: `profile-${householdId}`, slotKey: householdId, displayOrder: 0, assignmentSource: 'AUTO' as const,
+  })
+
+  beforeEach(() => {
+    adminDocs.clear()
+    adminCollectionDocs.clear()
+    findActiveBulkSettlementLeaseMock.mockReset()
+    findActiveBulkSettlementLeaseMock.mockResolvedValue(null)
+  })
+
+  const baseInput = {
+    lessonRunId: 'run-1',
+    label: '手動保存',
+    actorUid: 'teacher-1',
+    idempotencyKey: 'idemp-advanced-1',
+  }
+
+  it('rejects when an active bulk-settlement lease exists', async () => {
+    findActiveBulkSettlementLeaseMock.mockResolvedValue({ operationId: 'op-1' } as unknown)
+    adminDocs.set(controlPath, openControl)
+    adminDocs.set(runPath, validRunDoc)
+    adminCollectionDocs.set(entriesPath, [{ id: 'hh-a', data: entryDoc('hh-a', 'team-1') }])
+
+    await expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput))
+      .rejects.toThrow('Active bulk operation lease is active')
+  })
+
+  it('rejects when the HouseholdRuntimeControl doc does not exist', async () => {
+    adminDocs.set(runPath, validRunDoc)
+    adminCollectionDocs.set(entriesPath, [{ id: 'hh-a', data: entryDoc('hh-a', 'team-1') }])
+    // Deliberately not setting adminDocs[controlPath].
+
+    await expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput))
+      .rejects.toThrow('HouseholdRuntimeControl not found')
+  })
+
+  it('rejects when the control doc\'s roundStatus is SETTLING (the core brief requirement)', async () => {
+    adminDocs.set(controlPath, { ...openControl, roundStatus: 'SETTLING' })
+    adminDocs.set(runPath, validRunDoc)
+    adminCollectionDocs.set(entriesPath, [{ id: 'hh-a', data: entryDoc('hh-a', 'team-1') }])
+
+    await expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput))
+      .rejects.toThrow('HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)')
+  })
+
+  it('rejects when the frozen household assignment has no entries', async () => {
+    adminDocs.set(controlPath, openControl)
+    adminDocs.set(runPath, validRunDoc)
+    // Deliberately leaving adminCollectionDocs[entriesPath] unset (empty).
+
+    await expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput))
+      .rejects.toThrow('HouseholdAssignment has not been prepared for this lesson yet')
+  })
+
+  it('rejects when the LessonRun doc does not exist', async () => {
+    adminDocs.set(controlPath, openControl)
+    adminCollectionDocs.set(entriesPath, [{ id: 'hh-a', data: entryDoc('hh-a', 'team-1') }])
+    // Deliberately not setting adminDocs[runPath].
+
+    await expect(saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput))
+      .rejects.toThrow('LessonRun not found')
+  })
+
+  it('succeeds and dispatches into writeHouseholdCheckpointV3 when roundStatus is OPEN and no lease is active (happy path)', async () => {
+    adminDocs.set(controlPath, openControl)
+    adminDocs.set(runPath, validRunDoc)
+    adminCollectionDocs.set(entriesPath, [
+      { id: 'hh-b', data: entryDoc('hh-b', 'team-2') },
+      { id: 'hh-a', data: entryDoc('hh-a', 'team-1') },
+    ])
+    adminDocs.set('lessonRuns/run-1/households/hh-a', {
+      householdId: 'hh-a', lessonRunId: 'run-1', teamId: 'team-1', profileId: 'profile-hh-a',
+      cashYen: 1000000, assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'INDEPENDENT', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 1000,
+    })
+    adminDocs.set('lessonRuns/run-1/households/hh-b', {
+      householdId: 'hh-b', lessonRunId: 'run-1', teamId: 'team-2', profileId: 'profile-hh-b',
+      cashYen: 2000000, assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'INDEPENDENT', roundIndex: 2, goalDelayedRounds: 0, updatedAtServerMillis: 1000,
+    })
+
+    const result = await saveManualAdvancedHouseholdCheckpointWithAdminSdk(baseInput)
+
+    expect(result.created).toBe(true)
+    expect(findActiveBulkSettlementLeaseMock).toHaveBeenCalledWith('run-1', expect.any(Number))
+
+    const cpDoc = adminDocs.get(`lessonRuns/run-1/checkpoints/${result.checkpointId}`)
+    expect(cpDoc).toBeDefined()
+    expect(cpDoc?.kind).toBe('MANUAL')
+    expect(cpDoc?.label).toBe('手動保存')
+    expect(cpDoc?.createdByUid).toBe('teacher-1')
+    const snapshot = cpDoc!.snapshot as HouseholdCheckpointSnapshotV3
+    expect(snapshot.schemaVersion).toBe(3)
+    expect(snapshot.courseFormat).toBe('ROLE_VARIANT')
+    expect(snapshot.assignmentRevision).toBe(3)
+    expect(snapshot.expectedRoundIndex).toBe(2)
+    expect(snapshot.householdIds).toEqual(['hh-a', 'hh-b'])
+    expect(snapshot.householdStates).toHaveLength(2)
   })
 })
