@@ -99,6 +99,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
     // ---- Init (Task 10) ----
     const initial = await getOrInitHouseholdState({
       firestore: fake, lessonRunId: 'run-hh-1', teamId: 'team-a', householdId: profile.householdId,
+      profileId: profile.householdId,
       startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, now: () => 1_000,
     })
     expect(initial.roundIndex).toBe(0)
@@ -107,6 +108,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
     // Re-init is idempotent — returns the SAME stored state, not a fresh one.
     const reinit = await getOrInitHouseholdState({
       firestore: fake, lessonRunId: 'run-hh-1', teamId: 'team-a', householdId: profile.householdId,
+      profileId: profile.householdId,
       startingCashYen: 999, startingLifeStage: 'RETIRED', now: () => 2_000,
     })
     expect(reinit).toEqual(initial)
@@ -229,6 +231,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
       lessonRunId: 'run-accept-1',
       householdId: 'team-1',
       teamId: 'team-1',
+      profileId: profile.householdId,
       startingCashYen: profile.cashSavingsYen,
       startingLifeStage: profile.lifeStage,
       nowMillis: 1000,
@@ -237,6 +240,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
       lessonRunId: 'run-accept-1',
       householdId: 'team-2',
       teamId: 'team-2',
+      profileId: profile.householdId,
       startingCashYen: profile.cashSavingsYen,
       startingLifeStage: profile.lifeStage,
       nowMillis: 1000,
