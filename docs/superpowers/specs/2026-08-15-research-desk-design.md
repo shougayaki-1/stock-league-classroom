@@ -111,6 +111,23 @@ lessonRunTeamState/{lessonRunId}/{teamId}/researchNote
 
 ただし UI のパネル非表示だけでは注文制御にならないため、`submitOrderCallable` 側も現在の `LessonRun.currentPhaseId` から phase type を確認し、`MARKET` 以外では新規注文を拒否する。`status === RUNNING`、`marketPaused !== true` の既存条件も維持する。
 
+現行 Callable は client input として `batchId` と `referencePrice` を受け取るが、Research Desk 実装時にこの2値を client-trusted input から外す。
+
+```ts
+export interface SubmitOrderInput {
+  lessonRunId: string
+  teamId: string
+  stockId: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  idempotencyKey: string
+}
+```
+
+server は認証・team membership 検証後、`lessonRuns/{lessonRunId}.nextBatchId` を注文の `batchId` として解決し、`lessonRuns/{lessonRunId}/stocks/{stockId}.currentPrice` を `referencePrice` として解決する。`nextBatchId` がない場合、MARKET phase でない場合、または stock が存在しない場合は注文を作成しない。
+
+これにより Research Desk のためだけに internal batch ID を student-readable RTDB へ追加せず、client が stale/future batch ID や偽の低価格を送って soft lock を弱める経路も作らない。
+
 注文入力の identity/team scope は既存どおり server-side で再検証する。
 
 ## Student route
@@ -126,7 +143,7 @@ lessonRunTeamState/{lessonRunId}/{teamId}/researchNote
 
 - RTDB public/team subscription の一方が未取得でも、取得済み部分は描画し、操作系パネルは必要な state が揃うまで disabled にする。
 - team note の revision conflict は入力を破棄せず「他のメンバーが更新しました」と表示して server 最新値を再取得する。
-- order submission 中は同一送信を disabled にし、既存 idempotency key を再利用して結果照会可能な状態にする。
+- order submission 中は同一送信を disabled にし、同じ論理送信の retry では同じ idempotency key を再利用する。
 - `marketPaused` または MARKET 以外では注文 UI を disabled にするが、server rejection を最終境界とする。
 
 ## セキュリティ不変条件
@@ -136,8 +153,9 @@ lessonRunTeamState/{lessonRunId}/{teamId}/researchNote
 3. 他チームの note / cash / holdings / orders を student に渡さない。
 4. team identity を client input だけで信用しない。
 5. MARKET 以外から Callable を直接叩いても新規注文できない。
-6. Research Desk publisher は RTDB sibling fields を上書きしない。
-7. client-side visibility は UX であり認可境界ではない。
+6. `batchId` と `referencePrice` を client input として信用しない。
+7. Research Desk publisher は RTDB sibling fields を上書きしない。
+8. client-side visibility は UX であり認可境界ではない。
 
 ## 今回扱わないもの
 
