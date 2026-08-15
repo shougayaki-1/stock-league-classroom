@@ -302,6 +302,53 @@ describe('processRound', () => {
 // -----------------------------------------------------------------------------
 const firestoreDocs = new Map<string, Record<string, unknown>>()
 
+// -----------------------------------------------------------------------------
+// A minimal RTDB fake that actually understands `.update()`'s
+// slash-in-key partial-path semantics — unlike
+// `processRound.publishRealtimeState.test.ts`'s flat `{path, data}` log
+// (sufficient for that file's COMMON_CONDITIONS-only assertions), Task 9's
+// "advanced updates only its runtime entry and preserves sibling
+// households" requirement can only be proven against a store that actually
+// merges `households/${id}` into the existing `households` map rather than
+// replacing it — real RTDB `.update()` treats a `/`-containing key as
+// addressing that nested path, not a literal top-level key.
+// -----------------------------------------------------------------------------
+const rtdbStore: Record<string, unknown> = {}
+
+const setAtPath = (root: Record<string, unknown>, path: string, value: unknown): void => {
+  const segments = path.split('/').filter(Boolean)
+  let node = root
+  for (let i = 0; i < segments.length - 1; i++) {
+    const key = segments[i]
+    const next = node[key]
+    if (typeof next !== 'object' || next === null) node[key] = {}
+    node = node[key] as Record<string, unknown>
+  }
+  node[segments[segments.length - 1]] = value
+}
+
+const getAtPath = (root: Record<string, unknown>, path: string): unknown => {
+  const segments = path.split('/').filter(Boolean)
+  let node: unknown = root
+  for (const key of segments) {
+    if (typeof node !== 'object' || node === null) return undefined
+    node = (node as Record<string, unknown>)[key]
+  }
+  return node
+}
+
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (basePath: string) => ({
+      update: async (data: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(data)) {
+          setAtPath(rtdbStore, `${basePath}/${key}`, value)
+        }
+      },
+    }),
+  }),
+}))
+
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
     doc: (path: string) => ({
@@ -333,6 +380,7 @@ vi.mock('firebase-admin/firestore', () => ({
 
 beforeEach(() => {
   firestoreDocs.clear()
+  for (const key of Object.keys(rtdbStore)) delete rtdbStore[key]
 })
 
 afterEach(() => {
@@ -465,5 +513,114 @@ describe('commitRoundSettlementWithAdminSdk — ALREADY_SETTLED race-guard norma
       expectedPriorRoundIndex: 2, result: settleResult, actorId: 'teacher-a',
       forcedSettlement: false, homeEconomicsContent: advancedContent,
     })).rejects.toThrow(/profileId/)
+  })
+})
+
+/**
+ * Task 9 — `publishRealtimeStateWithAdminSdk`'s course-format branch for
+ * `lessonRunTeamState`. COMMON_CONDITIONS keeps writing `.household`
+ * unchanged (Task 15, exercised by `processRound.publishRealtimeState.test.ts`);
+ * the 3 advanced formats instead write a scoped `households/${householdId}`
+ * update that must never clobber a sibling household's already-published
+ * entry on the same team node — this is the core Task 9 regression the
+ * `rtdbStore` path-aware fake above exists to prove.
+ */
+describe('publishRealtimeStateWithAdminSdk — advanced course-format branch (Task 9)', () => {
+  const advancedProfile = {
+    householdId: 'case-b', age: 32, householdIncomeYen: 6000000,
+    annualLivingExpensesYen: 3000000, cashSavingsYen: 500000,
+    family: '配偶者・子2人', housing: '賃貸マンション', lifeGoal: '住宅購入と教育資金',
+    lifeStage: 'CHILD_REARING' as const, eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }
+  const advancedHomeEconomics = {
+    households: [advancedProfile], assets: [], insuranceProducts: [], lifeEvents: [], liabilities: [],
+    publicSupportPrograms: [], roundYears: 5 as const, courseFormat: 'MULTI_PERSON_PER_TEAM' as const,
+    taxAndSocialInsuranceModelVersion: 1,
+    economicFactors: { inflationPercent: 0, interestRatePercent: 1, marketReturnPercent: 0 },
+    borrowingAllowed: false, goalPackage: 'OVERALL_BALANCE' as const,
+    evaluationWeights: {
+      lifeGoalAchievement: 1, emergencyFundAdequacy: 0, stability: 0, diversification: 0, borrowingBurden: 0, reflection: 0,
+    },
+  }
+  const advancedSettleResult: SettleRoundResult = {
+    newHouseholdState: {
+      householdId: 'household-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b', cashYen: 600000,
+      assetHoldingsYen: {}, activeInsuranceContracts: {}, activeLiabilities: {},
+      lifeStage: 'CHILD_REARING', roundIndex: 3, goalDelayedRounds: 0, updatedAtServerMillis: 0,
+    },
+    occurredEventIds: [], incomeYen: 4800000, expensesYen: 3000000,
+    netCashFlowYen: 1800000, shortfallYen: 0, insuranceBenefitsYen: 0,
+    shortfallOptionsConsidered: [],
+  }
+  const control = {
+    courseFormat: 'MULTI_PERSON_PER_TEAM', assignmentRevision: 1, synchronizedRoundIndex: 3,
+    roundStatus: 'OPEN', activeOperationId: null, updatedAtServerMillis: 1,
+  }
+
+  const siblingEntry = {
+    householdId: 'household-a', profile: { householdId: 'case-a' }, state: { householdId: 'household-a', roundIndex: 3 },
+    submittedRoundIndex: null,
+  }
+
+  it('throws when HouseholdRuntimeControl has not been published yet', async () => {
+    const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
+    await expect(publishRealtimeStateWithAdminSdk({
+      lessonRunId: 'run-1', orgId: 'org-1', homeEconomics: advancedHomeEconomics, profile: advancedProfile,
+      decision: null, result: advancedSettleResult,
+    })).rejects.toThrow('HouseholdRuntimeControl not found')
+  })
+
+  it('writes a scoped households/{householdId} update and preserves an existing sibling entry + householdOrder', async () => {
+    firestoreDocs.set('lessonRuns/run-1/householdRuntime/control', control)
+    // Simulate an initial publish (afterStatusTransition, Task 9) already
+    // having written household-a's entry and the team-wide householdOrder.
+    setAtPath(rtdbStore, 'lessonRunTeamState/run-1/team-a/households/household-a', siblingEntry)
+    setAtPath(rtdbStore, 'lessonRunTeamState/run-1/team-a/householdOrder', ['household-a', 'household-b'])
+
+    const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
+    await publishRealtimeStateWithAdminSdk({
+      lessonRunId: 'run-1', orgId: 'org-1', homeEconomics: advancedHomeEconomics, profile: advancedProfile,
+      decision: null, result: advancedSettleResult,
+    })
+
+    const teamNode = getAtPath(rtdbStore, 'lessonRunTeamState/run-1/team-a') as Record<string, unknown>
+    expect(teamNode.orgId).toBe('org-1')
+    expect(teamNode.courseFormat).toBe('MULTI_PERSON_PER_TEAM')
+    expect(teamNode.synchronizedRoundIndex).toBe(3)
+    expect(teamNode.roundStatus).toBe('OPEN')
+
+    const households = teamNode.households as Record<string, unknown>
+    // The just-settled household's entry was written...
+    expect((households['household-b'] as { householdId: string }).householdId).toBe('household-b')
+    // ...and the sibling's already-published entry survived untouched.
+    expect(households['household-a']).toEqual(siblingEntry)
+    // householdOrder (set once by the initial publish) was never touched by this scoped update.
+    expect(teamNode.householdOrder).toEqual(['household-a', 'household-b'])
+  })
+
+  it('sets submittedRoundIndex to null for the just-settled household (it has not yet submitted for its new current round)', async () => {
+    firestoreDocs.set('lessonRuns/run-1/householdRuntime/control', control)
+
+    const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
+    await publishRealtimeStateWithAdminSdk({
+      lessonRunId: 'run-1', orgId: 'org-1', homeEconomics: advancedHomeEconomics, profile: advancedProfile,
+      decision: null, result: advancedSettleResult,
+    })
+
+    const entry = getAtPath(rtdbStore, 'lessonRunTeamState/run-1/team-a/households/household-b') as { submittedRoundIndex: number | null }
+    expect(entry.submittedRoundIndex).toBeNull()
+  })
+
+  it('never writes a whole-node household field for advanced formats — no bare .household key', async () => {
+    firestoreDocs.set('lessonRuns/run-1/householdRuntime/control', control)
+
+    const { publishRealtimeStateWithAdminSdk } = await import('./processRound')
+    await publishRealtimeStateWithAdminSdk({
+      lessonRunId: 'run-1', orgId: 'org-1', homeEconomics: advancedHomeEconomics, profile: advancedProfile,
+      decision: null, result: advancedSettleResult,
+    })
+
+    const teamNode = getAtPath(rtdbStore, 'lessonRunTeamState/run-1/team-a') as Record<string, unknown>
+    expect(teamNode.household).toBeUndefined()
   })
 })

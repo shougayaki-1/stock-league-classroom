@@ -12,8 +12,9 @@ import {
 import { settleRound, type SettleRoundInput, type SettleRoundResult } from './engine/settleRound'
 import { buildEventDisclosureView } from './engine/lifeEvents'
 import { resolveVisibleConcepts } from './goalPackage'
-import { toHouseholdStateTeamView } from './realtimeProjection'
+import { toAdvancedHouseholdTeamEntryView, toHouseholdStateTeamView } from './realtimeProjection'
 import type { HouseholdDecisionInput } from './submitDecision'
+import type { HouseholdRuntimeControl } from './statusTransition'
 
 /**
  * `processRound` is the Admin SDK wrapper around the pure `settleRound`
@@ -399,10 +400,23 @@ export const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSet
  *   Keyed by householdId (not overwritten wholesale) so settling one
  *   household's round never clobbers another household's already-published
  *   log entry on the same shared node.
- * - `lessonRunTeamState/{lessonRunId}/{teamId}` gets only the
- *   `household` field, built via `toHouseholdStateTeamView` (Task 15 Step
- *   3's allow-list — never `{...household}`) — this team's own household
- *   view only, never another team's, and never the internal fields above.
+ * - `lessonRunTeamState/{lessonRunId}/{teamId}` — Task 9 branches this on
+ *   course format. COMMON_CONDITIONS (unchanged from Task 15) writes only
+ *   the `household` field, built via `toHouseholdStateTeamView` (Task 15
+ *   Step 3's allow-list — never `{...household}`) — this team's own
+ *   household view only, never another team's, and never the internal
+ *   fields above. The 3 advanced formats (ROLE_VARIANT/STAGE_SPLIT/
+ *   MULTI_PERSON_PER_TEAM) instead write a SCOPED update at
+ *   `households/${householdId}` — a slash-containing RTDB update key
+ *   addresses that nested path only, so settling one household never
+ *   overwrites the `households` map's other entries (siblings on the same
+ *   MULTI_PERSON_PER_TEAM team) — plus the team-agnostic
+ *   `courseFormat`/`synchronizedRoundIndex`/`roundStatus` fields, read fresh
+ *   from `HouseholdRuntimeControl` (`statusTransition.ts`) at publish time
+ *   since this function has no other source for them. `householdOrder` is
+ *   NOT rewritten here — it was already published once, in full, by
+ *   `afterStatusTransition`'s initial projection (Task 9), and a single
+ *   household's settlement never changes team membership.
  */
 export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtimeState'] = async (input) => {
   const rtdb = getDatabase()
@@ -426,8 +440,6 @@ export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtime
   // already `[]` when `shortfallYen === 0` (Critical C1 fix: no shortfall
   // prompt broadcast on a surplus round).
   const shortfallOptions = result.shortfallOptionsConsidered
-
-  const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
 
   // ---- lessonRunPublic: class-wide economic assumptions only, via update() ----
   await rtdb.ref(`lessonRunPublic/${input.lessonRunId}`).update({
@@ -457,12 +469,37 @@ export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtime
     },
   })
 
-  // ---- lessonRunTeamState: this team's own household view only, via update() ----
-  await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
-    orgId: input.orgId,
-    household: householdView,
-    updatedAtMillis: Date.now(),
-  })
+  // ---- lessonRunTeamState: branch on course format (see this function's doc comment) ----
+  if (homeEconomics.courseFormat === 'COMMON_CONDITIONS') {
+    const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
+    await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
+      orgId: input.orgId,
+      household: householdView,
+      updatedAtMillis: Date.now(),
+    })
+  } else {
+    const controlSnap = await getFirestore().doc(`lessonRuns/${input.lessonRunId}/householdRuntime/control`).get()
+    if (!controlSnap.exists) throw new Error('HouseholdRuntimeControl not found — cannot publish advanced team state.')
+    const control = controlSnap.data() as unknown as HouseholdRuntimeControl
+
+    // submittedRoundIndex: this household just consumed its submitted
+    // decision for the round that was JUST settled — it has not yet
+    // submitted anything for the round it is now on
+    // (`newHousehold.roundIndex`, already advanced by settleRound), so this
+    // is always null immediately after settlement. See task-9-report.md for
+    // the full reasoning on why sibling households' submittedRoundIndex
+    // values are intentionally left untouched by this scoped update.
+    const entryView = toAdvancedHouseholdTeamEntryView(profile, newHousehold, visibleConcepts, eventDisclosures, shortfallOptions, null)
+
+    await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
+      orgId: input.orgId,
+      courseFormat: control.courseFormat,
+      synchronizedRoundIndex: control.synchronizedRoundIndex,
+      roundStatus: control.roundStatus,
+      [`households/${newHousehold.householdId}`]: entryView,
+      updatedAtMillis: Date.now(),
+    })
+  }
 }
 
 export const processRoundDepsWithAdminSdk = (): ProcessRoundDeps => ({

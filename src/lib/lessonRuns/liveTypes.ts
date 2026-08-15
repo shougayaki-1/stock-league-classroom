@@ -246,6 +246,60 @@ export interface TeamResearchNoteView {
 }
 
 /**
+ * Client counterpart of `functions/src/homeEconomics/toPublicView.ts`'s
+ * `toHouseholdProfilePublicView`'s output shape (originally defined in
+ * `@stock-league/household-public-content`, a `functions/`-only package —
+ * `src/` cannot import across the functions/src rootDir boundary, same
+ * constraint `HouseholdStateTeamView` above already documents). Hand-synced;
+ * keep field-for-field identical to that server-side allow-list.
+ */
+export interface HouseholdProfilePublicView {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: string
+  isFictional: true
+}
+
+/**
+ * Advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+ * counterpart of `HouseholdStateTeamView` above — one household's entry
+ * within an `AdvancedHouseholdTeamStateView`. Hand-duplicated from
+ * `functions/src/homeEconomics/realtimeProjection.ts`'s server-side type of
+ * the same name (Task 9) — see that file's JSDoc for why.
+ */
+export interface AdvancedHouseholdTeamEntryView {
+  householdId: string
+  profile: HouseholdProfilePublicView
+  state: HouseholdStateTeamView
+  /** Which round this household has an on-record submitted decision for, or `null` when it has not yet submitted for its CURRENT round (`state.roundIndex`). */
+  submittedRoundIndex: number | null
+}
+
+/**
+ * Advanced-format counterpart of `LessonRunTeamState.household` — a team
+ * running ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM can host more than
+ * one runtime household on the SAME team, so this carries a `households`
+ * map (keyed by runtime householdId) plus display order and the
+ * team-agnostic course-format/round-sync fields, instead of a single
+ * `household` field. Hand-duplicated from
+ * `functions/src/homeEconomics/realtimeProjection.ts`'s server-side type of
+ * the same name (Task 9) — see that file's JSDoc for why.
+ */
+export interface AdvancedHouseholdTeamStateView {
+  courseFormat: 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+  synchronizedRoundIndex: number
+  roundStatus: 'OPEN' | 'SETTLING'
+  households: Record<string, AdvancedHouseholdTeamEntryView>
+  householdOrder: string[]
+}
+
+/**
  * Third visibility class alongside LessonRunPublicState (every participant)
  * and LessonRunPrivateState (teachers only): a team's own cash, holdings,
  * locked funds/shares, and order state must reach that team's members in
@@ -255,14 +309,31 @@ export interface TeamResearchNoteView {
  * teacher oversight) and this file's LessonRunPrivateState JSDoc for why
  * a nested path would defeat the isolation RTDB's read cascade requires.
  */
-export interface LessonRunTeamState {
+/**
+ * `LessonRunTeamState` (below) intersects with this so an advanced-format
+ * lessonRun's `lessonRunTeamState/{lessonRunId}/{teamId}` node's
+ * `courseFormat`/`synchronizedRoundIndex`/`roundStatus`/`households`/
+ * `householdOrder` fields are written FLAT on the node itself — not nested
+ * under a wrapper key — matching exactly what
+ * `functions/src/homeEconomics/processRound.ts`'s
+ * `publishRealtimeStateWithAdminSdk` and
+ * `functions/src/homeEconomics/statusTransition.ts`'s
+ * `afterStatusTransition` actually write (Task 9).
+ */
+export interface LessonRunTeamState extends Partial<AdvancedHouseholdTeamStateView> {
   cash: number
   holdings: Record<string, number>
   lockedBuyValue: number
   lockedSellQuantity: Record<string, number>
   myOrders: MyOrderView[]
   updatedAtMillis: number
-  /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
+  /**
+   * Only present for HOME_ECONOMICS lessonRuns using COMMON_CONDITIONS —
+   * mutually exclusive with the market fields above (a LessonRun's
+   * `subject` never changes after creation) AND with the
+   * `AdvancedHouseholdTeamStateView` fields inherited above (a lessonRun's
+   * courseFormat never changes after creation either).
+   */
   household?: HouseholdStateTeamView
   /** Team Research Desk notes mirror. Scoped to this team only. */
   researchNote?: TeamResearchNoteView

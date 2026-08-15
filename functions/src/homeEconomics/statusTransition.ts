@@ -1,7 +1,12 @@
-import type { HouseholdProfile } from '@stock-league/household-authoring-content'
+import { getFirestore } from 'firebase-admin/firestore'
+import { getDatabase } from 'firebase-admin/database'
+import type { GoalPackage, HouseholdProfile } from '@stock-league/household-authoring-content'
 import type { LifeStage } from '@stock-league/household-public-content'
 import type { FirestoreTx } from '../lessonRuns/phases/transitionPhase'
 import type { LessonRunStatus } from '../lessonRuns/phases/stateMachine'
+import { ensureAssignedHouseholdStateWithAdminSdk } from './assignedHousehold'
+import { resolveVisibleConcepts } from './goalPackage'
+import { toAdvancedHouseholdTeamEntryView } from './realtimeProjection'
 import {
   distinctLifeStagesInOrder,
   teamSetFingerprint,
@@ -48,10 +53,12 @@ const teamsIndexPath = (lessonRunId: string): string => `lessonRuns/${lessonRunI
 interface RunSnapshotShape {
   subject?: string
   startedAt?: unknown
+  orgId?: string
   templateSnapshot?: {
     homeEconomics?: {
       courseFormat?: string
       households?: HouseholdProfile[]
+      goalPackage?: GoalPackage
     }
   }
 }
@@ -212,19 +219,114 @@ export const prepareStatusTransition = async (
 }
 
 /**
- * Post-commit hook. This task only needs it to exist and be wired so that
- * `transitionPhase.ts`'s call site is exercised end-to-end (and so a
- * deduplicated replay still invokes it, per the brief) — real post-commit
- * work (publishing an RTDB projection of the frozen assignment / initial
- * `HouseholdRuntimeControl` so clients see the freeze without polling
- * Firestore) belongs to a later task (spec'd as Task 9) once that
- * projection shape exists. Deliberately a no-op here rather than a partial
- * implementation of that projection.
+ * Post-commit hook (Task 9). Runs strictly after `prepareStatusTransition`'s
+ * writes have committed (see `transitionPhase.ts`'s
+ * `TransitionPhaseDeps.afterStatusTransition` JSDoc). For the very first
+ * RUNNING start of an advanced (ROLE_VARIANT/STAGE_SPLIT/
+ * MULTI_PERSON_PER_TEAM) Home Economics lesson, this:
+ *
+ * 1. Ensures every FROZEN assignment entry's `HouseholdState` document
+ *    actually exists (`ensureAssignedHouseholdStateWithAdminSdk`, Task 4 —
+ *    already idempotent: a second call just returns the existing doc).
+ * 2. Publishes an INITIAL `AdvancedHouseholdTeamStateView` to each team's
+ *    `lessonRunTeamState/{lessonRunId}/{teamId}` RTDB node, so `/play` can
+ *    detect household mode (and each household's starting state) before
+ *    any round is ever settled — otherwise a student landing on `/play`
+ *    between FROZEN and the first `processRound` call would see nothing.
+ *
+ * Deliberately re-reads everything it needs directly from Firestore
+ * (`lessonRuns/{id}`, the HouseholdAssignmentConfig + its frozen entries,
+ * `HouseholdRuntimeControl`) rather than widening this hook's signature —
+ * `transitionPhase.ts`'s `TransitionPhaseDeps.afterStatusTransition` is
+ * SHARED, subject-agnostic plumbing (Task 3's territory), and every other
+ * `*WithAdminSdk` function in this codebase is a self-sufficient read
+ * rather than requiring its caller to pre-fetch everything
+ * (`ensureAssignedHouseholdStateWithAdminSdk` itself is the closest
+ * precedent). This keeps `transitionPhase.ts` completely untouched.
+ *
+ * Self-gates identically to `prepareStatusTransition` (non-RUNNING /
+ * non-HOME_ECONOMICS / COMMON_CONDITIONS / config not FROZEN all return
+ * early with no writes) so a Social Studies lesson or a resume costs at
+ * most a couple of extra reads, never a write. Naturally idempotent: a
+ * deduplicated replay (`input.deduplicated === true`, which this hook is
+ * still invoked for, per its JSDoc requirement) re-ensures already-existing
+ * `HouseholdState` docs (no-op) and re-publishes the same deterministic
+ * initial view via RTDB `.update()` (a no-op in effect the second time).
+ * Runs entirely outside any Firestore transaction — the sequential reads/
+ * writes below are plain post-commit I/O, not a new transaction of their
+ * own.
  */
-export const afterStatusTransition = async (_input: {
+export const afterStatusTransition = async (input: {
   lessonRunId: string
   targetStatus?: LessonRunStatus
   deduplicated: boolean
 }): Promise<void> => {
-  // Intentionally empty — see doc comment above.
+  if (input.targetStatus !== 'RUNNING') return
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${input.lessonRunId}`).get()
+  if (!runSnap.exists) return
+  const run = runSnap.data() as RunSnapshotShape
+  if (run.subject !== 'HOME_ECONOMICS') return
+
+  const courseFormat = run.templateSnapshot?.homeEconomics?.courseFormat
+  if (!isAdvancedHouseholdCourseFormat(courseFormat)) return
+
+  const configSnap = await db.doc(configPath(input.lessonRunId)).get()
+  if (!configSnap.exists) return
+  const config = configSnap.data() as unknown as HouseholdAssignmentConfig
+  // Only publish once the assignment is actually FROZEN — for a first
+  // RUNNING transition this is always true (prepareStatusTransition just
+  // froze it in the SAME committed transaction), but this hook re-checks
+  // rather than assuming, since it re-reads independently.
+  if (config.state !== 'FROZEN') return
+
+  const controlSnap = await db.doc(controlPath(input.lessonRunId)).get()
+  if (!controlSnap.exists) return
+  const control = controlSnap.data() as unknown as HouseholdRuntimeControl
+
+  const entriesSnap = await db.collection(entriesCollectionPath(input.lessonRunId)).get()
+  const entries = entriesSnap.docs.map((doc) => doc.data() as unknown as HouseholdAssignmentEntry)
+  if (entries.length === 0) return
+
+  const profiles = run.templateSnapshot?.homeEconomics?.households ?? []
+  const profileById = new Map(profiles.map((profile) => [profile.householdId, profile] as const))
+  const goalPackage = run.templateSnapshot?.homeEconomics?.goalPackage
+  const visibleConcepts = goalPackage ? resolveVisibleConcepts(goalPackage) : []
+
+  const entriesByTeam = new Map<string, HouseholdAssignmentEntry[]>()
+  for (const entry of entries) {
+    const list = entriesByTeam.get(entry.teamId)
+    if (list) list.push(entry)
+    else entriesByTeam.set(entry.teamId, [entry])
+  }
+
+  const rtdb = getDatabase()
+  for (const [teamId, teamEntries] of entriesByTeam) {
+    const orderedEntries = [...teamEntries].sort((a, b) => a.displayOrder - b.displayOrder)
+    const householdEntryViews: Record<string, unknown> = {}
+    for (const entry of orderedEntries) {
+      const profile = profileById.get(entry.profileId)
+      if (!profile) continue // validated at freeze time (prepareStatusTransition) — should never happen here
+      // Idempotent — ensureAssignedHouseholdStateWithAdminSdk returns the
+      // existing document unchanged on a deduplicated replay.
+      const householdState = await ensureAssignedHouseholdStateWithAdminSdk(input.lessonRunId, entry.householdId)
+      // Initial publish, before any round has ever been settled: no life
+      // events have occurred yet and there is no shortfall to resolve —
+      // and no decision has been submitted for round 0 yet either.
+      householdEntryViews[entry.householdId] = toAdvancedHouseholdTeamEntryView(
+        profile, householdState, visibleConcepts, [], [], null,
+      )
+    }
+
+    await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${teamId}`).update({
+      orgId: run.orgId,
+      courseFormat: control.courseFormat,
+      synchronizedRoundIndex: control.synchronizedRoundIndex,
+      roundStatus: control.roundStatus,
+      households: householdEntryViews,
+      householdOrder: orderedEntries.map((entry) => entry.householdId),
+      updatedAtMillis: Date.now(),
+    })
+  }
 }

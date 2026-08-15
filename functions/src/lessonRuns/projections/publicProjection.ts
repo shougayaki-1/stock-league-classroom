@@ -106,6 +106,31 @@ export const publishLessonProjectionWithAdminSdk = (
   input: PublishLessonProjectionInput,
 ): Promise<{ publicState: LessonRunPublicState; displayState: LessonRunDisplayState }> =>
   publishLessonProjection({
-    setPublicState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunPublic/${lessonRunId}`).set(state) },
+    // Task 9: `lessonRunPublic/{lessonRunId}` is a SHARED node — besides
+    // this generic, subject-agnostic publisher, `homeEconomics/
+    // processRound.ts`'s `publishRealtimeStateWithAdminSdk` also writes
+    // `economicFactors` onto the very same node (via `.update()`, never
+    // `.set()`), and Task 12 will add a `householdClassComparison` field
+    // the same way. Neither of those fields is part of
+    // `LessonRunPublicState`'s allow-list, so if this function ever ran
+    // with `.set()` AFTER either of those writes, it would silently wipe
+    // them out. `.update()` here is a partial multi-field merge — it
+    // preserves any sibling key already on the node (economicFactors,
+    // the future comparison field) while still fully replacing every field
+    // `LessonRunPublicState` itself owns. Verified safe for every current
+    // caller: this function has no production caller wired up yet (see
+    // this file's own JSDoc — "a future phase-transition/tick Callable,
+    // not built by this task"), and its own test suite constructs
+    // `LessonRunPublicState` fresh each call, so there is no existing code
+    // path relying on `.set()`'s "wipe everything not in this write"
+    // semantics for this node.
+    setPublicState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunPublic/${lessonRunId}`).update(state as unknown as Record<string, unknown>) },
+    // `lessonRunDisplay/{lessonRunId}` has no such cross-write hazard —
+    // it is written ONLY by this function and by
+    // `setTeacherGuidance.ts`'s `setTeacherGuidanceWithAdminSdk`, both of
+    // which always publish the FULL `LessonRunDisplayState` object, so
+    // `.set()`'s whole-node-replace semantics are exactly what's wanted
+    // here (never leave a stale field from a previous publish behind).
+    // Left unchanged per this task's brief.
     setDisplayState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunDisplay/${lessonRunId}`).set(state) },
   }, input)

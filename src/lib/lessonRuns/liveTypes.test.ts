@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { LessonRunPrivateState, LessonRunPublicState, LessonRunTeamState } from './liveTypes'
+import type { AdvancedHouseholdTeamStateView, LessonRunPrivateState, LessonRunPublicState, LessonRunTeamState } from './liveTypes'
 
 describe('LessonRunPublicState / LessonRunPrivateState field separation', () => {
   it('LessonRunPublicState has no field named randomSeed or containing "seed"', () => {
@@ -45,5 +45,37 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
       updatedAtMillis: 1,
     }
     expect(state.cash).toBe(14000)
+  })
+
+  it('LessonRunTeamState carries AdvancedHouseholdTeamStateView fields flat on the node (Task 9), not nested under a wrapper key', () => {
+    const view: AdvancedHouseholdTeamStateView = {
+      courseFormat: 'MULTI_PERSON_PER_TEAM',
+      synchronizedRoundIndex: 2,
+      roundStatus: 'OPEN',
+      households: {
+        'household-a': {
+          householdId: 'household-a',
+          profile: {
+            householdId: 'profile-a', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000,
+            cashSavingsYen: 1000000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄', lifeStage: 'INDEPENDENT',
+            isFictional: true,
+          },
+          state: {
+            householdId: 'household-a', isFictional: true, cashYen: 100000, assetHoldingsYen: {},
+            activeInsuranceContractYearsRemaining: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT',
+            roundIndex: 2, goalDelayedRounds: 0, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+          },
+          submittedRoundIndex: null,
+        },
+      },
+      householdOrder: ['household-a'],
+    }
+    const state: LessonRunTeamState = {
+      cash: 0, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1,
+      ...view,
+    }
+    expect(state.courseFormat).toBe('MULTI_PERSON_PER_TEAM')
+    expect(state.households?.['household-a'].submittedRoundIndex).toBeNull()
+    expect(state.household).toBeUndefined()
   })
 })

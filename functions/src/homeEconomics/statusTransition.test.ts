@@ -1,9 +1,62 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HouseholdProfile } from '@stock-league/household-authoring-content'
 import { prepareStatusTransition, afterStatusTransition, type HouseholdRuntimeControl } from './statusTransition'
 import type { FirestoreTx } from '../lessonRuns/phases/transitionPhase'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
 import type { HouseholdAssignmentEntry } from './householdAssignment'
+
+// -----------------------------------------------------------------------------
+// `afterStatusTransition` (Task 9) is self-sufficient — it calls
+// getFirestore()/getDatabase() directly rather than taking an injected
+// dependency seam, matching every other `*WithAdminSdk`-style function in
+// this codebase (see its own JSDoc). Module-level mocks are the established
+// way to test that without a real emulator (same precedent as
+// assignedHousehold.test.ts's `ensureAssignedHouseholdStateWithAdminSdk`
+// tests, which this hook calls internally).
+// -----------------------------------------------------------------------------
+const docs = new Map<string, Record<string, unknown>>()
+const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
+
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: () => ({
+    doc: (path: string) => ({
+      path,
+      get: async () => ({
+        exists: docs.has(path),
+        data: () => docs.get(path),
+        get: (field: string) => (docs.get(path) as Record<string, unknown> | undefined)?.[field],
+      }),
+    }),
+    collection: (path: string) => ({
+      get: async () => ({
+        docs: (collections.get(path) ?? []).map((entry) => ({ id: entry.id, data: () => entry.data })),
+      }),
+    }),
+    runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
+      get: async (ref: { path: string }) => ({ exists: docs.has(ref.path), data: () => docs.get(ref.path) }),
+      set: (ref: { path: string }, data: Record<string, unknown>) => { docs.set(ref.path, data) },
+    }),
+  }),
+}))
+
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (path: string) => ({
+      update: async (data: Record<string, unknown>) => { rtdbUpdates.push({ path, data }) },
+    }),
+  }),
+}))
+
+beforeEach(() => {
+  docs.clear()
+  collections.clear()
+  rtdbUpdates.length = 0
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 const profileA: HouseholdProfile = {
   householdId: 'profile-a', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000,
@@ -305,9 +358,113 @@ describe('prepareStatusTransition', () => {
   })
 })
 
-describe('afterStatusTransition', () => {
-  it('resolves without throwing (this task only wires the hook; real post-commit projection is a later task)', async () => {
-    await expect(afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })).resolves.toBeUndefined()
+describe('afterStatusTransition (Task 9)', () => {
+  const frozenConfig: HouseholdAssignmentConfig = {
+    courseFormat: 'MULTI_PERSON_PER_TEAM', state: 'FROZEN', validationStatus: 'READY', assignmentRevision: 1,
+    teamSetFingerprint: 'fp', entryIds: [], entriesDigest: 'digest',
+    lastEditedByUid: 'teacher-1', lastEditedAtServerMillis: 1, frozenByUid: 'teacher-1', frozenAtServerMillis: 1,
+  }
+  const control: HouseholdRuntimeControl = {
+    courseFormat: 'MULTI_PERSON_PER_TEAM', assignmentRevision: 1, synchronizedRoundIndex: 0,
+    roundStatus: 'OPEN', activeOperationId: null, updatedAtServerMillis: 1,
+  }
+  const multiPersonRun = {
+    subject: 'HOME_ECONOMICS', startedAt: null, orgId: 'org-1',
+    templateSnapshot: {
+      homeEconomics: { courseFormat: 'MULTI_PERSON_PER_TEAM', households: [profileA, profileB], goalPackage: 'EMERGENCY_FUND' },
+    },
+  }
+
+  const setUpMultiPersonTeam = () => {
+    docs.set('lessonRuns/run-1', multiPersonRun)
+    docs.set('lessonRuns/run-1/householdAssignment/config', frozenConfig as unknown as Record<string, unknown>)
+    docs.set('lessonRuns/run-1/householdRuntime/control', control as unknown as Record<string, unknown>)
+    collections.set('lessonRuns/run-1/householdAssignment/config/entries', [
+      { id: 'team-a:profile-a', data: entry('team-a', 'profile-a', 'profile-a', 0) as unknown as Record<string, unknown> },
+      { id: 'team-a:profile-b', data: entry('team-a', 'profile-b', 'profile-b', 1) as unknown as Record<string, unknown> },
+    ])
+  }
+
+  it('does nothing for a non-RUNNING target status', async () => {
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'PAUSED', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing for a Social Studies lesson', async () => {
+    docs.set('lessonRuns/run-1', { ...multiPersonRun, subject: 'SOCIAL_STUDIES' })
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing for COMMON_CONDITIONS Home Economics', async () => {
+    docs.set('lessonRuns/run-1', {
+      ...multiPersonRun,
+      templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS', households: [profileA] } },
+    })
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing when the assignment is not (yet) FROZEN', async () => {
+    docs.set('lessonRuns/run-1', multiPersonRun)
+    docs.set('lessonRuns/run-1/householdAssignment/config', { ...frozenConfig, state: 'DRAFT' } as unknown as Record<string, unknown>)
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing when the LessonRun document does not exist', async () => {
+    await afterStatusTransition({ lessonRunId: 'ghost-run', targetStatus: 'RUNNING', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('ensures a HouseholdState exists for every frozen entry and publishes an initial team node for MULTI_PERSON_PER_TEAM (both households on the one team, one update)', async () => {
+    setUpMultiPersonTeam()
+
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+
+    expect(docs.get('lessonRuns/run-1/households/team-a:profile-a')).toBeDefined()
+    expect(docs.get('lessonRuns/run-1/households/team-a:profile-b')).toBeDefined()
+
+    const teamUpdate = rtdbUpdates.find((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+    expect(teamUpdate).toBeDefined()
+    expect(teamUpdate!.data.orgId).toBe('org-1')
+    expect(teamUpdate!.data.courseFormat).toBe('MULTI_PERSON_PER_TEAM')
+    expect(teamUpdate!.data.synchronizedRoundIndex).toBe(0)
+    expect(teamUpdate!.data.roundStatus).toBe('OPEN')
+    expect(teamUpdate!.data.householdOrder).toEqual(['team-a:profile-a', 'team-a:profile-b'])
+
+    const households = teamUpdate!.data.households as Record<string, { householdId: string; submittedRoundIndex: number | null }>
+    expect(Object.keys(households).sort()).toEqual(['team-a:profile-a', 'team-a:profile-b'])
+    expect(households['team-a:profile-a'].submittedRoundIndex).toBeNull()
+    expect(households['team-a:profile-b'].submittedRoundIndex).toBeNull()
+  })
+
+  it('never leaks internalRiskFactors/eventProbabilityOverrides in the initial published team node', async () => {
+    setUpMultiPersonTeam()
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    const teamUpdate = rtdbUpdates.find((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+    expect(JSON.stringify(teamUpdate!.data)).not.toContain('internalRiskFactors')
+    expect(JSON.stringify(teamUpdate!.data)).not.toContain('eventProbabilityOverrides')
+  })
+
+  /**
+   * Task 3's `prepareStatusTransition` requirement: this post-commit hook
+   * must still fire (and behave correctly) on a deduplicated replay of the
+   * SAME first-RUNNING request — e.g. a retried Callable. Ensuring an
+   * already-existing HouseholdState is a no-op (Task 4), and re-publishing
+   * the same deterministic initial view via RTDB `.update()` is a no-op in
+   * effect the second time.
+   */
+  it('is safe to re-invoke on a deduplicated replay (deduplicated: true) — same result, no throw', async () => {
+    setUpMultiPersonTeam()
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    rtdbUpdates.length = 0
+
     await expect(afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: true })).resolves.toBeUndefined()
+
+    const teamUpdate = rtdbUpdates.find((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+    expect(teamUpdate).toBeDefined()
+    const households = teamUpdate!.data.households as Record<string, unknown>
+    expect(Object.keys(households).sort()).toEqual(['team-a:profile-a', 'team-a:profile-b'])
   })
 })
