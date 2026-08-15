@@ -15,6 +15,8 @@ const memberProps = {
   onSuspendMember: vi.fn(),
   suspending: false,
   teacherSeatLimit: undefined,
+  onRevokeInvitation: vi.fn(),
+  onChangeRole: vi.fn(),
 }
 
 describe('SchoolOrgSettingsPage', () => {
@@ -25,19 +27,13 @@ describe('SchoolOrgSettingsPage', () => {
           orgName="桜丘高校"
           orgId="org-1"
           invitations={[
-            {
-              id: 'i1',
-              orgId: 'org-1',
-              email: 'x@example.com',
-              role: 'teacher',
-              status: 'PENDING',
-              invitedByUid: 'u1',
-              createdAt: null,
-            },
+            { id: 'i1', orgId: 'org-1', email: 'x@example.com', role: 'teacher', status: 'PENDING', invitedByUid: 'u1', createdAt: null },
+            { id: 'i2', orgId: 'org-1', email: 'y@example.com', role: 'teacher', status: 'REVOKED', invitedByUid: 'u1', createdAt: null },
           ]}
           onInvite={vi.fn()}
           inviting={false}
           {...memberProps}
+          canManageMembers
         />
       </MemoryRouter>,
     )
@@ -45,6 +41,29 @@ describe('SchoolOrgSettingsPage', () => {
     expect(screen.getByText('桜丘高校')).toBeInTheDocument()
     expect(screen.getByText('x@example.com')).toBeInTheDocument()
     expect(screen.getByText('招待中')).toBeInTheDocument()
+    expect(screen.getByText('y@example.com')).toBeInTheDocument()
+    expect(screen.getByText('失効済み')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '失効' })).toHaveLength(1)
+  })
+
+  it('calls onRevokeInvitation with the invitation id', () => {
+    const onRevokeInvitation = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage
+          orgName="桜丘高校"
+          orgId="org-1"
+          invitations={[{ id: 'i1', orgId: 'org-1', email: 'x@example.com', role: 'teacher', status: 'PENDING', invitedByUid: 'u1', createdAt: null }]}
+          onInvite={vi.fn()}
+          inviting={false}
+          {...memberProps}
+          canManageMembers
+          onRevokeInvitation={onRevokeInvitation}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '失効' }))
+    expect(onRevokeInvitation).toHaveBeenCalledWith('i1')
   })
 
   it('submits the invitation form', () => {
@@ -78,7 +97,8 @@ describe('member list', () => {
     render(
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
-          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
       </MemoryRouter>,
     )
     expect(screen.getByText('教師席: 使用中 2 / 上限 5')).toBeInTheDocument()
@@ -90,7 +110,8 @@ describe('member list', () => {
     render(
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
-          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
       </MemoryRouter>,
     )
     expect(screen.getAllByRole('button', { name: '解除' })).toHaveLength(1)
@@ -100,7 +121,8 @@ describe('member list', () => {
     render(
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
-          members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5} />
+          members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
       </MemoryRouter>,
     )
     expect(screen.queryByRole('button', { name: '解除' })).not.toBeInTheDocument()
@@ -111,11 +133,45 @@ describe('member list', () => {
     render(
       <MemoryRouter>
         <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
-          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={onSuspendMember} teacherSeatLimit={5} />
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={onSuspendMember} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
       </MemoryRouter>,
     )
     fireEvent.click(screen.getByRole('button', { name: '解除' }))
     expect(onSuspendMember).toHaveBeenCalledWith('uid-teacher')
+  })
+
+  it('shows an owner role option only when the viewer is an owner, and hides it otherwise', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('option', { name: 'owner' })).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-teacher" canManageMembers={false} suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={vi.fn()} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('option', { name: 'owner' })).not.toBeInTheDocument()
+  })
+
+  it('calls onChangeRole when a new role is selected', () => {
+    const onChangeRole = vi.fn()
+    render(
+      <MemoryRouter>
+        <SchoolOrgSettingsPage orgName="桜丘高校" orgId="org-1" invitations={[]} onInvite={vi.fn()} inviting={false}
+          members={members} viewerUid="uid-owner" canManageMembers suspending={false} onSuspendMember={vi.fn()} teacherSeatLimit={5}
+          onRevokeInvitation={vi.fn()} onChangeRole={onChangeRole} />
+      </MemoryRouter>,
+    )
+    fireEvent.change(screen.getByLabelText('uid-teacherのロール'), { target: { value: 'admin' } })
+    expect(onChangeRole).toHaveBeenCalledWith('uid-teacher', 'admin')
   })
 })
 

@@ -395,7 +395,15 @@ describe('School org creation and invitation routes', () => {
   })
 
   it('uses the invitation ID returned by the server when adding a sent invitation', async () => {
-    callableMock.mockResolvedValue({ data: { invitationId: 'server-invitation-1' } })
+    const createCallable = vi.fn().mockResolvedValue({ data: { invitationId: 'server-invitation-1' } })
+    const listCallable = vi.fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id: 'server-invitation-1', orgId: 'org-1', email: 'invitee@example.com', role: 'teacher', status: 'PENDING', invitedByUid: 'teacher-uid', createdAt: null }] })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'createInvitationCallable') return createCallable
+      if (name === 'listOrgInvitationsCallable') return listCallable
+      return callableMock
+    })
     const randomUUIDMock = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('local invitation IDs must not be generated') })
     window.history.pushState({}, '', '/teacher/organizations/org-1/settings')
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
@@ -405,10 +413,11 @@ describe('School org creation and invitation routes', () => {
     await userEvent.type(await screen.findByRole('textbox', { name: '招待するメールアドレス' }), 'invitee@example.com')
     await userEvent.click(screen.getByRole('button', { name: '招待を送る' }))
     expect(await screen.findByText('invitee@example.com')).toBeInTheDocument()
-    expect(callableMock).toHaveBeenLastCalledWith({ orgId: 'org-1', email: 'invitee@example.com', role: 'teacher' })
+    expect(createCallable).toHaveBeenCalledWith({ orgId: 'org-1', email: 'invitee@example.com', role: 'teacher' })
     randomUUIDMock.mockRestore()
     window.history.pushState({}, '', '/')
   })
+
 })
 
 describe('Parent org hierarchy routes', () => {

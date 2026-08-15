@@ -41,7 +41,7 @@ import { PlanLimitsPage } from './components/teacher/organizations/PlanLimitsPag
 import { BillingSection } from './components/teacher/organizations/BillingSection'
 import { PendingInvitationsBanner } from './components/teacher/organizations/PendingInvitationsBanner'
 import { createSchoolOrg } from './lib/organizations/schoolOrg'
-import { acceptInvitation, createInvitation, listMyInvitations, type Invitation } from './lib/organizations/invitations'
+import { acceptInvitation, createInvitation, listMyInvitations, listOrgInvitations, revokeInvitation, type Invitation } from './lib/organizations/invitations'
 import { getOrgPlanLimits, type PlanLimitsResult } from './lib/organizations/planLimits'
 import { getParentOrgQuotaUsage, getSchoolEffectiveQuota, setSchoolQuotaAllocation, type ParentOrgQuotaUsageResult, type SchoolEffectiveQuotaResult } from './lib/organizations/parentOrgQuota'
 import { createStripeCheckoutSession } from './lib/billing/stripeCheckout'
@@ -50,7 +50,8 @@ import { getBillingOverview, saveBillingProfile, startInvoiceSubscription, type 
 import { ParentOrgSettingsPage } from './components/teacher/organizations/ParentOrgSettingsPage'
 import { createParentOrg } from './lib/organizations/parentOrg'
 import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, type ChildSchool } from './lib/organizations/schoolHierarchy'
-import { listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
+import { changeOrgMemberRole, listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
+
 import { migrateSchoolFromEndedParent } from './lib/organizations/parentContractMigration'
 
 const docPages: Record<string, () => React.JSX.Element> = {
@@ -466,8 +467,18 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
 
   const loadMembers = useCallback(() => {
     if (!orgId) return
-    void listOrgMembers(services.functions, { orgId }).then(setMembers).catch(() => setMembers([]))
+    void listOrgMembers(services.functions, { orgId })
+      .then((data) => { if (Array.isArray(data)) setMembers(data) })
+      .catch(() => setMembers([]))
   }, [orgId, services.functions])
+
+  const loadInvitations = useCallback(() => {
+    if (!orgId) return
+    void listOrgInvitations(services.functions, orgId)
+      .then((data) => { if (Array.isArray(data)) setInvitations(data) })
+      .catch(() => setInvitations([]))
+  }, [orgId, services.functions])
+  useEffect(() => { loadInvitations() }, [loadInvitations])
 
   useEffect(() => { loadMembers() }, [loadMembers])
   useEffect(() => {
@@ -503,11 +514,18 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
           .then(loadMembers)
           .finally(() => setSuspending(false))
       }}
+      onRevokeInvitation={(invitationId) => {
+        void revokeInvitation(services.functions, { orgId, invitationId }).then(loadInvitations)
+      }}
+      onChangeRole={(uid, newRole) => {
+        void changeOrgMemberRole(services.functions, { orgId, uid, newRole }).then(loadMembers)
+      }}
       onInvite={async (email, role) => {
         setInviting(true)
         try {
           const { invitationId } = await createInvitation(services.functions, { orgId, email, role })
           setInvitations((prev) => [...prev, { id: invitationId, orgId, email, role, status: 'PENDING', invitedByUid: '', createdAt: null }])
+          await loadInvitations()
         } finally {
           setInviting(false)
         }
@@ -515,6 +533,8 @@ function SchoolOrgSettingsRoute({ services }: { services: FirebaseServices }) {
     />
   )
 }
+
+
 
 function ParentOrgNewRoute({ services }: { services: FirebaseServices }) {
   const [name, setName] = useState(''); const [creating, setCreating] = useState(false); const navigate = useNavigate()

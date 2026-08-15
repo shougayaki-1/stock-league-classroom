@@ -29,3 +29,9 @@ export const suspendOrgMember = async (
 ): Promise<void> => {
   await httpsCallable<SuspendOrgMemberInput, void>(functions, 'suspendOrgMemberCallable')(input)
 }
+
+export interface ChangeOrgMemberRoleInput { orgId: string; uid: string; newRole: 'owner' | 'admin' | 'teacher' }
+export const changeOrgMemberRole = async (functions: Functions, input: ChangeOrgMemberRoleInput): Promise<void> => {
+  await httpsCallable<ChangeOrgMemberRoleInput, void>(functions, 'changeOrgMemberRoleCallable')(input)
+}
+

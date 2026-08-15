@@ -4,10 +4,7 @@ import { Button, List, ListItem, ListItemText, MenuItem, Stack, TextField, Typog
 import type { Invitation } from '../../../lib/organizations/invitations'
 import type { OrgMember } from '../../../lib/organizations/orgMembers'
 
-const STATUS_LABEL: Record<Invitation['status'], string> = {
-  PENDING: '招待中',
-  ACCEPTED: '参加済み',
-}
+const STATUS_LABEL: Record<Invitation['status'], string> = { PENDING: '招待中', ACCEPTED: '参加済み', REVOKED: '失効済み' }
 const ROLE_LABEL: Record<OrgMember['role'], string> = { owner: 'owner', admin: '管理者', teacher: '教師' }
 const SEAT_ROLES: OrgMember['role'][] = ['owner', 'admin', 'teacher']
 
@@ -24,14 +21,20 @@ export interface SchoolOrgSettingsPageProps {
   suspending: boolean
   teacherSeatLimit: number | undefined
   parentOrgName?: string | null
+  onRevokeInvitation: (invitationId: string) => void
+  onChangeRole: (uid: string, newRole: 'owner' | 'admin' | 'teacher') => void
 }
 
 export function SchoolOrgSettingsPage({
-  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName,
+  orgName, orgId, invitations, onInvite, inviting, members, viewerUid, canManageMembers, onSuspendMember, suspending, teacherSeatLimit, parentOrgName, onRevokeInvitation, onChangeRole,
 }: SchoolOrgSettingsPageProps) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'teacher'>('teacher')
-  const activeSeatCount = members.filter((member) => member.status === 'active' && SEAT_ROLES.includes(member.role)).length
+  const safeMembers = Array.isArray(members) ? members : []
+  const safeInvitations = Array.isArray(invitations) ? invitations : []
+  const activeSeatCount = safeMembers.filter((member) => member.status === 'active' && SEAT_ROLES.includes(member.role)).length
+  const viewerRole = safeMembers.find((member) => member.uid === viewerUid)?.role
+
 
   return (
     <Stack spacing={3} sx={{ p: 2 }}>
@@ -62,12 +65,17 @@ export function SchoolOrgSettingsPage({
       </Stack>
       <Stack spacing={1}>
         <Typography variant="subtitle1">招待一覧</Typography>
-        {invitations.length === 0 ? (
+        {safeInvitations.length === 0 ? (
           <Typography variant="body2" color="text.secondary">まだ招待がありません。</Typography>
         ) : (
           <List>
-            {invitations.map((invitation) => (
-              <ListItem key={invitation.id}>
+            {safeInvitations.map((invitation) => (
+              <ListItem
+                key={invitation.id}
+                secondaryAction={canManageMembers && invitation.status === 'PENDING' ? (
+                  <Button size="small" onClick={() => onRevokeInvitation(invitation.id)}>失効</Button>
+                ) : undefined}
+              >
                 <ListItemText primary={invitation.email} secondary={STATUS_LABEL[invitation.status]} />
               </ListItem>
             ))}
@@ -79,11 +87,26 @@ export function SchoolOrgSettingsPage({
           教師席: 使用中 {activeSeatCount} / 上限 {teacherSeatLimit ?? '?'}
         </Typography>
         <List>
-          {members.map((member) => (
+          {safeMembers.map((member) => (
             <ListItem
               key={member.uid}
               secondaryAction={canManageMembers && member.uid !== viewerUid && member.status === 'active' ? (
-                <Button size="small" disabled={suspending} onClick={() => onSuspendMember(member.uid)}>解除</Button>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <TextField
+                    select
+                    slotProps={{ select: { native: true } }}
+                    size="small"
+                    label={`${member.uid}のロール`}
+                    value={member.role}
+                    onChange={(event) => onChangeRole(member.uid, event.target.value as 'owner' | 'admin' | 'teacher')}
+                    sx={{ minWidth: 120 }}
+                  >
+                    {(viewerRole === 'owner' ? (['owner', 'admin', 'teacher'] as const) : (['admin', 'teacher'] as const))
+                      .filter((_roleOption) => viewerRole === 'owner' || member.role !== 'owner')
+                      .map((roleOption) => <option key={roleOption} value={roleOption}>{roleOption}</option>)}
+                  </TextField>
+                  <Button size="small" disabled={suspending} onClick={() => onSuspendMember(member.uid)}>解除</Button>
+                </Stack>
               ) : undefined}
             >
               <ListItemText
@@ -94,6 +117,7 @@ export function SchoolOrgSettingsPage({
           ))}
         </List>
       </Stack>
+
     </Stack>
   )
 }

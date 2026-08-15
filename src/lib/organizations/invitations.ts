@@ -5,7 +5,7 @@ export interface Invitation {
   orgId: string
   email: string
   role: 'admin' | 'teacher'
-  status: 'PENDING' | 'ACCEPTED'
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED'
   invitedByUid: string
   createdAt: unknown
 }
@@ -35,3 +35,12 @@ export const acceptInvitation = async (
 
 export const listMyInvitations = async (functions: Functions): Promise<Invitation[]> =>
   (await httpsCallable<void, Invitation[]>(functions, 'listMyInvitationsCallable')()).data
+
+export const listOrgInvitations = async (functions: Functions, orgId: string): Promise<Invitation[]> =>
+  (await httpsCallable<{ orgId: string }, Invitation[]>(functions, 'listOrgInvitationsCallable')({ orgId })).data
+
+export interface RevokeInvitationInput { orgId: string; invitationId: string }
+export const revokeInvitation = async (functions: Functions, input: RevokeInvitationInput): Promise<void> => {
+  await httpsCallable<RevokeInvitationInput, void>(functions, 'revokeInvitationCallable')(input)
+}
+
