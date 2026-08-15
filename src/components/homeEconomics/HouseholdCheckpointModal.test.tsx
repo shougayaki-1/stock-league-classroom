@@ -75,4 +75,35 @@ describe('HouseholdCheckpointModal', () => {
     fireEvent.click(confirmRestoreBtn)
     expect(onRestore).toHaveBeenCalledWith('cp-1', '誤操作のため')
   })
+
+  it('disables restore for a v3 checkpoint whose recorded assignmentRevision no longer matches the current assignment', () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const onRestore = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    const checkpoints: HouseholdCheckpointManifest[] = [
+      { ...makeManifest('cp-stale', '第1ラウンド（旧割り当て）'), schemaVersion: 3, assignmentRevision: 1 },
+      { ...makeManifest('cp-fresh', '第2ラウンド（現行割り当て）'), schemaVersion: 3, assignmentRevision: 2 },
+    ]
+
+    render(
+      <HouseholdCheckpointModal
+        isOpen={true}
+        onClose={onClose}
+        checkpoints={checkpoints}
+        courseFormat="ROLE_VARIANT"
+        currentAssignmentRevision={2}
+        onSaveManualCheckpoint={onSave}
+        onRestoreCheckpoint={onRestore}
+        isSubmitting={false}
+      />,
+    )
+
+    const restoreButtons = screen.getAllByRole('button', { name: '復元...' })
+    expect(restoreButtons[0]).toBeDisabled()
+    expect(restoreButtons[1]).not.toBeDisabled()
+    expect(screen.getByText('割り当て内容が変更されているため復元できません')).toBeInTheDocument()
+
+    fireEvent.click(restoreButtons[0])
+    expect(screen.queryByText('チェックポイント復元の確認')).not.toBeInTheDocument()
+  })
 })

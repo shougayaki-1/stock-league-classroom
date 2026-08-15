@@ -79,6 +79,27 @@ export interface HouseholdCheckpointManifest {
   createdAtServerMillis: number
   createdByUid: string
   restoreGeneration: number
+  /**
+   * Which snapshot codec produced this checkpoint — `2` for Common-only,
+   * `3` for advanced-format. Mirrors the server-side
+   * `HouseholdCheckpointManifest.schemaVersion` (functions/src/homeEconomics/householdCheckpoint.ts),
+   * which IS populated for every checkpoint by `listHouseholdCheckpointManifests`
+   * (unlike the write/restore call *results*' `schemaVersion`, which Task 7's
+   * review flagged as decorative). Optional here only so older
+   * tests/fixtures that predate this field keep compiling.
+   */
+  schemaVersion?: 2 | 3
+  /**
+   * The `HouseholdAssignmentConfig.assignmentRevision` a v3 checkpoint was
+   * taken under. NOT currently populated by any real server response path —
+   * the server-side manifest builder does not expose it per-checkpoint yet
+   * (only the full v3 snapshot body carries it). Included here so the
+   * checkpoint modal's incompatible-restore guard is ready the moment a
+   * future server change starts populating it; until then this field is
+   * always `undefined` and the guard is a no-op, with the actual safety net
+   * remaining `restoreHouseholdCheckpointV3`'s existing server-side rejection.
+   */
+  assignmentRevision?: number
 }
 
 export interface HouseholdBulkSettlementOperationView {

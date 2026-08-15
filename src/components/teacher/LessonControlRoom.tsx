@@ -101,7 +101,11 @@ export function LessonControlRoom({
   lessonRunId,
   role,
   subject,
-  homeEconomicsCourseFormat,
+  // Kept in the public props interface for caller compatibility; no longer
+  // branched on here since Task 11 merged the Common/advanced-format
+  // HouseholdTeacherDashboard rendering into a single unconditional case
+  // (the dashboard itself now branches internally on dashboard.courseFormat).
+  homeEconomicsCourseFormat: _homeEconomicsCourseFormat,
   functions,
   firestore,
   database,
@@ -260,7 +264,7 @@ export function LessonControlRoom({
 
       <ParticipantMonitor participants={participants} expectedParticipantCount={expectedParticipantCount} />
 
-      {subject === 'HOME_ECONOMICS' && homeEconomicsCourseFormat === 'COMMON_CONDITIONS' && (
+      {subject === 'HOME_ECONOMICS' && (
         <Box component="section" aria-label="家庭科管理ダッシュボード">
           <HouseholdTeacherDashboard
             lessonRunId={lessonRunId}
@@ -268,12 +272,6 @@ export function LessonControlRoom({
             functions={functions}
           />
         </Box>
-      )}
-
-      {subject === 'HOME_ECONOMICS' && homeEconomicsCourseFormat !== 'COMMON_CONDITIONS' && (
-        <Alert severity="info">
-          このコース形式の家庭科ダッシュボード表示には未対応です（共通条件モードのみ対応）。
-        </Alert>
       )}
 
       <InterventionPanel

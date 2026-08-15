@@ -14,6 +14,11 @@ import {
   writeHouseholdCheckpoint,
   restoreHouseholdCheckpoint,
 } from '../../lib/homeEconomics/checkpoints'
+import {
+  prepareHouseholdAssignment,
+  updateHouseholdAssignment,
+  type UpdateHouseholdAssignmentInput,
+} from '../../lib/homeEconomics/householdAssignment'
 import { HouseholdTeacherDashboard as HouseholdTeacherDashboardView } from '../homeEconomics/HouseholdTeacherDashboard'
 
 export interface HouseholdTeacherDashboardProps {
@@ -142,6 +147,41 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
     }
   }
 
+  const handlePrepareAssignment = async () => {
+    setIsActionInProgress(true)
+    setError(null)
+    try {
+      await prepareHouseholdAssignment(functions, {
+        lessonRunId,
+        idempotencyKey: generateIdempotencyKey('prepare-assignment'),
+      })
+      await loadDashboard()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '割り当ての準備に失敗しました')
+    } finally {
+      setIsActionInProgress(false)
+    }
+  }
+
+  const handleUpdateAssignment = async (
+    input: Omit<UpdateHouseholdAssignmentInput, 'lessonRunId' | 'idempotencyKey'>,
+  ) => {
+    setIsActionInProgress(true)
+    setError(null)
+    try {
+      await updateHouseholdAssignment(functions, {
+        lessonRunId,
+        idempotencyKey: generateIdempotencyKey('update-assignment'),
+        ...input,
+      })
+      await loadDashboard()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '割り当ての更新に失敗しました')
+    } finally {
+      setIsActionInProgress(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-500 text-sm">
@@ -189,6 +229,8 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         onProcessIndividualRound={handleProcessIndividualRound}
         onSaveManualCheckpoint={handleSaveManualCheckpoint}
         onRestoreCheckpoint={handleRestoreCheckpoint}
+        onPrepareAssignment={handlePrepareAssignment}
+        onUpdateAssignment={handleUpdateAssignment}
         isActionInProgress={isActionInProgress}
       />
     </div>

@@ -233,7 +233,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('renders unsupported notice in control room when subject is HOME_ECONOMICS and courseFormat is not COMMON_CONDITIONS', async () => {
+  it('renders HouseholdTeacherDashboard in control room for advanced (non-COMMON_CONDITIONS) course formats too', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
     getDocMock.mockResolvedValue({
       exists: () => true,
@@ -241,12 +241,12 @@ describe('Phase B lesson platform routes (Task 17)', () => {
         orgId: 'org-1',
         teacherRoles: { 'teacher-uid': 'PRIMARY' },
         subject: 'HOME_ECONOMICS',
-        templateSnapshot: { homeEconomics: { courseFormat: 'CUSTOM_VARIANT' } },
+        templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
       }),
     })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
-    expect(await screen.findByText(/このコース形式の家庭科ダッシュボード表示には未対応です/)).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 
