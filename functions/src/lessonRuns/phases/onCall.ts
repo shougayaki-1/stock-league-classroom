@@ -89,6 +89,14 @@ const translateTransitionPhaseError = (error: unknown): unknown => {
     if (error.message.startsWith('Lesson failed start validation')) {
       return new HttpsError('failed-precondition', error.message)
     }
+    // Task 3: homeEconomics/statusTransition.ts's prepareStatusTransition
+    // throws bare Errors whose messages all start with 'HouseholdAssignment'
+    // when an advanced-format Home Economics lesson cannot be started
+    // (not prepared / stale / invalid / a broken cross-reference) — the
+    // LessonRun must not transition to RUNNING in that case.
+    if (error.message.startsWith('HouseholdAssignment')) {
+      return new HttpsError('failed-precondition', error.message)
+    }
   }
   return error
 }

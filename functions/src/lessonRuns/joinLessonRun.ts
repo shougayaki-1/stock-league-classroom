@@ -5,6 +5,20 @@ import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '..
 import { appendLessonEventInTransaction, type FirestoreTx } from './appendLessonEvent'
 import type { LessonParticipant } from './participants/repository'
 import { syncLessonRunMembershipWithAdminSdk } from './membershipMirror'
+import { assignBalancedTeam } from './teams/repository'
+import type { LessonTeam } from './teams/repository'
+
+/**
+ * Task 3: the 3 advanced Home Economics formats (ROLE_VARIANT/STAGE_SPLIT/
+ * MULTI_PERSON_PER_TEAM) pre-assign every household to a pre-existing team
+ * at freeze time (`homeEconomics/statusTransition.ts`), so a late-arriving
+ * student in one of these lessons must slot into that fixed team
+ * structure rather than getting a fresh, unassigned join the way a
+ * Social Studies (or COMMON_CONDITIONS) student would. This is the ONLY
+ * narrow exception to `JOINABLE_STATUSES` excluding RUNNING below — every
+ * other RUNNING join attempt is still rejected exactly as before.
+ */
+const ADVANCED_HOUSEHOLD_COURSE_FORMATS = new Set(['ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM'])
 
 /**
  * Statuses that a reconnect (same authUid re-entering a join code) must
@@ -191,8 +205,41 @@ export const joinLessonRun = async (
 
     const runSnap = await tx.get(`lessonRuns/${lessonRunId}`)
     if (!runSnap.exists) throw new Error('LessonRun not found')
-    const run = runSnap.data() as { orgId: string; status: string; maxParticipants?: number }
-    if (!JOINABLE_STATUSES.has(run.status)) throw new Error('LessonRun is not accepting participants')
+    const run = runSnap.data() as {
+      orgId: string
+      status: string
+      maxParticipants?: number
+      subject?: string
+      templateSnapshot?: { homeEconomics?: { courseFormat?: string } }
+    }
+
+    // Advanced-format Home Economics late-join exception (Task 3): only
+    // reached when the ordinary READY/WAITING gate above already failed.
+    // `lateJoinTeamIds` stays empty (and therefore ineligible) unless every
+    // condition holds: the run is RUNNING, it's an advanced Home Economics
+    // format, its household assignment is FROZEN, and at least one team
+    // already exists to join into.
+    let lateJoinTeamIds: TeamId[] = []
+    if (!JOINABLE_STATUSES.has(run.status)) {
+      if (
+        run.status === 'RUNNING'
+        && run.subject === 'HOME_ECONOMICS'
+        && ADVANCED_HOUSEHOLD_COURSE_FORMATS.has(run.templateSnapshot?.homeEconomics?.courseFormat ?? '')
+      ) {
+        const assignmentConfigSnap = await tx.get(`lessonRuns/${lessonRunId}/householdAssignment/config`)
+        const assignmentState = assignmentConfigSnap.exists
+          ? (assignmentConfigSnap.data() as { state?: string } | undefined)?.state
+          : undefined
+        if (assignmentState === 'FROZEN') {
+          const teamsIndexSnap = await tx.get(`lessonRuns/${lessonRunId}/meta/teamsIndex`)
+          const teamIds = teamsIndexSnap.exists
+            ? ((teamsIndexSnap.data() as { teamIds?: TeamId[] } | undefined)?.teamIds ?? [])
+            : []
+          if (teamIds.length > 0) lateJoinTeamIds = teamIds
+        }
+      }
+      if (lateJoinTeamIds.length === 0) throw new Error('LessonRun is not accepting participants')
+    }
 
     const authIndexPath = `lessonRuns/${lessonRunId}/participantsByAuthUid/${deps.authUid}`
     const authIndexSnap = await tx.get(authIndexPath)
@@ -209,6 +256,14 @@ export const joinLessonRun = async (
     // (either maxParticipants is unset, or this is a reconnect that must
     // not consume a new slot).
     let counterValueToPersist: number | undefined
+    // Only set when a brand-new participant is being late-joined into an
+    // advanced-format Home Economics lesson (`lateJoinTeamIds` above): the
+    // existing team doc (chosen via `assignBalancedTeam`, same pure
+    // load-balancing rule `assignParticipantToTeam` uses) to append this
+    // participant to and re-write with an incremented `version`. Never set
+    // for a reconnect (which reuses `existing.teamId` and never touches a
+    // team doc) and never used to create a new team.
+    let lateJoinTeam: LessonTeam | undefined
 
     if (authIndexSnap.exists) {
       const { participantId: existingParticipantId } = authIndexSnap.data() as { participantId: ParticipantId }
@@ -234,11 +289,31 @@ export const joinLessonRun = async (
         counterValueToPersist = currentCount + 1
       }
       participantId = deps.generateParticipantId()
-      teamId = undefined
       sessionVersion = 0
       joinedAt = nowValue
       isNewParticipant = true
-      newStatus = 'ACTIVE'
+
+      if (lateJoinTeamIds.length > 0) {
+        // Advanced Home Economics late-join: every household is already
+        // pinned to a pre-existing team at freeze time
+        // (homeEconomics/statusTransition.ts), so a latecomer joins one of
+        // those teams directly rather than starting unassigned — never a
+        // freshly created team.
+        const teamPaths = lateJoinTeamIds.map((id) => `lessonRuns/${lessonRunId}/teams/${id}`)
+        const teamSnaps = await Promise.all(teamPaths.map((path) => tx.get(path)))
+        const teams = teamSnaps.map((snap, index) => {
+          if (!snap.exists) throw new Error(`Team not found: ${lateJoinTeamIds[index]}`)
+          return snap.data() as unknown as LessonTeam
+        })
+        const chosenTeamId = assignBalancedTeam(teams.map((team) => ({ id: team.id, size: team.memberParticipantIds.length })))
+        lateJoinTeam = teams.find((team) => team.id === chosenTeamId)
+        if (!lateJoinTeam) throw new Error('Selected team could not be resolved')
+        teamId = lateJoinTeam.id
+        newStatus = 'LATE_JOIN'
+      } else {
+        teamId = undefined
+        newStatus = 'ACTIVE'
+      }
     }
 
     let duplicateIdentifierWarning = false
@@ -294,6 +369,14 @@ export const joinLessonRun = async (
 
     if (counterValueToPersist !== undefined) {
       tx.set(`lessonRuns/${lessonRunId}/meta/participantCounter`, { value: counterValueToPersist })
+    }
+
+    if (lateJoinTeam) {
+      tx.set(`lessonRuns/${lessonRunId}/teams/${lateJoinTeam.id}`, {
+        ...lateJoinTeam,
+        memberParticipantIds: [...lateJoinTeam.memberParticipantIds, participantId],
+        version: lateJoinTeam.version + 1,
+      })
     }
 
     const participant: LessonParticipant = {

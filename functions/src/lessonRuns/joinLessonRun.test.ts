@@ -240,4 +240,92 @@ describe('joinLessonRun', () => {
     const participant = fake.docs.get(`lessonRuns/run-1/participants/${first.participantId}`)
     expect(participant).toMatchObject({ status: 'ACTIVE' })
   })
+
+  // Task 3: advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+  // Home Economics lessons pre-pin every household to a pre-existing team
+  // at freeze time, so a late arrival must join one of THOSE teams — never
+  // get a fresh unassigned join, and never trigger creation of a new team.
+  describe('advanced Home Economics late join (RUNNING + FROZEN assignment)', () => {
+    const setUpAdvancedFrozenRun = (docs: Map<string, Record<string, unknown>>, overrides: Record<string, unknown> = {}) => {
+      docs.set('lessonJoinCodes/ABCDEF', { code: 'ABCDEF', lessonRunId: 'run-1', status: 'ACTIVE' })
+      docs.set('lessonRuns/run-1', {
+        orgId: 'org-1', status: 'RUNNING', subject: 'HOME_ECONOMICS',
+        templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
+        ...overrides,
+      })
+      docs.set('lessonRuns/run-1/householdAssignment/config', { state: 'FROZEN' })
+      docs.set('lessonRuns/run-1/meta/teamsIndex', { teamIds: ['team-a', 'team-b'] })
+      docs.set('lessonRuns/run-1/teams/team-a', {
+        id: 'team-a', lessonRunId: 'run-1', orgId: 'org-1', displayName: 'A', confirmationMode: 'ALL',
+        memberParticipantIds: ['existing-1', 'existing-2'], version: 1,
+      })
+      docs.set('lessonRuns/run-1/teams/team-b', {
+        id: 'team-b', lessonRunId: 'run-1', orgId: 'org-1', displayName: 'B', confirmationMode: 'ALL',
+        memberParticipantIds: ['existing-3'], version: 1,
+      })
+    }
+
+    it('rejects an ordinary (non-advanced / non-frozen) RUNNING join exactly as before', async () => {
+      const fake = makeFakeFirestore()
+      setUpLessonRun(fake.docs, { status: 'RUNNING' })
+      const deps = makeDeps(fake)
+      await expect(joinLessonRun(deps, baseInput())).rejects.toThrow('LessonRun is not accepting participants')
+    })
+
+    it('rejects a RUNNING join for an advanced-format lesson whose assignment is not FROZEN yet', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs)
+      fake.docs.set('lessonRuns/run-1/householdAssignment/config', { state: 'DRAFT' })
+      const deps = makeDeps(fake)
+      await expect(joinLessonRun(deps, baseInput())).rejects.toThrow('LessonRun is not accepting participants')
+    })
+
+    it('rejects a RUNNING join for a FROZEN advanced-format lesson that has no teams yet', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs)
+      fake.docs.set('lessonRuns/run-1/meta/teamsIndex', { teamIds: [] })
+      const deps = makeDeps(fake)
+      await expect(joinLessonRun(deps, baseInput())).rejects.toThrow('LessonRun is not accepting participants')
+    })
+
+    it('rejects a RUNNING join for COMMON_CONDITIONS (not one of the 3 advanced formats) even if somehow FROZEN', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs, { templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS' } } })
+      const deps = makeDeps(fake)
+      await expect(joinLessonRun(deps, baseInput())).rejects.toThrow('LessonRun is not accepting participants')
+    })
+
+    it('allows a new participant to late-join into the least-full existing team, tagged LATE_JOIN, and never creates a new team', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs)
+      const deps = makeDeps(fake)
+
+      const result = await joinLessonRun(deps, baseInput())
+
+      expect(result.teamId).toBe('team-b') // team-b has 1 member, team-a has 2 — balanced pick
+      const participant = fake.docs.get(`lessonRuns/run-1/participants/${result.participantId}`)
+      expect(participant).toMatchObject({ status: 'LATE_JOIN', teamId: 'team-b' })
+      const teamB = fake.docs.get('lessonRuns/run-1/teams/team-b') as { memberParticipantIds: string[]; version: number }
+      expect(teamB.memberParticipantIds).toContain(result.participantId)
+      expect(teamB.version).toBe(2)
+      const teamA = fake.docs.get('lessonRuns/run-1/teams/team-a') as { memberParticipantIds: string[] }
+      expect(teamA.memberParticipantIds).not.toContain(result.participantId)
+      expect(fake.docs.has('lessonRuns/run-1/teams/new-team')).toBe(false)
+      expect(deps.syncMembership).toHaveBeenCalledWith(expect.objectContaining({ teamId: 'team-b', status: 'LATE_JOIN' }))
+    })
+
+    it('is idempotent: replaying the same late-join idempotencyKey does not double-append the participant to the team', async () => {
+      const fake = makeFakeFirestore()
+      setUpAdvancedFrozenRun(fake.docs)
+      const deps = makeDeps(fake)
+
+      const first = await joinLessonRun(deps, baseInput({ idempotencyKey: 'late-1' }))
+      const second = await joinLessonRun(deps, baseInput({ idempotencyKey: 'late-1' }))
+
+      expect(second.deduplicated).toBe(true)
+      expect(second.participantId).toBe(first.participantId)
+      const teamB = fake.docs.get('lessonRuns/run-1/teams/team-b') as { memberParticipantIds: string[] }
+      expect(teamB.memberParticipantIds.filter((id) => id === first.participantId)).toHaveLength(1)
+    })
+  })
 })

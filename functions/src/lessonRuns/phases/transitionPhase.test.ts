@@ -4,17 +4,22 @@ import { transitionPhase } from './transitionPhase'
 // Same fake as teams/assignTeam.test.ts / joinLessonRun.test.ts: enforces
 // Firestore Admin SDK's "all reads before all writes" transaction
 // constraint so a Task-3-Critical-#1-style ordering bug fails a test
-// instead of only failing in production.
+// instead of only failing in production. `getCollection` is included so
+// Task 3's `prepareStatusTransition` hook tests (below) can exercise a
+// subcollection read within the same read-before-write discipline.
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
+  const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
   const reads: string[] = []
   const deletes: string[] = []
   return {
     docs,
+    collections,
     reads,
     deletes,
     runTransaction: async <T>(fn: (tx: {
       get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      getCollection: (path: string) => Promise<Array<{ id: string; data: Record<string, unknown> }>>
       set: (path: string, data: Record<string, unknown>) => void
       delete: (path: string) => void
     }) => Promise<T>) => {
@@ -24,6 +29,11 @@ const makeFakeFirestore = () => {
           if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
           reads.push(path)
           return { exists: docs.has(path), data: () => docs.get(path) }
+        },
+        getCollection: async (path: string) => {
+          if (written) throw new Error('Firestore transactions require all reads to be executed before all writes.')
+          reads.push(path)
+          return collections.get(path) ?? []
         },
         set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
         delete: (path: string) => { written = true; deletes.push(path); docs.delete(path) },
@@ -474,6 +484,148 @@ describe('transitionPhase', () => {
       })).rejects.toThrow()
 
       expect(publishResearchDeskProjection).not.toHaveBeenCalled()
+    })
+  })
+
+  // Task 3: the generic `prepareStatusTransition`/`afterStatusTransition`
+  // hook slots themselves — the household-specific logic they carry in
+  // production lives in homeEconomics/statusTransition.test.ts; these tests
+  // only verify the GENERIC engine's contract (when the hook runs, that its
+  // reads happen inside the read phase, that its returned writes commit
+  // atomically with LessonRun.status, and that the post-commit hook fires
+  // even on a deduplicated replay).
+  describe('prepareStatusTransition / afterStatusTransition hooks', () => {
+    it('calls prepareStatusTransition (read-phase, before any write) and commits its returned writes atomically with LessonRun.status', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const callOrder: string[] = []
+      const prepareStatusTransition = vi.fn(async (
+        tx: Parameters<NonNullable<Parameters<typeof transitionPhase>[0]['prepareStatusTransition']>>[0],
+        input: Parameters<NonNullable<Parameters<typeof transitionPhase>[0]['prepareStatusTransition']>>[1],
+      ) => {
+        callOrder.push('prepare')
+        // Exercise a getCollection read to prove it is legal here (still
+        // inside the read phase — no write has happened yet in this
+        // transaction).
+        await tx.getCollection?.('lessonRuns/run-1/someCollection')
+        expect(input.targetStatus).toBe('RUNNING')
+        return { writes: [{ path: 'lessonRuns/run-1/householdRuntime/control', data: { roundStatus: 'OPEN' } }] }
+      })
+      const writeCheckpoint = vi.fn(async () => { callOrder.push('checkpoint'); return { checkpointId: 'cp-1', deduplicated: false } })
+
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-hook-1' })
+
+      expect(result.status).toBe('RUNNING')
+      expect(prepareStatusTransition).toHaveBeenCalledTimes(1)
+      expect(callOrder).toEqual(['prepare', 'checkpoint'])
+      const control = fake.docs.get('lessonRuns/run-1/householdRuntime/control')
+      expect(control).toEqual({ roundStatus: 'OPEN' })
+      // The prepared write and the LessonRun status write must both be
+      // present after the SAME transaction — proving they committed
+      // atomically together (this fake only ever has one runTransaction
+      // call for a non-replayed request, so both existing is sufficient
+      // evidence they were part of the same commit).
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.status).toBe('RUNNING')
+    })
+
+    it('does not call prepareStatusTransition for a phase-only transition', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'RUNNING', currentPhaseId: 'phase-a' })
+      const prepareStatusTransition = vi.fn().mockResolvedValue(null)
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(), prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetPhaseId: 'phase-b', reason: '次のフェーズへ', idempotencyKey: 'tx-hook-2' })
+
+      expect(prepareStatusTransition).not.toHaveBeenCalled()
+    })
+
+    it('applies no extra writes when prepareStatusTransition returns null', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const prepareStatusTransition = vi.fn().mockResolvedValue(null)
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-hook-3' })
+
+      expect(result.status).toBe('RUNNING')
+      expect(fake.docs.has('lessonRuns/run-1/householdRuntime/control')).toBe(false)
+    })
+
+    it('a failed transaction (e.g. prepareStatusTransition throws) never commits the LessonRun.status write either', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const prepareStatusTransition = vi.fn().mockRejectedValue(new Error('HouseholdAssignment is not ready to start: X'))
+
+      await expect(transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(), prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-hook-4' }))
+        .rejects.toThrow('HouseholdAssignment is not ready to start')
+
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.status).toBe('WAITING')
+    })
+
+    it('invokes afterStatusTransition post-commit, exactly once, with the transition result', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const afterStatusTransition = vi.fn().mockResolvedValue(undefined)
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, afterStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'tx-hook-5' })
+
+      expect(afterStatusTransition).toHaveBeenCalledTimes(1)
+      expect(afterStatusTransition).toHaveBeenCalledWith({ lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: false })
+    })
+
+    // Brief requirement: afterStatusTransition must fire even when the
+    // transition itself is a deduplicated idempotency replay, so a
+    // post-commit side effect (e.g. a future RTDB repair write) that failed
+    // on a prior attempt remains retryable.
+    it('invokes afterStatusTransition on a deduplicated replay too, with deduplicated: true', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'WAITING' })
+      const afterStatusTransition = vi.fn().mockResolvedValue(undefined)
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+      const deps = { firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, afterStatusTransition }
+      const input = { lessonRunId: 'run-1', targetStatus: 'RUNNING' as const, reason: '開始', idempotencyKey: 'tx-hook-6' }
+
+      await transitionPhase(deps, input)
+      await transitionPhase(deps, input)
+
+      expect(afterStatusTransition).toHaveBeenCalledTimes(2)
+      expect(afterStatusTransition).toHaveBeenNthCalledWith(2, { lessonRunId: 'run-1', targetStatus: 'RUNNING', deduplicated: true })
+    })
+
+    // Regression (brief): PAUSED -> RUNNING must never re-freeze the
+    // household assignment or reset its runtime control — only the very
+    // first WAITING -> RUNNING start does. This is verified at the generic
+    // engine level: prepareStatusTransition is called on the resume too
+    // (the engine has no opinion on WHEN the hook applies), but a
+    // household-aware hook (see homeEconomics/statusTransition.test.ts) is
+    // expected to return null for it, so no writes get applied.
+    it('still calls prepareStatusTransition on PAUSED -> RUNNING (a resume), leaving it to the hook to decide whether to act', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'PAUSED', startedAt: '2026-08-15T09:00:00Z' })
+      const prepareStatusTransition = vi.fn().mockResolvedValue(null)
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'RUNNING', reason: '再開', idempotencyKey: 'tx-hook-7' })
+
+      expect(result.status).toBe('RUNNING')
+      expect(prepareStatusTransition).toHaveBeenCalledTimes(1)
+      const [, hookInput] = prepareStatusTransition.mock.calls[0]
+      expect((hookInput as { run: { startedAt: unknown } }).run.startedAt).toBe('2026-08-15T09:00:00Z')
+      expect(fake.docs.has('lessonRuns/run-1/householdRuntime/control')).toBe(false)
     })
   })
 })

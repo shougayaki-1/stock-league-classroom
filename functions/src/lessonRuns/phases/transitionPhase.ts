@@ -1,10 +1,25 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../../lib/idempotency'
-import { appendLessonEventInTransaction, type FirestoreTx } from '../appendLessonEvent'
+import { appendLessonEventInTransaction, type FirestoreTx as BaseFirestoreTx } from '../appendLessonEvent'
 import { writeCheckpointWithAdminSdk } from '../checkpoint'
 import { quotaReservationDocumentPath } from '../../organizations/parentOrgQuotaFirestore'
 import { canTransitionRun, type LessonRunStatus } from './stateMachine'
 import { validateLessonForStart, type LessonForStartValidation } from './validation'
+
+/**
+ * Local superset of `appendLessonEvent.ts`'s `FirestoreTx`, adding an
+ * OPTIONAL `getCollection` so `prepareStatusTransition` hooks (Task 3,
+ * `homeEconomics/statusTransition.ts`) can read a subcollection (the
+ * household assignment's `entries`) entirely within the transaction's READ
+ * PHASE. Deliberately kept local to this file rather than added to the
+ * shared base `FirestoreTx` — no other consumer of that shared type needs
+ * it, and because it's optional, every existing base-`FirestoreTx` value
+ * (every other admin-sdk wiring site, every existing test fake) remains
+ * structurally assignable to this type unchanged.
+ */
+export interface FirestoreTx extends BaseFirestoreTx {
+  getCollection?: (path: string) => Promise<Array<{ id: string; data: Record<string, unknown> }>>
+}
 
 export interface TransitionPhaseInput {
   lessonRunId: string
@@ -31,6 +46,10 @@ export interface WriteCheckpointFn {
   }): Promise<{ checkpointId: string; deduplicated: boolean }>
 }
 
+export interface StatusTransitionPreparation {
+  writes: Array<{ path: string; data: Record<string, unknown> }>
+}
+
 export interface TransitionPhaseDeps {
   firestore: { runTransaction: <T>(fn: (tx: FirestoreTx) => Promise<T>) => Promise<T> }
   actorId: string
@@ -45,6 +64,45 @@ export interface TransitionPhaseDeps {
    * active-operations concept to stop yet.
    */
   stopActiveOperations?: (lessonRunId: string) => Promise<void>
+  /**
+   * Subject-adapter hook (Task 3, homeEconomics/statusTransition.ts is the
+   * real production implementation). Called once per status transition
+   * (i.e. only when `input.targetStatus` is given), inside the transaction's
+   * READ PHASE, AFTER every read this function performs on its own but
+   * BEFORE any of this function's own `tx.set` calls. Must perform ONLY
+   * reads and return the writes to apply — it must never call `tx.set`
+   * itself, so its own reads stay legal within the same
+   * all-reads-before-all-writes transaction this function's caller
+   * participates in. Returning `null` means "nothing to do for this
+   * transition" (e.g. not the specific subject/format/first-start case the
+   * hook cares about) — no extra writes are applied. Defaults to undefined
+   * (no hook), so every transition works exactly as before when unset.
+   */
+  prepareStatusTransition?: (
+    tx: FirestoreTx,
+    input: {
+      lessonRunId: string
+      run: Record<string, unknown>
+      targetStatus: LessonRunStatus
+      actorId: string
+      nowValue: unknown
+    },
+  ) => Promise<StatusTransitionPreparation | null>
+  /**
+   * Subject-adapter hook, post-commit counterpart to `prepareStatusTransition`.
+   * Runs strictly AFTER the Firestore transaction commits (never inside
+   * it — matching `writeCheckpoint`'s "Firestore commit before any
+   * side-effect" ordering, e.g. for a future RTDB projection write that
+   * cannot participate in a Firestore transaction). Invoked even when the
+   * transition was deduplicated (idempotent replay), so a post-commit
+   * side effect that failed on a prior attempt remains retryable by simply
+   * replaying the same request.
+   */
+  afterStatusTransition?: (input: {
+    lessonRunId: string
+    targetStatus?: LessonRunStatus
+    deduplicated: boolean
+  }) => Promise<void>
   /**
    * Injected so tests can fake it; production wiring
    * (`transitionPhaseWithAdminSdk` below) supplies `writeCheckpointWithAdminSdk`.
@@ -230,6 +288,23 @@ export const transitionPhase = async (
       }
     }
 
+    // Subject-adapter READ: must run before any write below, and must
+    // itself perform only reads (see the JSDoc on
+    // `TransitionPhaseDeps.prepareStatusTransition`). Only invoked for a
+    // status transition (never a phase-only move) — the hook's own
+    // `targetStatus` parameter is non-optional, matching that constraint.
+    let preparedWrites: StatusTransitionPreparation['writes'] = []
+    if (input.targetStatus && deps.prepareStatusTransition) {
+      const preparation = await deps.prepareStatusTransition(tx, {
+        lessonRunId: input.lessonRunId,
+        run,
+        targetStatus: input.targetStatus,
+        actorId: deps.actorId,
+        nowValue,
+      })
+      if (preparation) preparedWrites = preparation.writes
+    }
+
     const newStatus = input.targetStatus ?? run.status
     const newPhaseId = input.targetPhaseId ?? run.currentPhaseId
 
@@ -274,6 +349,7 @@ export const transitionPhase = async (
       if (!tx.delete) throw new Error('Firestore transaction delete is required for terminal quota release')
       tx.delete(quotaReservationPathToDelete)
     }
+    for (const write of preparedWrites) tx.set(write.path, write.data)
     tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId, startedAt, endedAt })
     const stored: StoredTransition = { requestDigest, status: newStatus, currentPhaseId: newPhaseId, sequence: lastSequence }
     tx.set(idempotencyPath, stored as unknown as Record<string, unknown>)
@@ -300,15 +376,43 @@ export const transitionPhase = async (
     await deps.publishResearchDeskProjection(input.lessonRunId)
   }
 
+  // Post-commit subject-adapter hook. Fires even on a deduplicated replay
+  // (see its JSDoc) — `outcome` is populated identically on both paths.
+  if (deps.afterStatusTransition) {
+    await deps.afterStatusTransition({
+      lessonRunId: input.lessonRunId,
+      targetStatus: input.targetStatus,
+      deduplicated: outcome.deduplicated,
+    })
+  }
+
   return { status: outcome.status, currentPhaseId: outcome.currentPhaseId, deduplicated: outcome.deduplicated }
 }
 
-/** Production wiring: Firestore Admin SDK transaction + real checkpoint writer. `stopActiveOperations` is left unset (no-op) — Phase C/D will pass their own implementation once the market/home-economics engines exist. */
+/**
+ * Production wiring: Firestore Admin SDK transaction + real checkpoint
+ * writer. `stopActiveOperations` is left unset (no-op) — Phase C/D will
+ * pass their own implementation once the market/home-economics engines
+ * exist.
+ *
+ * `prepareStatusTransition`/`afterStatusTransition` are wired
+ * UNCONDITIONALLY to `homeEconomics/statusTransition.ts`'s implementations
+ * rather than gated here by subject — this function only has
+ * `input.lessonRunId` at wiring time, and reading the run doc up front just
+ * to decide whether to attach the hook would duplicate the read
+ * `transitionPhase`'s own transaction already does. Instead,
+ * `prepareStatusTransition` self-gates on the `run` document it receives
+ * (`run.subject !== 'HOME_ECONOMICS'` -> returns `null` immediately, no
+ * extra reads) — see that module's JSDoc. A Social Studies (or
+ * COMMON_CONDITIONS Home Economics) transition therefore still only ever
+ * costs one extra `if` check, never an extra Firestore read.
+ */
 export const transitionPhaseWithAdminSdk = async (
   input: TransitionPhaseInput & { actorId: string; actorType?: 'TEACHER' | 'SYSTEM' },
 ): Promise<TransitionPhaseResult> => {
   const db = getFirestore()
   const { publishResearchDeskProjectionWithAdminSdk } = await import('../../market/researchDeskProjection')
+  const { prepareStatusTransition, afterStatusTransition } = await import('../../homeEconomics/statusTransition')
   const { actorId, actorType, ...rest } = input
   return transitionPhase({
     firestore: {
@@ -316,12 +420,18 @@ export const transitionPhaseWithAdminSdk = async (
         get: async (path) => { const snap = await tx.get(db.doc(path)); return { exists: snap.exists, data: () => snap.data() } },
         set: (path, data) => { tx.set(db.doc(path), data) },
         delete: (path) => { tx.delete(db.doc(path)) },
+        getCollection: async (path) => {
+          const snap = await tx.get(db.collection(path))
+          return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }))
+        },
       })),
     },
     actorId,
     actorType,
     writeCheckpoint: writeCheckpointWithAdminSdk,
     publishResearchDeskProjection: publishResearchDeskProjectionWithAdminSdk,
+    prepareStatusTransition,
+    afterStatusTransition,
   }, rest)
 }
 
