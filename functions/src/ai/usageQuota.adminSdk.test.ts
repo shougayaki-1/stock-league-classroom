@@ -29,8 +29,9 @@ vi.mock('firebase-admin/firestore', () => ({
 
 vi.mock('../organizations/planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
 
+import { getFirestore } from 'firebase-admin/firestore'
 import { getOrgPlanLimitsWithAdminSdk } from '../organizations/planLimits'
-import { getAiUsageQuotaDepsWithAdminSdk } from './usageQuota'
+import { getAiUsageQuotaDepsWithAdminSdk, readAiUsageCount } from './usageQuota'
 
 const nowMillis = () => Date.parse('2026-01-01T02:00:00Z') // JST 2026-01-01T11:00:00
 
@@ -83,5 +84,20 @@ describe('getAiUsageQuotaDepsWithAdminSdk', () => {
       'organizations/org-1/aiUsageCounters/2026-01-01',
       'organizations/org-1/aiUsageCounters/2026-01',
     ])
+  })
+})
+
+describe('readAiUsageCount', () => {
+  beforeEach(() => { documents.clear(); setCalls.length = 0 })
+
+  it('returns 0 when the counter document does not exist', async () => {
+    const db = getFirestore()
+    await expect(readAiUsageCount(db, 'org-1', '2026-01-01')).resolves.toBe(0)
+  })
+
+  it('returns the stored count field', async () => {
+    documents.set('organizations/org-1/aiUsageCounters/2026-01-01', { count: 3 })
+    const db = getFirestore()
+    await expect(readAiUsageCount(db, 'org-1', '2026-01-01')).resolves.toBe(3)
   })
 })

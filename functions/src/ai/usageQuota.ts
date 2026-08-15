@@ -1,4 +1,4 @@
-import { FieldValue, getFirestore } from 'firebase-admin/firestore'
+import { FieldValue, getFirestore, type Firestore } from 'firebase-admin/firestore'
 import { getOrgPlanLimitsWithAdminSdk } from '../organizations/planLimits'
 
 export interface AiUsageQuotaDeps {
@@ -50,10 +50,6 @@ export const monthlyKey = (millis: number): string => dailyKey(millis).slice(0, 
 export const getAiUsageQuotaDepsWithAdminSdk = (nowMillis: () => number = Date.now): AiUsageQuotaDeps => {
   const db = getFirestore()
   const counterDoc = (orgId: string, key: string) => db.doc(`organizations/${orgId}/aiUsageCounters/${key}`)
-  const readCount = async (orgId: string, key: string): Promise<number> => {
-    const snap = await counterDoc(orgId, key).get()
-    return snap.exists ? ((snap.get('count') as number | undefined) ?? 0) : 0
-  }
   return {
     isKillSwitchEnabled: async () => {
       const snap = await db.doc('systemConfig/aiKillSwitch').get()
@@ -68,9 +64,15 @@ export const getAiUsageQuotaDepsWithAdminSdk = (nowMillis: () => number = Date.n
       const monthly = Number.isFinite(limits.aiCredits) ? limits.aiCredits : 0
       return { daily, monthly }
     },
-    getDailyCount: (orgId) => readCount(orgId, dailyKey(nowMillis())),
-    getMonthlyCount: (orgId) => readCount(orgId, monthlyKey(nowMillis())),
+    getDailyCount: (orgId) => readAiUsageCount(db, orgId, dailyKey(nowMillis())),
+    getMonthlyCount: (orgId) => readAiUsageCount(db, orgId, monthlyKey(nowMillis())),
     incrementDailyCount: async (orgId) => { await counterDoc(orgId, dailyKey(nowMillis())).set({ count: FieldValue.increment(1) }, { merge: true }) },
     incrementMonthlyCount: async (orgId) => { await counterDoc(orgId, monthlyKey(nowMillis())).set({ count: FieldValue.increment(1) }, { merge: true }) },
   }
+}
+
+/** organizations/{orgId}/aiUsageCounters/{key} の count フィールドを読む(未作成なら0)。ダッシュボード集計からも再利用する。 */
+export const readAiUsageCount = async (db: Firestore, orgId: string, key: string): Promise<number> => {
+  const snap = await db.doc(`organizations/${orgId}/aiUsageCounters/${key}`).get()
+  return snap.exists ? ((snap.get('count') as number | undefined) ?? 0) : 0
 }
