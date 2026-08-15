@@ -55,28 +55,38 @@ const requireTeamMembership = async (lessonRunId: string, teamId: string, actorP
   }
 }
 
-/**
- * Admin SDK implementation of `SubmitOrderDeps['isMarketAcceptingOrders']`
- * (spec §12.25). `marketPaused` does not exist on `LessonRun` yet (added by
- * Task 11's pause/resume Callable) — its absence must read as "not paused",
- * hence `marketPaused !== true` rather than a truthiness check.
- */
-const isMarketAcceptingOrdersWithAdminSdk = async (lessonRunId: string): Promise<boolean> => {
-  const snap = await getFirestore().doc(`lessonRuns/${lessonRunId}`).get()
-  if (!snap.exists) return false
-  const data = snap.data() as { status?: string; marketPaused?: boolean }
-  return data.status === 'RUNNING' && data.marketPaused !== true
-}
-
-interface SubmitOrderRequest {
+export interface SubmitOrderRequest {
   lessonRunId: string
-  batchId: string
   teamId: string
   stockId: string
   side: 'BUY' | 'SELL'
   quantity: number
-  referencePrice: number
   idempotencyKey: string
+}
+
+export interface SubmitOrderCallableDeps {
+  resolveActorParticipantId: (lessonRunId: string, authUid: string) => Promise<string>
+  requireTeamMembership: (lessonRunId: string, teamId: string, actorParticipantId: string) => Promise<void>
+  getLessonRun: (lessonRunId: string) => Promise<{
+    status?: string
+    marketPaused?: boolean
+    currentPhaseId?: string | null
+    nextBatchId?: string | null
+    templateSnapshot?: { phases?: Array<{ id: string; phaseType: string }> }
+  } | null>
+  getStockPrice: (lessonRunId: string, stockId: string) => Promise<number | null>
+  getOrInitTeamAccount: (input: { lessonRunId: string; teamId: string }) => Promise<void>
+  submitOrderFn: (input: {
+    lessonRunId: string
+    batchId: string
+    teamId: string
+    stockId: string
+    side: 'BUY' | 'SELL'
+    quantity: number
+    referencePrice: number
+    idempotencyKey: string
+    actorParticipantId: string
+  }) => Promise<{ orderId: string; created: boolean }>
 }
 
 /**
@@ -95,54 +105,146 @@ const translateSubmitOrderError = (error: unknown): unknown => {
   return error
 }
 
-/** Student-facing order submission Callable — spec §12.13/§12.16/§12.25. */
-export const submitOrderCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+export const handleSubmitOrder = async (
+  request: { auth?: { uid: string } | null; data: unknown },
+  deps: SubmitOrderCallableDeps,
+): Promise<{ orderId: string; created: boolean }> => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
   const data = request.data as SubmitOrderRequest
   if (
-    !data.lessonRunId || !data.batchId || !data.teamId || !data.stockId
-    || (data.side !== 'BUY' && data.side !== 'SELL')
-    || !data.quantity || data.quantity <= 0
-    || !data.referencePrice || data.referencePrice <= 0
-    || !data.idempotencyKey
+    !data ||
+    !data.lessonRunId ||
+    !data.teamId ||
+    !data.stockId ||
+    (data.side !== 'BUY' && data.side !== 'SELL') ||
+    typeof data.quantity !== 'number' ||
+    data.quantity <= 0 ||
+    !Number.isInteger(data.quantity) ||
+    !data.idempotencyKey
   ) {
-    throw new HttpsError('invalid-argument', 'lessonRunId、batchId、teamId、stockId、side、quantity、referencePrice、idempotencyKey は必須です。')
+    throw new HttpsError(
+      'invalid-argument',
+      'lessonRunId、teamId、stockId、side、quantity(正の整数)、idempotencyKey は必須です。',
+    )
   }
 
-  const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
-  await requireTeamMembership(data.lessonRunId, data.teamId, actorParticipantId)
+  const actorParticipantId = await deps.resolveActorParticipantId(data.lessonRunId, request.auth.uid)
+  await deps.requireTeamMembership(data.lessonRunId, data.teamId, actorParticipantId)
 
-  // Ensures the team's ledger exists before the soft lock reads it —
-  // no-op if it was already initialized by an earlier order.
-  await getOrInitTeamAccount({
-    firestore: teamAccountsRepositoryWithAdminSdk(), lessonRunId: data.lessonRunId,
-    teamId: data.teamId, startingCash: DEFAULT_STARTING_CASH, now: Date.now,
+  const run = await deps.getLessonRun(data.lessonRunId)
+  if (!run || run.status !== 'RUNNING' || run.marketPaused === true) {
+    throw new HttpsError('failed-precondition', '市場は停止中です。新規注文は受け付けられません。')
+  }
+
+  const currentPhase = run.currentPhaseId && run.templateSnapshot?.phases
+    ? run.templateSnapshot.phases.find((p) => p.id === run.currentPhaseId)
+    : undefined
+
+  if (!currentPhase || currentPhase.phaseType !== 'MARKET') {
+    throw new HttpsError('failed-precondition', '市場フェーズ中のみ注文できます。')
+  }
+
+  if (!run.nextBatchId) {
+    throw new HttpsError('failed-precondition', '受付中のバッチがありません。')
+  }
+
+  const currentPrice = await deps.getStockPrice(data.lessonRunId, data.stockId)
+  if (currentPrice == null || currentPrice <= 0) {
+    throw new HttpsError('failed-precondition', '株式情報が見つかりません。')
+  }
+
+  await deps.getOrInitTeamAccount({
+    lessonRunId: data.lessonRunId,
+    teamId: data.teamId,
   })
 
-  // Read once up front (submitOrder's isMarketAcceptingOrders is
-  // synchronous by design, so it can be trivially faked in submitOrder's
-  // own unit tests) rather than threading an async check through the DI.
-  const marketAcceptingOrders = await isMarketAcceptingOrdersWithAdminSdk(data.lessonRunId)
-
   try {
-    return await submitOrder({
-      isMarketAcceptingOrders: () => marketAcceptingOrders,
-      applySoftLock: (input) => applySoftLockForNewOrder({
-        firestore: teamAccountsRepositoryWithAdminSdk(),
-        lessonRunId: input.lessonRunId, teamId: input.teamId, side: input.side,
-        stockId: input.stockId, quantity: input.quantity, referencePrice: input.referencePrice, now: Date.now,
-      }),
-      createOrder: (input) => createPendingOrder({
-        firestore: ordersRepositoryWithAdminSdk(), lessonRunId: input.lessonRunId, batchId: input.batchId,
-        teamId: input.teamId, participantId: actorParticipantId, stockId: input.stockId, side: input.side,
-        quantity: input.quantity, referencePrice: input.referencePrice, idempotencyKey: input.idempotencyKey, now: Date.now,
-      }),
-      lessonRunId: data.lessonRunId, batchId: data.batchId, teamId: data.teamId, stockId: data.stockId,
-      side: data.side, quantity: data.quantity, referencePrice: data.referencePrice, idempotencyKey: data.idempotencyKey,
+    return await deps.submitOrderFn({
+      lessonRunId: data.lessonRunId,
+      batchId: run.nextBatchId,
+      teamId: data.teamId,
+      stockId: data.stockId,
+      side: data.side,
+      quantity: data.quantity,
+      referencePrice: currentPrice,
+      idempotencyKey: data.idempotencyKey,
+      actorParticipantId,
     })
   } catch (error) {
     throw translateSubmitOrderError(error)
   }
+}
+
+/** Student-facing order submission Callable — spec §12.13/§12.16/§12.25. */
+export const submitOrderCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  const db = getFirestore()
+  return handleSubmitOrder(request, {
+    resolveActorParticipantId,
+    requireTeamMembership,
+    getLessonRun: async (lessonRunId) => {
+      const snap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+      if (!snap.exists) return null
+      return snap.data() as {
+        status?: string
+        marketPaused?: boolean
+        currentPhaseId?: string | null
+        nextBatchId?: string | null
+        templateSnapshot?: { phases?: Array<{ id: string; phaseType: string }> }
+      }
+    },
+    getStockPrice: async (lessonRunId, stockId) => {
+      const snap = await db.doc(`lessonRuns/${lessonRunId}/stocks/${stockId}`).get()
+      if (!snap.exists) return null
+      const data = snap.data() as { currentPrice?: number }
+      return typeof data.currentPrice === 'number' ? data.currentPrice : null
+    },
+    getOrInitTeamAccount: async ({ lessonRunId, teamId }) => {
+      await getOrInitTeamAccount({
+        firestore: teamAccountsRepositoryWithAdminSdk(),
+        lessonRunId,
+        teamId,
+        startingCash: DEFAULT_STARTING_CASH,
+        now: Date.now,
+      })
+    },
+    submitOrderFn: (input) =>
+      submitOrder({
+        isMarketAcceptingOrders: () => true,
+        applySoftLock: (lockInput) =>
+          applySoftLockForNewOrder({
+            firestore: teamAccountsRepositoryWithAdminSdk(),
+            lessonRunId: lockInput.lessonRunId,
+            teamId: lockInput.teamId,
+            side: lockInput.side,
+            stockId: lockInput.stockId,
+            quantity: lockInput.quantity,
+            referencePrice: lockInput.referencePrice,
+            now: Date.now,
+          }),
+        createOrder: (orderInput) =>
+          createPendingOrder({
+            firestore: ordersRepositoryWithAdminSdk(),
+            lessonRunId: orderInput.lessonRunId,
+            batchId: orderInput.batchId,
+            teamId: orderInput.teamId,
+            participantId: input.actorParticipantId,
+            stockId: orderInput.stockId,
+            side: orderInput.side,
+            quantity: orderInput.quantity,
+            referencePrice: orderInput.referencePrice,
+            idempotencyKey: orderInput.idempotencyKey,
+            now: Date.now,
+          }),
+        lessonRunId: input.lessonRunId,
+        batchId: input.batchId,
+        teamId: input.teamId,
+        stockId: input.stockId,
+        side: input.side,
+        quantity: input.quantity,
+        referencePrice: input.referencePrice,
+        idempotencyKey: input.idempotencyKey,
+      }),
+  })
 })
 
 interface CancelOrderRequest {

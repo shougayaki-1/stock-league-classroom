@@ -16,14 +16,14 @@ describe('submitOrder (client)', () => {
     const functions = {} as Functions
 
     const result = await submitOrder(functions, {
-      lessonRunId: 'run-1', batchId: 'batch-3', teamId: 'team-a', stockId: 'acme',
-      side: 'BUY', quantity: 5, referencePrice: 1000, idempotencyKey: 'idem-1',
+      lessonRunId: 'run-1', teamId: 'team-a', stockId: 'acme',
+      side: 'BUY', quantity: 5, idempotencyKey: 'idem-1',
     })
 
     expect(httpsCallable).toHaveBeenCalledWith(functions, 'submitOrderCallable')
     expect(callable).toHaveBeenCalledWith({
-      lessonRunId: 'run-1', batchId: 'batch-3', teamId: 'team-a', stockId: 'acme',
-      side: 'BUY', quantity: 5, referencePrice: 1000, idempotencyKey: 'idem-1',
+      lessonRunId: 'run-1', teamId: 'team-a', stockId: 'acme',
+      side: 'BUY', quantity: 5, idempotencyKey: 'idem-1',
     })
     expect(result).toEqual({ orderId: 'order-1', created: true })
   })

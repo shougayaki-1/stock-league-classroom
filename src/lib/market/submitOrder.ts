@@ -2,12 +2,10 @@ import { httpsCallable, type Functions } from 'firebase/functions'
 
 export interface SubmitOrderInput {
   lessonRunId: string
-  batchId: string
   teamId: string
   stockId: string
   side: 'BUY' | 'SELL'
   quantity: number
-  referencePrice: number
   idempotencyKey: string
 }
 
