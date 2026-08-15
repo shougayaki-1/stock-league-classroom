@@ -79,6 +79,13 @@ describe('organization membership Firestore rules', () => {
     await assertFails(setDoc(doc(owner, 'users', 'teacher-a'), { personalOrgId: 'personal_teacher-a' }))
   })
 
+  it('rejects a client attempt to set studentDataRetentionPolicy directly (must go through setStudentDataRetentionPolicyCallable)', async () => {
+    const owner = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+    await assertFails(updateDoc(doc(owner, 'organizations', 'personal_teacher-a'), {
+      studentDataRetentionPolicy: { retentionDays: 365, setByUid: 'teacher-a' },
+    }))
+  })
+
   it('lets a suspended member read their own membership status', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'suspended', membershipVersion: 2 })

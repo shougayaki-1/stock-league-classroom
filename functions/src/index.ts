@@ -28,6 +28,7 @@ export {
   linkSchoolToParentOrgCallable,
   unlinkSchoolFromParentOrgCallable,
   listChildSchoolsCallable,
+  setStudentDataRetentionPolicyCallable,
 } from './organizations/onCall'
 
 export {

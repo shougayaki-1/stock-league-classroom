@@ -15,6 +15,7 @@ import {
   createParentOrgCallable,
   linkSchoolToParentOrgCallable,
   listChildSchoolsCallable,
+  setStudentDataRetentionPolicyCallable,
   unlinkSchoolFromParentOrgCallable,
 } from './onCall'
 import type { CallableRequest } from 'firebase-functions/v2/https'
@@ -53,7 +54,11 @@ vi.mock('./parentOrg', () => ({ createParentOrgWithAdminSdk: vi.fn() }))
 vi.mock('./schoolHierarchy', () => ({ linkSchoolToParentOrgWithAdminSdk: vi.fn(), unlinkSchoolFromParentOrgWithAdminSdk: vi.fn(), listChildSchoolsWithAdminSdk: vi.fn() }))
 
 const docGetMock = vi.fn()
-vi.mock('firebase-admin/firestore', () => ({ getFirestore: () => ({ doc: () => ({ get: docGetMock }) }) }))
+const docUpdateMock = vi.fn()
+vi.mock('firebase-admin/firestore', () => ({
+  FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
+  getFirestore: () => ({ doc: () => ({ get: docGetMock, update: docUpdateMock }) }),
+}))
 
 const teacher = {
   uid: 'teacher-1',
@@ -460,4 +465,50 @@ describe('changeOrgMemberRoleCallable', () => {
     await expect(changeOrgMemberRoleCallable.run(request)).resolves.toBeUndefined()
   })
 })
+
+describe('setStudentDataRetentionPolicyCallable', () => {
+  const makeRequest = ({ uid, data }: { uid?: string; data: Record<string, unknown> }) =>
+    ({
+      auth: uid
+        ? { uid, token: { email_verified: true, firebase: { sign_in_provider: 'google.com' } } }
+        : undefined,
+      data,
+    }) as unknown as CallableRequest
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('rejects an unauthenticated caller', async () => {
+    await expect(setStudentDataRetentionPolicyCallable.run(makeRequest({ uid: undefined, data: { orgId: 'org-1', retentionDays: 365 } })))
+      .rejects.toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('rejects a non-owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
+    await expect(setStudentDataRetentionPolicyCallable.run(makeRequest({ uid: 'admin-a', data: { orgId: 'org-1', retentionDays: 365 } })))
+      .rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('rejects a retentionDays value outside 30-3650', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    await expect(setStudentDataRetentionPolicyCallable.run(makeRequest({ uid: 'owner-a', data: { orgId: 'org-1', retentionDays: 29 } })))
+      .rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('rejects a non-integer retentionDays', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    await expect(setStudentDataRetentionPolicyCallable.run(makeRequest({ uid: 'owner-a', data: { orgId: 'org-1', retentionDays: 365.5 } })))
+      .rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('writes the policy for a valid owner request', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    await setStudentDataRetentionPolicyCallable.run(makeRequest({ uid: 'owner-a', data: { orgId: 'org-1', retentionDays: 365 } }))
+    expect(docUpdateMock).toHaveBeenCalledWith({
+      studentDataRetentionPolicy: { retentionDays: 365, setByUid: 'owner-a', setAt: 'SERVER_TIMESTAMP' },
+    })
+  })
+})
+
 

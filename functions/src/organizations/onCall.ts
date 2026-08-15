@@ -1,4 +1,4 @@
-import { getFirestore } from 'firebase-admin/firestore'
+import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { ensurePersonalOrgWithAdminSdk } from './personalOrg'
 import { createSchoolOrgWithAdminSdk } from './schoolOrg'
@@ -254,5 +254,32 @@ export const changeOrgMemberRoleCallable = onCall({ region: 'asia-northeast1' },
     }
     throw error
   }
+})
+
+interface SetStudentDataRetentionPolicyRequest { orgId?: unknown; retentionDays?: unknown }
+
+const MIN_RETENTION_DAYS = 30
+const MAX_RETENTION_DAYS = 3650
+
+/**
+ * Spec §21.2の入口部分のみ: 組織ownerが保持期間(日数)を設定する。
+ * 期限到来時の対応待ちキュー・匿名化/削除/延長の判断・年1回再承認は
+ * 別スコープ(このCallableは方針の保存のみを行う)。
+ */
+export const setStudentDataRetentionPolicyCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as SetStudentDataRetentionPolicyRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', '入力内容が不正です。')
+  if (typeof data.retentionDays !== 'number' || !Number.isInteger(data.retentionDays) || data.retentionDays < MIN_RETENTION_DAYS || data.retentionDays > MAX_RETENTION_DAYS) {
+    throw new HttpsError('invalid-argument', `保持期間は${MIN_RETENTION_DAYS}〜${MAX_RETENTION_DAYS}日の整数で指定してください。`)
+  }
+
+  const membership = await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  if (membership.role !== 'owner') throw new HttpsError('permission-denied', '組織のownerのみ保持期間を設定できます。')
+
+  await getFirestore().doc(`organizations/${data.orgId}`).update({
+    studentDataRetentionPolicy: { retentionDays: data.retentionDays, setByUid: request.auth.uid, setAt: FieldValue.serverTimestamp() },
+  })
 })
 
