@@ -36,7 +36,7 @@ export {
   setSchoolQuotaAllocationCallable,
 } from './organizations/parentOrgQuotaOnCall'
 export { migrateSchoolFromEndedParentCallable } from './organizations/parentContractMigrationOnCall'
-export { generateLessonDraftCallable, generateTeacherGuidanceCallable } from './ai/onCall'
+export { generateLessonDraftCallable, generateTeacherGuidanceCallable, grantAiBetaAccessCallable, revokeAiBetaAccessCallable } from './ai/onCall'
 export { getTuningConstantsCallable } from './platformConfig/onCall'
 export {
   canReviewTemplateCallable, createTemplateShareCallable, duplicateLessonTemplateCallable, grantOperatorCallable,
@@ -96,6 +96,7 @@ export { chainWatchdogScheduled } from './market/chainWatchdog'
 export {
   exportOrgStudentDataCallable,
   exportPersonalDataCallable,
+  listOrgAuditLogCallable,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
   requestSoftDeleteCallable,

@@ -283,3 +283,35 @@ export const exportOrgStudentDataCallable = onCall({ region: 'asia-northeast1' }
   return result
 })
 
+interface ListOrgAuditLogRequest { orgId?: unknown }
+
+export const listOrgAuditLogCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as ListOrgAuditLogRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+
+  const db = getFirestore()
+  const membership = await requireActiveOrgMember(db, data.orgId, request.auth.uid)
+  // §21.5: owner/adminのみ閲覧可。adminの責任範囲による絞り込みは別スコープとし、
+  // 現時点ではowner/adminいずれも組織全体の監査ログを閲覧できる。
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    throw new HttpsError('permission-denied', '組織のowner・adminのみ監査ログを閲覧できます。')
+  }
+
+  const snap = await db.collection(`organizations/${data.orgId}/auditLog`).orderBy('occurredAt', 'desc').limit(50).get()
+  const entries = snap.docs.map((doc) => {
+    const entryData = doc.data() as Record<string, unknown>
+    const occurredAt = entryData.occurredAt as { toDate: () => Date } | undefined
+    return {
+      id: doc.id,
+      actorUid: entryData.actorUid as string,
+      action: entryData.action as string,
+      result: entryData.result as 'SUCCESS' | 'FAILURE',
+      occurredAt: occurredAt ? occurredAt.toDate().toISOString() : null,
+      ...(entryData.reason !== undefined ? { reason: entryData.reason as string } : {}),
+    }
+  })
+  return { entries }
+})
+

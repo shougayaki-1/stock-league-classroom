@@ -5,6 +5,7 @@ import {
   exportOrgStudentDataCallable,
   exportPersonalDataCallable,
   isReauthFresh,
+  listOrgAuditLogCallable,
   normalizeResourcePath,
   purgeHardDeleteCallable,
   purgePersonalOrganizationCallable,
@@ -24,6 +25,7 @@ import {
 
 const orgDocGetMock = vi.fn()
 const resourceDocs = new Map<string, { exists: boolean; data?: Record<string, unknown> }>()
+const auditLogDocs: Array<{ id: string; data: Record<string, unknown> }> = []
 
 vi.mock('./exportPersonalData', () => ({ exportPersonalDataWithAdminSdk: vi.fn() }))
 vi.mock('./exportOrgStudentData', () => ({ exportOrgStudentDataWithAdminSdk: vi.fn() }))
@@ -46,6 +48,17 @@ vi.mock('firebase-admin/firestore', () => ({
           get: (field: string) => entry?.data?.[field],
         }
       },
+    }),
+    collection: (path: string) => ({
+      orderBy: () => ({
+        limit: () => ({
+          get: async () => ({
+            docs: path.includes('/auditLog')
+              ? auditLogDocs.map((entry) => ({ id: entry.id, data: () => entry.data }))
+              : [],
+          }),
+        }),
+      }),
     }),
   }),
 }))
@@ -543,6 +556,25 @@ describe('exportOrgStudentDataCallable', () => {
     vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'admin', membershipVersion: 1 })
     await expect(exportOrgStudentDataCallable.run(makeRequest({ uid: 'admin-a', authTime: NOW_SECONDS, data: { orgId: 'org-1' } }))).rejects.toMatchObject({ code: 'permission-denied' })
     expect(recordAuditLogEntry).toHaveBeenCalledWith(expect.anything(), { orgId: 'org-1', actorUid: 'admin-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'FAILURE' })
+  })
+})
+
+describe('listOrgAuditLogCallable', () => {
+  beforeEach(() => { auditLogDocs.length = 0 })
+
+  it('rejects a caller who is not an owner or admin of the org', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    await expect(listOrgAuditLogCallable.run(makeRequest({ uid: 'teacher-a', authTime: NOW_SECONDS, data: { orgId: 'org-1' } }))).rejects.toMatchObject({ code: 'permission-denied' })
+  })
+
+  it('returns recent entries for an owner', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'owner', membershipVersion: 1 })
+    auditLogDocs.push({
+      id: 'log-1',
+      data: { orgId: 'org-1', actorUid: 'owner-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS', occurredAt: { toDate: () => new Date('2026-08-15T00:00:00.000Z') } },
+    })
+    const response = await listOrgAuditLogCallable.run(makeRequest({ uid: 'owner-a', authTime: NOW_SECONDS, data: { orgId: 'org-1' } }))
+    expect(response).toEqual({ entries: [{ id: 'log-1', actorUid: 'owner-a', action: 'EXPORT_ORG_STUDENT_DATA', result: 'SUCCESS', occurredAt: '2026-08-15T00:00:00.000Z' }] })
   })
 })
 
