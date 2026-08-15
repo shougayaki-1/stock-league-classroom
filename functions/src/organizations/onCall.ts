@@ -8,6 +8,7 @@ import { changeOrgMemberRoleWithAdminSdk } from './changeRole'
 
 import { requireActiveOrgMember } from './authorization'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
+import { getOrgUsageDashboardWithAdminSdk } from './usageDashboard'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
 import { suspendOrgMemberWithAdminSdk } from './suspendMember'
 import { createParentOrgWithAdminSdk } from './parentOrg'
@@ -88,6 +89,24 @@ export const getOrgPlanLimitsCallable = onCall({ region: 'asia-northeast1' }, as
   await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
   try {
     return await getOrgPlanLimitsWithAdminSdk(data.orgId)
+  } catch (error) {
+    if (error instanceof Error && error.message === 'この組織にはプランが設定されていません') {
+      throw new HttpsError('failed-precondition', error.message)
+    }
+    throw error
+  }
+})
+
+interface GetOrgUsageDashboardRequest { orgId?: unknown }
+
+export const getOrgUsageDashboardCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  if (!isCallerTeacher(request.auth.token)) throw new HttpsError('permission-denied', '教師アカウントのみ利用できます。')
+  const data = request.data as GetOrgUsageDashboardRequest
+  if (typeof data.orgId !== 'string') throw new HttpsError('invalid-argument', 'orgId は必須です。')
+  await requireActiveOrgMember(getFirestore(), data.orgId, request.auth.uid)
+  try {
+    return await getOrgUsageDashboardWithAdminSdk(data.orgId)
   } catch (error) {
     if (error instanceof Error && error.message === 'この組織にはプランが設定されていません') {
       throw new HttpsError('failed-precondition', error.message)

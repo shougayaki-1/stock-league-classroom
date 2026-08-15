@@ -5,6 +5,7 @@ import {
   createInvitationCallable,
   createSchoolOrgCallable,
   getOrgPlanLimitsCallable,
+  getOrgUsageDashboardCallable,
   isCallerTeacher,
   listOrgInvitationsCallable,
   listOrgMembersCallable,
@@ -28,6 +29,7 @@ import {
 } from './invitations'
 import { changeOrgMemberRoleWithAdminSdk } from './changeRole'
 import { getOrgPlanLimitsWithAdminSdk } from './planLimits'
+import { getOrgUsageDashboardWithAdminSdk } from './usageDashboard'
 import { listOrgMembersWithAdminSdk } from './orgMembers'
 import { suspendOrgMemberWithAdminSdk } from './suspendMember'
 import { createParentOrgWithAdminSdk } from './parentOrg'
@@ -44,6 +46,7 @@ vi.mock('./invitations', () => ({
 }))
 vi.mock('./changeRole', () => ({ changeOrgMemberRoleWithAdminSdk: vi.fn() }))
 vi.mock('./planLimits', () => ({ getOrgPlanLimitsWithAdminSdk: vi.fn() }))
+vi.mock('./usageDashboard', () => ({ getOrgUsageDashboardWithAdminSdk: vi.fn() }))
 vi.mock('./orgMembers', () => ({ listOrgMembersWithAdminSdk: vi.fn() }))
 vi.mock('./suspendMember', () => ({ suspendOrgMemberWithAdminSdk: vi.fn() }))
 vi.mock('./parentOrg', () => ({ createParentOrgWithAdminSdk: vi.fn() }))
@@ -226,6 +229,39 @@ describe('getOrgPlanLimitsCallable', () => {
     vi.mocked(getOrgPlanLimitsWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
     const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
     await expect(getOrgPlanLimitsCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
+  })
+})
+
+describe('getOrgUsageDashboardCallable', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects unauthenticated requests', async () => {
+    const request = { auth: undefined, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgUsageDashboardCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+  })
+
+  it('requires an active org member', async () => {
+    vi.mocked(requireActiveOrgMember).mockRejectedValueOnce(new Error('permission-denied'))
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgUsageDashboardCallable.run(request)).rejects.toThrow('permission-denied')
+  })
+
+  it('returns the assembled usage dashboard for an active member', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getOrgUsageDashboardWithAdminSdk).mockResolvedValueOnce({
+      lessonRunsThisMonth: 3, lessonRunsTotal: 42, concurrentActive: 2, concurrentLimit: 5,
+      aiDailyUsed: 4, aiDailyLimit: 10, aiMonthlyUsed: 30, aiMonthlyLimit: 100,
+    })
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgUsageDashboardCallable.run(request)).resolves.toMatchObject({ lessonRunsTotal: 42 })
+    expect(getOrgUsageDashboardWithAdminSdk).toHaveBeenCalledWith('org-1')
+  })
+
+  it('translates a missing plan into a failed-precondition error', async () => {
+    vi.mocked(requireActiveOrgMember).mockResolvedValueOnce({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(getOrgUsageDashboardWithAdminSdk).mockRejectedValueOnce(new Error('この組織にはプランが設定されていません'))
+    const request = { auth: teacher, data: { orgId: 'org-1' } } as unknown as CallableRequest
+    await expect(getOrgUsageDashboardCallable.run(request)).rejects.toMatchObject({ code: 'failed-precondition' })
   })
 })
 

@@ -21,6 +21,7 @@ export {
   revokeInvitationCallable,
   changeOrgMemberRoleCallable,
   getOrgPlanLimitsCallable,
+  getOrgUsageDashboardCallable,
   listOrgMembersCallable,
   suspendOrgMemberCallable,
   createParentOrgCallable,
