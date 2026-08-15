@@ -103,6 +103,42 @@ describe('bulkSettlementOperation', () => {
         }),
       ).rejects.toThrow('Idempotency key payload mismatch')
     })
+
+    it('rejects same key with a different target set (e.g. the team roster changed between the first attempt and a retry)', async () => {
+      const fake = makeFakeFirestore()
+      await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+      })
+
+      await expect(
+        createOrReplayBulkSettlementOperation({
+          firestore: fake as never,
+          ...baseInput,
+          targets: [
+            ...baseTargets,
+            { householdId: 'team-c', teamId: 'team-c', profileId: 'profile-c' },
+          ],
+        }),
+      ).rejects.toThrow('Idempotency key payload mismatch')
+    })
+
+    it('accepts a replay whose targets are the same set in a different array order (digest sorts by householdId)', async () => {
+      const fake = makeFakeFirestore()
+      const first = await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+        targets: baseTargets,
+      })
+
+      const second = await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+        targets: [...baseTargets].reverse(),
+      })
+
+      expect(second.operationId).toBe(first.operationId)
+    })
   })
 
   describe('createOrReplayBulkSettlementOperationWithControlLock (advanced formats)', () => {
@@ -183,6 +219,22 @@ describe('bulkSettlementOperation', () => {
       ).rejects.toThrow('synchronizedRoundIndex')
 
       expect([...fake.docs.keys()]).toEqual([controlPath])
+    })
+
+    it('rejects same key with a different target set (e.g. the team roster changed between the first attempt and a retry)', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      await createOrReplayBulkSettlementOperationWithControlLock({ firestore: fake as never, ...lockedInput })
+
+      await expect(
+        createOrReplayBulkSettlementOperationWithControlLock({
+          firestore: fake as never,
+          ...lockedInput,
+          targets: [
+            ...baseTargets,
+            { householdId: 'team-c', teamId: 'team-c', profileId: 'profile-c' },
+          ],
+        }),
+      ).rejects.toThrow('Idempotency key payload mismatch')
     })
 
     it('replaying the same idempotencyKey does not re-touch the control document', async () => {

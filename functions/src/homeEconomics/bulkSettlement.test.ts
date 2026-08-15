@@ -243,7 +243,7 @@ describe('bulkSettlement', () => {
       ).rejects.toThrow('not supported')
     })
 
-    it('rejects normal settlement when any household has not submitted decision, CANCELLING the operation without mutating or checkpointing', async () => {
+    it('rejects normal settlement when any household has not submitted decision, FAILING the operation (Common has no control-lock to release, and the teacher dashboard depends on FAILED to show its error banner + retry button) without mutating or checkpointing', async () => {
       const deps = makeDeps({
         readHouseholdDecision: vi.fn().mockImplementation(async (_runId, householdId) => {
           if (householdId === 'team-b') return null
@@ -264,8 +264,10 @@ describe('bulkSettlement', () => {
 
       expect(deps.writePreSettlementCheckpoint).not.toHaveBeenCalled()
       expect(deps.processRoundFn).not.toHaveBeenCalled()
-      expect(deps.finalizeOperation).not.toHaveBeenCalled()
-      expect(deps.cancelOperation).toHaveBeenCalledWith(expect.objectContaining({ operationId: 'op-1' }))
+      expect(deps.cancelOperation).not.toHaveBeenCalled()
+      expect(deps.finalizeOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'op-1', status: 'FAILED' }),
+      )
     })
   })
 

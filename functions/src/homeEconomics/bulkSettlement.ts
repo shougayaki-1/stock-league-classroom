@@ -225,26 +225,35 @@ export const processHouseholdRoundBatch = async (
   }
 
   // Pre-validate states and decisions. A failure here means NO item has been
-  // attempted yet, so the operation is CANCELLED (not FAILED) and any
-  // control-document lock is released immediately — see
-  // `cancelBulkSettlementOperation`'s doc comment.
+  // attempted yet.
+  //
+  // Advanced formats: the operation is CANCELLED (not FAILED) and the
+  // control-document `roundStatus: SETTLING` lock acquired above is released
+  // immediately — see `cancelBulkSettlementOperation`'s doc comment.
+  //
+  // Common (COMMON_CONDITIONS): keeps its pre-existing FAILED path. Common
+  // never acquires a control-document lock, so there is nothing to release,
+  // and the teacher dashboard UI (`HouseholdTeacherDashboard.tsx`) depends on
+  // `status === 'FAILED'` to surface an error banner + retry button — CANCELLED
+  // operations are treated as already-resolved and would disappear silently.
+  const preflightFail = async (reason: string): Promise<never> => {
+    if (isAdvanced) {
+      await deps.cancelOperation({ operationId: op.operationId, nowMillis: input.nowMillis })
+    } else {
+      await deps.finalizeOperation({ operationId: op.operationId, status: 'FAILED', nowMillis: input.nowMillis })
+    }
+    throw new Error(reason)
+  }
+
   for (const target of targets) {
     const state = await deps.readHouseholdState(input.lessonRunId, target.householdId)
     if (!state || state.roundIndex !== input.expectedRoundIndex) {
-      await deps.cancelOperation({
-        operationId: op.operationId,
-        nowMillis: input.nowMillis,
-      })
-      throw new Error('家庭間でラウンドが不一致または期待ラウンドと異なります')
+      await preflightFail('家庭間でラウンドが不一致または期待ラウンドと異なります')
     }
 
     const decision = await deps.readHouseholdDecision(input.lessonRunId, target.householdId, input.expectedRoundIndex)
     if (!decision && !input.forceUnsubmitted) {
-      await deps.cancelOperation({
-        operationId: op.operationId,
-        nowMillis: input.nowMillis,
-      })
-      throw new Error('未提出の家庭が存在するため一括決算できません')
+      await preflightFail('未提出の家庭が存在するため一括決算できません')
     }
   }
 

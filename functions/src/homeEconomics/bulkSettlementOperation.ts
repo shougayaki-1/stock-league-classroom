@@ -117,6 +117,17 @@ export const toHouseholdBulkSettlementOperationView = (
 const sortedTargets = (targets: HouseholdBulkTarget[]): HouseholdBulkTarget[] =>
   [...targets].sort((a, b) => a.householdId.localeCompare(b.householdId))
 
+/**
+ * Deterministic (householdId, teamId, profileId) triples for inclusion in
+ * `requestDigest` — sorted by `householdId` regardless of the caller's
+ * input order, so idempotency-key replays with the SAME logical target set
+ * but different array ordering are still recognized as the same request,
+ * while a genuinely DIFFERENT target set (e.g. the team roster changed
+ * between the first attempt and a retry) is rejected as a payload mismatch.
+ */
+const sortedTargetTriples = (targets: HouseholdBulkTarget[]): Array<[string, string, string]> =>
+  sortedTargets(targets).map((target) => [target.householdId, target.teamId, target.profileId])
+
 const buildPendingHouseholds = (targets: HouseholdBulkTarget[]): Record<string, HouseholdBulkItem> => {
   const households: Record<string, HouseholdBulkItem> = {}
   for (const target of sortedTargets(targets)) {
@@ -156,6 +167,7 @@ export const createOrReplayBulkSettlementOperation = (
       forceUnsubmitted: input.forceUnsubmitted,
       restoreGeneration: input.restoreGeneration,
       actorUid: input.actorUid,
+      targets: sortedTargetTriples(input.targets),
     })
 
     // ---- ALL READS FIRST ----
@@ -245,6 +257,7 @@ export const createOrReplayBulkSettlementOperationWithControlLock = (
       restoreGeneration: input.restoreGeneration,
       actorUid: input.actorUid,
       assignmentRevision: input.assignmentRevision,
+      targets: sortedTargetTriples(input.targets),
     })
 
     // ---- ALL READS FIRST ----
