@@ -24,6 +24,8 @@ import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilde
 import { TemplateOverviewPage } from './components/teacher/templates/TemplateOverviewPage'
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
+import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
+import { listPendingTemplateReports, resolveTemplateReport, type PendingTemplateReport } from './lib/lessonTemplates/moderationQueue'
 import { listTemplateDerivatives } from './lib/lessonTemplates/templateDerivatives'
 import { listCommunityTemplates, type CommunityTemplate } from './lib/lessonTemplates/communityTemplates'
 import { duplicateLessonTemplate } from './lib/lessonTemplates/duplicateLessonTemplate'
@@ -330,6 +332,25 @@ function CommunityMarketplaceRoute({ services }: { services: FirebaseServices })
     onReport={(template, reason, details) => {
       void reportTemplate(services.functions, { templateId: template.id, versionId: template.currentPublishedVersionId, reason, details: details || undefined })
     }}
+  />
+}
+
+function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
+  const [reports, setReports] = useState<PendingTemplateReport[]>([])
+  const [loading, setLoading] = useState(true)
+  const [accessDenied, setAccessDenied] = useState(false)
+  const load = () => {
+    setLoading(true)
+    listPendingTemplateReports(services.functions)
+      .then((result) => { setReports(result); setAccessDenied(false) })
+      .catch(() => setAccessDenied(true))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [services])
+  return <OperatorReportsPage
+    reports={reports} loading={loading} accessDenied={accessDenied}
+    onUnpublish={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'UNPUBLISH' }).then(load) }}
+    onDismiss={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'DISMISS' }).then(load) }}
   />
 }
 
@@ -752,6 +773,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
