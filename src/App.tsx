@@ -25,9 +25,11 @@ import { TemplateOverviewPage } from './components/teacher/templates/TemplateOve
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
 import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
+import { OperatorTemplateCertificationsPage } from './components/operator/OperatorTemplateCertificationsPage'
 import { CommunityTemplateDetailPage, type CommunityTemplateDetailPageProps } from './components/teacher/templates/CommunityTemplateDetailPage'
 import { canReviewTemplate, listTemplateReviews as listTemplateReviewsClient, submitTemplateReview as submitTemplateReviewClient, type TemplateReview } from './lib/lessonTemplates/templateReviews'
 import { listPendingTemplateReports, resolveTemplateReport, type PendingTemplateReport } from './lib/lessonTemplates/moderationQueue'
+import { listTemplateCertificationCandidates, setTemplateCertification, type CertificationCandidate } from './lib/lessonTemplates/templateCertification'
 import { listTemplateDerivatives } from './lib/lessonTemplates/templateDerivatives'
 import { listCommunityTemplates, type CommunityTemplate } from './lib/lessonTemplates/communityTemplates'
 import { duplicateLessonTemplate } from './lib/lessonTemplates/duplicateLessonTemplate'
@@ -386,6 +388,7 @@ function CommunityTemplateDetailRoute({ services }: { services: FirebaseServices
 }
 
 function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
   const [reports, setReports] = useState<PendingTemplateReport[]>([])
   const [loading, setLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState(false)
@@ -401,7 +404,55 @@ function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
     reports={reports} loading={loading} accessDenied={accessDenied}
     onUnpublish={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'UNPUBLISH' }).then(load) }}
     onDismiss={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'DISMISS' }).then(load) }}
+    onNavigateToCertifications={() => navigate('/operator/certifications')}
   />
+}
+
+function OperatorCertificationsRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
+  const [candidates, setCandidates] = useState<CertificationCandidate[]>([])
+  const [loading, setLoading] = useState(true)
+  const [accessDenied, setAccessDenied] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    listTemplateCertificationCandidates(services.functions)
+      .then((result) => {
+        setCandidates(result)
+        setAccessDenied(false)
+      })
+      .catch(() => setAccessDenied(true))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+  }, [services])
+
+  const handleSetCertification = async (
+    candidate: CertificationCandidate,
+    level: 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL',
+    reason: string,
+  ) => {
+    await setTemplateCertification(services.functions, {
+      templateId: candidate.templateId,
+      versionId: candidate.currentPublishedVersionId,
+      level,
+      reason,
+      idempotencyKey: crypto.randomUUID(),
+    })
+    load()
+  }
+
+  return (
+    <OperatorTemplateCertificationsPage
+      candidates={candidates}
+      loading={loading}
+      accessDenied={accessDenied}
+      onSetCertification={handleSetCertification}
+      onNavigateToReports={() => navigate('/operator/reports')}
+    />
+  )
 }
 
 function TemplateNewRoute({ services }: { services: FirebaseServices }) {
@@ -1117,6 +1168,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route path="/operator/certifications" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorCertificationsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />

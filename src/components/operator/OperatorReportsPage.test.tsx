@@ -27,4 +27,20 @@ describe('OperatorReportsPage', () => {
     render(<OperatorReportsPage reports={[]} loading={false} accessDenied={false} onUnpublish={vi.fn()} onDismiss={vi.fn()} />)
     expect(screen.getByText('未対応の通報はありません。')).toBeInTheDocument()
   })
+
+  it('triggers onNavigateToCertifications when navigation button is clicked', () => {
+    const onNavigateToCertifications = vi.fn()
+    render(
+      <OperatorReportsPage
+        reports={[]}
+        loading={false}
+        accessDenied={false}
+        onUnpublish={vi.fn()}
+        onDismiss={vi.fn()}
+        onNavigateToCertifications={onNavigateToCertifications}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '教材認定へ' }))
+    expect(onNavigateToCertifications).toHaveBeenCalled()
+  })
 })
