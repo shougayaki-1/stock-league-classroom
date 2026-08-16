@@ -271,6 +271,7 @@ export function LessonControlRoom({
             lessonRunId={lessonRunId}
             role={role}
             functions={functions}
+            database={database}
           />
         </Box>
       )}

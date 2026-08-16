@@ -125,12 +125,20 @@ export const publishLessonProjectionWithAdminSdk = (
     // path relying on `.set()`'s "wipe everything not in this write"
     // semantics for this node.
     setPublicState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunPublic/${lessonRunId}`).update(state as unknown as Record<string, unknown>) },
-    // `lessonRunDisplay/{lessonRunId}` has no such cross-write hazard —
-    // it is written ONLY by this function and by
+    // `lessonRunDisplay/{lessonRunId}` is written by this function and by
     // `setTeacherGuidance.ts`'s `setTeacherGuidanceWithAdminSdk`, both of
-    // which always publish the FULL `LessonRunDisplayState` object, so
-    // `.set()`'s whole-node-replace semantics are exactly what's wanted
-    // here (never leave a stale field from a previous publish behind).
-    // Left unchanged per this task's brief.
+    // which always publish the FULL `LessonRunDisplayState` object via
+    // `.set()`'s whole-node-replace semantics (never leave a stale field
+    // from a previous publish behind). Task 13 added a THIRD writer,
+    // `showHouseholdComparisonOnDisplayCallable`
+    // (functions/src/homeEconomics/onCall.ts), which instead uses
+    // `.update()` to switch just the `mode`/`householdClassComparison`
+    // fields without disturbing the rest of the node — so this node DOES
+    // now have the same kind of cross-write shape as `lessonRunPublic`
+    // above, with one difference: that Callable's own JSDoc documents why
+    // the resulting race (a subsequent whole-node `.set()` here reverting
+    // the projector back to the status-derived mode) is accepted rather
+    // than guarded against. See that JSDoc for the full explanation before
+    // changing either writer.
     setDisplayState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunDisplay/${lessonRunId}`).set(state) },
   }, input)
