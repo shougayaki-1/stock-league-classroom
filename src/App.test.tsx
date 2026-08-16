@@ -136,7 +136,12 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: '使い方' })).toHaveAttribute('href', '/guide')
     expect(screen.getByRole('link', { name: '特徴' })).toHaveAttribute('href', '/about')
     expect(screen.getByRole('link', { name: /詳しく見る/i })).toHaveAttribute('href', '/about')
-    expect(screen.getByRole('link', { name: /サービス概要を見る/i })).toHaveAttribute('href', '/about')
+    for (const link of screen.getAllByRole('link', { name: /サービス概要を見る/i })) {
+      expect(link).toHaveAttribute('href', '/about')
+    }
+    for (const link of screen.getAllByRole('link', { name: '操作マニュアル' })) {
+      expect(link).toHaveAttribute('href', '/guide')
+    }
   })
 
   it.each([
