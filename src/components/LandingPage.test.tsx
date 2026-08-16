@@ -34,4 +34,17 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { level: 3, name: '家庭科｜生活設計シミュレーション' })).toBeInTheDocument()
     expect(screen.getByText('学生から退職後まで、人生の各段階を疑似体験。1ラウンド＝5年（設定変更可）で、家計と資産形成を考えます。役割別・段階分担など、クラスの人数構成に合わせた進行形式にも対応予定。')).toBeInTheDocument()
   })
+
+  it('lays out the six-step lesson flow in order', () => {
+    renderLandingPage()
+    const steps = screen.getAllByRole('listitem').filter((item) => item.closest('.landing-flow-steps'))
+    expect(steps.map((item) => item.querySelector('strong')?.textContent)).toEqual([
+      '教材をつくる',
+      '授業を実施する',
+      '生徒が参加する',
+      '教室に表示する',
+      '売買する',
+      '結果を振り返る',
+    ])
+  })
 })

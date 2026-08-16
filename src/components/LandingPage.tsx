@@ -50,6 +50,17 @@ export const LandingPage = () => <main className="landing-page">
       </article>
     </div>
   </section>
+  <section className="landing-flow">
+    <h2>授業の流れ</h2>
+    <ol className="landing-flow-steps">
+      <li><strong>教材をつくる</strong><span>目標を選んで、授業の骨格を用意します</span></li>
+      <li><strong>授業を実施する</strong><span>教師が進行を管理します</span></li>
+      <li><strong>生徒が参加する</strong><span>端末から授業に加わります</span></li>
+      <li><strong>教室に表示する</strong><span>クラス全体の状況を共有します</span></li>
+      <li><strong>売買する</strong><span>情報をもとに判断し、取引します</span></li>
+      <li><strong>結果を振り返る</strong><span>何が起きたか、なぜかを確認します</span></li>
+    </ol>
+  </section>
   <section className="landing-closing"><p>準備を進めています。</p><h2>まもなく教室に市場をひらけます。</h2><Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button></section>
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
 </main>
