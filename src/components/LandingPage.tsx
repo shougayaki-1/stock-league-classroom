@@ -16,8 +16,8 @@ export const LandingPage = () => <main className="landing-page">
     <Link component={RouterLink} className="brand" to="/" underline="none" color="inherit" aria-label="Stock League Classroom ホーム" sx={{ minHeight: 48, display: 'inline-flex', alignItems: 'center' }}>Stock League <span>Classroom</span></Link>
     <Stack component="nav" direction="row" aria-label="主要ナビゲーション" sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
       <Link component={RouterLink} to="/guide" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>使い方</Link>
-      <Link component={RouterLink} to="/about" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>サービス概要</Link>
-      <Button component={RouterLink} className="nav-cta" to="/about" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>導入情報を見る</Button>
+      <Link component={RouterLink} to="/about" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>特徴</Link>
+      <Button component={RouterLink} className="nav-cta" to="/about" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>詳しく見る</Button>
     </Stack>
   </Box>
 
@@ -27,7 +27,7 @@ export const LandingPage = () => <main className="landing-page">
     <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。そんな授業を教室で行えるよう、準備を進めています。</p>
     <Alert severity="info" className="landing-hero-notice">現在は公開ページを提供しています。授業機能の公開に向けて準備を進めています。</Alert>
     <Stack direction="row" spacing={2} className="landing-hero-ctas">
-      <Button component={RouterLink} to="/about" variant="contained" size="large" sx={landingCtaSx}>詳しい利用条件を見る</Button>
+      <Button component={RouterLink} to="/about" variant="contained" size="large" sx={landingCtaSx}>サービス概要を見る</Button>
       <Button component={RouterLink} to="/guide" variant="outlined" size="large">教師向け案内を見る</Button>
     </Stack>
   </section>
@@ -131,7 +131,7 @@ export const LandingPage = () => <main className="landing-page">
   <section className="landing-closing">
     <p>現在は授業機能の提供準備を進めています。</p>
     <h2>まずは、学校で使うための条件をご確認ください。</h2>
-    <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>詳しい利用条件を見る <span aria-hidden="true">→</span></Button>
+    <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button>
   </section>
 
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
