@@ -21,6 +21,7 @@ const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
   LIVE: '進行中の画面',
   END: '終了画面',
   EXPLANATION: '説明スライド',
+  HOUSEHOLD_COMPARISON: 'クラス比較画面',
 }
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([

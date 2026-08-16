@@ -130,6 +130,31 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     await waitFor(() => expect(screen.queryByText(/授業中の画面に戻ります/)).not.toBeInTheDocument())
     expect(screen.getByText('チームA')).toBeInTheDocument()
   })
+
+  it('renders HouseholdClassComparisonView for mode HOUSEHOLD_COMPARISON — teacher-triggered, never status-derived', async () => {
+    renderPage()
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
+    act(() => onUpdateCallback?.({
+      ...baseState,
+      mode: 'HOUSEHOLD_COMPARISON',
+      householdClassComparison: {
+        courseFormat: 'ROLE_VARIANT',
+        finalRoundCount: 4,
+        publishedAtMillis: 1000,
+        teams: [{ teamDisplayName: 'チームA', households: [] }],
+      },
+    }))
+    expect(await screen.findByText('クラス全体の比較')).toBeInTheDocument()
+    expect(screen.getByText('チームA')).toBeInTheDocument()
+  })
+
+  it('falls back to ExplanationSlide for mode HOUSEHOLD_COMPARISON when householdClassComparison is defensively absent', async () => {
+    renderPage()
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
+    act(() => onUpdateCallback?.({ ...baseState, mode: 'HOUSEHOLD_COMPARISON', teacherGuidance: '比較データ待ち' }))
+    expect(await screen.findByText('比較データ待ち')).toBeInTheDocument()
+    expect(screen.queryByText('クラス全体の比較')).not.toBeInTheDocument()
+  })
 })
 
 describe('ClassroomDisplayPage — forbidden-information regression', () => {
@@ -152,7 +177,7 @@ describe('ClassroomDisplayPage — forbidden-information regression', () => {
     individualEvaluation: { p1: 'S評価' },
   }
 
-  it.each(['START', 'LIVE', 'END', 'EXPLANATION'] as const)('never renders forbidden fields in mode %s', async (mode) => {
+  it.each(['START', 'LIVE', 'END', 'EXPLANATION', 'HOUSEHOLD_COMPARISON'] as const)('never renders forbidden fields in mode %s', async (mode) => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
     const contaminated = { ...baseState, mode, ...forbidden } as unknown as LessonRunDisplayState

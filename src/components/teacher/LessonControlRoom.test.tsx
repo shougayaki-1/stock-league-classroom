@@ -92,6 +92,15 @@ describe('LessonControlRoom', () => {
     expect(screen.getByText('山田太郎')).toBeInTheDocument()
   })
 
+  it('labels the HOUSEHOLD_COMPARISON display mode (DISPLAY_MODE_LABEL exhaustiveness, Task 13)', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'REFLECTION', currentPhaseId: 'phase-1' })
+    emitDisplay({ mode: 'HOUSEHOLD_COMPARISON', title: 'クラス比較' })
+    emitParticipants([])
+
+    expect(screen.getByText(/クラス比較画面/)).toBeInTheDocument()
+  })
+
   it('a PRIMARY teacher sees the start-lesson CTA while the run is READY and it invokes onStartLesson', async () => {
     const user = userEvent.setup()
     const onStartLesson = vi.fn()

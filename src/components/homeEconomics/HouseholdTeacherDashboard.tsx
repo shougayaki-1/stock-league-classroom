@@ -24,6 +24,19 @@ export interface HouseholdTeacherDashboardProps {
   onPrepareAssignment?: () => Promise<void>
   onUpdateAssignment?: (input: Omit<UpdateHouseholdAssignmentInput, 'lessonRunId' | 'idempotencyKey'>) => Promise<void>
   isActionInProgress?: boolean
+  /**
+   * Task 13: PRIMARY-or-ASSISTANT display-switch authority — the same gate
+   * `showHouseholdComparisonOnDisplayCallable`/`issueDisplaySessionTokenCallable`
+   * enforce server-side (functions/src/lessonRuns/projections/onCall.ts).
+   * Distinct from `isPrimaryTeacher` above (PRIMARY-only, used for the
+   * settlement actions) — an ASSISTANT teacher may switch the projector but
+   * may not run a bulk settlement.
+   */
+  canManageDisplay?: boolean
+  /** "クラス比較を見る" — renders `HouseholdClassComparisonView` for the teacher's own screen. Absent/undefined hides the action entirely. */
+  onViewClassComparison?: () => void
+  /** "教室画面に表示" — calls `showHouseholdComparisonOnDisplayCallable` to switch the shared classroom projector. Absent/undefined hides the action entirely. */
+  onShowOnDisplay?: () => void
 }
 
 const severityClass = (severity: 'ACTION_REQUIRED' | 'WARNING' | 'INFO') => {
@@ -179,6 +192,9 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   onPrepareAssignment,
   onUpdateAssignment,
   isActionInProgress = false,
+  canManageDisplay = false,
+  onViewClassComparison,
+  onShowOnDisplay,
 }) => {
   const [isSettlementModalOpen, setIsSettlementModalOpen] = useState(false)
   const [isCheckpointModalOpen, setIsCheckpointModalOpen] = useState(false)
@@ -301,6 +317,31 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
               >
                 一括決算
+              </button>
+            )}
+            {/* Task 13: only once the class-wide comparison exists
+                (dashboard.finalComparisonAvailable, Task 10/12) AND this
+                teacher has display-switch authority (canManageDisplay,
+                PRIMARY/ASSISTANT — matches showHouseholdComparisonOnDisplayCallable's
+                server-side gate). */}
+            {dashboard.finalComparisonAvailable && canManageDisplay && onViewClassComparison && (
+              <button
+                type="button"
+                onClick={onViewClassComparison}
+                disabled={isBusy}
+                className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                クラス比較を見る
+              </button>
+            )}
+            {dashboard.finalComparisonAvailable && canManageDisplay && onShowOnDisplay && (
+              <button
+                type="button"
+                onClick={onShowOnDisplay}
+                disabled={isBusy}
+                className="px-3.5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                教室画面に表示
               </button>
             )}
           </div>

@@ -1,6 +1,18 @@
 import type { LessonRunProjectionSource } from './source'
+import type { HouseholdClassComparisonPublicView } from '@stock-league/household-public-content'
 
-export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION'
+/**
+ * `HOUSEHOLD_COMPARISON` (Task 13) is deliberately NOT status-derived, unlike
+ * the other four modes below (see `deriveDisplayMode`) — it is written
+ * exclusively by `showHouseholdComparisonOnDisplayCallable`
+ * (`homeEconomics/onCall.ts`) when a teacher explicitly chooses
+ * "教室画面に表示" for the class comparison. See that Callable's own JSDoc
+ * for the accepted `.set()`-vs-`.update()` race with this module's generic
+ * whole-node publish (`toLessonRunDisplayState` below never writes this mode
+ * or the `householdClassComparison` field — only the dedicated Callable
+ * does).
+ */
+export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION' | 'HOUSEHOLD_COMPARISON'
 
 /**
  * Server-side counterpart of src/lib/lessonRuns/liveTypes.ts's
@@ -16,6 +28,8 @@ export interface LessonRunDisplayState {
   teams: LessonRunDisplayTeamSummary[]
   teacherGuidance: string | null
   updatedAtMillis: number
+  /** See `LessonRunDisplayMode`'s own JSDoc above — present only while `mode === 'HOUSEHOLD_COMPARISON'`. */
+  householdClassComparison?: HouseholdClassComparisonPublicView
 }
 
 export interface LessonRunDisplayTeamSummary {

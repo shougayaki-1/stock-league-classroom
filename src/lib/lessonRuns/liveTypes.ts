@@ -155,8 +155,20 @@ export interface HouseholdClassComparisonPublicView {
   teams: HouseholdClassComparisonTeamView[]
 }
 
-/** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */
-export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION'
+/**
+ * `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom
+ * projector should render. Unlike the other four modes (derived purely from
+ * `LessonRun.status` by `deriveDisplayMode` — see
+ * `functions/src/lessonRuns/projections/displayProjection.ts`),
+ * `HOUSEHOLD_COMPARISON` (Task 13) is never status-derived: it is written
+ * exclusively by `showHouseholdComparisonOnDisplayCallable`
+ * (`functions/src/homeEconomics/onCall.ts`) when a teacher explicitly
+ * chooses "教室画面に表示" for the class comparison. See that Callable's
+ * own JSDoc for the accepted race with `setDisplayState`'s generic
+ * whole-node `.set()` publish (a subsequent phase-lifecycle/teacher-guidance
+ * publish reverts the projector back to the status-derived mode).
+ */
+export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION' | 'HOUSEHOLD_COMPARISON'
 
 /**
  * A single team's projector-safe summary. Never member identities, never
@@ -195,6 +207,15 @@ export interface LessonRunDisplayState {
   /** Teacher-authored guidance text meant for the whole class to see on the projector (e.g. "スマホを置いて前を見てください"). Never internal teacher-only notes. */
   teacherGuidance: string | null
   updatedAtMillis: number
+  /**
+   * Present only while `mode === 'HOUSEHOLD_COMPARISON'`. Written exclusively
+   * by `showHouseholdComparisonOnDisplayCallable`, which reads this EXACT
+   * already-privacy-safe object back from
+   * `lessonRuns/{lessonRunId}/householdFinalComparison/result` server-side
+   * and republishes it verbatim — never accepts one from client input. See
+   * `LessonRunDisplayMode`'s own JSDoc above for the field's lifecycle.
+   */
+  householdClassComparison?: HouseholdClassComparisonPublicView
 }
 
 /**

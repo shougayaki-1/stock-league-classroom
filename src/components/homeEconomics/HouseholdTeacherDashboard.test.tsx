@@ -389,3 +389,61 @@ describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => 
     expect(screen.queryByText('家庭の割り当て')).not.toBeInTheDocument()
   })
 })
+
+describe('HouseholdTeacherDashboard — class comparison teacher actions (Task 13)', () => {
+  it('hides both actions when finalComparisonAvailable is false, even with display authority and handlers present', () => {
+    const dashboard = makeDashboard({ finalComparisonAvailable: false })
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        canManageDisplay={true}
+        onViewClassComparison={vi.fn()}
+        onShowOnDisplay={vi.fn()}
+        {...noopHandlers}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'クラス比較を見る' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '教室画面に表示' })).not.toBeInTheDocument()
+  })
+
+  it('hides both actions when finalComparisonAvailable is true but the teacher lacks display authority (canManageDisplay false — VIEWER)', () => {
+    const dashboard = makeDashboard({ finalComparisonAvailable: true })
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={false}
+        canManageDisplay={false}
+        onViewClassComparison={vi.fn()}
+        onShowOnDisplay={vi.fn()}
+        {...noopHandlers}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'クラス比較を見る' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '教室画面に表示' })).not.toBeInTheDocument()
+  })
+
+  it('shows both actions for an ASSISTANT (canManageDisplay true, isPrimaryTeacher false) once a final comparison exists, and invokes the given callbacks', () => {
+    const dashboard = makeDashboard({ finalComparisonAvailable: true })
+    const onViewClassComparison = vi.fn()
+    const onShowOnDisplay = vi.fn()
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={false}
+        canManageDisplay={true}
+        onViewClassComparison={onViewClassComparison}
+        onShowOnDisplay={onShowOnDisplay}
+        {...noopHandlers}
+      />,
+    )
+
+    const viewBtn = screen.getByRole('button', { name: 'クラス比較を見る' })
+    const displayBtn = screen.getByRole('button', { name: '教室画面に表示' })
+    fireEvent.click(viewBtn)
+    fireEvent.click(displayBtn)
+
+    expect(onViewClassComparison).toHaveBeenCalledTimes(1)
+    expect(onShowOnDisplay).toHaveBeenCalledTimes(1)
+  })
+})

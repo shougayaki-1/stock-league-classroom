@@ -102,6 +102,7 @@ export {
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
   retryHouseholdRoundBatchCallable,
+  showHouseholdComparisonOnDisplayCallable,
   submitHouseholdDecisionCallable,
   updateHouseholdAssignmentCallable,
   writeHouseholdCheckpointCallable,

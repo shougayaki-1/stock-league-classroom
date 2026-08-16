@@ -1,4 +1,5 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import { getDatabase } from 'firebase-admin/database'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
 import type { CourseFormat, HomeEconomicsContent } from '@stock-league/household-authoring-content'
@@ -31,6 +32,7 @@ import {
   saveManualHouseholdCheckpointWithAdminSdk,
 } from './householdCheckpoint'
 import { restoreHouseholdCheckpointWithAdminSdk } from './householdRestore'
+import { readHouseholdFinalComparisonWithAdminSdk } from './finalComparison'
 import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
 import {
   buildHouseholdAssignmentView,
@@ -1223,3 +1225,78 @@ export const updateHouseholdAssignmentCallable = onCall({ region: 'asia-northeas
   }
 })
 
+interface ShowHouseholdComparisonOnDisplayRequest {
+  lessonRunId: string
+}
+
+/**
+ * Task 13: teacher-triggered classroom-projector switch to the privacy-safe
+ * final comparison ("教室画面に表示"). Auth mirrors
+ * `requireCheckpointAuthority` above — the same PRIMARY/ASSISTANT + active-
+ * org-member gate `writeHouseholdCheckpointCallable` uses — reused directly
+ * rather than re-implemented, so this Callable never has authorization logic
+ * to drift out of sync with its sibling.
+ *
+ * SECURITY-CRITICAL (this task's own highest-risk property): `request.data`
+ * carries ONLY `lessonRunId` — never a comparison payload. The safe
+ * `HouseholdClassComparisonPublicView` snapshot is read back from
+ * Firestore's `householdFinalComparison/result`
+ * (`readHouseholdFinalComparisonWithAdminSdk`, `finalComparison.ts` — the
+ * SAME already-computed, already-privacy-filtered document
+ * `afterReflectionTransition` republishes from) and written to
+ * `lessonRunDisplay/{lessonRunId}` VERBATIM. A malicious or buggy client
+ * cannot inject arbitrary content onto the shared classroom projector this
+ * way — there is no code path here that ever reads a comparison shape out
+ * of `request.data`.
+ *
+ * `failed-precondition` when no snapshot exists yet (lesson hasn't reached
+ * REFLECTION, or Task 12's gate never fired) — matches this file's
+ * established convention of `failed-precondition` for "the lesson isn't in
+ * the right state for this action yet" (e.g. `requireLessonRunRunning`,
+ * `translateProcessRoundError`'s unsubmitted-decision case above).
+ *
+ * DESIGN NOTE — accepted `.set()`-vs-`.update()` race with the generic
+ * publish path: `setDisplayState` (`publicProjection.ts`) still does a
+ * whole-node `.set()` on every generic `publishLessonProjectionWithAdminSdk`
+ * call (phase transitions) and on every `setTeacherGuidanceCallable` edit,
+ * and `toLessonRunDisplayState` always recomputes `mode` fresh from
+ * `deriveDisplayMode(status)` — so a publish that happens AFTER this
+ * Callable runs will silently revert the projector's `mode` (and drop
+ * `householdClassComparison` entirely, since `.set()` replaces the whole
+ * node) back to the status-derived value (`EXPLANATION` for REFLECTION,
+ * where this mode is exclusively meaningful). This write below
+ * deliberately uses `.update()` — not `.set()` — so it only ever touches
+ * `mode`/`householdClassComparison`/`updatedAtMillis`, leaving
+ * orgId/title/goal/teams/teacherGuidance exactly as the last generic
+ * publish left them; that is the full extent of the fix applied here.
+ * Making the reverse direction race-free (a generic publish preserving an
+ * already-HOUSEHOLD_COMPARISON mode) would require a read-before-write in
+ * `toLessonRunDisplayState`'s call site, which is otherwise a pure function
+ * — rejected as unwarranted complexity for what is, in practice, a rare,
+ * manually-toggled, low-consequence display mode: REFLECTION is a
+ * long-lived, mostly-static phase (the lesson has already stopped
+ * progressing through phases), so the realistic reset triggers are a
+ * teacher explicitly editing 説明スライド (an action they immediately see
+ * the result of and can redo) or a genuine phase transition (which SHOULD
+ * legitimately leave HOUSEHOLD_COMPARISON, since the class has moved on).
+ */
+export const showHouseholdComparisonOnDisplayCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as ShowHouseholdComparisonOnDisplayRequest
+  if (typeof data.lessonRunId !== 'string' || data.lessonRunId === '') {
+    throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+  }
+
+  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+
+  const comparison = await readHouseholdFinalComparisonWithAdminSdk(data.lessonRunId)
+  if (!comparison) {
+    throw new HttpsError('failed-precondition', 'クラス比較がまだ準備されていません。授業がREFLECTIONに進んでから再試行してください。')
+  }
+
+  await getDatabase().ref(`lessonRunDisplay/${data.lessonRunId}`).update({
+    mode: 'HOUSEHOLD_COMPARISON',
+    householdClassComparison: comparison,
+    updatedAtMillis: Date.now(),
+  })
+})

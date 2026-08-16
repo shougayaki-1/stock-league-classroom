@@ -14,6 +14,8 @@ import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
+import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScreen'
+import { subscribeOwnTeamState } from './lib/lessonRuns/liveRepository'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
 import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repository'
@@ -1218,6 +1220,51 @@ function StudentLessonRoute({ services, heading }: { services: FirebaseServices;
   return <DeferredDataNotice heading={heading} />
 }
 
+type HouseholdModeStatus = 'LOADING' | 'YES' | 'NO'
+
+/**
+ * `/lessons/:runId/play` only (Task 13) — every other student route
+ * (`/waiting`, `/results`) keeps `StudentLessonRoute`'s
+ * `DeferredDataNotice` fallback unchanged; only the "授業中" screen needs to
+ * decide whether to render `HouseholdTeamScreen`.
+ *
+ * Detects "is this a household-mode lessonRun" by SHAPE, not by a
+ * routing-only field: subscribes to this team's own
+ * `lessonRunTeamState/{runId}/{teamId}` node (the exact node
+ * `HouseholdTeamScreen` itself subscribes to) and checks whether it carries
+ * EITHER `.household` (Common/legacy) or `.households` (advanced, Task 9) —
+ * never a `subject`/`courseFormat` field added solely for this decision, per
+ * this task's brief ("detect by shape, not by a routing-only flag" is this
+ * codebase's established convention — see e.g. how `HouseholdTeamScreen`
+ * itself branches Common vs advanced by which field is present, not by a
+ * separate flag). A market lessonRun's team-state node has neither field, so
+ * it falls through to the unchanged `DeferredDataNotice` fallback.
+ */
+function StudentPlayRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
+  const { runId } = useParams<{ runId: string }>()
+  const access = useStudentLessonAccess(runId ?? '', services)
+  const [householdMode, setHouseholdMode] = useState<HouseholdModeStatus>('LOADING')
+
+  useEffect(() => {
+    if (access.status !== 'GRANTED' || !access.teamId || !runId) return
+    setHouseholdMode('LOADING')
+    return subscribeOwnTeamState<{ household?: unknown; households?: unknown }>(
+      services.database,
+      runId,
+      access.teamId,
+      (state) => setHouseholdMode(state && (state.household !== undefined || state.households !== undefined) ? 'YES' : 'NO'),
+    )
+  }, [access.status, access.teamId, runId, services])
+
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/join" />
+  if (householdMode === 'LOADING') return <GuardLoading />
+  if (householdMode === 'YES' && runId && access.teamId) {
+    return <HouseholdTeamScreen lessonRunId={runId} teamId={access.teamId} database={services.database} functions={services.functions} />
+  }
+  return <DeferredDataNotice heading={heading} />
+}
+
 function JoinRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
   const [ready, setReady] = useState(false)
@@ -1265,7 +1312,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentLessonRoute services={services} heading="開始をお待ちください" /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentLessonRoute services={services} heading="授業中" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} heading="授業中" /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />

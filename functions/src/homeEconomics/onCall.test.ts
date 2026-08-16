@@ -8,10 +8,12 @@ import {
   processRoundCallable,
   restoreHouseholdCheckpointCallable,
   retryHouseholdRoundBatchCallable,
+  showHouseholdComparisonOnDisplayCallable,
   submitHouseholdDecisionCallable,
   updateHouseholdAssignmentCallable,
   writeHouseholdCheckpointCallable,
 } from './onCall'
+import { readHouseholdFinalComparisonWithAdminSdk } from './finalComparison'
 import {
   getHouseholdRuntimeControlWithAdminSdk,
   getHouseholdStateWithAdminSdk,
@@ -118,6 +120,17 @@ vi.mock('./householdCheckpoint', () => ({
 }))
 vi.mock('./householdRestore', () => ({
   restoreHouseholdCheckpointWithAdminSdk: vi.fn(),
+}))
+vi.mock('./finalComparison', () => ({
+  readHouseholdFinalComparisonWithAdminSdk: vi.fn(),
+}))
+
+const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
+const rtdbUpdateMock = vi.fn(async (path: string, data: Record<string, unknown>) => { rtdbUpdates.push({ path, data }) })
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (path: string) => ({ update: (data: Record<string, unknown>) => rtdbUpdateMock(path, data) }),
+  }),
 }))
 
 interface SubmitHouseholdDecisionRequestData {
@@ -1387,5 +1400,102 @@ describe('household assignment Callables (Task 2)', () => {
       await expect(updateHouseholdAssignmentCallable.run(req)).rejects.toMatchObject({ code: 'failed-precondition' })
       expect(updateHouseholdAssignment).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('showHouseholdComparisonOnDisplayCallable', () => {
+  const comparison = {
+    courseFormat: 'ROLE_VARIANT',
+    finalRoundCount: 4,
+    publishedAtMillis: 9000,
+    teams: [{ teamDisplayName: 'チームA', households: [] }],
+  }
+
+  const makeRequest = (uid = 'teacher-a', lessonRunId = 'run-1') => ({
+    auth: { uid },
+    data: { lessonRunId },
+    rawRequest: {},
+  } as never)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    rtdbUpdates.length = 0
+  })
+
+  it('rejects an unauthenticated caller without reading Firestore or RTDB', async () => {
+    const request = { auth: undefined, data: { lessonRunId: 'run-1' }, rawRequest: {} } as never
+    await expect(showHouseholdComparisonOnDisplayCallable.run(request)).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(lessonRunGetMock).not.toHaveBeenCalled()
+    expect(rtdbUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a request with no lessonRunId', async () => {
+    const request = { auth: { uid: 'teacher-a' }, data: {}, rawRequest: {} } as never
+    await expect(showHouseholdComparisonOnDisplayCallable.run(request)).rejects.toMatchObject({ code: 'invalid-argument' })
+  })
+
+  it('rejects a student caller (no teacherRoles entry) and never writes to RTDB', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: {} }))
+    await expect(showHouseholdComparisonOnDisplayCallable.run(makeRequest('student-a'))).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(readHouseholdFinalComparisonWithAdminSdk).not.toHaveBeenCalled()
+    expect(rtdbUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a VIEWER-role teacher (display-switch authority requires PRIMARY/ASSISTANT)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'VIEWER' } }))
+    await expect(showHouseholdComparisonOnDisplayCallable.run(makeRequest())).rejects.toMatchObject({ code: 'permission-denied' })
+    expect(rtdbUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects with failed-precondition when no final comparison snapshot exists yet', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(readHouseholdFinalComparisonWithAdminSdk).mockResolvedValue(null)
+    await expect(showHouseholdComparisonOnDisplayCallable.run(makeRequest())).rejects.toMatchObject({ code: 'failed-precondition' })
+    expect(rtdbUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('a PRIMARY teacher with an existing final snapshot succeeds and republishes it verbatim via .update() (never a client-supplied payload)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(readHouseholdFinalComparisonWithAdminSdk).mockResolvedValue(comparison as never)
+
+    await showHouseholdComparisonOnDisplayCallable.run(makeRequest())
+
+    expect(requireActiveOrgMember).toHaveBeenCalledWith(expect.anything(), 'org-1', 'teacher-a')
+    expect(readHouseholdFinalComparisonWithAdminSdk).toHaveBeenCalledWith('run-1')
+    expect(rtdbUpdateMock).toHaveBeenCalledTimes(1)
+    expect(rtdbUpdates[0]?.path).toBe('lessonRunDisplay/run-1')
+    expect(rtdbUpdates[0]?.data).toEqual({
+      mode: 'HOUSEHOLD_COMPARISON',
+      householdClassComparison: comparison,
+      updatedAtMillis: expect.any(Number),
+    })
+  })
+
+  it('an ASSISTANT-role teacher also succeeds (PRIMARY/ASSISTANT, not PRIMARY-only)', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'ASSISTANT' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(readHouseholdFinalComparisonWithAdminSdk).mockResolvedValue(comparison as never)
+
+    await expect(showHouseholdComparisonOnDisplayCallable.run(makeRequest())).resolves.toBeUndefined()
+    expect(rtdbUpdateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('never derives the published comparison from request.data — request.data carries only lessonRunId, so an attacker-supplied comparison payload is ignored entirely', async () => {
+    lessonRunGetMock.mockResolvedValue(makeLessonRunSnap(true, { orgId: 'org-1', teacherRoles: { 'teacher-a': 'PRIMARY' } }))
+    vi.mocked(requireActiveOrgMember).mockResolvedValue({ role: 'teacher', membershipVersion: 1 })
+    vi.mocked(readHouseholdFinalComparisonWithAdminSdk).mockResolvedValue(comparison as never)
+
+    const maliciousRequest = {
+      auth: { uid: 'teacher-a' },
+      data: { lessonRunId: 'run-1', householdClassComparison: { teams: [{ teamDisplayName: 'FORGED', households: [] }] } },
+      rawRequest: {},
+    } as never
+
+    await showHouseholdComparisonOnDisplayCallable.run(maliciousRequest)
+
+    expect(rtdbUpdates[0]?.data.householdClassComparison).toEqual(comparison)
+    expect(JSON.stringify(rtdbUpdates[0]?.data)).not.toContain('FORGED')
   })
 })
