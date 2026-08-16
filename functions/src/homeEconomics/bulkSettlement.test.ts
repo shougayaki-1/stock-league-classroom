@@ -603,4 +603,201 @@ describe('bulkSettlement', () => {
       }))
     })
   })
+
+  /**
+   * Important I2 (whole-branch review): replaying the SAME idempotencyKey
+   * against an operation that already has at least one SUCCEEDED item must
+   * RESUME settlement, not CANCEL. Before this fix, `processHouseholdRoundBatch`'s
+   * preflight loop unconditionally treated "household's roundIndex !==
+   * expectedRoundIndex" as a hard failure — but a household this SAME
+   * operation already settled in a prior attempt is EXPECTED to now be one
+   * round ahead. Hitting that on a replay's preflight pass cancelled the
+   * whole operation (advanced formats: CANCELLED is terminal, never
+   * retryable), releasing the control-document lock at the UN-ADVANCED
+   * round and permanently splitting the class (some households ahead, some
+   * behind) — every fresh bulk attempt would then fail preflight the same
+   * way forever.
+   */
+  describe('processHouseholdRoundBatch idempotent replay resumes instead of cancelling (Important I2)', () => {
+    const targets: HouseholdBulkTarget[] = [
+      { householdId: 'hh-a', teamId: 'team-a', profileId: 'profile-a' },
+      { householdId: 'hh-b', teamId: 'team-b', profileId: 'profile-b' },
+      { householdId: 'hh-c', teamId: 'team-c', profileId: 'profile-c' },
+    ]
+
+    const control: HouseholdRuntimeControl = {
+      courseFormat: 'ROLE_VARIANT',
+      assignmentRevision: 9,
+      synchronizedRoundIndex: 1,
+      roundStatus: 'OPEN',
+      activeOperationId: null,
+      updatedAtServerMillis: 500,
+    }
+
+    it('resuming: household 1 SUCCEEDED, household 2 FAILED — resubmitting the SAME idempotencyKey does not cancel, does not re-settle household 1, and drives the operation to COMPLETED', async () => {
+      const householdStates: Record<string, HouseholdState> = {
+        'hh-a': makeBaseHousehold('hh-a', 1),
+        'hh-b': makeBaseHousehold('hh-b', 1),
+        'hh-c': makeBaseHousehold('hh-c', 1),
+      }
+      const decisions: Record<string, boolean> = { 'hh-a': true, 'hh-b': true, 'hh-c': true }
+
+      let operation: HouseholdBulkSettlementOperation = {
+        operationId: 'op-replay-1',
+        lessonRunId: 'run-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 1,
+        restoreGeneration: 0,
+        assignmentRevision: 9,
+        forceUnsubmitted: false,
+        status: 'PENDING',
+        preSettlementCheckpointId: null,
+        requestDigest: 'digest-replay-1',
+        attempt: 0,
+        leaseExpiresAtServerMillis: null,
+        lastHeartbeatAtServerMillis: null,
+        households: {
+          'hh-a': { status: 'PENDING', teamId: 'team-a', profileId: 'profile-a' },
+          'hh-b': { status: 'PENDING', teamId: 'team-b', profileId: 'profile-b' },
+          'hh-c': { status: 'PENDING', teamId: 'team-c', profileId: 'profile-c' },
+        },
+        createdAtServerMillis: 1000,
+        updatedAtServerMillis: 1000,
+      }
+
+      // processRoundFn fails for hh-b on its FIRST call only (simulating
+      // attempt 1's transient settlement error), then succeeds on any later
+      // call (simulating that a genuine retry would clear it).
+      let hhBAttempts = 0
+      let hhASettleCalls = 0
+
+      // Idempotent, unlike `makeDeps`'s helper (which unconditionally resets
+      // `households` to PENDING on every call): the real
+      // `createOrReplayBulkSettlementOperationWithControlLock` returns the
+      // SAME operation object — with whatever item statuses a prior attempt
+      // left behind — when replayed under the same idempotencyKey. This
+      // fake mirrors that by simply always returning the current `operation`
+      // closure variable, never resetting it.
+      const createOrReplayOperationWithControlLock = vi.fn().mockImplementation(async () => operation)
+
+      const deps: BulkSettlementDeps = {
+        readLessonRun: vi.fn().mockResolvedValue({
+          status: 'RUNNING', subject: 'HOME_ECONOMICS', courseFormat: 'ROLE_VARIANT', restoreGeneration: 0,
+        }),
+        readRuntimeControl: vi.fn().mockResolvedValue(control),
+        listTargets: vi.fn().mockResolvedValue(targets),
+        createOrReplayOperation: vi.fn(),
+        createOrReplayOperationWithControlLock,
+        acquireLease: vi.fn().mockImplementation(async () => {
+          operation = { ...operation, status: 'RUNNING', attempt: operation.attempt + 1, leaseExpiresAtServerMillis: Date.now() + 60000 }
+          return operation
+        }),
+        heartbeatLease: vi.fn().mockImplementation(async () => operation),
+        ensureHousehold: vi.fn().mockImplementation(async (_runId, target) => householdStates[target.householdId]),
+        readHouseholdState: vi.fn().mockImplementation(async (_runId, householdId) => householdStates[householdId]),
+        readHouseholdDecision: vi.fn().mockImplementation(async (_runId, householdId, round) => {
+          if (!decisions[householdId]) return null
+          return { decisionId: `dec-${householdId}-${round}` }
+        }),
+        writePreSettlementCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-replay-1', created: true }),
+        setOperationCheckpointId: vi.fn().mockImplementation(async (_opId, cpId) => {
+          operation = { ...operation, preSettlementCheckpointId: cpId }
+          return operation
+        }),
+        processRoundFn: vi.fn().mockImplementation(async (input): Promise<ProcessRoundExecutionResult> => {
+          if (input.householdId === 'hh-a') hhASettleCalls += 1
+          if (input.householdId === 'hh-b') {
+            hhBAttempts += 1
+            if (hhBAttempts === 1) throw new Error('transient settlement error')
+          }
+          const current = householdStates[input.householdId]
+          householdStates[input.householdId] = { ...current, roundIndex: current.roundIndex + 1 }
+          return {
+            status: 'COMMITTED',
+            settlement: {
+              newHouseholdState: householdStates[input.householdId],
+              occurredEventIds: [], incomeYen: 100, expensesYen: 50, netCashFlowYen: 50,
+              shortfallYen: 0, insuranceBenefitsYen: 0, shortfallOptionsConsidered: [],
+            },
+          }
+        }),
+        updateItemStatus: vi.fn().mockImplementation(async (input) => {
+          const prior = operation.households[input.householdId]
+          operation = {
+            ...operation,
+            households: {
+              ...operation.households,
+              [input.householdId]: {
+                teamId: prior?.teamId ?? input.householdId,
+                profileId: prior?.profileId ?? 'profile-a',
+                status: input.status,
+                errorCode: input.errorCode,
+                errorMessage: input.errorMessage,
+              },
+            },
+          }
+          return operation
+        }),
+        finalizeOperation: vi.fn().mockImplementation(async (input) => {
+          operation = { ...operation, status: input.status, leaseExpiresAtServerMillis: null }
+          return operation
+        }),
+        cancelOperation: vi.fn().mockImplementation(async () => {
+          operation = { ...operation, status: 'CANCELLED', leaseExpiresAtServerMillis: null }
+          return operation
+        }),
+        getOperation: vi.fn().mockImplementation(async () => operation),
+        // The "single unresolved operation per lessonRun" guard is
+        // orthogonal to what I2 tests (both calls below use the SAME
+        // idempotencyKey, so the real implementation would see its own
+        // operation as the unresolved one and let it through anyway) —
+        // stubbed to null to keep this test focused on the preflight/replay
+        // behavior itself.
+        findUnresolvedOperation: vi.fn().mockResolvedValue(null),
+      }
+
+      // ---- Attempt 1 (idempotencyKey "replay-key-1"): hh-a settles
+      // successfully, hh-b fails transiently. `executeBulkItems` has no
+      // early-exit on a mid-loop item failure, so hh-c is also attempted
+      // (and succeeds) within this SAME call — the operation still ends
+      // FAILED overall (not every item SUCCEEDED). Note this is the
+      // MINIMAL reproduction of the bug: the preflight loop's false "round
+      // mismatch" is triggered by hh-a's SUCCEEDED status ALONE on the next
+      // replay, regardless of whether hh-c was also attempted in attempt 1
+      // — so this test does not need to separately force a "hh-c never
+      // attempted" crash to exercise the exact bug described.
+      const firstResult = await processHouseholdRoundBatch(deps, {
+        lessonRunId: 'run-1', expectedRoundIndex: 1, forceUnsubmitted: false,
+        actorUid: 'teacher-1', idempotencyKey: 'replay-key-1', nowMillis: 1000,
+      })
+      expect(firstResult.status).toBe('FAILED')
+      expect(operation.households['hh-a'].status).toBe('SUCCEEDED')
+      expect(operation.households['hh-b'].status).toBe('FAILED')
+      expect(hhASettleCalls).toBe(1)
+
+      // ---- Attempt 2: the SAME idempotencyKey is resubmitted (a client
+      // retry-by-resubmission, NOT the dedicated retryHouseholdRoundBatch
+      // Callable). Before the I2 fix, the preflight loop would see hh-a's
+      // now-advanced roundIndex (2, vs expectedRoundIndex 1), treat it as a
+      // round mismatch, and CANCEL the whole operation — releasing the
+      // control lock at the un-advanced round and leaving hh-b/hh-c
+      // permanently stuck (no retry path, since CANCELLED is terminal).
+      const secondResult = await processHouseholdRoundBatch(deps, {
+        lessonRunId: 'run-1', expectedRoundIndex: 1, forceUnsubmitted: false,
+        actorUid: 'teacher-1', idempotencyKey: 'replay-key-1', nowMillis: 2000,
+      })
+
+      expect(deps.cancelOperation).not.toHaveBeenCalled()
+      expect(secondResult.status).not.toBe('CANCELLED')
+      // This implementation resumes settlement DIRECTLY within the replay
+      // call itself (the preflight loop simply skips the already-SUCCEEDED
+      // item and lets `executeBulkItems` retry the rest) — it does not
+      // require a separate call to the dedicated retry Callable.
+      expect(secondResult.status).toBe('COMPLETED')
+      expect(operation.households['hh-b'].status).toBe('SUCCEEDED')
+      expect(operation.households['hh-c'].status).toBe('SUCCEEDED')
+      // hh-a was never re-settled — still exactly the one call from attempt 1.
+      expect(hhASettleCalls).toBe(1)
+    })
+  })
 })

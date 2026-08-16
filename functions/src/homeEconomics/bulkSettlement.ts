@@ -261,6 +261,23 @@ export const processHouseholdRoundBatch = async (
   }
 
   for (const target of targets) {
+    // Important I2 fix: a household this SAME operation already settled
+    // (via a prior attempt under this idempotency key — `op` here is the
+    // REPLAYED operation `createOrReplayOperation(WithControlLock)` above
+    // returned, not a fresh one) is expected to now be one round AHEAD of
+    // `expectedRoundIndex`. That is not a "round mismatch" — it is exactly
+    // what a resumed replay should see for an item it already resolved.
+    // Before this fix, the round check below fired on the SUCCEEDED item's
+    // now-advanced round and CANCELLED the whole operation — permanently
+    // stranding any household that had NOT yet been retried, since a
+    // CANCELLED operation can never be retried and every fresh attempt
+    // would hit the exact same false mismatch. Skip already-SUCCEEDED items
+    // here entirely (same "only re-attempt non-SUCCEEDED items" rule
+    // `executeBulkItems` below independently applies on its own pass).
+    if (op.households[target.householdId]?.status === 'SUCCEEDED') {
+      continue
+    }
+
     const state = await deps.readHouseholdState(input.lessonRunId, target.householdId)
     if (!state || state.roundIndex !== input.expectedRoundIndex) {
       await preflightFail('家庭間でラウンドが不一致または期待ラウンドと異なります')
