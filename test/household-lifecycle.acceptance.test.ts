@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import type { HomeEconomicsContent } from '../functions/packages/household-authoring-content/src/index'
+import { describe, expect, it, vi } from 'vitest'
+import type { HomeEconomicsContent, HouseholdProfile } from '../functions/packages/household-authoring-content/src/index'
 import { validateHomeEconomicsContent } from '../functions/src/homeEconomics/templateValidation'
-import { getOrInitHouseholdState, type HouseholdState, type HouseholdTx } from '../functions/src/lessonRuns/households/repository'
+import {
+  buildInitialHouseholdState, getOrInitHouseholdState,
+  type HouseholdState, type HouseholdTx,
+} from '../functions/src/lessonRuns/households/repository'
+import { saveAdvancedHouseholdDecisionWithAdminSdk } from '../functions/src/lessonRuns/households/repository'
 import { settleRound } from '../functions/src/homeEconomics/engine/settleRound'
 import { buildHouseholdCheckpointSnapshot, restoreHouseholdsFromSnapshot } from '../functions/src/homeEconomics/checkpointRestore'
 import { resolveVisibleConcepts } from '../functions/src/homeEconomics/goalPackage'
@@ -11,6 +15,16 @@ import {
   computeDiversificationScore, computeEmergencyFundAdequacyScore, computeLifeGoalAchievementScore,
   computeStabilityScore, computeWeightedTotalScore,
 } from '../functions/src/homeEconomics/evaluation'
+import { buildDefaultHouseholdAssignmentEntries, type HouseholdAssignmentEntry } from '../functions/src/homeEconomics/householdAssignment'
+import { prepareHouseholdAssignment } from '../functions/src/homeEconomics/householdAssignmentRepository'
+import { prepareStatusTransition, type HouseholdRuntimeControl } from '../functions/src/homeEconomics/statusTransition'
+import type { FirestoreTx } from '../functions/src/lessonRuns/phases/transitionPhase'
+import { processHouseholdRoundBatch, retryHouseholdRoundBatch, type BulkSettlementDeps } from '../functions/src/homeEconomics/bulkSettlement'
+import type { HouseholdBulkSettlementOperation, HouseholdBulkTarget } from '../functions/src/homeEconomics/bulkSettlementOperation'
+import type { ProcessRoundExecutionResult } from '../functions/src/homeEconomics/processRound'
+import { writeHouseholdCheckpointV3, type HouseholdCheckpointSnapshotV3 } from '../functions/src/homeEconomics/householdCheckpoint'
+import { restoreHouseholdCheckpointV3, type HouseholdRestoreV3Deps } from '../functions/src/homeEconomics/householdRestore'
+import { evaluateHouseholdReflectionGate } from '../functions/src/homeEconomics/finalComparison'
 
 /**
  * Task 17 (§27.4 item 4's own gap-fill task; brief's Part C): a
@@ -340,6 +354,580 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
     )
     expect(restoredHouseholds[0].restoreGeneration).toBe(1)
     expect(restoredTeamView.roundIndex).toBe(0)
+  })
+})
+
+/**
+ * Task 14 (Part 3): advanced household course format acceptance regression.
+ * Same "pure-function/in-memory-fake orchestration, no Firestore/RTDB
+ * emulator" style as the Task 17 suite above — every function called below
+ * is imported unmodified from functions/src/homeEconomics/**\/functions/src/
+ * lessonRuns/households/**, exactly as production wires it. `docs` is a
+ * single shared `Map<string, Record<string, unknown>>` standing in for
+ * Firestore; `assignmentFirestoreOver`/`householdFirestoreOver` are two
+ * thin facades over the SAME map, matching whichever narrower transaction
+ * shape (`HouseholdAssignmentTx`'s get/getCollection/set/delete vs.
+ * `HouseholdTx`'s get/set) each production function under test declares.
+ */
+describe('Task 14: advanced household course formats (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) — acceptance regression', () => {
+  const profileYoung: HouseholdProfile = {
+    householdId: 'profile-young', age: 28, householdIncomeYen: 4500000, annualLivingExpensesYen: 3000000,
+    cashSavingsYen: 1200000, family: '夫婦のみ', housing: '賃貸', lifeGoal: '住宅購入資金の準備', lifeStage: 'FAMILY_FORMATION',
+    eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }
+  const profileRetiree: HouseholdProfile = {
+    householdId: 'profile-retiree', age: 65, householdIncomeYen: 2400000, annualLivingExpensesYen: 2200000,
+    cashSavingsYen: 8000000, family: '夫婦のみ', housing: '持ち家', lifeGoal: '資産維持', lifeStage: 'RETIRED',
+    eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }
+  const profileSingle: HouseholdProfile = {
+    householdId: 'profile-single', age: 24, householdIncomeYen: 3800000, annualLivingExpensesYen: 2200000,
+    cashSavingsYen: 600000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄の形成', lifeStage: 'INDEPENDENT',
+    eventProbabilityOverrides: {}, internalRiskFactors: {},
+  }
+
+  const readCollectionFrom = (docs: Map<string, Record<string, unknown>>, prefix: string) => {
+    const full = `${prefix}/`
+    const out: Array<{ id: string; data: Record<string, unknown> }> = []
+    for (const [key, value] of docs.entries()) {
+      if (key.startsWith(full) && !key.slice(full.length).includes('/')) out.push({ id: key.slice(full.length), data: value })
+    }
+    return out
+  }
+
+  /** Assignment-repository/status-transition shaped facade (get/getCollection/set/delete). */
+  const assignmentFirestoreOver = (docs: Map<string, Record<string, unknown>>) => ({
+    runTransaction: async <T>(fn: (tx: {
+      get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+      getCollection: (path: string) => Promise<Array<{ id: string; data: Record<string, unknown> }>>
+      set: (path: string, data: Record<string, unknown>) => void
+      delete: (path: string) => void
+    }) => Promise<T>): Promise<T> => {
+      let written = false
+      return fn({
+        get: async (path) => { if (written) throw new Error(`read-after-write violation: ${path}`); return { exists: docs.has(path), data: () => docs.get(path) } },
+        getCollection: async (path) => { if (written) throw new Error(`read-after-write violation: ${path}`); return readCollectionFrom(docs, path) },
+        set: (path, data) => { written = true; docs.set(path, data) },
+        delete: (path) => { written = true; docs.delete(path) },
+      })
+    },
+  })
+
+  /** Household-repository/checkpoint-v3/restore-v3 shaped facade (get/set only). */
+  const householdFirestoreOver = (docs: Map<string, Record<string, unknown>>): { runTransaction: <T>(fn: (tx: HouseholdTx) => Promise<T>) => Promise<T> } => ({
+    runTransaction: async <T>(fn: (tx: HouseholdTx) => Promise<T>): Promise<T> => {
+      let written = false
+      return fn({
+        get: async (path: string) => { if (written) throw new Error(`read-after-write violation: ${path}`); return { exists: docs.has(path), data: () => docs.get(path) } },
+        set: (path: string, data: Record<string, unknown>) => { written = true; docs.set(path, data) },
+      })
+    },
+  })
+
+  const seedTeamsAndIndex = (docs: Map<string, Record<string, unknown>>, lessonRunId: string, teamIds: string[]) => {
+    docs.set(`lessonRuns/${lessonRunId}/meta/teamsIndex`, { teamIds })
+    for (const teamId of teamIds) docs.set(`lessonRuns/${lessonRunId}/teams/${teamId}`, { displayName: `チーム${teamId}` })
+  }
+
+  const buildAdvancedRun = (courseFormat: string, profiles: HouseholdProfile[], overrides: Record<string, unknown> = {}) => ({
+    subject: 'HOME_ECONOMICS', startedAt: null, orgId: 'org-1',
+    templateSnapshot: { homeEconomics: { courseFormat, households: profiles } },
+    ...overrides,
+  })
+
+  const settleAdvancedRound = (household: HouseholdState, profile: HouseholdProfile, decision: Parameters<typeof settleRound>[0]['decision'] = null) =>
+    settleRound({
+      household, profile, decision,
+      lifeEvents: template.lifeEvents, insuranceProducts: template.insuranceProducts,
+      publicSupportPrograms: template.publicSupportPrograms, liabilityCatalog: template.liabilities,
+      assetCatalog: template.assets, economicFactors: template.economicFactors,
+      taxModelVersion: template.taxAndSocialInsuranceModelVersion, roundYears: template.roundYears,
+      borrowingAllowed: template.borrowingAllowed, randomSeed: 'adv-seed', restoreGeneration: 0,
+    })
+
+  it('ROLE_VARIANT: deterministic assignment -> freeze at first RUNNING -> decisions -> bulk settle -> next round -> v3 checkpoint -> restore -> bulk again -> REFLECTION gate -> automatic public comparison', async () => {
+    const lessonRunId = 'run-adv-role'
+    const teamIds = ['team-a', 'team-b']
+    const profiles = [profileYoung, profileRetiree]
+    const docs = new Map<string, Record<string, unknown>>()
+    docs.set(`lessonRuns/${lessonRunId}`, { orgId: 'org-1', restoreGeneration: 0 })
+    seedTeamsAndIndex(docs, lessonRunId, teamIds)
+    const profileById = new Map(profiles.map((p) => [p.householdId, p]))
+    const submittedDecisions = new Set<string>()
+
+    // ---- Deterministic assignment (Task 1) ----
+    const defaultEntries = buildDefaultHouseholdAssignmentEntries({ lessonRunId, courseFormat: 'ROLE_VARIANT', teamIds, profiles })
+    expect(defaultEntries).toHaveLength(2)
+    expect(new Set(defaultEntries.map((e) => e.teamId))).toEqual(new Set(teamIds))
+
+    // ---- Prepare (Task 2) ----
+    const prepared = await prepareHouseholdAssignment({
+      firestore: assignmentFirestoreOver(docs), lessonRunId, courseFormat: 'ROLE_VARIANT', teamIds, profiles,
+      actorUid: 'teacher-1', idempotencyKey: 'prep-role-1', now: () => 1000,
+    })
+    expect(prepared.config.state).toBe('DRAFT')
+    expect(prepared.config.assignmentRevision).toBe(1)
+    expect(prepared.entries).toHaveLength(2)
+
+    // ---- First RUNNING start freezes the assignment and initializes control (Task 3/9) ----
+    const preparation = await assignmentFirestoreOver(docs).runTransaction((tx) =>
+      prepareStatusTransition(tx as unknown as FirestoreTx, {
+        lessonRunId, run: buildAdvancedRun('ROLE_VARIANT', profiles), targetStatus: 'RUNNING', actorId: 'teacher-1', nowValue: 'now',
+      }))
+    expect(preparation).not.toBeNull()
+    for (const write of preparation!.writes) docs.set(write.path, write.data)
+
+    const frozenConfig = docs.get(`lessonRuns/${lessonRunId}/householdAssignment/config`) as Record<string, unknown>
+    expect(frozenConfig.state).toBe('FROZEN')
+    let control = docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+    expect(control).toMatchObject({ assignmentRevision: 1, synchronizedRoundIndex: 0, roundStatus: 'OPEN', activeOperationId: null })
+
+    // Materialize each frozen entry's runtime HouseholdState, the same
+    // buildInitialHouseholdState + persist step `afterStatusTransition`
+    // performs in production (Task 4).
+    for (const entry of prepared.entries) {
+      const profile = profileById.get(entry.profileId)!
+      const state = buildInitialHouseholdState({
+        lessonRunId, teamId: entry.teamId, householdId: entry.householdId, profileId: entry.profileId,
+        startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+      })
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, state as unknown as Record<string, unknown>)
+    }
+
+    const submitDecisionForRound = async (entry: HouseholdAssignmentEntry, roundIndex: number, assignmentRevision: number) => {
+      const key = `dec-${entry.householdId}-r${roundIndex}`
+      await saveAdvancedHouseholdDecisionWithAdminSdk({
+        firestore: householdFirestoreOver(docs), lessonRunId, householdId: entry.householdId,
+        decision: {
+          decisionId: key, lessonRunId, householdId: entry.householdId, roundIndex,
+          assetAllocationChangesYen: {}, insurancePurchaseIds: [], insuranceCancelIds: [],
+          shortfallResolutionType: null, publicSupportApplicationIds: [], idempotencyKey: key,
+        },
+        expectedSynchronizedRoundIndex: roundIndex, assignmentRevision, idempotencyKey: key, nowMillis: 1500,
+      })
+      submittedDecisions.add(`${entry.householdId}:${roundIndex}`)
+    }
+
+    const makeAdvancedBulkDeps = (): BulkSettlementDeps => {
+      let operation: HouseholdBulkSettlementOperation | null = null
+      return {
+        readLessonRun: async () => ({ status: 'RUNNING', subject: 'HOME_ECONOMICS', courseFormat: 'ROLE_VARIANT', restoreGeneration: 0 }),
+        readRuntimeControl: async () => docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl,
+        listTargets: async () => prepared.entries.map((entry): HouseholdBulkTarget => ({ householdId: entry.householdId, teamId: entry.teamId, profileId: entry.profileId })),
+        createOrReplayOperation: async () => { throw new Error('advanced format must use the control-lock variant') },
+        createOrReplayOperationWithControlLock: async (input) => {
+          operation = {
+            operationId: input.idempotencyKey, lessonRunId, actorUid: input.actorUid, expectedRoundIndex: input.expectedRoundIndex,
+            restoreGeneration: input.restoreGeneration, assignmentRevision: input.assignmentRevision, forceUnsubmitted: input.forceUnsubmitted,
+            status: 'PENDING', preSettlementCheckpointId: null, requestDigest: 'digest', attempt: 0,
+            leaseExpiresAtServerMillis: null, lastHeartbeatAtServerMillis: null,
+            households: Object.fromEntries(input.targets.map((t) => [t.householdId, { status: 'PENDING', teamId: t.teamId, profileId: t.profileId }])),
+            createdAtServerMillis: input.nowMillis, updatedAtServerMillis: input.nowMillis,
+          }
+          return operation
+        },
+        acquireLease: async () => { operation = { ...operation!, status: 'RUNNING', attempt: operation!.attempt + 1 }; return operation },
+        heartbeatLease: async () => operation!,
+        ensureHousehold: async (_runId, target) => docs.get(`lessonRuns/${lessonRunId}/households/${target.householdId}`) as unknown as HouseholdState,
+        readHouseholdState: async (_runId, householdId) => docs.get(`lessonRuns/${lessonRunId}/households/${householdId}`) as unknown as HouseholdState,
+        readHouseholdDecision: async (_runId, householdId, round) => (submittedDecisions.has(`${householdId}:${round}`) ? ({ decisionId: `dec-${householdId}-r${round}` } as never) : null),
+        writePreSettlementCheckpoint: async (input) => ({ checkpointId: `cp-pre-${input.expectedRoundIndex}`, created: true }),
+        setOperationCheckpointId: async (_opId, checkpointId) => { operation = { ...operation!, preSettlementCheckpointId: checkpointId }; return operation },
+        processRoundFn: async (input): Promise<ProcessRoundExecutionResult> => {
+          const household = docs.get(`lessonRuns/${lessonRunId}/households/${input.householdId}`) as unknown as HouseholdState
+          const profile = profileById.get(household.profileId)!
+          const result = settleAdvancedRound(household, profile)
+          docs.set(`lessonRuns/${lessonRunId}/households/${input.householdId}`, result.newHouseholdState as unknown as Record<string, unknown>)
+          return { status: 'COMMITTED', settlement: result }
+        },
+        updateItemStatus: async (input) => {
+          const prior = operation!.households[input.householdId]
+          operation = { ...operation!, households: { ...operation!.households, [input.householdId]: { teamId: prior?.teamId ?? input.householdId, profileId: prior?.profileId ?? 'profile', status: input.status, errorCode: input.errorCode, errorMessage: input.errorMessage } } }
+          return operation
+        },
+        finalizeOperation: async (input) => {
+          operation = { ...operation!, status: input.status, leaseExpiresAtServerMillis: null }
+          if (input.status === 'COMPLETED') {
+            const currentControl = docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+            docs.set(`lessonRuns/${lessonRunId}/householdRuntime/control`, {
+              ...currentControl, roundStatus: 'OPEN', activeOperationId: null, synchronizedRoundIndex: currentControl.synchronizedRoundIndex + 1,
+            })
+          }
+          return operation
+        },
+        cancelOperation: async () => { operation = { ...operation!, status: 'CANCELLED', leaseExpiresAtServerMillis: null }; return operation },
+        getOperation: async () => operation,
+        findUnresolvedOperation: async () => null,
+      }
+    }
+
+    // ---- Decisions (Task 5) + bulk settlement (Task 6): round 0 -> round 1 ----
+    for (const entry of prepared.entries) await submitDecisionForRound(entry, 0, 1)
+    const bulk1 = await processHouseholdRoundBatch(makeAdvancedBulkDeps(), {
+      lessonRunId, expectedRoundIndex: 0, forceUnsubmitted: false, actorUid: 'teacher-1', idempotencyKey: 'bulk-1', nowMillis: 2000,
+    })
+    expect(bulk1.status).toBe('COMPLETED')
+    expect(Object.values(bulk1.households).every((h) => h.status === 'SUCCEEDED')).toBe(true)
+    for (const entry of prepared.entries) {
+      expect((docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState).roundIndex).toBe(1)
+    }
+    control = docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+    expect(control.synchronizedRoundIndex).toBe(1)
+
+    // ---- Next synchronized round: submit round-1 decisions, then take a v3 checkpoint (Task 7) BEFORE settling it ----
+    for (const entry of prepared.entries) await submitDecisionForRound(entry, 1, 1)
+    const checkpointResult = await writeHouseholdCheckpointV3({
+      firestore: householdFirestoreOver(docs), lessonRunId, courseFormat: 'ROLE_VARIANT',
+      householdIds: prepared.entries.map((e) => e.householdId), assignmentRevision: 1,
+      kind: 'MANUAL', label: 'ラウンド1 手動チェックポイント', expectedRoundIndex: 1,
+      actorUid: 'teacher-1', idempotencyKey: 'cp-v3-1', nowMillis: 3000,
+      visibleConcepts: resolveVisibleConcepts(template.goalPackage),
+    })
+    expect(checkpointResult.created).toBe(true)
+    const checkpointDoc = docs.get(`lessonRuns/${lessonRunId}/checkpoints/${checkpointResult.checkpointId}`) as { snapshot: HouseholdCheckpointSnapshotV3 }
+    expect(checkpointDoc.snapshot.schemaVersion).toBe(3)
+    expect(checkpointDoc.snapshot.householdIds.slice().sort()).toEqual(prepared.entries.map((e) => e.householdId).slice().sort())
+
+    // Settle round 1 -> 2 (moving PAST the checkpoint, so restore below has something real to undo).
+    const bulk2 = await processHouseholdRoundBatch(makeAdvancedBulkDeps(), {
+      lessonRunId, expectedRoundIndex: 1, forceUnsubmitted: false, actorUid: 'teacher-1', idempotencyKey: 'bulk-2', nowMillis: 3500,
+    })
+    expect(bulk2.status).toBe('COMPLETED')
+    for (const entry of prepared.entries) {
+      expect((docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState).roundIndex).toBe(2)
+    }
+
+    // ---- Restore (Task 8): v3 restore rewinds every household + control back to the checkpoint's round 1, safely cancelling any stale unresolved bulk ----
+    docs.set(`lessonRuns/${lessonRunId}`, { orgId: 'org-1', restoreGeneration: 0 })
+    docs.set(`lessonRuns/${lessonRunId}/meta/eventCounter`, { value: 0 })
+    let cancelledOperationId: string | null = null
+    const restoreDeps: HouseholdRestoreV3Deps = {
+      firestore: householdFirestoreOver(docs),
+      checkActiveBulkLease: async () => false,
+      findUnresolvedBulkOperationId: async () => 'stale-op-1',
+      cancelInactiveUnresolvedBulkOperationById: async (operationId) => { cancelledOperationId = operationId },
+      savePreRestoreCheckpoint: async () => ({ checkpointId: 'cp-pre-restore-v3', created: true }),
+      syncRtdbProjections: async () => undefined,
+    }
+    const restoreResult = await restoreHouseholdCheckpointV3(restoreDeps, {
+      lessonRunId, checkpointId: checkpointResult.checkpointId, reason: 'テストによる復元', actorUid: 'teacher-1',
+      idempotencyKey: 'restore-1', nowMillis: 4000,
+    })
+    expect(restoreResult.newRestoreGeneration).toBe(1)
+    expect(cancelledOperationId).toBe('stale-op-1') // safely cancels the stale unresolved bulk, not a fresh concurrent one
+    for (const entry of prepared.entries) {
+      expect((docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState).roundIndex).toBe(1)
+    }
+    control = docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+    expect(control).toMatchObject({ synchronizedRoundIndex: 1, roundStatus: 'OPEN', activeOperationId: null })
+
+    // ---- Bulk again after restore (round 1 -> 2, replaying the same round-1 decisions the restore preserved) ----
+    const bulk3 = await processHouseholdRoundBatch(makeAdvancedBulkDeps(), {
+      lessonRunId, expectedRoundIndex: 1, forceUnsubmitted: false, actorUid: 'teacher-1', idempotencyKey: 'bulk-3', nowMillis: 5000,
+    })
+    expect(bulk3.status).toBe('COMPLETED')
+    for (const entry of prepared.entries) {
+      expect((docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState).roundIndex).toBe(2)
+    }
+
+    // ---- REFLECTION gate + automatic public comparison (Task 12/13) ----
+    control = docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+    const householdRoundIndices = prepared.entries.map((entry) => (docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState).roundIndex)
+    expect(evaluateHouseholdReflectionGate({
+      roundStatus: control.roundStatus, activeOperationId: control.activeOperationId,
+      synchronizedRoundIndex: control.synchronizedRoundIndex, hasUnresolvedBulkOperation: false, householdRoundIndices,
+    })).toBeNull()
+
+    const reflectionPreparation = await assignmentFirestoreOver(docs).runTransaction((tx) =>
+      prepareStatusTransition(tx as unknown as FirestoreTx, {
+        lessonRunId, run: buildAdvancedRun('ROLE_VARIANT', profiles), targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+      }))
+    expect(reflectionPreparation).not.toBeNull()
+    expect(reflectionPreparation!.writes).toHaveLength(1)
+    expect(reflectionPreparation!.writes[0].path).toBe(`lessonRuns/${lessonRunId}/householdFinalComparison/result`)
+    for (const write of reflectionPreparation!.writes) docs.set(write.path, write.data)
+
+    const comparison = docs.get(`lessonRuns/${lessonRunId}/householdFinalComparison/result`) as {
+      courseFormat: string; finalRoundCount: number; teams: Array<{ teamDisplayName: string }>
+    }
+    expect(comparison.courseFormat).toBe('ROLE_VARIANT')
+    expect(comparison.finalRoundCount).toBe(2)
+    expect(comparison.teams).toHaveLength(2)
+    const serializedComparison = JSON.stringify(comparison)
+    expect(serializedComparison).not.toContain('internalRiskFactors')
+    expect(serializedComparison).not.toContain('eventProbabilityOverrides')
+    expect(serializedComparison).not.toContain(prepared.entries[0].householdId)
+  })
+
+  it('MULTI_PERSON_PER_TEAM: 2 profiles per team settle independently, each team ending up with both households correctly settled', async () => {
+    const lessonRunId = 'run-adv-multi'
+    const teamIds = ['team-a', 'team-b']
+    const profiles = [profileYoung, profileRetiree]
+    const docs = new Map<string, Record<string, unknown>>()
+    seedTeamsAndIndex(docs, lessonRunId, teamIds)
+    const profileById = new Map(profiles.map((p) => [p.householdId, p]))
+
+    const entries = buildDefaultHouseholdAssignmentEntries({ lessonRunId, courseFormat: 'MULTI_PERSON_PER_TEAM', teamIds, profiles })
+    // Every team gets the FULL profile set — 2 teams x 2 profiles = 4 runtime households.
+    expect(entries).toHaveLength(4)
+    for (const teamId of teamIds) {
+      const teamEntries = entries.filter((e) => e.teamId === teamId)
+      expect(teamEntries.map((e) => e.profileId).slice().sort()).toEqual([profileRetiree.householdId, profileYoung.householdId])
+    }
+
+    const prepared = await prepareHouseholdAssignment({
+      firestore: assignmentFirestoreOver(docs), lessonRunId, courseFormat: 'MULTI_PERSON_PER_TEAM', teamIds, profiles,
+      actorUid: 'teacher-1', idempotencyKey: 'prep-multi-1', now: () => 1000,
+    })
+    const preparation = await assignmentFirestoreOver(docs).runTransaction((tx) =>
+      prepareStatusTransition(tx as unknown as FirestoreTx, {
+        lessonRunId, run: buildAdvancedRun('MULTI_PERSON_PER_TEAM', profiles), targetStatus: 'RUNNING', actorId: 'teacher-1', nowValue: 'now',
+      }))
+    expect(preparation).not.toBeNull()
+    for (const write of preparation!.writes) docs.set(write.path, write.data)
+
+    for (const entry of prepared.entries) {
+      const profile = profileById.get(entry.profileId)!
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, buildInitialHouseholdState({
+        lessonRunId, teamId: entry.teamId, householdId: entry.householdId, profileId: entry.profileId,
+        startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+      }) as unknown as Record<string, unknown>)
+    }
+
+    // Settle every household in this team, independently of the sibling household on the SAME team.
+    for (const entry of prepared.entries) {
+      const state = docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState
+      const profile = profileById.get(entry.profileId)!
+      const result = settleAdvancedRound(state, profile)
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, result.newHouseholdState as unknown as Record<string, unknown>)
+    }
+
+    for (const teamId of teamIds) {
+      const teamEntries = prepared.entries.filter((e) => e.teamId === teamId)
+      expect(teamEntries).toHaveLength(2)
+      for (const entry of teamEntries) {
+        const state = docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState
+        expect(state.roundIndex).toBe(1)
+        expect(state.teamId).toBe(teamId)
+      }
+      // The two households on the SAME team have distinct runtime ids and
+      // distinct profiles, even though they share a team — one team's two
+      // households never collapse into a single record.
+      expect(teamEntries[0].householdId).not.toBe(teamEntries[1].householdId)
+      expect(teamEntries.map((e) => e.profileId).slice().sort()).toEqual([profileRetiree.householdId, profileYoung.householdId])
+    }
+  })
+
+  it('STAGE_SPLIT: lifeStage stays fixed per household through settlement (acceptance-level mirror of Task 4\'s own unit test)', async () => {
+    const lessonRunId = 'run-adv-stage'
+    const teamIds = ['team-a', 'team-b', 'team-c']
+    const profiles = [profileYoung, profileRetiree, profileSingle]
+    const docs = new Map<string, Record<string, unknown>>()
+    seedTeamsAndIndex(docs, lessonRunId, teamIds)
+    const profileById = new Map(profiles.map((p) => [p.householdId, p]))
+
+    const prepared = await prepareHouseholdAssignment({
+      firestore: assignmentFirestoreOver(docs), lessonRunId, courseFormat: 'STAGE_SPLIT', teamIds, profiles,
+      actorUid: 'teacher-1', idempotencyKey: 'prep-stage-1', now: () => 1000,
+    })
+    // Every distinct lifeStage is covered by at least one team, per Task 1's STAGE_SPLIT algorithm.
+    expect(new Set(prepared.entries.map((e) => profileById.get(e.profileId)!.lifeStage))).toEqual(
+      new Set(profiles.map((p) => p.lifeStage)),
+    )
+
+    const preparation = await assignmentFirestoreOver(docs).runTransaction((tx) =>
+      prepareStatusTransition(tx as unknown as FirestoreTx, {
+        lessonRunId, run: buildAdvancedRun('STAGE_SPLIT', profiles), targetStatus: 'RUNNING', actorId: 'teacher-1', nowValue: 'now',
+      }))
+    expect(preparation).not.toBeNull()
+    for (const write of preparation!.writes) docs.set(write.path, write.data)
+
+    for (const entry of prepared.entries) {
+      const profile = profileById.get(entry.profileId)!
+      const initial = buildInitialHouseholdState({
+        lessonRunId, teamId: entry.teamId, householdId: entry.householdId, profileId: entry.profileId,
+        startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+      })
+      expect(initial.lifeStage).toBe(profile.lifeStage)
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, initial as unknown as Record<string, unknown>)
+    }
+
+    // Settle 3 rounds; §13's lifeStage is a fixed household attribute, never
+    // mutated by round settlement — `settleRound` must carry it through
+    // completely unchanged every round.
+    for (const entry of prepared.entries) {
+      const profile = profileById.get(entry.profileId)!
+      let state = docs.get(`lessonRuns/${lessonRunId}/households/${entry.householdId}`) as unknown as HouseholdState
+      for (let round = 0; round < 3; round += 1) {
+        const result = settleAdvancedRound(state, profile)
+        state = result.newHouseholdState
+        expect(state.lifeStage).toBe(profile.lifeStage)
+      }
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, state as unknown as Record<string, unknown>)
+    }
+  })
+
+  it('partial bulk retry: one household already SUCCEEDED, one FAILED — retry resumes and settles only the failed one (Task 6\'s executeBulkItems skip-already-SUCCEEDED behavior)', async () => {
+    const lessonRunId = 'run-adv-retry'
+    const profile = profileYoung
+    const docs = new Map<string, Record<string, unknown>>()
+
+    // hh-a already succeeded and moved on to round 2; hh-b is still stuck at round 1 (its prior attempt crashed before committing).
+    docs.set(`lessonRuns/${lessonRunId}/households/hh-a`, buildInitialHouseholdState({
+      lessonRunId, teamId: 'team-a', householdId: 'hh-a', profileId: profile.householdId,
+      startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+    }) as unknown as Record<string, unknown>)
+    docs.set('lessonRuns/run-adv-retry/households/hh-a', { ...(docs.get('lessonRuns/run-adv-retry/households/hh-a') as Record<string, unknown>), roundIndex: 2 })
+    docs.set(`lessonRuns/${lessonRunId}/households/hh-b`, buildInitialHouseholdState({
+      lessonRunId, teamId: 'team-b', householdId: 'hh-b', profileId: profile.householdId,
+      startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+    }) as unknown as Record<string, unknown>)
+    docs.set('lessonRuns/run-adv-retry/households/hh-b', { ...(docs.get('lessonRuns/run-adv-retry/households/hh-b') as Record<string, unknown>), roundIndex: 1 })
+
+    let operation: HouseholdBulkSettlementOperation = {
+      operationId: 'op-retry-1', lessonRunId, actorUid: 'teacher-1', expectedRoundIndex: 1,
+      restoreGeneration: 0, assignmentRevision: 3, forceUnsubmitted: false, status: 'FAILED',
+      preSettlementCheckpointId: 'cp-pre-1', requestDigest: 'digest-1', attempt: 1,
+      leaseExpiresAtServerMillis: null, lastHeartbeatAtServerMillis: 1000,
+      households: {
+        'hh-a': { status: 'SUCCEEDED', teamId: 'team-a', profileId: profile.householdId },
+        'hh-b': { status: 'FAILED', teamId: 'team-b', profileId: profile.householdId, errorCode: 'ERR', errorMessage: 'Simulated crash' },
+      },
+      createdAtServerMillis: 1000, updatedAtServerMillis: 2000,
+    }
+    const processRoundFn = vi.fn(async (input: { householdId: string }): Promise<ProcessRoundExecutionResult> => {
+      if (input.householdId === 'hh-a') throw new Error('hh-a already SUCCEEDED — retry must never re-attempt it')
+      const household = docs.get(`lessonRuns/${lessonRunId}/households/${input.householdId}`) as unknown as HouseholdState
+      const result = settleAdvancedRound(household, profile)
+      docs.set(`lessonRuns/${lessonRunId}/households/${input.householdId}`, result.newHouseholdState as unknown as Record<string, unknown>)
+      return { status: 'COMMITTED', settlement: result }
+    })
+
+    const deps: BulkSettlementDeps = {
+      readLessonRun: async () => ({ status: 'RUNNING', subject: 'HOME_ECONOMICS', courseFormat: 'ROLE_VARIANT', restoreGeneration: 0 }),
+      readRuntimeControl: async () => ({ courseFormat: 'ROLE_VARIANT', assignmentRevision: 3, synchronizedRoundIndex: 1, roundStatus: 'SETTLING', activeOperationId: 'op-retry-1', updatedAtServerMillis: 900 }),
+      listTargets: async () => Object.entries(operation.households).map(([householdId, item]): HouseholdBulkTarget => ({ householdId, teamId: item.teamId, profileId: item.profileId })),
+      createOrReplayOperation: async () => { throw new Error('not used on retry') },
+      createOrReplayOperationWithControlLock: async () => { throw new Error('not used on retry') },
+      acquireLease: async () => { operation = { ...operation, status: 'RUNNING', attempt: operation.attempt + 1 }; return operation },
+      heartbeatLease: async () => operation,
+      ensureHousehold: async (_runId, target) => docs.get(`lessonRuns/${lessonRunId}/households/${target.householdId}`) as unknown as HouseholdState,
+      readHouseholdState: async (_runId, householdId) => docs.get(`lessonRuns/${lessonRunId}/households/${householdId}`) as unknown as HouseholdState,
+      readHouseholdDecision: async () => ({ decisionId: 'dec-1' } as never),
+      writePreSettlementCheckpoint: async () => ({ checkpointId: 'cp-pre-1', created: false }),
+      setOperationCheckpointId: async () => operation,
+      processRoundFn,
+      updateItemStatus: async (input) => {
+        const prior = operation.households[input.householdId]
+        operation = { ...operation, households: { ...operation.households, [input.householdId]: { teamId: prior.teamId, profileId: prior.profileId, status: input.status, errorCode: input.errorCode, errorMessage: input.errorMessage } } }
+        return operation
+      },
+      finalizeOperation: async (input) => { operation = { ...operation, status: input.status, leaseExpiresAtServerMillis: null }; return operation },
+      cancelOperation: async () => { operation = { ...operation, status: 'CANCELLED', leaseExpiresAtServerMillis: null }; return operation },
+      getOperation: async () => operation,
+      findUnresolvedOperation: async () => null,
+    }
+
+    const result = await retryHouseholdRoundBatch(deps, { lessonRunId, operationId: 'op-retry-1', actorUid: 'teacher-1', nowMillis: 3000 })
+
+    expect(result.status).toBe('COMPLETED')
+    expect(processRoundFn).toHaveBeenCalledTimes(1)
+    expect(processRoundFn).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'hh-b' }))
+    // hh-a (already SUCCEEDED before the retry) is completely untouched.
+    expect((docs.get(`lessonRuns/${lessonRunId}/households/hh-a`) as unknown as HouseholdState).roundIndex).toBe(2)
+    // hh-b (the one that actually failed) is now genuinely settled.
+    expect((docs.get(`lessonRuns/${lessonRunId}/households/hh-b`) as unknown as HouseholdState).roundIndex).toBe(2)
+    expect(result.households['hh-b'].status).toBe('SUCCEEDED')
+  })
+
+  it('other-team denial: a household\'s owning team is fixed by its FROZEN assignment entry, and the decision-write path has no caller-supplied team to spoof', async () => {
+    const lessonRunId = 'run-adv-denial'
+    const teamIds = ['team-a', 'team-b']
+    const profiles = [profileYoung, profileRetiree]
+    const docs = new Map<string, Record<string, unknown>>()
+    seedTeamsAndIndex(docs, lessonRunId, teamIds)
+    const profileById = new Map(profiles.map((p) => [p.householdId, p]))
+
+    const prepared = await prepareHouseholdAssignment({
+      firestore: assignmentFirestoreOver(docs), lessonRunId, courseFormat: 'ROLE_VARIANT', teamIds, profiles,
+      actorUid: 'teacher-1', idempotencyKey: 'prep-denial-1', now: () => 1000,
+    })
+    const preparation = await assignmentFirestoreOver(docs).runTransaction((tx) =>
+      prepareStatusTransition(tx as unknown as FirestoreTx, {
+        lessonRunId, run: buildAdvancedRun('ROLE_VARIANT', profiles), targetStatus: 'RUNNING', actorId: 'teacher-1', nowValue: 'now',
+      }))
+    for (const write of preparation!.writes) docs.set(write.path, write.data)
+    for (const entry of prepared.entries) {
+      const profile = profileById.get(entry.profileId)!
+      docs.set(`lessonRuns/${lessonRunId}/households/${entry.householdId}`, buildInitialHouseholdState({
+        lessonRunId, teamId: entry.teamId, householdId: entry.householdId, profileId: entry.profileId,
+        startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, nowMillis: 1000,
+      }) as unknown as Record<string, unknown>)
+    }
+
+    const householdOnTeamA = prepared.entries.find((e) => e.teamId === 'team-a')!
+    const householdOnTeamB = prepared.entries.find((e) => e.teamId === 'team-b')!
+    expect(householdOnTeamA.householdId).not.toBe(householdOnTeamB.householdId)
+
+    // `SaveAdvancedHouseholdDecisionInput` (the real, only mutating write
+    // path for an advanced decision) takes `lessonRunId`/`householdId` and
+    // nothing resembling a caller-supplied `teamId` — team ownership is
+    // never something a request payload can assert; it can only be read
+    // back from the household's own FROZEN, server-written record. A real
+    // Callable (`submitHouseholdDecisionCallable`, `onCall.ts`) authorizes
+    // the caller against exactly that stored `teamId`
+    // (`resolveFrozenAssignmentEntry` + `requireTeamMembership`) before
+    // ever reaching this function — this test proves the data-layer half
+    // of that guarantee: the record this authorization reads from is
+    // immutable per household and cannot be influenced by the caller.
+    const stateBBefore = docs.get(`lessonRuns/${lessonRunId}/households/${householdOnTeamB.householdId}`)
+    await saveAdvancedHouseholdDecisionWithAdminSdk({
+      firestore: householdFirestoreOver(docs), lessonRunId, householdId: householdOnTeamA.householdId,
+      decision: {
+        decisionId: `dec-${householdOnTeamA.householdId}-r0`, lessonRunId, householdId: householdOnTeamA.householdId, roundIndex: 0,
+        assetAllocationChangesYen: {}, insurancePurchaseIds: [], insuranceCancelIds: [], shortfallResolutionType: null,
+        publicSupportApplicationIds: [], idempotencyKey: `dec-${householdOnTeamA.householdId}-r0`,
+      },
+      expectedSynchronizedRoundIndex: 0, assignmentRevision: 1, idempotencyKey: `dec-${householdOnTeamA.householdId}-r0`, nowMillis: 1500,
+    })
+
+    const stateA = docs.get(`lessonRuns/${lessonRunId}/households/${householdOnTeamA.householdId}`) as unknown as HouseholdState
+    const stateBAfter = docs.get(`lessonRuns/${lessonRunId}/households/${householdOnTeamB.householdId}`)
+    expect(stateA.teamId).toBe('team-a')
+    // team-b's household is completely untouched by a decision submitted for team-a's household.
+    expect(stateBAfter).toEqual(stateBBefore)
+  })
+
+  it('COMMON_CONDITIONS legacy regression: the original Common flow still works completely unchanged after all 13 tasks\' generalization work', async () => {
+    // Re-runs the exact Task 17 assertions this file already opened with
+    // (init -> settle -> checkpoint round-trip), as an explicit acceptance
+    // guard specifically for Task 14's generalization work rather than
+    // relying on the pre-existing tests above never having been touched.
+    expect(validateHomeEconomicsContent(template)).toEqual({ valid: true })
+    const profile = template.households[0]
+    const fake = makeFakeHouseholdFirestore()
+
+    const initial = await getOrInitHouseholdState({
+      firestore: fake, lessonRunId: 'run-common-regress', teamId: 'case-a', householdId: 'case-a',
+      profileId: 'case-a', startingCashYen: profile.cashSavingsYen, startingLifeStage: profile.lifeStage, now: () => 1_000,
+    })
+    // COMMON_CONDITIONS's defining identity collision still holds: householdId === teamId === the sole profile's id.
+    expect(initial.householdId).toBe(initial.teamId)
+    expect(initial.householdId).toBe(profile.householdId)
+
+    const settled = settleRound({
+      household: initial, profile, decision: null,
+      lifeEvents: template.lifeEvents, insuranceProducts: template.insuranceProducts,
+      publicSupportPrograms: template.publicSupportPrograms, liabilityCatalog: template.liabilities,
+      assetCatalog: template.assets, economicFactors: template.economicFactors,
+      taxModelVersion: template.taxAndSocialInsuranceModelVersion, roundYears: template.roundYears,
+      borrowingAllowed: template.borrowingAllowed, randomSeed: 'common-regress-seed', restoreGeneration: 0,
+    })
+    expect(settled.newHouseholdState.roundIndex).toBe(1)
+
+    const snapshot = buildHouseholdCheckpointSnapshot([settled.newHouseholdState])
+    const restored = restoreHouseholdsFromSnapshot(JSON.parse(JSON.stringify(snapshot)))
+    expect(restored).toEqual([settled.newHouseholdState])
   })
 })
 

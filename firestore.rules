@@ -270,6 +270,21 @@ service cloud.firestore {
           match /submitSurveyIdempotency/{key} { allow read, write: if false; }
         }
       }
+
+      // Advanced Home Economics household course formats (ROLE_VARIANT/
+      // STAGE_SPLIT/MULTI_PERSON_PER_TEAM): assignment config/entries,
+      // idempotency, runtime control, final comparison source, and
+      // per-household state/decisions are all server-owned. Students
+      // subscribe to the RTDB lessonRunTeamState/lessonRunPublic
+      // projections instead; teachers act only through Callables. These
+      // are already denied by the trailing catch-all below, but each gets
+      // its own explicit deny here for defense-in-depth, matching this
+      // file's convention for every other server-owned collection.
+      match /householdAssignment/{document=**} { allow read, write: if false; }
+      match /householdAssignmentIdempotency/{document=**} { allow read, write: if false; }
+      match /householdRuntime/{document=**} { allow read, write: if false; }
+      match /householdFinalComparison/{document=**} { allow read, write: if false; }
+      match /households/{document=**} { allow read, write: if false; }
     }
     match /lessonRunIdempotency/{key} { allow read, write: if false; }
 

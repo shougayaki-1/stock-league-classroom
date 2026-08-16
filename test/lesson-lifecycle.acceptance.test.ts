@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createLessonRun } from '../functions/src/lessonRuns/createLessonRun'
 import { transitionPhase } from '../functions/src/lessonRuns/phases/transitionPhase'
+import { prepareStatusTransition, type HouseholdRuntimeControl } from '../functions/src/homeEconomics/statusTransition'
+import type { HouseholdAssignmentConfig } from '../functions/src/homeEconomics/householdAssignmentRepository'
+import { teamSetFingerprint, type HouseholdAssignmentEntry } from '../functions/src/homeEconomics/householdAssignment'
 import { writeCheckpoint, restoreCheckpoint } from '../functions/src/lessonRuns/checkpoint'
 import { transferPrimaryTeacher } from '../functions/src/lessonRuns/interventions'
 import { issueRecoveryCode, wireRecoverParticipant, sha256Hex } from '../functions/src/lessonRuns/recovery'
@@ -398,6 +401,167 @@ describe('Task 18: lesson lifecycle acceptance', () => {
         lessonRunId: '', resultId: 'result-5', participantId: 'participant-absent' as never,
         answers: {}, idempotencyKey: 'survey-3',
       })).rejects.toThrow('lessonRunId, resultId, and participantId are all required')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task 14: this file stays scoped to the GENERIC lesson lifecycle (not
+  // Home-Economics business logic, which belongs in
+  // household-lifecycle.acceptance.test.ts) — the one generic-lifecycle
+  // behavior Task 14 adds coverage for here is that a resume transition
+  // (PAUSED -> RUNNING) must never re-run the first-start household freeze
+  // or reset `HouseholdRuntimeControl`, exercising `prepareStatusTransition`'s
+  // `run.startedAt != null` resume-detection guard (statusTransition.ts) at
+  // the acceptance level, through the REAL `transitionPhase` +
+  // `prepareStatusTransition` wiring (the same `deps.prepareStatusTransition`
+  // hook production injects — see transitionPhase.ts's own JSDoc on that
+  // field), rather than re-deriving the guard's logic.
+  // ---------------------------------------------------------------------------
+  describe('Step 5 (Task 14): PAUSED -> RUNNING resume never resets advanced household runtime control', () => {
+    // A HOME_ECONOMICS lesson may never contain a MARKET phase
+    // (validation.ts's HOME_ECONOMICS_MARKET_FORBIDDEN), so this template
+    // snapshot uses DECISION/REFLECTION phase types instead of the
+    // MARKET-phase `validTemplateSnapshot` other steps above use.
+    const homeEconomicsTemplateSnapshot = {
+      phases: [
+        { id: 'decision', type: 'DECISION', progression: 'TIMED', durationSeconds: 60, nextPhaseIds: ['reflection'], displayConfig: {} },
+        { id: 'reflection', type: 'REFLECTION', progression: 'SUBMISSION_BASED', requiredCompletionRatio: 0.5, nextPhaseIds: [], displayConfig: {} },
+      ],
+    }
+
+    // A superset of `makeFakeFirestore`'s tx (this describe's own copy)
+    // adding `getCollection`/`delete` so the REAL `prepareStatusTransition`
+    // can read the FROZEN assignment's `entries` subcollection inside the
+    // same transaction — the same "optional getCollection" shape
+    // `transitionPhase.ts`'s own local `FirestoreTx` documents.
+    const makeFakeFirestoreWithCollections = () => {
+      const docs = new Map<string, Record<string, unknown>>()
+      const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+      docs.set('organizations/org-1', { planId: 'FREE' })
+      docs.set('planDefinitions/FREE', { limits: { concurrentLessonsAndMarkets: 100 } })
+      return {
+        docs, collections,
+        runTransaction: async <T>(fn: (tx: {
+          get: (path: string) => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>
+          getCollection: (path: string) => Promise<Array<{ id: string; data: Record<string, unknown> }>>
+          set: (path: string, data: Record<string, unknown>) => void
+          delete: (path: string) => void
+        }) => Promise<T>): Promise<T> => fn({
+          get: async (path: string) => ({ exists: docs.has(path), data: () => docs.get(path) }),
+          getCollection: async (path: string) => collections.get(path) ?? [],
+          set: (path: string, data: Record<string, unknown>) => { docs.set(path, data) },
+          delete: (path: string) => { docs.delete(path) },
+        }),
+      }
+    }
+
+    const entry = (teamId: string, profileId: string, slotKey: string, displayOrder: number): HouseholdAssignmentEntry => ({
+      householdId: `${teamId}:${slotKey}`, teamId, profileId, slotKey, displayOrder, assignmentSource: 'AUTO',
+    })
+
+    it('a resume of a RUNNING (now PAUSED) advanced-format Home Economics lesson preserves assignmentRevision/synchronizedRoundIndex/roundStatus/activeOperationId exactly, and does not re-freeze the assignment', async () => {
+      const fake = makeFakeFirestoreWithCollections()
+      const lessonRunId = 'run-14-resume'
+
+      const frozenConfig: HouseholdAssignmentConfig = {
+        courseFormat: 'ROLE_VARIANT', state: 'FROZEN', validationStatus: 'READY', assignmentRevision: 7,
+        teamSetFingerprint: 'fp-resume', entryIds: ['team-a:profile-a', 'team-b:profile-b'], entriesDigest: 'digest-resume',
+        lastEditedByUid: 'teacher-1', lastEditedAtServerMillis: 100, frozenByUid: 'teacher-1', frozenAtServerMillis: 200,
+      }
+      // Deliberately non-default/mid-lesson values — a resume must preserve
+      // these EXACTLY, not reset them to the first-start defaults
+      // (synchronizedRoundIndex: 0, roundStatus: 'OPEN', activeOperationId: null).
+      const midLessonControl: HouseholdRuntimeControl = {
+        courseFormat: 'ROLE_VARIANT', assignmentRevision: 7, synchronizedRoundIndex: 4,
+        roundStatus: 'SETTLING', activeOperationId: 'op-in-flight-before-pause', updatedAtServerMillis: 900,
+      }
+
+      fake.docs.set(`lessonRuns/${lessonRunId}`, {
+        id: lessonRunId, orgId: 'org-1', status: 'PAUSED', currentPhaseId: 'decision',
+        subject: 'HOME_ECONOMICS', templateSnapshot: { ...homeEconomicsTemplateSnapshot, homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
+        // Already started earlier — this is the exact signal
+        // `prepareStatusTransition`'s resume-detection guard checks.
+        startedAt: '2026-08-15T09:00:00Z', restoreGeneration: 0,
+      })
+      fake.docs.set(`lessonRuns/${lessonRunId}/householdAssignment/config`, frozenConfig as unknown as Record<string, unknown>)
+      fake.docs.set(`lessonRuns/${lessonRunId}/householdRuntime/control`, midLessonControl as unknown as Record<string, unknown>)
+      fake.collections.set(`lessonRuns/${lessonRunId}/householdAssignment/config/entries`, [
+        { id: 'team-a:profile-a', data: entry('team-a', 'profile-a', 'profile-a', 0) as unknown as Record<string, unknown> },
+        { id: 'team-b:profile-b', data: entry('team-b', 'profile-b', 'profile-b', 0) as unknown as Record<string, unknown> },
+      ])
+
+      const resumed = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1',
+        writeCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-resume', deduplicated: false }),
+        prepareStatusTransition,
+      }, { lessonRunId, targetStatus: 'RUNNING', reason: '通信復旧、再開', idempotencyKey: 'resume-hh-1' })
+
+      expect(resumed.status).toBe('RUNNING')
+      expect(resumed.deduplicated).toBe(false)
+
+      // `startedAt` was already set — a resume must leave it untouched, not
+      // stamp a new value (`newStatus === 'RUNNING' && run.startedAt == null`
+      // in transitionPhase.ts is false here).
+      const runAfter = fake.docs.get(`lessonRuns/${lessonRunId}`) as Record<string, unknown>
+      expect(runAfter.startedAt).toBe('2026-08-15T09:00:00Z')
+
+      // The control document is BYTE-FOR-BYTE unchanged — no re-init to
+      // round 0/OPEN/no-active-op, and the in-flight `activeOperationId`
+      // from before the pause survives the resume untouched.
+      const controlAfter = fake.docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`)
+      expect(controlAfter).toEqual(midLessonControl)
+
+      // The assignment was never re-frozen (still the SAME frozenAtServerMillis/assignmentRevision).
+      const configAfter = fake.docs.get(`lessonRuns/${lessonRunId}/householdAssignment/config`)
+      expect(configAfter).toEqual(frozenConfig)
+    })
+
+    it('contrast case: the SAME lesson\'s genuine first RUNNING start (WAITING -> RUNNING, startedAt still null) DOES freeze the assignment and initialize control at round 0/OPEN', async () => {
+      const fake = makeFakeFirestoreWithCollections()
+      const lessonRunId = 'run-14-first-start'
+
+      const draftConfig: HouseholdAssignmentConfig = {
+        courseFormat: 'ROLE_VARIANT', state: 'DRAFT', validationStatus: 'READY', assignmentRevision: 1,
+        teamSetFingerprint: teamSetFingerprint(['team-a', 'team-b']), entryIds: ['team-a:profile-a', 'team-b:profile-b'], entriesDigest: 'digest-first',
+        lastEditedByUid: 'teacher-1', lastEditedAtServerMillis: 100,
+      }
+      fake.docs.set(`lessonRuns/${lessonRunId}`, {
+        id: lessonRunId, orgId: 'org-1', status: 'WAITING', currentPhaseId: null,
+        subject: 'HOME_ECONOMICS',
+        templateSnapshot: {
+          ...homeEconomicsTemplateSnapshot,
+          homeEconomics: {
+            courseFormat: 'ROLE_VARIANT',
+            households: [
+              { householdId: 'profile-a', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000, cashSavingsYen: 1000000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄', lifeStage: 'INDEPENDENT', eventProbabilityOverrides: {}, internalRiskFactors: {} },
+              { householdId: 'profile-b', age: 40, householdIncomeYen: 7000000, annualLivingExpensesYen: 4000000, cashSavingsYen: 2000000, family: '配偶者・子1人', housing: '持ち家', lifeGoal: '教育資金', lifeStage: 'CHILD_REARING', eventProbabilityOverrides: {}, internalRiskFactors: {} },
+            ],
+          },
+        },
+        startedAt: null, restoreGeneration: 0,
+      })
+      fake.docs.set(`lessonRuns/${lessonRunId}/meta/teamsIndex`, { teamIds: ['team-a', 'team-b'] })
+      fake.docs.set(`lessonRuns/${lessonRunId}/householdAssignment/config`, draftConfig as unknown as Record<string, unknown>)
+      fake.collections.set(`lessonRuns/${lessonRunId}/householdAssignment/config/entries`, [
+        { id: 'team-a:profile-a', data: entry('team-a', 'profile-a', 'profile-a', 0) as unknown as Record<string, unknown> },
+        { id: 'team-b:profile-b', data: entry('team-b', 'profile-b', 'profile-b', 0) as unknown as Record<string, unknown> },
+      ])
+
+      const started = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1',
+        writeCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-first', deduplicated: false }),
+        prepareStatusTransition,
+      }, { lessonRunId, targetStatus: 'RUNNING', reason: '開始', idempotencyKey: 'first-start-hh-1' })
+
+      expect(started.status).toBe('RUNNING')
+      const runAfter = fake.docs.get(`lessonRuns/${lessonRunId}`) as Record<string, unknown>
+      expect(runAfter.startedAt).not.toBeNull()
+
+      const configAfter = fake.docs.get(`lessonRuns/${lessonRunId}/householdAssignment/config`) as unknown as HouseholdAssignmentConfig
+      expect(configAfter.state).toBe('FROZEN')
+
+      const controlAfter = fake.docs.get(`lessonRuns/${lessonRunId}/householdRuntime/control`) as unknown as HouseholdRuntimeControl
+      expect(controlAfter).toMatchObject({ synchronizedRoundIndex: 0, roundStatus: 'OPEN', activeOperationId: null })
     })
   })
 })

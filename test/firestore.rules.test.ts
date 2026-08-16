@@ -714,3 +714,58 @@ describe('household bulk settlement operations and checkpoint v2 idempotency col
   })
 })
 
+// Task 14: advanced household course formats (ROLE_VARIANT/STAGE_SPLIT/
+// MULTI_PERSON_PER_TEAM) add five more server-owned collections under
+// lessonRuns/{lessonRunId}. These are already denied by the trailing
+// catch-all, but firestore.rules now gives each its own explicit deny for
+// defense-in-depth (matching every other server-owned collection in this
+// file). Both a non-teacher student and the lesson's own PRIMARY teacher
+// must be denied direct get/set/update/delete — assignment config/entries,
+// runtime control, final comparison source, and per-household state/
+// decisions are readable only via Callables/RTDB projections.
+describe('advanced household course format server-owned collections are denied to all direct clients', () => {
+  const collections = [
+    'householdAssignment',
+    'householdAssignmentIdempotency',
+    'householdRuntime',
+    'householdFinalComparison',
+    'households',
+  ] as const
+
+  for (const subcollection of collections) {
+    it(`denies student and primary-teacher get/set/update/delete of lessonRuns/{lessonRunId}/${subcollection}`, async () => {
+      await environment.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'RUNNING' })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', subcollection, 'doc-1'), { seeded: true })
+      })
+      const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+      const student = environment.authenticatedContext('student-a').firestore()
+      const reference = (db: typeof teacher) => doc(db, 'lessonRuns', 'run-1', subcollection, 'doc-1')
+
+      for (const db of [teacher, student]) {
+        await assertFails(getDoc(reference(db)))
+        await assertFails(setDoc(reference(db), { fake: true }))
+        await assertFails(updateDoc(reference(db), { fake: true }))
+        await assertFails(deleteDoc(reference(db)))
+      }
+    })
+
+    it(`denies student and primary-teacher access to an arbitrarily nested document under lessonRuns/{lessonRunId}/${subcollection}`, async () => {
+      await environment.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), 'organizations', 'personal_teacher-a', 'members', 'teacher-a'), { role: 'owner', status: 'active', membershipVersion: 1 })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1'), { orgId: 'personal_teacher-a', templateId: 't1', primaryTeacherUid: 'teacher-a', status: 'RUNNING' })
+        await setDoc(doc(context.firestore(), 'lessonRuns', 'run-1', subcollection, 'household-1', 'decisions', 'decision-1'), { seeded: true })
+      })
+      const teacher = environment.authenticatedContext('teacher-a', teacherToken).firestore()
+      const student = environment.authenticatedContext('student-a').firestore()
+      const reference = (db: typeof teacher) => doc(db, 'lessonRuns', 'run-1', subcollection, 'household-1', 'decisions', 'decision-1')
+
+      for (const db of [teacher, student]) {
+        await assertFails(getDoc(reference(db)))
+        await assertFails(setDoc(reference(db), { fake: true }))
+      }
+    })
+  }
+})
+
