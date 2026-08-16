@@ -39,6 +39,15 @@ export interface HouseholdTeacherRow {
   teamId: string
   teamDisplayName: string
   lifeStage: string
+  /**
+   * Important I3 fix — a human-readable label (`${lifeStage}・${family}`)
+   * for this household, distinct from the opaque runtime `householdId`
+   * above. Server-side counterpart:
+   * `functions/src/homeEconomics/teacherDashboard.ts`'s `HouseholdTeacherRow`
+   * (hand-synced, same functions/src ↔ src boundary this file's sibling
+   * types already document elsewhere).
+   */
+  profileLabel: string
   roundIndex: number
   submittedForRoundIndex: boolean
   submittedAtServerMillis: number | null

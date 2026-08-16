@@ -31,11 +31,17 @@ interface HouseholdEntryStateNode {
 
 /**
  * Hand-duplicated subset of `AdvancedHouseholdTeamEntryView`
- * (`src/lib/lessonRuns/liveTypes.ts`) — this screen never reads `.profile`
- * (the authored profile view), only the runtime `.state`.
+ * (`src/lib/lessonRuns/liveTypes.ts`). Task 9's RTDB projection already
+ * publishes `.profile` (a `HouseholdProfilePublicView`) into this same
+ * entry specifically so a UI could label a household by something more
+ * meaningful than its opaque runtime `householdId` — see this screen's tab
+ * rendering below (Important I3 fix), which reads `lifeStage`/`family` from
+ * it. Only those two fields are duplicated here (not the full
+ * `HouseholdProfilePublicView`), since this screen doesn't need the rest.
  */
 interface AdvancedHouseholdEntryNode {
   householdId: string
+  profile: { lifeStage: string; family: string }
   state: HouseholdEntryStateNode
 }
 
@@ -159,6 +165,29 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
 
   const isSettling = state?.roundStatus === 'SETTLING'
 
+  // Important I3 fix: label each tab with something a student can actually
+  // read, instead of the opaque runtime `householdId` (an
+  // `idempotencyDocumentId()` hash — Task 1 — meaningless to a student).
+  // `lifeStage` alone is not guaranteed unique within a team:
+  // MULTI_PERSON_PER_TEAM puts EVERY authored profile on the same team (not
+  // just distinct stages the way STAGE_SPLIT does), so an authoring template
+  // with two profiles sharing a `lifeStage` would otherwise still produce
+  // two identical tab labels. Always pairing `lifeStage` with `family`
+  // (rather than only falling back to it when a collision is detected)
+  // keeps this simple and robust against that case without needing to
+  // detect collisions at render time — every household's `family` text is
+  // authored freely per profile, so the pair is unique in practice. Neither
+  // field is translated to a Japanese label here: the rest of this app
+  // (`HouseholdSummaryCard`, `HouseholdClassComparisonView`) also renders
+  // `lifeStage`'s raw enum string with no existing translation convention
+  // to match, so this keeps the SAME convention rather than introducing a
+  // one-off mapping found nowhere else.
+  const householdTabLabel = (id: string): string => {
+    const entry = state?.households?.[id]
+    if (!entry) return id
+    return `${entry.profile.lifeStage}・${entry.profile.family}`
+  }
+
   const handleSubmit = useCallback(() => {
     if (!household || isSettling) return
     setSubmitStatus('PENDING')
@@ -203,7 +232,7 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
           variant="scrollable"
         >
           {householdOrder.map((id) => (
-            <Tab key={id} value={id} label={state?.households?.[id]?.state.householdId ?? id} />
+            <Tab key={id} value={id} label={householdTabLabel(id)} />
           ))}
         </Tabs>
       )}

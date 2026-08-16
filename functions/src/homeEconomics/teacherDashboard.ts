@@ -77,6 +77,24 @@ export interface HouseholdTeacherRow {
   teamId: string
   teamDisplayName: string
   lifeStage: string
+  /**
+   * Important I3 fix (whole-branch review): a human-readable label for this
+   * household, distinct from the opaque runtime `householdId` above (an
+   * `idempotencyDocumentId()` hash — Task 1). Without this, a MULTI team's
+   * several household rows in the teacher dashboard were only
+   * distinguishable by that hash. `${lifeStage}・${family}` — same pairing
+   * and same rationale as the student-facing tab label fix in
+   * `HouseholdTeamScreen.tsx` (`family` disambiguates MULTI_PERSON_PER_TEAM,
+   * which puts every authored profile on the same team and so can repeat a
+   * `lifeStage`; neither field is translated, matching this codebase's
+   * existing convention of rendering `lifeStage`'s raw enum string
+   * elsewhere). `family` is looked up from the template snapshot's
+   * `HomeEconomicsContent.households` by `state.profileId` — falls back to
+   * `lifeStage` alone if the profile is somehow not found (defensive; should
+   * not happen given `profileId` is validated against the template at
+   * freeze/lazy-init time).
+   */
+  profileLabel: string
   roundIndex: number
   submittedForRoundIndex: boolean
   submittedAtServerMillis: number | null
@@ -133,6 +151,8 @@ export const buildHouseholdTeacherRow = (
   const { state, content, decision, lastSettlementEventPayload, bulkItemStatus } = input
 
   const totalAssetsYen = Object.values(state.assetHoldingsYen).reduce((sum, val) => sum + val, 0)
+  const authoredProfile = content.households.find((profile) => profile.householdId === state.profileId)
+  const profileLabel = authoredProfile ? `${state.lifeStage}・${authoredProfile.family}` : state.lifeStage
   const submittedForRoundIndex = decision !== null && decision.roundIndex === state.roundIndex
   const submittedAtServerMillis = submittedForRoundIndex ? decision.submittedAtServerMillis : null
   const lastSettledRoundIndex = lastSettlementEventPayload?.roundIndex ?? null
@@ -222,6 +242,7 @@ export const buildHouseholdTeacherRow = (
     teamId: input.teamId,
     teamDisplayName: input.teamDisplayName,
     lifeStage: state.lifeStage,
+    profileLabel,
     roundIndex: state.roundIndex,
     submittedForRoundIndex,
     submittedAtServerMillis,

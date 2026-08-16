@@ -77,7 +77,12 @@ const HouseholdSummaryRow: React.FC<{
   return (
     <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center py-2 text-sm text-gray-600">
       <div>
-        <div className="font-medium text-gray-900">{row.lifeStage}</div>
+        {/* Important I3 fix: `profileLabel` (lifeStage・family) instead of
+            bare `lifeStage` — a MULTI team's several household rows are
+            otherwise only distinguishable by the opaque runtime
+            householdId, since MULTI_PERSON_PER_TEAM can repeat the same
+            lifeStage across its full profile set. */}
+        <div className="font-medium text-gray-900">{row.profileLabel}</div>
         <div className="text-xs text-gray-400">第{row.roundIndex + 1}R</div>
       </div>
       <div>

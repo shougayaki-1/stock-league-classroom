@@ -73,6 +73,7 @@ describe('HouseholdTeacherDashboard (Container)', () => {
             teamId: 'team-1',
             teamDisplayName: 'チーム1',
             lifeStage: 'INDEPENDENT',
+            profileLabel: 'INDEPENDENT',
             roundIndex: 0,
             submittedForRoundIndex: true,
             submittedAtServerMillis: 500,

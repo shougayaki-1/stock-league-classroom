@@ -10,6 +10,7 @@ const makeRow = (id: string, teamId: string, teamDisplayName: string, lifeStage:
   teamId,
   teamDisplayName,
   lifeStage,
+  profileLabel: lifeStage,
   roundIndex: 1,
   submittedForRoundIndex: submitted,
   submittedAtServerMillis: submitted ? 1000 : null,

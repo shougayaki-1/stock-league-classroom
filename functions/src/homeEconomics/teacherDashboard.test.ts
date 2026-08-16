@@ -178,6 +178,49 @@ describe('buildHouseholdTeacherRow', () => {
     expect(serialized).not.toContain('annualInterestRatePercent')
   })
 
+  /**
+   * Important I3 (whole-branch review): a MULTI team's several household
+   * rows in the teacher dashboard were previously distinguishable only by
+   * `lifeStage` or the opaque runtime `householdId` — neither disambiguates
+   * two households sharing a `lifeStage` (possible under
+   * MULTI_PERSON_PER_TEAM, which puts every authored profile on the same
+   * team). `profileLabel` pairs `lifeStage` with the authored profile's
+   * `family` text, resolved from the template snapshot by `state.profileId`.
+   */
+  it('projects profileLabel as lifeStage・family, resolved from content.households by state.profileId', () => {
+    const multiState: HouseholdState = { ...state, householdId: 'hh-runtime-1', profileId: 'profile-1' }
+    const row = buildHouseholdTeacherRow({
+      teamId: 'team-1',
+      teamDisplayName: 'チーム1',
+      state: multiState,
+      content,
+      decision: null,
+      lastSettlementEventPayload: null,
+      bulkItemStatus: null,
+      restoreGeneration: 0,
+    })
+
+    expect(row.profileLabel).toBe('INDEPENDENT・単身')
+    // Never the opaque runtime householdId.
+    expect(row.profileLabel).not.toContain('hh-runtime-1')
+  })
+
+  it('falls back to lifeStage alone when the profile cannot be resolved from content.households (defensive)', () => {
+    const orphanState: HouseholdState = { ...state, profileId: 'no-such-profile' }
+    const row = buildHouseholdTeacherRow({
+      teamId: 'team-1',
+      teamDisplayName: 'チーム1',
+      state: orphanState,
+      content,
+      decision: null,
+      lastSettlementEventPayload: null,
+      bulkItemStatus: null,
+      restoreGeneration: 0,
+    })
+
+    expect(row.profileLabel).toBe('INDEPENDENT')
+  })
+
   it('reports BULK_SETTLEMENT_FAILED, keyed by the row itself (bulkItemStatus is resolved by RUNTIME householdId by the caller)', () => {
     const row = buildHouseholdTeacherRow({
       teamId: 'team-1',

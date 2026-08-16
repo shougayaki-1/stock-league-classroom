@@ -99,18 +99,89 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     roundStatus: 'OPEN',
     householdOrder: ['case-b', 'case-a', 'case-c'],
     households: {
-      'case-a': { householdId: 'case-a', state: { ...household, householdId: 'case-a', lifeStage: 'SINGLE' } },
-      'case-b': { householdId: 'case-b', state: { ...household, householdId: 'case-b', lifeStage: 'CHILD_REARING' } },
-      'case-c': { householdId: 'case-c', state: { ...household, householdId: 'case-c', lifeStage: 'RETIRED' } },
+      'case-a': {
+        householdId: 'case-a',
+        profile: { lifeStage: 'SINGLE', family: '独身' },
+        state: { ...household, householdId: 'case-a', lifeStage: 'SINGLE' },
+      },
+      'case-b': {
+        householdId: 'case-b',
+        profile: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' },
+        state: { ...household, householdId: 'case-b', lifeStage: 'CHILD_REARING' },
+      },
+      'case-c': {
+        householdId: 'case-c',
+        profile: { lifeStage: 'RETIRED', family: '配偶者のみ' },
+        state: { ...household, householdId: 'case-c', lifeStage: 'RETIRED' },
+      },
     },
   }
+
+  /**
+   * Important I3 (whole-branch review): a MULTI team's tabs previously
+   * labeled themselves with `state.householdId` — an opaque
+   * `idempotencyDocumentId()` runtime hash, meaningless to a student. This
+   * proves the tab label is now human-readable (`lifeStage`・`family`,
+   * read from `.profile` — Task 9's projection already publishes it, but
+   * this screen never read it before this fix).
+   */
+  it('labels each tab with a human-readable lifeStage・family pair from .profile, not the opaque runtime householdId (Important I3)', () => {
+    renderScreen()
+    emitTeamState(multiState)
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'CHILD_REARING・配偶者・子1人',
+      'SINGLE・独身',
+      'RETIRED・配偶者のみ',
+    ])
+    // None of the runtime householdId hashes leak into a tab label.
+    expect(screen.queryByRole('tab', { name: 'case-a' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'case-b' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'case-c' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * Important I3: MULTI_PERSON_PER_TEAM puts EVERY authored profile on the
+   * same team (unlike STAGE_SPLIT, which guarantees distinct stages), so an
+   * authoring template with two profiles sharing a `lifeStage` is possible.
+   * `lifeStage` alone would then produce two identical tab labels — pairing
+   * it with `family` (always, not only on a detected collision) resolves
+   * this without needing collision-detection logic.
+   */
+  it('disambiguates two households sharing the same lifeStage via family (Important I3)', () => {
+    renderScreen()
+    emitTeamState({
+      ...multiState,
+      householdOrder: ['case-a', 'case-d'],
+      households: {
+        'case-a': multiState.households['case-a'],
+        'case-d': {
+          householdId: 'case-d',
+          profile: { lifeStage: 'SINGLE', family: '同棲中のパートナーあり' },
+          state: { ...household, householdId: 'case-d', lifeStage: 'SINGLE' },
+        },
+      },
+    })
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'SINGLE・独身',
+      'SINGLE・同棲中のパートナーあり',
+    ])
+    expect(new Set(tabs.map((tab) => tab.textContent)).size).toBe(2)
+  })
 
   it('renders stable tabs in householdOrder order, not object-key order, and keeps that order stable across a re-render/update', () => {
     renderScreen()
     emitTeamState(multiState)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['case-b', 'case-a', 'case-c'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'CHILD_REARING・配偶者・子1人',
+      'SINGLE・独身',
+      'RETIRED・配偶者のみ',
+    ])
 
     // A subsequent update (e.g. cashYen changing this round) must not
     // reorder the tabs — order is driven by householdOrder, not by
@@ -123,7 +194,11 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
       },
     })
     const tabsAfter = screen.getAllByRole('tab')
-    expect(tabsAfter.map((tab) => tab.textContent)).toEqual(['case-b', 'case-a', 'case-c'])
+    expect(tabsAfter.map((tab) => tab.textContent)).toEqual([
+      'CHILD_REARING・配偶者・子1人',
+      'SINGLE・独身',
+      'RETIRED・配偶者のみ',
+    ])
   })
 
   it('selecting a tab switches which household is shown, and the selected RUNTIME householdId (not teamId) is sent to the decision API on submit', async () => {
@@ -132,10 +207,10 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     emitTeamState(multiState)
 
     // First tab (case-b) selected by default.
-    expect(screen.getByText(/CHILD_REARING/)).toBeInTheDocument()
+    expect(screen.getByText('ライフステージ: CHILD_REARING')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('tab', { name: 'case-a' }))
-    expect(screen.getByText(/SINGLE/)).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'SINGLE・独身' }))
+    expect(screen.getByText('ライフステージ: SINGLE')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '今回の意思決定を提出する' }))
     expect(callableMock).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'case-a', lessonRunId: 'run-1' }))
@@ -146,9 +221,9 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     renderScreen()
     emitTeamState(multiState)
     expect(screen.getAllByRole('tab')).toHaveLength(3)
-    expect(screen.getByRole('tab', { name: 'case-a' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'case-b' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'case-c' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'SINGLE・独身' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'CHILD_REARING・配偶者・子1人' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'RETIRED・配偶者のみ' })).toBeInTheDocument()
   })
 
   it('SETTLING: submission is disabled/hidden, mirroring the server-side OPEN-only guard', async () => {

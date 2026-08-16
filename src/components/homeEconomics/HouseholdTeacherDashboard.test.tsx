@@ -13,6 +13,7 @@ const makeHousehold = (overrides: Partial<HouseholdTeacherRow> = {}): HouseholdT
   teamId: 'team-a',
   teamDisplayName: 'チーム A',
   lifeStage: 'INDEPENDENT',
+  profileLabel: 'INDEPENDENT・単身',
   roundIndex: 1,
   submittedForRoundIndex: true,
   submittedAtServerMillis: 1000,
@@ -232,10 +233,13 @@ describe('HouseholdTeacherDashboard (Common — single-household-per-team)', () 
 })
 
 describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => {
-  const multiHouseholdA = makeHousehold({ householdId: 'team-multi-h1', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: '独身', submittedForRoundIndex: true })
+  const multiHouseholdA = makeHousehold({
+    householdId: 'team-multi-h1', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: '独身',
+    profileLabel: '独身・一人暮らし', submittedForRoundIndex: true,
+  })
   const multiHouseholdB = makeHousehold({
     householdId: 'team-multi-h2', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: '子育て',
-    submittedForRoundIndex: false, submittedAtServerMillis: null,
+    profileLabel: '子育て・配偶者と子2人', submittedForRoundIndex: false, submittedAtServerMillis: null,
     warnings: [{ severity: 'ACTION_REQUIRED', code: 'UNSUBMITTED_DECISION', message: '子育て世帯の意思決定が未提出です' }],
   })
   const multiTeam: HouseholdTeacherTeamRow = {
@@ -282,6 +286,36 @@ describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => 
 
     expect(screen.getAllByText('1 / 2 提出済み').length).toBeGreaterThan(0)
     expect(screen.getByText('子育て世帯の意思決定が未提出です')).toBeInTheDocument()
+  })
+
+  /**
+   * Important I3 (whole-branch review): a MULTI team's several household
+   * rows were previously distinguishable only by `lifeStage` (which
+   * MULTI_PERSON_PER_TEAM can repeat across its full profile set) or the
+   * opaque runtime householdId. This proves `profileLabel` (lifeStage・
+   * family) is what actually renders per row.
+   */
+  it('renders each household row by its human-readable profileLabel, not the opaque runtime householdId', () => {
+    const dashboard = makeDashboard({
+      courseFormat: 'MULTI_PERSON_PER_TEAM',
+      assignment: readyAssignment,
+      teams: [multiTeam],
+    })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+        onPrepareAssignment={vi.fn()}
+        onUpdateAssignment={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('独身・一人暮らし')).toBeInTheDocument()
+    expect(screen.getByText('子育て・配偶者と子2人')).toBeInTheDocument()
+    expect(screen.queryByText('team-multi-h1')).not.toBeInTheDocument()
+    expect(screen.queryByText('team-multi-h2')).not.toBeInTheDocument()
   })
 
   it('never renders individual settlement for advanced formats (regression)', () => {
