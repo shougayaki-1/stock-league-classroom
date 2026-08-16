@@ -24,6 +24,7 @@ import {
 import { appendLessonEventInTransaction, type FirestoreTx } from '../lessonRuns/appendLessonEvent'
 import { ensureCommonConditionsHouseholdStateWithAdminSdk } from './commonConditionsHousehold'
 import { resolveVisibleConcepts } from './goalPackage'
+import { advancedTeamControlStateFields } from './realtimeProjection'
 import type { HouseholdAssignmentEntry } from './householdAssignment'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
 import type { HouseholdRuntimeControl } from './statusTransition'
@@ -642,10 +643,32 @@ export const restoreHouseholdCheckpointV3 = async (
   // Task 9's eventual reader, since it is simply "whatever the checkpoint
   // says this team's households looked like" — the same relationship v2's
   // restore already has to its own RTDB node.
+  // Critical C1 fix: also republish the control-derived trio
+  // (`courseFormat`/`synchronizedRoundIndex`/`roundStatus`) that the
+  // transaction above just reset on the Firestore control doc — the v3
+  // restore write previously carried `households`/`householdOrder`/`orgId`/
+  // `updatedAtMillis` only, leaving each team's RTDB node stuck at whatever
+  // `roundStatus` it showed before the restore (often `'SETTLING'`, if the
+  // restore was itself recovering from a stuck bulk operation), even though
+  // the restore always rewinds the control doc to `roundStatus: 'OPEN'` at
+  // `snapshot.expectedRoundIndex`. `snapshot.courseFormat`/
+  // `expectedRoundIndex` are used here (not a separate control re-read)
+  // since they are exactly what the transaction above wrote to the control
+  // doc, and are already in scope on both the fresh-restore and
+  // already-committed-replay paths.
+  const controlTrio = advancedTeamControlStateFields({
+    courseFormat: snapshot.courseFormat,
+    synchronizedRoundIndex: snapshot.expectedRoundIndex,
+    roundStatus: 'OPEN',
+  })
+
   const rtdbUpdates: Record<string, unknown> = {}
   for (const [teamId, teamView] of Object.entries(snapshot.teamViews)) {
     rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/households`] = teamView.households
     rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/householdOrder`] = teamView.householdOrder
+    rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/courseFormat`] = controlTrio.courseFormat
+    rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/synchronizedRoundIndex`] = controlTrio.synchronizedRoundIndex
+    rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/roundStatus`] = controlTrio.roundStatus
     rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/orgId`] = orgId
     rtdbUpdates[`lessonRunTeamState/${input.lessonRunId}/${teamId}/updatedAtMillis`] = input.nowMillis
     // Clear stale computation-log entries per RESTORED RUNTIME HOUSEHOLD id

@@ -1,6 +1,8 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import { getDatabase } from 'firebase-admin/database'
 import { idempotencyDocumentId, requestDigest } from '../lib/idempotency'
 import { householdRepositoryWithAdminSdk, type HouseholdFirestoreDeps } from '../lessonRuns/households/repository'
+import { advancedTeamControlStateFields } from './realtimeProjection'
 import type { HouseholdRuntimeControl } from './statusTransition'
 
 export const HOUSEHOLD_BULK_LEASE_MS = 60_000
@@ -492,10 +494,16 @@ export interface FinalizeBulkSettlementOperationInput {
  * already enforces, but cheap to check here since the control doc is
  * already being read).
  */
-export const finalizeBulkSettlementOperation = (
+export const finalizeBulkSettlementOperation = async (
   input: FinalizeBulkSettlementOperationInput,
-): Promise<HouseholdBulkSettlementOperation> =>
-  input.firestore.runTransaction(async (tx) => {
+): Promise<HouseholdBulkSettlementOperation> => {
+  // Captured from inside the transaction when the control-document unlock
+  // actually happens, so the post-commit RTDB republish below (Critical C1
+  // fix) uses the SAME new control values that were just committed to
+  // Firestore, without re-reading them non-transactionally.
+  let unlockedControl: HouseholdRuntimeControl | null = null
+
+  const updated = await input.firestore.runTransaction(async (tx) => {
     const opPath = `householdBulkSettlementOperations/${input.operationId}`
     // ---- ALL READS FIRST ----
     const existing = await tx.get(opPath)
@@ -518,18 +526,50 @@ export const finalizeBulkSettlementOperation = (
     if (isControlLocked && input.status === 'COMPLETED' && controlSnap?.exists) {
       const control = controlSnap.data() as unknown as HouseholdRuntimeControl
       if (control.activeOperationId === op.operationId) {
-        tx.set(controlPath, {
+        const newControl: HouseholdRuntimeControl = {
           ...control,
           roundStatus: 'OPEN',
           activeOperationId: null,
           synchronizedRoundIndex: control.synchronizedRoundIndex + 1,
           updatedAtServerMillis: input.nowMillis,
-        } as unknown as Record<string, unknown>)
+        }
+        tx.set(controlPath, newControl as unknown as Record<string, unknown>)
+        unlockedControl = newControl
       }
     }
 
     return updated
   })
+
+  // Critical C1 fix: republish `roundStatus`/`synchronizedRoundIndex` to
+  // RTDB for every DISTINCT team this operation spanned, now that
+  // Firestore's control doc has flipped back to OPEN in the transaction
+  // above. Without this, `lessonRunTeamState/{lessonRunId}/{teamId}` stays
+  // stuck at `roundStatus: 'SETTLING'` forever (it is only otherwise
+  // written by `afterStatusTransition`, once, at lesson start, and by
+  // `processRound.ts` mid-settlement, always to 'SETTLING' since the
+  // control lock is held for the whole bulk loop) — permanently hiding the
+  // student submit button. Runs strictly after the transaction has
+  // committed, same "transactional write, then post-commit RTDB I/O"
+  // discipline as `afterStatusTransition`/`householdRestore.ts`. One update
+  // per team, not per household — an operation can span multiple teams
+  // (e.g. MULTI_PERSON_PER_TEAM), but a team's RTDB node is written once.
+  if (unlockedControl) {
+    const control = unlockedControl as HouseholdRuntimeControl
+    const teamIds = new Set(Object.values(updated.households).map((item) => item.teamId))
+    const rtdb = getDatabase()
+    await Promise.all(
+      [...teamIds].map((teamId) =>
+        rtdb.ref(`lessonRunTeamState/${updated.lessonRunId}/${teamId}`).update({
+          ...advancedTeamControlStateFields(control),
+          updatedAtMillis: input.nowMillis,
+        }),
+      ),
+    )
+  }
+
+  return updated
+}
 
 export interface CancelBulkSettlementOperationInput {
   firestore: HouseholdFirestoreDeps['firestore']

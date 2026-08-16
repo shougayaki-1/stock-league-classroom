@@ -6,6 +6,7 @@ import type { EventDisclosureView } from './engine/lifeEvents'
 import type { ShortfallOption } from './engine/shortfallOptions'
 import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
 import { toHouseholdProfilePublicView } from './toPublicView'
+import type { HouseholdRuntimeControl } from './statusTransition'
 
 /**
  * Server-side counterpart of src/lib/lessonRuns/liveTypes.ts's
@@ -144,4 +145,30 @@ export const toAdvancedHouseholdTeamStateView = (
   roundStatus,
   households: Object.fromEntries(entries.map((entry) => [entry.householdId, entry])),
   householdOrder: entries.map((entry) => entry.householdId),
+})
+
+/**
+ * Critical C1 (whole-branch review) fix — the ONE shared field-builder for
+ * the control-derived trio (`courseFormat`/`synchronizedRoundIndex`/
+ * `roundStatus`) every writer of an advanced-format
+ * `lessonRunTeamState/{lessonRunId}/{teamId}` node must publish in
+ * agreement. Before this existed, `statusTransition.ts`'s
+ * `afterStatusTransition`, `processRound.ts`'s
+ * `publishRealtimeStateWithAdminSdk`, `bulkSettlementOperation.ts`'s
+ * `finalizeBulkSettlementOperation`, and `householdRestore.ts`'s v3 restore
+ * each hand-rolled this same 3-field object independently — and had already
+ * drifted: `finalizeBulkSettlementOperation` never wrote it at all after a
+ * bulk settlement completed (leaving every team's RTDB node permanently
+ * showing `roundStatus: 'SETTLING'`, so students could never submit again),
+ * and v3 restore's RTDB write never included it either. Pure — callers are
+ * responsible for the actual RTDB `.update()` call (never `.set()`, so this
+ * node's `households`/`householdOrder` fields, managed by sibling writes,
+ * are never clobbered).
+ */
+export const advancedTeamControlStateFields = (
+  control: Pick<HouseholdRuntimeControl, 'courseFormat' | 'synchronizedRoundIndex' | 'roundStatus'>,
+): Pick<AdvancedHouseholdTeamStateView, 'courseFormat' | 'synchronizedRoundIndex' | 'roundStatus'> => ({
+  courseFormat: control.courseFormat,
+  synchronizedRoundIndex: control.synchronizedRoundIndex,
+  roundStatus: control.roundStatus,
 })

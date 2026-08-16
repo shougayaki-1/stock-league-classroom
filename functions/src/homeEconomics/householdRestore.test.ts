@@ -483,6 +483,44 @@ describe('householdRestore v3 (advanced formats)', () => {
     expect(rtdbUpdates!['lessonRunTeamState/run-1/team-a/householdOrder']).toEqual(['hh-a'])
     expect(rtdbUpdates!['lessonRunPrivate/run-1/householdComputationLog/hh-a']).toBeNull()
     expect(rtdbUpdates!['lessonRunPrivate/run-1/householdComputationLog/hh-b']).toBeNull()
+
+    // Critical C1 (whole-branch review): the v3 restore write previously
+    // omitted `roundStatus`/`synchronizedRoundIndex`/`courseFormat`
+    // entirely, leaving each team's RTDB node stuck at whatever it showed
+    // BEFORE the restore — even though the transaction above just rewound
+    // the Firestore control doc to `roundStatus: 'OPEN'` at the checkpoint's
+    // round. Both team nodes must now carry the SAME trio the control doc
+    // was just reset to.
+    for (const teamId of ['team-a', 'team-b']) {
+      expect(rtdbUpdates![`lessonRunTeamState/run-1/${teamId}/roundStatus`]).toBe('OPEN')
+      expect(rtdbUpdates![`lessonRunTeamState/run-1/${teamId}/synchronizedRoundIndex`]).toBe(1)
+      expect(rtdbUpdates![`lessonRunTeamState/run-1/${teamId}/courseFormat`]).toBe('ROLE_VARIANT')
+    }
+  })
+
+  /**
+   * Critical C1 regression, isolated to the exact bug scenario: the control
+   * doc BEFORE restore is stuck `SETTLING` (e.g. restoring precisely to
+   * recover from a wedged bulk operation) — the fix must republish `OPEN`
+   * to RTDB regardless of what `roundStatus` happened to be beforehand,
+   * since the restore transaction unconditionally rewinds control to OPEN.
+   */
+  it('republishes roundStatus OPEN to RTDB even when the pre-restore control doc was stuck SETTLING (Critical C1)', async () => {
+    const fake = makeFakeFirestore()
+    seedBaseDocs(fake)
+    fake.docs.set(controlPath, { ...openControl, roundStatus: 'SETTLING', activeOperationId: 'stuck-op' } as unknown as Record<string, unknown>)
+
+    let rtdbUpdates: Record<string, unknown> | null = null
+    const deps = makeDeps(fake, {
+      syncRtdbProjections: vi.fn().mockImplementation(async (updates) => { rtdbUpdates = updates }),
+    })
+
+    await restoreHouseholdCheckpointV3(deps, baseInput)
+
+    const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+    expect(control.roundStatus).toBe('OPEN')
+    expect(rtdbUpdates!['lessonRunTeamState/run-1/team-a/roundStatus']).toBe('OPEN')
+    expect(rtdbUpdates!['lessonRunTeamState/run-1/team-b/roundStatus']).toBe('OPEN')
   })
 
   it('rejects when the current HouseholdAssignmentConfig assignmentRevision does not match the checkpoint snapshot', async () => {

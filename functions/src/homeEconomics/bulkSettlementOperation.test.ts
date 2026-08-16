@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   acquireBulkSettlementLease,
   BulkSettlementOperationNotCancellableError,
@@ -16,6 +16,28 @@ import {
   type HouseholdBulkTarget,
 } from './bulkSettlementOperation'
 import type { HouseholdRuntimeControl } from './statusTransition'
+
+// `finalizeBulkSettlementOperation` calls `getDatabase()` directly (no
+// injected dependency seam) to republish the control-derived trio to RTDB
+// on COMPLETED (Critical C1 fix) — same module-level mock convention as
+// `processRound.publishRealtimeState.test.ts`.
+const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
+
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (path: string) => ({
+      update: async (data: Record<string, unknown>) => { rtdbUpdates.push({ path, data }) },
+    }),
+  }),
+}))
+
+beforeEach(() => {
+  rtdbUpdates.length = 0
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 const makeFakeFirestore = (initialDocs: Record<string, Record<string, unknown>> = {}) => {
   const docs = new Map<string, Record<string, unknown>>(Object.entries(initialDocs))
@@ -448,6 +470,57 @@ describe('bulkSettlementOperation', () => {
       expect(control.synchronizedRoundIndex).toBe(3)
     })
 
+    /**
+     * Critical C1 (whole-branch review): before this fix, completing a bulk
+     * settlement flipped Firestore's control doc back to `OPEN` but never
+     * touched RTDB — `lessonRunTeamState/{lessonRunId}/{teamId}` stayed
+     * stuck at `roundStatus: 'SETTLING'` forever (`processRound.ts` only
+     * ever writes 'SETTLING' there mid-bulk-loop, and `afterStatusTransition`
+     * only writes the initial 'OPEN' once, at lesson start), permanently
+     * hiding the student submit button after the FIRST completed bulk
+     * round. This proves the RTDB republish actually happens, with the
+     * NEW (post-completion) values, once per DISTINCT team — not once per
+     * household — covering a MULTI_PERSON_PER_TEAM-shaped operation where
+     * two households share the same team.
+     */
+    it('completion republishes roundStatus OPEN + advanced synchronizedRoundIndex to RTDB, once per distinct team (Critical C1)', async () => {
+      const multiTargets: HouseholdBulkTarget[] = [
+        { householdId: 'hh-1', teamId: 'team-a', profileId: 'profile-1' },
+        { householdId: 'hh-2', teamId: 'team-a', profileId: 'profile-2' },
+        { householdId: 'hh-3', teamId: 'team-b', profileId: 'profile-3' },
+      ]
+      const fake = makeFakeFirestore({ [controlPath]: { ...lockedControl, roundStatus: 'OPEN', activeOperationId: null } as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-multi',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: multiTargets,
+        nowMillis: 1000,
+      })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-1', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-2', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-3', status: 'SUCCEEDED', nowMillis: 1100 })
+
+      await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'COMPLETED', nowMillis: 2000 })
+
+      const teamAUpdates = rtdbUpdates.filter((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+      const teamBUpdates = rtdbUpdates.filter((u) => u.path === 'lessonRunTeamState/run-1/team-b')
+      // Once per distinct team, not once per household (team-a hosts 2).
+      expect(teamAUpdates).toHaveLength(1)
+      expect(teamBUpdates).toHaveLength(1)
+
+      for (const update of [...teamAUpdates, ...teamBUpdates]) {
+        expect(update.data.roundStatus).toBe('OPEN')
+        expect(update.data.synchronizedRoundIndex).toBe(3)
+        expect(update.data.courseFormat).toBe('ROLE_VARIANT')
+      }
+    })
+
     it('partial failure: control stays SETTLING at the SAME round — the lock is NOT released and the round is NOT advanced', async () => {
       const { fake, op } = await setUpLockedOperation()
       await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-a', status: 'SUCCEEDED', nowMillis: 1100 })
@@ -461,6 +534,9 @@ describe('bulkSettlementOperation', () => {
       expect(control.roundStatus).toBe('SETTLING')
       expect(control.activeOperationId).toBe(op.operationId)
       expect(control.synchronizedRoundIndex).toBe(2)
+      // No control unlock happened, so no RTDB republish either — a
+      // partial failure must not tell students the round is OPEN again.
+      expect(rtdbUpdates).toHaveLength(0)
     })
 
     it('never touches the control document for COMMON_CONDITIONS (assignmentRevision null)', async () => {
