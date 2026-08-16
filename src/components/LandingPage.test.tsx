@@ -19,4 +19,11 @@ describe('LandingPage', () => {
       expect(link).toHaveAttribute('href', '/guide')
     }
   })
+
+  it('lists the three product principles', () => {
+    renderLandingPage()
+    expect(screen.getByText('今、必要な判断だけ。')).toBeInTheDocument()
+    expect(screen.getByText('なぜ起きたかまで扱う。')).toBeInTheDocument()
+    expect(screen.getByText('サーバーが進行を守る。')).toBeInTheDocument()
+  })
 })

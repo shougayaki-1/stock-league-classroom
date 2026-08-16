@@ -30,6 +30,13 @@ export const LandingPage = () => <main className="landing-page">
       <Button component={RouterLink} to="/guide" variant="outlined" size="large">操作マニュアル</Button>
     </Stack>
   </section>
+  <section className="landing-features" aria-label="特徴">
+    <ul>
+      <li><strong>今、必要な判断だけ。</strong>生徒の画面には今取るべき行動だけを表示。情報過多にしない。</li>
+      <li><strong>なぜ起きたかまで扱う。</strong>結果だけでなく「何が起きたか→なぜ→次にどうするか」を振り返る設計。</li>
+      <li><strong>サーバーが進行を守る。</strong>教師のブラウザに依存しない設計。スリープや通信断で授業が止まらない。</li>
+    </ul>
+  </section>
   <section className="landing-closing"><p>準備を進めています。</p><h2>まもなく教室に市場をひらけます。</h2><Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button></section>
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
 </main>
