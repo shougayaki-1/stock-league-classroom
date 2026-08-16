@@ -4,6 +4,7 @@ import type { HouseholdState } from '../lessonRuns/households/repository'
 import {
   buildHouseholdClassComparisonPublicView,
   evaluateHouseholdReflectionGate,
+  hasUnresolvedBulkSettlementOperationInTransaction,
   householdFinalComparisonPath,
 } from './finalComparison'
 import type { HouseholdAssignmentEntry } from './householdAssignment'
@@ -136,10 +137,81 @@ describe('buildHouseholdClassComparisonPublicView', () => {
   })
 })
 
-// `hasUnresolvedBulkSettlementOperationWithAdminSdk` and
-// `readHouseholdFinalComparisonWithAdminSdk` are thin Admin SDK reads with
-// no independent logic of their own to unit test in isolation — their
-// behavior is exercised end-to-end via `statusTransition.test.ts`'s
-// REFLECTION-gate and RTDB-republish tests (mocked `firebase-admin/firestore`
-// / `./bulkSettlementOperation` there), matching this file's "pure logic
-// here, Admin SDK wiring exercised by the caller's tests" split.
+// `readHouseholdFinalComparisonWithAdminSdk` is a thin Admin SDK read with no
+// independent logic of its own to unit test in isolation — its behavior is
+// exercised end-to-end via `statusTransition.test.ts`'s RTDB-republish tests
+// (mocked `firebase-admin/firestore` there), matching this file's "pure
+// logic here, Admin SDK wiring exercised by the caller's tests" split.
+//
+// `hasUnresolvedBulkSettlementOperationInTransaction`, by contrast, has real
+// filtering logic of its own (reads the WHOLE top-level, lessonRunId-unscoped
+// `householdBulkSettlementOperations` collection through `tx.getCollection`
+// and filters by `lessonRunId`/`status` itself — see its JSDoc for why), so
+// it is unit-tested directly here rather than only through
+// `statusTransition.test.ts`'s end-to-end REFLECTION-gate tests.
+describe('hasUnresolvedBulkSettlementOperationInTransaction', () => {
+  const op = (overrides: Partial<{ lessonRunId: string; status: string }> = {}) => ({
+    operationId: 'op-1', lessonRunId: 'run-1', status: 'RUNNING', ...overrides,
+  })
+
+  it('throws when the transaction has no getCollection support — proves this reads through tx, not a standalone Admin SDK query', async () => {
+    const tx = { get: async () => ({ exists: false, data: () => undefined }), set: () => {} }
+    await expect(hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1'))
+      .rejects.toThrow('getCollection support')
+  })
+
+  it('reads the collection through tx.getCollection rather than any other path', async () => {
+    let requestedPath: string | null = null
+    const tx = {
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: () => {},
+      getCollection: async (path: string) => { requestedPath = path; return [] },
+    }
+    await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')
+    expect(requestedPath).toBe('householdBulkSettlementOperations')
+  })
+
+  it('returns true when an unresolved (RUNNING) operation exists for this lesson run', async () => {
+    const tx = {
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: () => {},
+      getCollection: async () => [{ id: 'op-1', data: op({ status: 'RUNNING' }) }],
+    }
+    expect(await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')).toBe(true)
+  })
+
+  it('returns false when the only operation for this lesson run is COMPLETED', async () => {
+    const tx = {
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: () => {},
+      getCollection: async () => [{ id: 'op-1', data: op({ status: 'COMPLETED' }) }],
+    }
+    expect(await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')).toBe(false)
+  })
+
+  it('returns false when the only operation for this lesson run is CANCELLED', async () => {
+    const tx = {
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: () => {},
+      getCollection: async () => [{ id: 'op-1', data: op({ status: 'CANCELLED' }) }],
+    }
+    expect(await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')).toBe(false)
+  })
+
+  // Regression: the collection is top-level and unscoped by lessonRunId —
+  // an unresolved operation belonging to a DIFFERENT lesson run must not
+  // count, proving the `lessonRunId` filter is genuinely applied.
+  it('returns false when the unresolved operation belongs to a different lesson run', async () => {
+    const tx = {
+      get: async () => ({ exists: false, data: () => undefined }),
+      set: () => {},
+      getCollection: async () => [{ id: 'op-1', data: op({ lessonRunId: 'run-OTHER', status: 'RUNNING' }) }],
+    }
+    expect(await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')).toBe(false)
+  })
+
+  it('returns false when no operations exist at all', async () => {
+    const tx = { get: async () => ({ exists: false, data: () => undefined }), set: () => {}, getCollection: async () => [] }
+    expect(await hasUnresolvedBulkSettlementOperationInTransaction(tx, 'run-1')).toBe(false)
+  })
+})

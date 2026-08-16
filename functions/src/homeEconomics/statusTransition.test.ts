@@ -17,11 +17,6 @@ import type { HouseholdAssignmentEntry } from './householdAssignment'
 const docs = new Map<string, Record<string, unknown>>()
 const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
 const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
-// Top-level, unscoped-by-lessonRunId collection used only by
-// `hasUnresolvedBulkSettlementOperationWithAdminSdk` (via `.where(field, '==', value).get()`)
-// — kept separate from `collections` above, which models
-// `tx.getCollection`'s scoped-subcollection reads only.
-const topLevelCollections = new Map<string, Array<Record<string, unknown>>>()
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
@@ -36,13 +31,6 @@ vi.mock('firebase-admin/firestore', () => ({
     collection: (path: string) => ({
       get: async () => ({
         docs: (collections.get(path) ?? []).map((entry) => ({ id: entry.id, data: () => entry.data })),
-      }),
-      where: (field: string, _op: string, value: unknown) => ({
-        get: async () => ({
-          docs: (topLevelCollections.get(path) ?? [])
-            .filter((entry) => entry[field] === value)
-            .map((entry) => ({ data: () => entry })),
-        }),
       }),
     }),
     runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
@@ -63,7 +51,6 @@ vi.mock('firebase-admin/database', () => ({
 beforeEach(() => {
   docs.clear()
   collections.clear()
-  topLevelCollections.clear()
   rtdbUpdates.length = 0
 })
 
@@ -405,6 +392,14 @@ describe('prepareStatusTransition (REFLECTION, Task 12)', () => {
       { id: 'team-a', data: { displayName: 'チームA' } },
       { id: 'team-b', data: { displayName: 'チームB' } },
     ],
+    // Top-level, unscoped-by-lessonRunId collection —
+    // `hasUnresolvedBulkSettlementOperationInTransaction` reads this whole
+    // collection through `tx.getCollection` (the same fake used for every
+    // other collection above) and filters by `lessonRunId`/`status` itself,
+    // so it is modeled here exactly like any other `tx.getCollection` path
+    // rather than through a separate `getFirestore().collection().where()`
+    // mock.
+    'householdBulkSettlementOperations': [] as Array<{ id: string; data: Record<string, unknown> }>,
   })
   const reflectionRun = buildRun({ templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [profileA, profileB] } } })
 
@@ -457,25 +452,51 @@ describe('prepareStatusTransition (REFLECTION, Task 12)', () => {
   })
 
   it('throws when an unresolved bulk settlement operation exists for this lesson run', async () => {
-    topLevelCollections.set('householdBulkSettlementOperations', [
-      { operationId: 'op-1', lessonRunId: 'run-1', status: 'RUNNING' },
-    ])
-    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const collectionsWithUnresolvedOp = {
+      ...baseCollections(),
+      householdBulkSettlementOperations: [
+        { id: 'op-1', data: { operationId: 'op-1', lessonRunId: 'run-1', status: 'RUNNING' } },
+      ],
+    }
+    const tx = makeFakeTx(baseDocs(), collectionsWithUnresolvedOp)
     await expect(prepareStatusTransition(tx, {
       lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
     })).rejects.toThrow('unresolved bulk')
   })
 
   it('does not reject on a RESOLVED (COMPLETED) bulk operation for this lesson run', async () => {
-    topLevelCollections.set('householdBulkSettlementOperations', [
-      { operationId: 'op-1', lessonRunId: 'run-1', status: 'COMPLETED' },
-    ])
-    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const collectionsWithResolvedOp = {
+      ...baseCollections(),
+      householdBulkSettlementOperations: [
+        { id: 'op-1', data: { operationId: 'op-1', lessonRunId: 'run-1', status: 'COMPLETED' } },
+      ],
+    }
+    const tx = makeFakeTx(baseDocs(), collectionsWithResolvedOp)
     const result = await prepareStatusTransition(tx, {
       lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
     })
     expect(result).not.toBeNull()
   })
+
+  // Regression for the transactional-consistency fix: this collection is
+  // top-level and unscoped by lessonRunId, so an unresolved operation
+  // belonging to a DIFFERENT lesson run must not trip this lesson's gate —
+  // proves the `lessonRunId` filter is actually applied after reading the
+  // whole collection through `tx`.
+  it('does not reject on an unresolved bulk operation belonging to a different lesson run', async () => {
+    const collectionsWithOtherRunOp = {
+      ...baseCollections(),
+      householdBulkSettlementOperations: [
+        { id: 'op-1', data: { operationId: 'op-1', lessonRunId: 'run-OTHER', status: 'RUNNING' } },
+      ],
+    }
+    const tx = makeFakeTx(baseDocs(), collectionsWithOtherRunOp)
+    const result = await prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })
+    expect(result).not.toBeNull()
+  })
+
 
   it('throws when households are not aligned on the same round index', async () => {
     const misaligned = baseCollections()

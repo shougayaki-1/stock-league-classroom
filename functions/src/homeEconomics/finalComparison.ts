@@ -6,10 +6,11 @@ import type {
   HouseholdClassComparisonTeamView,
 } from '@stock-league/household-public-content'
 import type { HouseholdState } from '../lessonRuns/households/repository'
+import type { FirestoreTx } from '../lessonRuns/phases/transitionPhase'
 import { computeLifeGoalAchievementScore } from './evaluation'
 import { toHouseholdProfilePublicView } from './toPublicView'
 import type { AdvancedHouseholdCourseFormat, HouseholdAssignmentEntry } from './householdAssignment'
-import { findUnresolvedBulkSettlementOperationWithAdminSdk } from './bulkSettlementOperation'
+import type { HouseholdBulkSettlementOperation } from './bulkSettlementOperation'
 
 /**
  * Task 12: the class-wide, privacy-safe comparison published the moment an
@@ -26,23 +27,48 @@ export const householdFinalComparisonPath = (lessonRunId: string): string =>
 
 /**
  * Reads whether an unresolved (not COMPLETED, not CANCELLED)
- * `HouseholdBulkSettlementOperation` exists for this lesson run. Delegates
- * to `bulkSettlementOperation.ts`'s existing `findUnresolvedBulkSettlementOperationWithAdminSdk`
- * — deliberately NOT read via `tx.getCollection` inside `prepareStatusTransition`'s
- * Firestore transaction: that collection (`householdBulkSettlementOperations`)
- * is TOP-LEVEL and unscoped by `lessonRunId` (queried with `.where('lessonRunId', '==', ...)`),
- * whereas every existing `tx.getCollection` call site in this codebase reads
- * a subcollection already scoped under `lessonRuns/{lessonRunId}/...` — a
- * bare `tx.getCollection('householdBulkSettlementOperations')` would fetch
- * every OTHER lesson run's operations too, with no way to filter transactionally
- * through that helper's current `(path: string) => ...` signature. This gate
- * check is read-only and does not participate in `tx`'s own optimistic-
- * concurrency read set — the same non-transactional-read pattern
- * `transitionPhase.ts`'s `stopActiveOperations` hook already uses for a
- * REFLECTION-adjacent concern.
+ * `HouseholdBulkSettlementOperation` exists for this lesson run — through
+ * the SAME Firestore transaction (`tx`) every other read in
+ * `prepareReflectionTransition` uses, so this check is genuinely covered by
+ * the transaction's snapshot isolation and cannot observe a different
+ * bulk-operation state on a transaction retry than the OTHER (transactional)
+ * reads captured in that same attempt.
+ *
+ * `householdBulkSettlementOperations` is a genuinely TOP-LEVEL collection,
+ * unscoped by `lessonRunId` (queried elsewhere with
+ * `.where('lessonRunId', '==', ...)` — see `bulkSettlementOperation.ts`'s
+ * `findUnresolvedBulkSettlementOperationWithAdminSdk`), unlike every other
+ * `tx.getCollection` call site in this codebase, which reads a subcollection
+ * already scoped under `lessonRuns/{lessonRunId}/...`. Rather than requiring
+ * a query-capable transactional read method, this reads the collection's
+ * FULL contents via the existing `tx.getCollection(path)` — which the Admin
+ * SDK's `Transaction.get()` already supports for any `CollectionReference`
+ * (a `Query`), not only single documents; see `transitionPhaseWithAdminSdk`'s
+ * `getCollection` wiring in `transitionPhase.ts`, which is just `tx.get(db.collection(path))`
+ * with no `.where(...)` applied — and filters by `lessonRunId`/`status` in
+ * application code below. That filtering runs over data that is already part
+ * of `tx`'s own read set, so it inherits the transaction's snapshot
+ * isolation: a retry re-reads (and re-filters) the exact same consistent
+ * snapshot the rest of `prepareReflectionTransition`'s reads observe on that
+ * attempt, unlike a plain `.where(...).get()` issued outside `tx`. This
+ * trades a wider read (every lesson run's bulk operations, not just this
+ * one's) for that consistency guarantee — acceptable here since this
+ * collection is not expected to grow large relative to a single
+ * transaction's read cost.
  */
-export const hasUnresolvedBulkSettlementOperationWithAdminSdk = async (lessonRunId: string): Promise<boolean> =>
-  (await findUnresolvedBulkSettlementOperationWithAdminSdk(lessonRunId)) !== null
+export const hasUnresolvedBulkSettlementOperationInTransaction = async (
+  tx: FirestoreTx,
+  lessonRunId: string,
+): Promise<boolean> => {
+  if (!tx.getCollection) {
+    throw new Error('Household final comparison requires a Firestore transaction with getCollection support')
+  }
+  const docs = await tx.getCollection('householdBulkSettlementOperations')
+  return docs.some((doc) => {
+    const op = doc.data as unknown as HouseholdBulkSettlementOperation
+    return op.lessonRunId === lessonRunId && op.status !== 'COMPLETED' && op.status !== 'CANCELLED'
+  })
+}
 
 /** Reads back the already-committed comparison snapshot, for `afterStatusTransition`'s post-commit RTDB republish. Never recomputes it. */
 export const readHouseholdFinalComparisonWithAdminSdk = async (

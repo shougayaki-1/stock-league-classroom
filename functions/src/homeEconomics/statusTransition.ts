@@ -19,7 +19,7 @@ import type { HouseholdState } from '../lessonRuns/households/repository'
 import {
   buildHouseholdClassComparisonPublicView,
   evaluateHouseholdReflectionGate,
-  hasUnresolvedBulkSettlementOperationWithAdminSdk,
+  hasUnresolvedBulkSettlementOperationInTransaction,
   householdFinalComparisonPath,
   readHouseholdFinalComparisonWithAdminSdk,
 } from './finalComparison'
@@ -268,11 +268,10 @@ const prepareRunningTransition = async (
  *    `HouseholdRuntimeControl`, the FROZEN assignment's entries, every
  *    entry's `HouseholdState`, and the lesson's team display names.
  * 2. Checks for an unresolved bulk settlement operation via
- *    `finalComparison.ts`'s `hasUnresolvedBulkSettlementOperationWithAdminSdk`
- *    — a deliberate NON-transactional read (see that function's own JSDoc
- *    for why: the operations collection is top-level and unscoped by
- *    lessonRunId, so it cannot be expressed through `tx.getCollection`'s
- *    scoped-subcollection-only signature).
+ *    `finalComparison.ts`'s `hasUnresolvedBulkSettlementOperationInTransaction`
+ *    — read through this SAME `tx`, like every other read in this function
+ *    (see that function's own JSDoc for how a top-level, lessonRunId-unscoped
+ *    collection is still made transactionally consistent via `tx.getCollection`).
  * 3. Evaluates the REFLECTION gate (`finalComparison.ts`'s
  *    `evaluateHouseholdReflectionGate`) — THROWS (failing the whole
  *    transition, so the lesson does NOT move to REFLECTION) if SETTLING, an
@@ -335,7 +334,7 @@ const prepareReflectionTransition = async (
   const teamDocs = await tx.getCollection(teamsCollectionPath(input.lessonRunId))
   const teams = teamDocs.map((doc) => ({ teamId: doc.id, displayName: normalizeTeamDisplayName(doc.id, doc.data) }))
 
-  const hasUnresolvedBulkOperation = await hasUnresolvedBulkSettlementOperationWithAdminSdk(input.lessonRunId)
+  const hasUnresolvedBulkOperation = await hasUnresolvedBulkSettlementOperationInTransaction(tx, input.lessonRunId)
 
   const gateFailure = evaluateHouseholdReflectionGate({
     roundStatus: control.roundStatus,
