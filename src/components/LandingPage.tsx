@@ -37,6 +37,19 @@ export const LandingPage = () => <main className="landing-page">
       <li><strong>サーバーが進行を守る。</strong>教師のブラウザに依存しない設計。スリープや通信断で授業が止まらない。</li>
     </ul>
   </section>
+  <section className="landing-subjects">
+    <h2>対象科目</h2>
+    <div className="subject-card-list">
+      <article className="subject-card">
+        <h3>社会科｜市場経済シミュレーション</h3>
+        <p>需要と供給、企業と産業のつながり、景気と政策。常時売買市場で、情報をもとに投資判断を積み重ねます。</p>
+      </article>
+      <article className="subject-card">
+        <h3>家庭科｜生活設計シミュレーション</h3>
+        <p>学生から退職後まで、人生の各段階を疑似体験。1ラウンド＝5年（設定変更可）で、家計と資産形成を考えます。役割別・段階分担など、クラスの人数構成に合わせた進行形式にも対応予定。</p>
+      </article>
+    </div>
+  </section>
   <section className="landing-closing"><p>準備を進めています。</p><h2>まもなく教室に市場をひらけます。</h2><Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button></section>
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>
 </main>

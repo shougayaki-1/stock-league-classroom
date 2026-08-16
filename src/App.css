@@ -44,6 +44,13 @@
 .landing-features li { flex: 1 1 260px; padding: 18px 20px; border-radius: 16px; background: #fff; box-shadow: 0 6px 18px #164a8a0f; color: var(--landing-text-muted); font-size: 14px; line-height: 1.7; }
 .landing-features li strong { display: block; margin-bottom: 6px; color: var(--landing-text); font-size: 15px; }
 
+.landing-subjects { max-width: 1112px; margin: 0 auto; padding: 40px 32px; }
+.landing-subjects h2 { margin: 0 0 24px; color: var(--landing-text); font-size: clamp(22px, 3vw, 28px); }
+.subject-card-list { display: flex; flex-wrap: wrap; gap: 24px; }
+.subject-card { flex: 1 1 320px; padding: 28px 26px; border-radius: 20px; background: #fff; box-shadow: 0 8px 24px #164a8a12; }
+.subject-card h3 { margin: 0 0 10px; color: var(--landing-accent); font-size: 18px; }
+.subject-card p { margin: 0; color: var(--landing-text-muted); font-size: 14px; line-height: 1.8; }
+
 .landing-closing { padding: 120px 32px; color: #fff; text-align: center; background: var(--landing-closing); }
 .landing-closing p { color: #b9d7ff; font-size: 13px; font-weight: 700; letter-spacing: .7px; }
 .landing-closing h2 { margin: 18px 0 36px; color: #fff; font-size: clamp(34px, 4vw, 52px); line-height: 1.12; letter-spacing: -2.6px; }
@@ -77,6 +84,7 @@
   .landing-hero { padding: 40px 20px 28px; }
   .landing-hero-ctas { flex-direction: column; align-items: stretch; }
   .landing-features { padding: 8px 20px 40px; }
+  .landing-subjects { padding: 28px 20px; }
   .landing-closing { padding: 80px 24px; }
   .landing-page > footer { padding: 22px 24px; gap: 15px; }
   .doc-nav, .doc-body, .doc-footer { padding-inline: 20px; }

@@ -26,4 +26,12 @@ describe('LandingPage', () => {
     expect(screen.getByText('なぜ起きたかまで扱う。')).toBeInTheDocument()
     expect(screen.getByText('サーバーが進行を守る。')).toBeInTheDocument()
   })
+
+  it('introduces both supported subjects', () => {
+    renderLandingPage()
+    expect(screen.getByRole('heading', { level: 3, name: '社会科｜市場経済シミュレーション' })).toBeInTheDocument()
+    expect(screen.getByText('需要と供給、企業と産業のつながり、景気と政策。常時売買市場で、情報をもとに投資判断を積み重ねます。')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: '家庭科｜生活設計シミュレーション' })).toBeInTheDocument()
+    expect(screen.getByText('学生から退職後まで、人生の各段階を疑似体験。1ラウンド＝5年（設定変更可）で、家計と資産形成を考えます。役割別・段階分担など、クラスの人数構成に合わせた進行形式にも対応予定。')).toBeInTheDocument()
+  })
 })
