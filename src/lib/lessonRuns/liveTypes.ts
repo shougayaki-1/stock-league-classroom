@@ -108,6 +108,51 @@ export interface LessonRunPublicState {
   economicFactors?: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
   /** Student Research Desk projection (Phase 2). */
   researchDesk?: ResearchDeskPublicView
+  /**
+   * Task 12: the class-wide, privacy-safe final comparison, present the
+   * moment an advanced (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+   * Home Economics lesson transitions RUNNING -> REFLECTION. Absent before
+   * that (and always absent for a market lesson / COMMON_CONDITIONS, which
+   * has no per-team comparison to publish). Hand-synced with
+   * `functions/src/homeEconomics/statusTransition.ts`'s `afterStatusTransition`
+   * REFLECTION branch, which is the sole writer of this field — see
+   * `HouseholdClassComparisonPublicView`'s own JSDoc below for the
+   * cross-boundary hand-sync discipline (same as `HouseholdProfilePublicView`
+   * above).
+   */
+  householdClassComparison?: HouseholdClassComparisonPublicView
+}
+
+/**
+ * Client counterpart of `@stock-league/household-public-content`'s
+ * `HouseholdClassComparisonHouseholdView` — hand-synced across the
+ * `functions/`-only package boundary the same way `HouseholdProfilePublicView`
+ * above is (`src/` cannot import that package; see its JSDoc). `profileId`
+ * is the LOGICAL template profile id — never a runtime householdId, never
+ * any participant identity, never a risk/probability/seed field. Keep
+ * field-for-field identical to the server-side allow-list.
+ */
+export interface HouseholdClassComparisonHouseholdView {
+  profileId: string
+  profile: HouseholdProfilePublicView
+  cashYen: number
+  totalAssetsYen: number
+  totalLiabilitiesYen: number
+  goalDelayedRounds: number
+  lifeGoalAchievementScore: number
+}
+
+export interface HouseholdClassComparisonTeamView {
+  teamDisplayName: string
+  households: HouseholdClassComparisonHouseholdView[]
+}
+
+/** Client counterpart of `@stock-league/household-public-content`'s `HouseholdClassComparisonPublicView`. Same hand-sync discipline as its sibling types above. */
+export interface HouseholdClassComparisonPublicView {
+  courseFormat: 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+  finalRoundCount: number
+  publishedAtMillis: number
+  teams: HouseholdClassComparisonTeamView[]
 }
 
 /** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */

@@ -42,3 +42,45 @@ export interface LiabilityPublicView {
     annualInterestRatePercent: number;
     remainingYears: number;
 }
+/**
+ * Hand-synced with `functions/src/homeEconomics/householdAssignment.ts`'s
+ * `AdvancedHouseholdCourseFormat` — duplicated here rather than imported
+ * because this package has no dependency edge onto `functions/src` (only
+ * `@stock-league/household-authoring-content` depends on THIS package, never
+ * the other way around). Same hand-sync discipline `src/lib/lessonRuns/
+ * liveTypes.ts` documents for its own cross-boundary duplicates.
+ */
+export type AdvancedHouseholdCourseFormat = 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM';
+/**
+ * Task 12 (household final comparison): one household's row within the
+ * class-wide, privacy-safe comparison published the moment an advanced
+ * lesson enters REFLECTION. `profileId` is the LOGICAL template profile id
+ * (`HouseholdProfile.householdId`) — the opaque per-team RUNTIME
+ * `HouseholdAssignmentEntry.householdId` never appears anywhere in this
+ * view, nor does any participant/student identity. `profile` is built
+ * exclusively through `toHouseholdProfilePublicView()` (never a spread of
+ * the internal `HouseholdProfile`, so `internalRiskFactors`/
+ * `eventProbabilityOverrides` can never leak in). No claim-probability or
+ * random-seed field belongs on this type either.
+ */
+export interface HouseholdClassComparisonHouseholdView {
+    profileId: string;
+    profile: HouseholdProfilePublicView;
+    cashYen: number;
+    totalAssetsYen: number;
+    totalLiabilitiesYen: number;
+    goalDelayedRounds: number;
+    lifeGoalAchievementScore: number;
+}
+export interface HouseholdClassComparisonTeamView {
+    teamDisplayName: string;
+    households: HouseholdClassComparisonHouseholdView[];
+}
+/** Persisted at `lessonRuns/{lessonRunId}/householdFinalComparison/result` and mirrored onto the shared `lessonRunPublic/{lessonRunId}` RTDB node's `householdClassComparison` field the moment RUNNING transitions to REFLECTION. */
+export interface HouseholdClassComparisonPublicView {
+    courseFormat: AdvancedHouseholdCourseFormat;
+    /** The class-wide synchronized round count (`HouseholdRuntimeControl.synchronizedRoundIndex`) at REFLECTION time — NOT any individual household's own `roundIndex` (the REFLECTION gate requires every household to be aligned on this same value before publication, so the two would be equal anyway, but this field is explicitly the class-wide one). */
+    finalRoundCount: number;
+    publishedAtMillis: number;
+    teams: HouseholdClassComparisonTeamView[];
+}

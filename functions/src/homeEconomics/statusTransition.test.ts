@@ -17,6 +17,11 @@ import type { HouseholdAssignmentEntry } from './householdAssignment'
 const docs = new Map<string, Record<string, unknown>>()
 const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
 const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
+// Top-level, unscoped-by-lessonRunId collection used only by
+// `hasUnresolvedBulkSettlementOperationWithAdminSdk` (via `.where(field, '==', value).get()`)
+// — kept separate from `collections` above, which models
+// `tx.getCollection`'s scoped-subcollection reads only.
+const topLevelCollections = new Map<string, Array<Record<string, unknown>>>()
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
@@ -31,6 +36,13 @@ vi.mock('firebase-admin/firestore', () => ({
     collection: (path: string) => ({
       get: async () => ({
         docs: (collections.get(path) ?? []).map((entry) => ({ id: entry.id, data: () => entry.data })),
+      }),
+      where: (field: string, _op: string, value: unknown) => ({
+        get: async () => ({
+          docs: (topLevelCollections.get(path) ?? [])
+            .filter((entry) => entry[field] === value)
+            .map((entry) => ({ data: () => entry })),
+        }),
       }),
     }),
     runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
@@ -51,6 +63,7 @@ vi.mock('firebase-admin/database', () => ({
 beforeEach(() => {
   docs.clear()
   collections.clear()
+  topLevelCollections.clear()
   rtdbUpdates.length = 0
 })
 
@@ -358,6 +371,150 @@ describe('prepareStatusTransition', () => {
   })
 })
 
+describe('prepareStatusTransition (REFLECTION, Task 12)', () => {
+  const frozenConfig: HouseholdAssignmentConfig = {
+    courseFormat: 'ROLE_VARIANT', state: 'FROZEN', validationStatus: 'READY', assignmentRevision: 1,
+    teamSetFingerprint: 'fp', entryIds: ['team-a:profile-a', 'team-b:profile-b'], entriesDigest: 'digest',
+    lastEditedByUid: 'teacher-1', lastEditedAtServerMillis: 1, frozenByUid: 'teacher-1', frozenAtServerMillis: 1,
+  }
+  const cleanControl: HouseholdRuntimeControl = {
+    courseFormat: 'ROLE_VARIANT', assignmentRevision: 1, synchronizedRoundIndex: 6,
+    roundStatus: 'OPEN', activeOperationId: null, updatedAtServerMillis: 1,
+  }
+  const householdState = (overrides: Record<string, unknown> = {}) => ({
+    householdId: 'x', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'profile-a',
+    cashYen: 1000000, assetHoldingsYen: { DOMESTIC_STOCK: 500000 }, activeInsuranceContracts: {},
+    activeLiabilities: {}, lifeStage: 'INDEPENDENT', roundIndex: 6, goalDelayedRounds: 1,
+    updatedAtServerMillis: 1, ...overrides,
+  })
+
+  const baseDocs = () => ({
+    'lessonRuns/run-1/householdAssignment/config': frozenConfig as unknown as Record<string, unknown>,
+    'lessonRuns/run-1/householdRuntime/control': cleanControl as unknown as Record<string, unknown>,
+  })
+  const baseCollections = () => ({
+    'lessonRuns/run-1/householdAssignment/config/entries': [
+      { id: 'team-a:profile-a', data: entry('team-a', 'profile-a', 'profile-a', 0) as unknown as Record<string, unknown> },
+      { id: 'team-b:profile-b', data: entry('team-b', 'profile-b', 'profile-b', 0) as unknown as Record<string, unknown> },
+    ],
+    'lessonRuns/run-1/households': [
+      { id: 'team-a:profile-a', data: householdState({ householdId: 'team-a:profile-a', teamId: 'team-a', profileId: 'profile-a', goalDelayedRounds: 0 }) },
+      { id: 'team-b:profile-b', data: householdState({ householdId: 'team-b:profile-b', teamId: 'team-b', profileId: 'profile-b', goalDelayedRounds: 2, roundIndex: 6 }) },
+    ],
+    'lessonRuns/run-1/teams': [
+      { id: 'team-a', data: { displayName: 'チームA' } },
+      { id: 'team-b', data: { displayName: 'チームB' } },
+    ],
+  })
+  const reflectionRun = buildRun({ templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [profileA, profileB] } } })
+
+  it('returns null for a Social Studies lesson (subject !== HOME_ECONOMICS)', async () => {
+    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const result = await prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: buildRun({ subject: 'SOCIAL_STUDIES' }), targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns null for COMMON_CONDITIONS Home Economics (no per-team comparison to publish)', async () => {
+    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const result = await prepareStatusTransition(tx, {
+      lessonRunId: 'run-1',
+      run: buildRun({ templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS', households: [profileA] } } }),
+      targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('throws when roundStatus is SETTLING', async () => {
+    const tx = makeFakeTx(
+      { ...baseDocs(), 'lessonRuns/run-1/householdRuntime/control': { ...cleanControl, roundStatus: 'SETTLING' } as unknown as Record<string, unknown> },
+      baseCollections(),
+    )
+    await expect(prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })).rejects.toThrow('SETTLING')
+  })
+
+  it('throws when there is an active operation lock', async () => {
+    const tx = makeFakeTx(
+      { ...baseDocs(), 'lessonRuns/run-1/householdRuntime/control': { ...cleanControl, activeOperationId: 'op-1' } as unknown as Record<string, unknown> },
+      baseCollections(),
+    )
+    await expect(prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })).rejects.toThrow('locked')
+  })
+
+  it('throws when synchronizedRoundIndex is 0 (no completed round yet)', async () => {
+    const tx = makeFakeTx(
+      { ...baseDocs(), 'lessonRuns/run-1/householdRuntime/control': { ...cleanControl, synchronizedRoundIndex: 0 } as unknown as Record<string, unknown> },
+      baseCollections(),
+    )
+    await expect(prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })).rejects.toThrow('nothing to compare')
+  })
+
+  it('throws when an unresolved bulk settlement operation exists for this lesson run', async () => {
+    topLevelCollections.set('householdBulkSettlementOperations', [
+      { operationId: 'op-1', lessonRunId: 'run-1', status: 'RUNNING' },
+    ])
+    const tx = makeFakeTx(baseDocs(), baseCollections())
+    await expect(prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })).rejects.toThrow('unresolved bulk')
+  })
+
+  it('does not reject on a RESOLVED (COMPLETED) bulk operation for this lesson run', async () => {
+    topLevelCollections.set('householdBulkSettlementOperations', [
+      { operationId: 'op-1', lessonRunId: 'run-1', status: 'COMPLETED' },
+    ])
+    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const result = await prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })
+    expect(result).not.toBeNull()
+  })
+
+  it('throws when households are not aligned on the same round index', async () => {
+    const misaligned = baseCollections()
+    misaligned['lessonRuns/run-1/households'] = [
+      { id: 'team-a:profile-a', data: householdState({ householdId: 'team-a:profile-a', roundIndex: 6 }) },
+      { id: 'team-b:profile-b', data: householdState({ householdId: 'team-b:profile-b', teamId: 'team-b', profileId: 'profile-b', roundIndex: 5 }) },
+    ]
+    const tx = makeFakeTx(baseDocs(), misaligned)
+    await expect(prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })).rejects.toThrow('not aligned')
+  })
+
+  it('returns a single write to householdFinalComparisonPath with a privacy-safe comparison, without calling tx.set itself', async () => {
+    const tx = makeFakeTx(baseDocs(), baseCollections())
+    const result = await prepareStatusTransition(tx, {
+      lessonRunId: 'run-1', run: reflectionRun, targetStatus: 'REFLECTION', actorId: 'teacher-1', nowValue: 'now',
+    })
+
+    expect(result).not.toBeNull()
+    expect(result!.writes).toHaveLength(1)
+    expect(result!.writes[0].path).toBe('lessonRuns/run-1/householdFinalComparison/result')
+
+    const comparison = result!.writes[0].data as unknown as {
+      courseFormat: string; finalRoundCount: number; teams: Array<{ teamDisplayName: string; households: Array<Record<string, unknown>> }>
+    }
+    expect(comparison.courseFormat).toBe('ROLE_VARIANT')
+    expect(comparison.finalRoundCount).toBe(6) // control.synchronizedRoundIndex, not any household's own roundIndex
+    expect(comparison.teams.map((t) => t.teamDisplayName)).toEqual(['チームA', 'チームB'])
+
+    const serialized = JSON.stringify(comparison)
+    expect(serialized).not.toContain('team-a:profile-a')
+    expect(serialized).not.toContain('team-b:profile-b')
+    expect(serialized).not.toContain('internalRiskFactors')
+    expect(serialized).not.toContain('eventProbabilityOverrides')
+    expect(serialized).not.toContain('lessonRunId')
+  })
+})
+
 describe('afterStatusTransition (Task 9)', () => {
   const frozenConfig: HouseholdAssignmentConfig = {
     courseFormat: 'MULTI_PERSON_PER_TEAM', state: 'FROZEN', validationStatus: 'READY', assignmentRevision: 1,
@@ -466,5 +623,78 @@ describe('afterStatusTransition (Task 9)', () => {
     expect(teamUpdate).toBeDefined()
     const households = teamUpdate!.data.households as Record<string, unknown>
     expect(Object.keys(households).sort()).toEqual(['team-a:profile-a', 'team-a:profile-b'])
+  })
+})
+
+describe('afterStatusTransition (REFLECTION, Task 12)', () => {
+  const roleVariantRun = {
+    subject: 'HOME_ECONOMICS', startedAt: '2026-08-01T00:00:00Z', orgId: 'org-1',
+    templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [profileA, profileB] } },
+  }
+  const comparison = {
+    courseFormat: 'ROLE_VARIANT', finalRoundCount: 6, publishedAtMillis: 1000,
+    teams: [{ teamDisplayName: 'チームA', households: [{ profileId: 'profile-a', profile: profileA, cashYen: 1, totalAssetsYen: 1, totalLiabilitiesYen: 0, goalDelayedRounds: 0, lifeGoalAchievementScore: 100 }] }],
+  }
+
+  it('does nothing for a Social Studies lesson', async () => {
+    docs.set('lessonRuns/run-1', { ...roleVariantRun, subject: 'SOCIAL_STUDIES' })
+    docs.set('lessonRuns/run-1/householdFinalComparison/result', comparison as unknown as Record<string, unknown>)
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing for COMMON_CONDITIONS Home Economics', async () => {
+    docs.set('lessonRuns/run-1', {
+      ...roleVariantRun,
+      templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS', households: [profileA] } },
+    })
+    docs.set('lessonRuns/run-1/householdFinalComparison/result', comparison as unknown as Record<string, unknown>)
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('does nothing when no comparison snapshot has been persisted (defensive — should be unreachable in practice)', async () => {
+    docs.set('lessonRuns/run-1', roleVariantRun)
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+    expect(rtdbUpdates).toHaveLength(0)
+  })
+
+  it('publishes the already-committed comparison snapshot to lessonRunPublic via update(), without recomputing or touching households', async () => {
+    docs.set('lessonRuns/run-1', roleVariantRun)
+    docs.set('lessonRuns/run-1/householdFinalComparison/result', comparison as unknown as Record<string, unknown>)
+
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+
+    expect(rtdbUpdates).toHaveLength(1)
+    expect(rtdbUpdates[0].path).toBe('lessonRunPublic/run-1')
+    expect(rtdbUpdates[0].data.orgId).toBe('org-1')
+    expect(rtdbUpdates[0].data.householdClassComparison).toEqual(comparison)
+    // No lessonRunTeamState write (the RUNNING branch's job) — REFLECTION's
+    // post-commit job never touches per-household team state.
+    expect(rtdbUpdates.some((u) => u.path.startsWith('lessonRunTeamState/'))).toBe(false)
+  })
+
+  /**
+   * Deduplicated transition repair: a replayed RUNNING -> REFLECTION request
+   * (already committed by a prior attempt) must still fire this hook and
+   * still republish — but purely by reading back the ALREADY-PERSISTED
+   * snapshot, never by re-running the REFLECTION gate or touching any
+   * HouseholdState. This test proves that by mutating the persisted
+   * snapshot directly (simulating "whatever was actually committed") and
+   * confirming the replay republishes exactly that value with no other
+   * side effect.
+   */
+  it('republishes the persisted snapshot verbatim on a deduplicated replay, without re-running settlement or state rewrite', async () => {
+    docs.set('lessonRuns/run-1', roleVariantRun)
+    docs.set('lessonRuns/run-1/householdFinalComparison/result', comparison as unknown as Record<string, unknown>)
+
+    await afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+    rtdbUpdates.length = 0
+
+    await expect(afterStatusTransition({ lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: true })).resolves.toBeUndefined()
+
+    expect(rtdbUpdates).toHaveLength(1)
+    expect(rtdbUpdates[0].data.householdClassComparison).toEqual(comparison)
+    expect(docs.has('lessonRuns/run-1/households/team-a:profile-a')).toBe(false)
   })
 })

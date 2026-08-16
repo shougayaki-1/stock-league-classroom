@@ -15,6 +15,14 @@ import {
   type HouseholdAssignmentEntry,
 } from './householdAssignment'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
+import type { HouseholdState } from '../lessonRuns/households/repository'
+import {
+  buildHouseholdClassComparisonPublicView,
+  evaluateHouseholdReflectionGate,
+  hasUnresolvedBulkSettlementOperationWithAdminSdk,
+  householdFinalComparisonPath,
+  readHouseholdFinalComparisonWithAdminSdk,
+} from './finalComparison'
 
 /**
  * Task 3's household-specific hooks for `lessonRuns/phases/transitionPhase.ts`'s
@@ -49,6 +57,14 @@ const configPath = (lessonRunId: string): string => `lessonRuns/${lessonRunId}/h
 const entriesCollectionPath = (lessonRunId: string): string => `${configPath(lessonRunId)}/entries`
 const controlPath = (lessonRunId: string): string => `lessonRuns/${lessonRunId}/householdRuntime/control`
 const teamsIndexPath = (lessonRunId: string): string => `lessonRuns/${lessonRunId}/meta/teamsIndex`
+const householdsCollectionPath = (lessonRunId: string): string => `lessonRuns/${lessonRunId}/households`
+const teamsCollectionPath = (lessonRunId: string): string => `lessonRuns/${lessonRunId}/teams`
+
+/** Hand-synced with `teacherDashboard.ts`'s `normalizeTeamDisplayName` — kept local rather than imported to avoid a `statusTransition.ts` <-> `teacherDashboard.ts` runtime import cycle (`teacherDashboard.ts` already does `import type { HouseholdRuntimeControl } from './statusTransition'`). */
+const normalizeTeamDisplayName = (teamId: string, data: Record<string, unknown>): string => {
+  const value = data.displayName
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : teamId
+}
 
 interface RunSnapshotShape {
   subject?: string
@@ -98,6 +114,13 @@ interface RunSnapshotShape {
  * config's cached `validationStatus`, since the DRAFT could have drifted
  * since it was last computed.
  */
+/**
+ * Dispatcher for `transitionPhase.ts`'s `TransitionPhaseDeps.prepareStatusTransition`
+ * hook slot. `transitionPhase.ts` itself needed ZERO changes to support the
+ * REFLECTION branch below — it already calls this hook generically for
+ * ANY `input.targetStatus` (Task 3's design), so this module simply grew a
+ * second case rather than requiring any change to the caller.
+ */
 export const prepareStatusTransition = async (
   tx: FirestoreTx,
   input: {
@@ -108,8 +131,21 @@ export const prepareStatusTransition = async (
     nowValue: unknown
   },
 ): Promise<StatusTransitionPreparation | null> => {
-  if (input.targetStatus !== 'RUNNING') return null
+  if (input.targetStatus === 'RUNNING') return prepareRunningTransition(tx, input)
+  if (input.targetStatus === 'REFLECTION') return prepareReflectionTransition(tx, input)
+  return null
+}
 
+const prepareRunningTransition = async (
+  tx: FirestoreTx,
+  input: {
+    lessonRunId: string
+    run: Record<string, unknown>
+    targetStatus: LessonRunStatus
+    actorId: string
+    nowValue: unknown
+  },
+): Promise<StatusTransitionPreparation | null> => {
   const run = input.run as RunSnapshotShape
   if (run.subject !== 'HOME_ECONOMICS') return null
   if (run.startedAt != null) return null // resume (PAUSED -> RUNNING), not a first start
@@ -219,6 +255,121 @@ export const prepareStatusTransition = async (
 }
 
 /**
+ * Task 12: the REFLECTION-gate + final-comparison counterpart of
+ * `prepareRunningTransition` above. Self-gates identically for the
+ * non-advanced-format cases (non-HOME_ECONOMICS, COMMON_CONDITIONS, and —
+ * new here — "the assignment was never frozen / RUNNING never actually
+ * happened for this format", which returns `null` defensively even though
+ * the `LessonRunStatus` state machine should make it unreachable) and
+ * returns `null` with zero extra reads/writes for those. For a genuine
+ * advanced-format RUNNING -> REFLECTION transition:
+ *
+ * 1. Reads (read-only, inside the transaction's read phase) the
+ *    `HouseholdRuntimeControl`, the FROZEN assignment's entries, every
+ *    entry's `HouseholdState`, and the lesson's team display names.
+ * 2. Checks for an unresolved bulk settlement operation via
+ *    `finalComparison.ts`'s `hasUnresolvedBulkSettlementOperationWithAdminSdk`
+ *    — a deliberate NON-transactional read (see that function's own JSDoc
+ *    for why: the operations collection is top-level and unscoped by
+ *    lessonRunId, so it cannot be expressed through `tx.getCollection`'s
+ *    scoped-subcollection-only signature).
+ * 3. Evaluates the REFLECTION gate (`finalComparison.ts`'s
+ *    `evaluateHouseholdReflectionGate`) — THROWS (failing the whole
+ *    transition, so the lesson does NOT move to REFLECTION) if SETTLING, an
+ *    active operation lock, no synchronized round yet, an unresolved bulk
+ *    operation, or misaligned household rounds is detected.
+ * 4. Builds the privacy-safe `HouseholdClassComparisonPublicView`
+ *    (`finalComparison.ts`'s pure `buildHouseholdClassComparisonPublicView`
+ *    — explicit allow-list, `toHouseholdProfilePublicView()`, never a spread
+ *    of `HouseholdProfile`/`HouseholdState`) and returns it as a WRITE to
+ *    `householdFinalComparisonPath`, to be applied by `transitionPhase.ts`
+ *    atomically with the RUNNING -> REFLECTION status write itself.
+ *
+ * Deliberately does NOT publish to RTDB here — that is
+ * `afterStatusTransition`'s post-commit job below, reading this SAME
+ * already-committed Firestore doc back rather than recomputing it, so a
+ * deduplicated replay can safely re-publish without re-running any of the
+ * gate checks or re-touching any HouseholdState.
+ */
+const prepareReflectionTransition = async (
+  tx: FirestoreTx,
+  input: {
+    lessonRunId: string
+    run: Record<string, unknown>
+    targetStatus: LessonRunStatus
+    actorId: string
+    nowValue: unknown
+  },
+): Promise<StatusTransitionPreparation | null> => {
+  const run = input.run as RunSnapshotShape
+  if (run.subject !== 'HOME_ECONOMICS') return null
+
+  const courseFormat = run.templateSnapshot?.homeEconomics?.courseFormat
+  if (!isAdvancedHouseholdCourseFormat(courseFormat)) return null
+
+  if (!tx.getCollection) {
+    throw new Error('Household final comparison requires a Firestore transaction with getCollection support')
+  }
+
+  const configSnap = await tx.get(configPath(input.lessonRunId))
+  const config = configSnap.exists ? (configSnap.data() as unknown as HouseholdAssignmentConfig) : null
+  // Defensive: the state machine requires RUNNING before REFLECTION, and
+  // `prepareRunningTransition` always freezes the assignment for an advanced
+  // format's first RUNNING start — so this should never actually be
+  // unfrozen/missing here. Returning null (no-op) rather than throwing keeps
+  // this hook's self-gating symmetric with every other "not this hook's
+  // case" branch above.
+  if (!config || config.state !== 'FROZEN') return null
+
+  const controlSnap = await tx.get(controlPath(input.lessonRunId))
+  if (!controlSnap.exists) return null
+  const control = controlSnap.data() as unknown as HouseholdRuntimeControl
+
+  const entryDocs = await tx.getCollection(entriesCollectionPath(input.lessonRunId))
+  const entries = entryDocs.map((doc) => doc.data as unknown as HouseholdAssignmentEntry)
+
+  const stateDocs = await tx.getCollection(householdsCollectionPath(input.lessonRunId))
+  const householdStates: Record<string, HouseholdState> = {}
+  for (const doc of stateDocs) householdStates[doc.id] = doc.data as unknown as HouseholdState
+
+  const teamDocs = await tx.getCollection(teamsCollectionPath(input.lessonRunId))
+  const teams = teamDocs.map((doc) => ({ teamId: doc.id, displayName: normalizeTeamDisplayName(doc.id, doc.data) }))
+
+  const hasUnresolvedBulkOperation = await hasUnresolvedBulkSettlementOperationWithAdminSdk(input.lessonRunId)
+
+  const gateFailure = evaluateHouseholdReflectionGate({
+    roundStatus: control.roundStatus,
+    activeOperationId: control.activeOperationId,
+    synchronizedRoundIndex: control.synchronizedRoundIndex,
+    hasUnresolvedBulkOperation,
+    householdRoundIndices: Object.values(householdStates).map((state) => state.roundIndex),
+  })
+  if (gateFailure) {
+    throw new Error(`Cannot enter REFLECTION: ${gateFailure}`)
+  }
+
+  const profiles = run.templateSnapshot?.homeEconomics?.households ?? []
+  const comparison = buildHouseholdClassComparisonPublicView({
+    courseFormat,
+    finalRoundCount: control.synchronizedRoundIndex,
+    publishedAtMillis: Date.now(),
+    teams,
+    entries,
+    profiles,
+    householdStates,
+  })
+
+  return {
+    writes: [
+      {
+        path: householdFinalComparisonPath(input.lessonRunId),
+        data: comparison as unknown as Record<string, unknown>,
+      },
+    ],
+  }
+}
+
+/**
  * Post-commit hook (Task 9). Runs strictly after `prepareStatusTransition`'s
  * writes have committed (see `transitionPhase.ts`'s
  * `TransitionPhaseDeps.afterStatusTransition` JSDoc). For the very first
@@ -261,6 +412,7 @@ export const afterStatusTransition = async (input: {
   targetStatus?: LessonRunStatus
   deduplicated: boolean
 }): Promise<void> => {
+  if (input.targetStatus === 'REFLECTION') return afterReflectionTransition(input)
   if (input.targetStatus !== 'RUNNING') return
 
   const db = getFirestore()
@@ -329,4 +481,54 @@ export const afterStatusTransition = async (input: {
       updatedAtMillis: Date.now(),
     })
   }
+}
+
+/**
+ * Task 12's post-commit half of the REFLECTION branch. Runs strictly after
+ * `prepareReflectionTransition`'s `HouseholdClassComparisonPublicView` write
+ * has committed to Firestore (`householdFinalComparisonPath`) atomically
+ * with the RUNNING -> REFLECTION status write itself — this function
+ * deliberately does NOT recompute the comparison (no re-read of control/
+ * entries/states/teams, no re-evaluation of the REFLECTION gate): it reads
+ * the already-persisted snapshot back
+ * (`finalComparison.ts`'s `readHouseholdFinalComparisonWithAdminSdk`) and
+ * republishes it verbatim to RTDB via `.update()`. This makes a
+ * deduplicated replay (`input.deduplicated === true`, which
+ * `transitionPhase.ts` still invokes this hook for) trivially safe: the
+ * Firestore doc from the original commit is simply read and re-published,
+ * with zero settlement logic or HouseholdState reads/writes re-run.
+ *
+ * Self-gates like the RUNNING branch (non-HOME_ECONOMICS / non-advanced-
+ * format / snapshot missing all no-op) so a Social Studies lesson or a
+ * comparison that — defensively — never got written costs at most a
+ * couple of extra reads, never a write.
+ */
+const afterReflectionTransition = async (input: {
+  lessonRunId: string
+  targetStatus?: LessonRunStatus
+  deduplicated: boolean
+}): Promise<void> => {
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${input.lessonRunId}`).get()
+  if (!runSnap.exists) return
+  const run = runSnap.data() as RunSnapshotShape
+  if (run.subject !== 'HOME_ECONOMICS') return
+
+  const courseFormat = run.templateSnapshot?.homeEconomics?.courseFormat
+  if (!isAdvancedHouseholdCourseFormat(courseFormat)) return
+
+  const comparison = await readHouseholdFinalComparisonWithAdminSdk(input.lessonRunId)
+  // Defensive: `prepareReflectionTransition` always writes this in the same
+  // transaction as a genuine RUNNING -> REFLECTION transition for an
+  // advanced format — a missing snapshot here means this hook is being
+  // invoked in a state that should be unreachable through the normal
+  // `transitionPhase` state machine. No-op rather than throw, matching this
+  // module's other defensive early-returns.
+  if (!comparison) return
+
+  const rtdb = getDatabase()
+  await rtdb.ref(`lessonRunPublic/${input.lessonRunId}`).update({
+    orgId: run.orgId,
+    householdClassComparison: comparison,
+  })
 }

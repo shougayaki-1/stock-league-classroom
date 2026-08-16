@@ -627,6 +627,54 @@ describe('transitionPhase', () => {
       expect((hookInput as { run: { startedAt: unknown } }).run.startedAt).toBe('2026-08-15T09:00:00Z')
       expect(fake.docs.has('lessonRuns/run-1/householdRuntime/control')).toBe(false)
     })
+
+    // Task 12: the REFLECTION-gate + final-comparison hook
+    // (homeEconomics/statusTransition.ts's `prepareReflectionTransition`)
+    // needed ZERO production changes to this file — this generic engine
+    // already calls `prepareStatusTransition`/`afterStatusTransition` for
+    // ANY `targetStatus`, per the JSDoc above. These two tests exist purely
+    // to prove that genericity actually covers REFLECTION end-to-end (write
+    // commits atomically with the RUNNING -> REFLECTION status write; the
+    // post-commit hook fires with `targetStatus: 'REFLECTION'`), not to add
+    // any new engine behavior.
+    it('commits a prepareStatusTransition-returned write atomically with a RUNNING -> REFLECTION status transition', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'RUNNING' })
+      const prepareStatusTransition = vi.fn(async (
+        _tx: unknown,
+        input: { targetStatus: string },
+      ) => {
+        expect(input.targetStatus).toBe('REFLECTION')
+        return { writes: [{ path: 'lessonRuns/run-1/householdFinalComparison/result', data: { finalRoundCount: 6 } }] }
+      })
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+
+      const result = await transitionPhase({
+        firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, prepareStatusTransition,
+      }, { lessonRunId: 'run-1', targetStatus: 'REFLECTION', reason: '振り返りへ', idempotencyKey: 'tx-hook-reflection-1' })
+
+      expect(result.status).toBe('REFLECTION')
+      const comparisonWrite = fake.docs.get('lessonRuns/run-1/householdFinalComparison/result')
+      expect(comparisonWrite).toEqual({ finalRoundCount: 6 })
+      const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+      expect(run.status).toBe('REFLECTION')
+    })
+
+    it('invokes afterStatusTransition post-commit for a RUNNING -> REFLECTION transition, including on a deduplicated replay', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs, { status: 'RUNNING' })
+      const afterStatusTransition = vi.fn().mockResolvedValue(undefined)
+      const writeCheckpoint = vi.fn().mockResolvedValue({ checkpointId: 'cp-1', deduplicated: false })
+      const deps = { firestore: fake as never, actorId: 'teacher-1', writeCheckpoint, afterStatusTransition }
+      const input = { lessonRunId: 'run-1', targetStatus: 'REFLECTION' as const, reason: '振り返りへ', idempotencyKey: 'tx-hook-reflection-2' }
+
+      await transitionPhase(deps, input)
+      await transitionPhase(deps, input)
+
+      expect(afterStatusTransition).toHaveBeenCalledTimes(2)
+      expect(afterStatusTransition).toHaveBeenNthCalledWith(1, { lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: false })
+      expect(afterStatusTransition).toHaveBeenNthCalledWith(2, { lessonRunId: 'run-1', targetStatus: 'REFLECTION', deduplicated: true })
+    })
   })
 })
 
