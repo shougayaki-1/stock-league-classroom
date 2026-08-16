@@ -103,4 +103,21 @@ describe('deriveDisplayMode', () => {
   it('defaults an unrecognized status to START (fail toward the least-informative screen)', () => {
     expect(deriveDisplayMode('SOME_UNKNOWN_STATUS')).toBe('START')
   })
+
+  it.each([
+    'DRAFT', 'READY', 'WAITING', 'RUNNING', 'PAUSED', 'INTERRUPTED',
+    'REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED', 'SOME_UNKNOWN_STATUS',
+  ])('never derives HOUSEHOLD_COMPARISON from status %s — that mode is exclusively teacher-triggered via showHouseholdComparisonOnDisplayCallable', (status) => {
+    expect(deriveDisplayMode(status)).not.toBe('HOUSEHOLD_COMPARISON')
+  })
+})
+
+describe('toLessonRunDisplayState — never writes HOUSEHOLD_COMPARISON fields', () => {
+  it('never includes householdClassComparison — only showHouseholdComparisonOnDisplayCallable writes that field', () => {
+    const display = toLessonRunDisplayState(privateRunFixture, 6_000)
+    expect('householdClassComparison' in display).toBe(false)
+    expect(Object.keys(display).sort()).toEqual(
+      ['goal', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
+    )
+  })
 })

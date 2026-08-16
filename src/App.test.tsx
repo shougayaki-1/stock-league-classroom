@@ -50,9 +50,16 @@ vi.mock('firebase/firestore', () => ({
 }))
 
 let membershipListener: ((snapshot: { val: () => unknown }) => void) | undefined
+let teamStateListener: ((snapshot: { val: () => unknown }) => void) | undefined
 const refMock = vi.fn((_database: unknown, path: string) => ({ __path: path }))
 const onValueMock = vi.fn((nodeRef: { __path: string }, onNext: (s: { val: () => unknown }) => void) => {
   if (nodeRef.__path.startsWith('lessonRunMembership/')) membershipListener = onNext
+  // Both StudentPlayRoute's own household-mode-detection subscription and
+  // HouseholdTeamScreen's internal subscribeOwnTeamState target this exact
+  // node — the LATEST subscriber (whichever mounted most recently) is what
+  // this shared variable ends up capturing, matching the real RTDB
+  // semantics where each `onValue` call is independent.
+  if (nodeRef.__path.startsWith('lessonRunTeamState/')) teamStateListener = onNext
   return () => {}
 })
 const offMock = vi.fn()
@@ -99,10 +106,15 @@ function emitMembership(value: { access: string; teamId?: string } | null) {
   membershipListener?.({ val: () => value })
 }
 
+function emitTeamState(value: unknown) {
+  teamStateListener?.({ val: () => value })
+}
+
 beforeEach(() => {
   authStateCallback = undefined
   ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = null
   membershipListener = undefined
+  teamStateListener = undefined
   onAuthStateChangedMock.mockClear()
   signInAnonymouslyMock.mockClear()
   signInWithCustomTokenMock.mockClear()
@@ -233,7 +245,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('renders unsupported notice in control room when subject is HOME_ECONOMICS and courseFormat is not COMMON_CONDITIONS', async () => {
+  it('renders HouseholdTeacherDashboard in control room for advanced (non-COMMON_CONDITIONS) course formats too', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
     getDocMock.mockResolvedValue({
       exists: () => true,
@@ -241,12 +253,12 @@ describe('Phase B lesson platform routes (Task 17)', () => {
         orgId: 'org-1',
         teacherRoles: { 'teacher-uid': 'PRIMARY' },
         subject: 'HOME_ECONOMICS',
-        templateSnapshot: { homeEconomics: { courseFormat: 'CUSTOM_VARIANT' } },
+        templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },
       }),
     })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
-    expect(await screen.findByText(/このコース形式の家庭科ダッシュボード表示には未対応です/)).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 
@@ -274,6 +286,70 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     await waitFor(() => expect(membershipListener).toBeDefined())
     emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
     expect(await screen.findByRole('heading', { level: 1, name: /開始をお待ちください/ })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('shows the deferred-data notice at /play for a non-household lessonRun (team state has neither .household nor .households)', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/play')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(teamStateListener).toBeDefined())
+    emitTeamState({ cash: 100000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1 })
+    expect(await screen.findByRole('heading', { level: 1, name: /授業中/ })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('renders HouseholdTeamScreen at /play when own team state carries .household (Common shape) — detected by shape, not a subject field', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/play')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(teamStateListener).toBeDefined())
+
+    const teamState = {
+      household: {
+        householdId: 'team-a', cashYen: 500000, lifeStage: 'CHILD_REARING', roundIndex: 0,
+        assetHoldingsYen: {}, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+      },
+    }
+    // StudentPlayRoute's own detection subscription and HouseholdTeamScreen's
+    // internal subscribeOwnTeamState (once the screen mounts) both target
+    // this exact node — re-emitting under `waitFor`'s retry loop until the
+    // screen's own subscription (attached asynchronously, after it mounts)
+    // has actually replaced this shared test double's captured listener and
+    // received the data.
+    await waitFor(() => {
+      emitTeamState(teamState)
+      expect(screen.getByText('team-a')).toBeInTheDocument()
+    })
+    window.history.pushState({}, '', '/')
+  })
+
+  it('renders HouseholdTeamScreen at /play when own team state carries .households (advanced shape) instead of .household', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/play')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(teamStateListener).toBeDefined())
+
+    const advancedState = {
+      courseFormat: 'ROLE_VARIANT', synchronizedRoundIndex: 0, roundStatus: 'OPEN',
+      householdOrder: ['case-a'],
+      households: {
+        'case-a': {
+          householdId: 'case-a',
+          state: {
+            householdId: 'case-a', cashYen: 500000, lifeStage: 'SINGLE', roundIndex: 0,
+            assetHoldingsYen: {}, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+          },
+        },
+      },
+    }
+    await waitFor(() => {
+      emitTeamState(advancedState)
+      expect(screen.getByText('case-a')).toBeInTheDocument()
+    })
     window.history.pushState({}, '', '/')
   })
 

@@ -1,29 +1,47 @@
 import { getFirestore } from 'firebase-admin/firestore'
+import { getDatabase } from 'firebase-admin/database'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
-import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import type { CourseFormat, HomeEconomicsContent } from '@stock-league/household-authoring-content'
 import {
+  getHouseholdRuntimeControlWithAdminSdk,
   getHouseholdStateWithAdminSdk,
   householdRepositoryWithAdminSdk,
+  saveAdvancedHouseholdDecisionWithAdminSdk,
   saveHouseholdDecision,
 } from '../lessonRuns/households/repository'
 import type { HouseholdState } from '../lessonRuns/households/repository'
-import { ensureCommonConditionsHouseholdState } from './commonConditionsHousehold'
+import { ensureCommonConditionsHouseholdState, resolveCommonConditionsProfile } from './commonConditionsHousehold'
+import { ensureAssignedHouseholdStateWithAdminSdk } from './assignedHousehold'
 import { canControlLesson } from '../lessonRuns/authorization'
 import { requireActiveOrgMember } from '../organizations/authorization'
 import { writeCheckpointWithAdminSdk } from '../lessonRuns/checkpoint'
-import { submitHouseholdDecision } from './submitDecision'
+import { idempotencyDocumentId } from '../lib/idempotency'
+import { submitAdvancedHouseholdDecision, submitHouseholdDecision } from './submitDecision'
 import type { HouseholdDecisionInput } from './submitDecision'
 import { processRoundWithAdminSdk } from './processRound'
 import { buildHouseholdCheckpointSnapshot } from './checkpointRestore'
 import { findActiveBulkSettlementLeaseWithAdminSdk } from './bulkSettlementOperation'
-import { loadHouseholdTeacherDashboardWithAdminSdk } from './teacherDashboard'
+import { loadHouseholdTeacherDashboardWithAdminSdk, normalizeTeamDisplayName } from './teacherDashboard'
 import {
   processHouseholdRoundBatchWithAdminSdk,
   retryHouseholdRoundBatchWithAdminSdk,
 } from './bulkSettlement'
-import { saveManualHouseholdCheckpointWithAdminSdk } from './householdCheckpoint'
-import { restoreHouseholdCheckpointV2WithAdminSdk } from './householdRestore'
+import {
+  saveManualAdvancedHouseholdCheckpointWithAdminSdk,
+  saveManualHouseholdCheckpointWithAdminSdk,
+} from './householdCheckpoint'
+import { restoreHouseholdCheckpointWithAdminSdk } from './householdRestore'
+import { readHouseholdFinalComparisonWithAdminSdk } from './finalComparison'
+import type { AdvancedHouseholdCourseFormat } from './householdAssignment'
+import {
+  buildHouseholdAssignmentView,
+  getHouseholdAssignmentView,
+  householdAssignmentReadDepsWithAdminSdk,
+  householdAssignmentRepositoryWithAdminSdk,
+  prepareHouseholdAssignment,
+  updateHouseholdAssignment,
+} from './householdAssignmentRepository'
 
 /**
  * Resolves the caller's `participantId` on this lessonRun from the verified
@@ -84,6 +102,97 @@ const requireLessonRunRunning = async (lessonRunId: string): Promise<void> => {
   const status = snap.get('status') as string | undefined
   if (status !== 'RUNNING') {
     throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
+  }
+}
+
+/**
+ * Task 5's Common-vs-advanced branch point. Mirrors `statusTransition.ts`'s
+ * own private `ADVANCED_FORMATS`/`isAdvancedHouseholdCourseFormat` (not
+ * exported from there — re-declared here rather than imported, matching
+ * that file's own choice to keep this small set local to each call site).
+ */
+const ADVANCED_HOUSEHOLD_COURSE_FORMATS = new Set<AdvancedHouseholdCourseFormat>([
+  'ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM',
+])
+const isAdvancedHouseholdCourseFormat = (value: unknown): value is AdvancedHouseholdCourseFormat =>
+  typeof value === 'string' && ADVANCED_HOUSEHOLD_COURSE_FORMATS.has(value as AdvancedHouseholdCourseFormat)
+
+/**
+ * Resolves the LessonRun's `courseFormat` off its `templateSnapshot`, the
+ * same field/path `statusTransition.ts`'s `prepareStatusTransition` reads
+ * (`run.templateSnapshot?.homeEconomics?.courseFormat`). Used by
+ * `submitHouseholdDecisionCallable` to decide whether to take the Common
+ * lazy-init path or the advanced FROZEN-assignment path below. Throws
+ * `not-found` when the LessonRun itself does not exist — the same message
+ * every other helper in this file uses for a missing LessonRun doc.
+ */
+const resolveLessonRunCourseFormat = async (lessonRunId: string): Promise<CourseFormat | undefined> => {
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  return templateSnapshot?.homeEconomics?.courseFormat
+}
+
+/**
+ * Resolves the `teamId`/`profileId` a runtime `householdId` is assigned to
+ * from the FROZEN `HouseholdAssignmentConfig`/`HouseholdAssignmentEntry`
+ * (Task 2/3) — read directly by doc id, since entries are persisted at
+ * `.../entries/{householdId}` (`householdAssignmentRepository.ts`'s
+ * `entryPath`). Used ONLY to authorize a caller against a household that
+ * does not exist yet — this never creates anything itself. Throws
+ * `HttpsError` directly (this helper lives at the Callable boundary, same
+ * as `requireTeamMembership`/`requireLessonRunRunning` above) rather than a
+ * bare `Error` translated elsewhere.
+ */
+const resolveFrozenAssignmentEntry = async (
+  lessonRunId: string, householdId: string,
+): Promise<{ teamId: string; profileId: string; assignmentRevision: number }> => {
+  const db = getFirestore()
+  const configSnap = await db.doc(`lessonRuns/${lessonRunId}/householdAssignment/config`).get()
+  if (!configSnap.exists) {
+    throw new HttpsError('failed-precondition', 'この授業の家庭割り当てはまだ準備されていません。')
+  }
+  const config = configSnap.data() as { state: string; assignmentRevision: number }
+  if (config.state !== 'FROZEN') {
+    throw new HttpsError('failed-precondition', `家庭割り当てが確定（FROZEN）されるまで、家庭を初期化できません（現在の状態: ${config.state}）。`)
+  }
+  const entrySnap = await db.doc(`lessonRuns/${lessonRunId}/householdAssignment/config/entries/${householdId}`).get()
+  if (!entrySnap.exists) {
+    throw new HttpsError('not-found', `対象の家庭の割り当てが見つかりません: ${householdId}`)
+  }
+  const entry = entrySnap.data() as { teamId: string; profileId: string }
+  return { teamId: entry.teamId, profileId: entry.profileId, assignmentRevision: config.assignmentRevision }
+}
+
+/**
+ * Advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+ * counterpart to `lazyInitHouseholdWithAdminSdk` below. Security ordering is
+ * the whole point (per this task's brief): an existing household is
+ * authorized against ITS OWN stored `teamId` exactly like Common; a MISSING
+ * household's owning `teamId` is resolved from the FROZEN assignment and
+ * membership is checked against THAT `teamId` BEFORE
+ * `ensureAssignedHouseholdStateWithAdminSdk` (Task 4) is ever called — so a
+ * caller can never cause a household document to be created, or learn
+ * whether one exists, for a team they are not a member of.
+ */
+const resolveAdvancedHousehold = async (
+  lessonRunId: string, householdId: string, actorParticipantId: string,
+): Promise<HouseholdState> => {
+  const existing = await getHouseholdStateWithAdminSdk(lessonRunId, householdId)
+  if (existing) {
+    await requireTeamMembership(lessonRunId, existing.teamId, actorParticipantId)
+    return existing
+  }
+
+  const { teamId } = await resolveFrozenAssignmentEntry(lessonRunId, householdId)
+  await requireTeamMembership(lessonRunId, teamId, actorParticipantId)
+
+  try {
+    return await ensureAssignedHouseholdStateWithAdminSdk(lessonRunId, householdId)
+  } catch (error) {
+    if (error instanceof Error) throw new HttpsError('failed-precondition', error.message)
+    throw error
   }
 }
 
@@ -232,6 +341,23 @@ const translateSubmitHouseholdDecisionError = (error: unknown): unknown => {
       return new HttpsError('failed-precondition', error.message)
     }
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+    // Task 5: `saveAdvancedHouseholdDecisionWithAdminSdk`'s
+    // `HouseholdRuntimeControl`/round-consistency guard messages
+    // (`lessonRuns/households/repository.ts`).
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdState not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'HouseholdRuntimeControl assignmentRevision does not match the expected assignment revision') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'HouseholdState roundIndex does not match HouseholdRuntimeControl synchronizedRoundIndex') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message === 'Requested round no longer matches the synchronized round') {
+      return new HttpsError('failed-precondition', error.message)
+    }
   }
   return error
 }
@@ -259,6 +385,74 @@ export const submitHouseholdDecisionCallable = onCall({ region: 'asia-northeast1
   validateRequest(data, shortfallResolutionType)
 
   const actorParticipantId = await resolveActorParticipantId(data.lessonRunId, request.auth.uid)
+
+  // Task 5: branch on the LessonRun's own courseFormat — the 3 advanced
+  // formats (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) route through a
+  // parallel resolution/save path (`resolveAdvancedHousehold` +
+  // `saveAdvancedHouseholdDecisionWithAdminSdk`) guarded by the shared
+  // `HouseholdRuntimeControl` document; COMMON_CONDITIONS keeps the
+  // pre-existing lazy-init/`saveHouseholdDecision` flow below entirely
+  // unchanged.
+  const courseFormat = await resolveLessonRunCourseFormat(data.lessonRunId)
+  if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+    const household = await resolveAdvancedHousehold(data.lessonRunId, data.householdId, actorParticipantId)
+
+    // Important I2 (mirrors the Common flow below): gate on LessonRun status
+    // AFTER authorization has resolved, but BEFORE the roundIndex check and
+    // the actual decision-saving transaction.
+    await requireLessonRunRunning(data.lessonRunId)
+
+    if (data.roundIndex !== household.roundIndex) {
+      throw new HttpsError('failed-precondition', 'この家庭は現在別のラウンドです。roundIndex が一致しません。')
+    }
+
+    const control = await getHouseholdRuntimeControlWithAdminSdk(data.lessonRunId)
+    if (!control) {
+      throw new HttpsError('failed-precondition', 'この授業の家庭運用制御ドキュメントが見つかりません。')
+    }
+
+    const idempotencyId = idempotencyDocumentId(
+      `${data.lessonRunId}/${data.householdId}/${data.roundIndex}`, data.idempotencyKey,
+    )
+    const decisionId = `${data.lessonRunId}_decision_${idempotencyId}`
+
+    try {
+      return await submitAdvancedHouseholdDecision({
+        saveDecision: (input) => saveAdvancedHouseholdDecisionWithAdminSdk({
+          firestore: householdRepositoryWithAdminSdk(),
+          lessonRunId: input.lessonRunId,
+          householdId: input.householdId,
+          decision: input.decision,
+          expectedSynchronizedRoundIndex: input.expectedSynchronizedRoundIndex,
+          assignmentRevision: input.assignmentRevision,
+          idempotencyKey: input.idempotencyKey,
+          nowMillis: input.nowMillis,
+        }),
+        lessonRunId: data.lessonRunId,
+        householdId: data.householdId,
+        decision: {
+          decisionId,
+          lessonRunId: data.lessonRunId,
+          householdId: data.householdId,
+          roundIndex: data.roundIndex,
+          assetAllocationChangesYen: data.assetAllocationChangesYen,
+          insurancePurchaseIds: data.insurancePurchaseIds,
+          insuranceCancelIds: data.insuranceCancelIds,
+          shortfallResolutionType,
+          ...(data.shortfallResolutionAssetType !== undefined ? { shortfallResolutionAssetType: data.shortfallResolutionAssetType } : {}),
+          publicSupportApplicationIds: data.publicSupportApplicationIds,
+          idempotencyKey: data.idempotencyKey,
+          ...(data.voluntaryDrawdownRequestedYen !== undefined ? { voluntaryDrawdownRequestedYen: data.voluntaryDrawdownRequestedYen } : {}),
+        },
+        expectedSynchronizedRoundIndex: data.roundIndex,
+        assignmentRevision: control.assignmentRevision,
+        idempotencyKey: data.idempotencyKey,
+        nowMillis: Date.now(),
+      })
+    } catch (error) {
+      throw translateSubmitHouseholdDecisionError(error)
+    }
+  }
 
   // Critical Fix #1: previously this threw 'not-found' unconditionally when
   // no household document existed yet — the exact gap the final
@@ -413,6 +607,23 @@ export const processRoundCallable = onCall({ region: 'asia-northeast1' }, async 
     throw new HttpsError('failed-precondition', 'このレッスンは実行中ではないため、この操作はできません。')
   }
 
+  // Task 6 / Global Constraint: 発展3形式（ROLE_VARIANT/STAGE_SPLIT/
+  // MULTI_PERSON_PER_TEAM）は通常の個別決算を server-side で拒否する —
+  // these formats settle ONLY through the bulk path
+  // (`processHouseholdRoundBatchCallable`/`retryHouseholdRoundBatchCallable`),
+  // which internally calls `processRoundWithAdminSdk` per household itself
+  // (unchanged, still callable — only THIS teacher-facing individual-settle
+  // Callable gains the rejection). Reuses `runSnap`, already fetched above
+  // for `teacherRoles`/`orgId`/`status` — no extra read.
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  const courseFormat = templateSnapshot?.homeEconomics?.courseFormat
+  if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'この授業形式（発展形式）では個別の決算は利用できません。一括決算を利用してください。',
+    )
+  }
+
   const activeLease = await findActiveBulkSettlementLeaseWithAdminSdk(data.lessonRunId, Date.now())
   if (activeLease) {
     throw new HttpsError('failed-precondition', '一括決算処理が実行中のため、個別の決算は行えません。')
@@ -459,11 +670,12 @@ export const getHouseholdTeacherDashboardCallable = onCall({ region: 'asia-north
   if (subject !== 'HOME_ECONOMICS') {
     throw new HttpsError('failed-precondition', 'LessonRun subject is not HOME_ECONOMICS')
   }
-  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
-  if (templateSnapshot?.homeEconomics?.courseFormat !== 'COMMON_CONDITIONS') {
-    throw new HttpsError('failed-precondition', 'LessonRun course format must be COMMON_CONDITIONS')
-  }
 
+  // Task 10: the dashboard projection is now generalized to a team-primary
+  // shape that covers all 4 course formats (COMMON_CONDITIONS plus the 3
+  // advanced formats) — the course-format restriction that used to live
+  // here has been removed. `loadHouseholdTeacherDashboardWithAdminSdk`
+  // itself now branches internally by `courseFormat`.
   try {
     return await loadHouseholdTeacherDashboardWithAdminSdk(data.lessonRunId, Date.now())
   } catch (error) {
@@ -586,9 +798,15 @@ export const retryHouseholdRoundBatchCallable = onCall({ region: 'asia-northeast
 })
 
 /**
- * Shared authorization for both checkpoint Callables below.
+ * Shared authorization for both checkpoint Callables below. Also returns the
+ * LessonRun's `courseFormat` (defaulting to `COMMON_CONDITIONS` when the
+ * template snapshot has none) — `writeHouseholdCheckpointCallable`'s manual
+ * checkpoint path uses this SAME read to dispatch Common -> v2, advanced ->
+ * v3 (Task 7), rather than reading the run doc a second time.
  */
-const requireCheckpointAuthority = async (lessonRunId: string, authUid: string): Promise<void> => {
+const requireCheckpointAuthority = async (
+  lessonRunId: string, authUid: string,
+): Promise<{ courseFormat: string }> => {
   const db = getFirestore()
   const runSnap = await db.doc(`lessonRuns/${lessonRunId}`).get()
   if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
@@ -599,6 +817,8 @@ const requireCheckpointAuthority = async (lessonRunId: string, authUid: string):
   }
   const orgId = runSnap.get('orgId') as string
   await requireActiveOrgMember(db, orgId, authUid)
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: { courseFormat?: string } } | undefined
+  return { courseFormat: templateSnapshot?.homeEconomics?.courseFormat ?? 'COMMON_CONDITIONS' }
 }
 
 interface WriteHouseholdCheckpointRequest {
@@ -620,6 +840,14 @@ const translateWriteHouseholdCheckpointError = (error: unknown): unknown => {
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('Label must be')) return new HttpsError('invalid-argument', error.message)
     if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
+    // Advanced (v3) manual-checkpoint path: same
+    // `HouseholdRuntimeControl` guard messages Task 5/6 established
+    // (`saveManualAdvancedHouseholdCheckpointWithAdminSdk`,
+    // `translateSubmitHouseholdDecisionError` above).
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdRuntimeControl round is not OPEN (a bulk settlement is in progress)') {
+      return new HttpsError('failed-precondition', error.message)
+    }
   }
   return error
 }
@@ -650,11 +878,22 @@ export const writeHouseholdCheckpointCallable = onCall({ region: 'asia-northeast
     }
   }
 
-  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+  const { courseFormat } = await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
-  // v2 manual checkpoint path
+  // Manual checkpoint path — dispatch by courseFormat: Common (no
+  // per-team assignment, one household per team) -> v2; the 3 advanced
+  // formats (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) -> v3. Both
+  // share the SAME PRIMARY/ASSISTANT authority check above.
   if (typeof data.label === 'string') {
     try {
+      if (isAdvancedHouseholdCourseFormat(courseFormat)) {
+        return await saveManualAdvancedHouseholdCheckpointWithAdminSdk({
+          lessonRunId: data.lessonRunId,
+          label: data.label,
+          actorUid: request.auth.uid,
+          idempotencyKey: data.idempotencyKey,
+        })
+      }
       return await saveManualHouseholdCheckpointWithAdminSdk({
         lessonRunId: data.lessonRunId,
         label: data.label,
@@ -706,12 +945,22 @@ const translateRestoreHouseholdCheckpointError = (error: unknown): unknown => {
     if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('Active bulk operation lease')) return new HttpsError('failed-precondition', error.message)
     if (error.message.includes('復元できるのは')) return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdRuntimeControl not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdAssignment not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'HouseholdAssignment is not FROZEN') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdAssignment assignmentRevision does not match the checkpoint snapshot') {
+      return new HttpsError('failed-precondition', error.message)
+    }
+    if (error.message.includes('より新しい世代の復元が行われた')) return new HttpsError('failed-precondition', error.message)
   }
   return error
 }
 
 /**
- * Teacher-facing checkpoint-restore Callable (v2 atomic).
+ * Teacher-facing checkpoint-restore Callable. Retains its external shape
+ * unchanged (Task 8) — internally now dispatches by checkpoint schema
+ * version via `restoreHouseholdCheckpointWithAdminSdk` (v2 Common-only /
+ * v3 advanced-format), instead of always calling the v2 restore flow.
  */
 export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
@@ -723,7 +972,7 @@ export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northea
   await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
 
   try {
-    return await restoreHouseholdCheckpointV2WithAdminSdk({
+    return await restoreHouseholdCheckpointWithAdminSdk({
       lessonRunId: data.lessonRunId,
       checkpointId: data.checkpointId,
       reason: data.reason,
@@ -736,3 +985,318 @@ export const restoreHouseholdCheckpointCallable = onCall({ region: 'asia-northea
   }
 })
 
+/**
+ * Household assignment (Task 2) — the pre-lesson plan of which
+ * `HouseholdProfile` each team plays, for the 3 advanced course formats
+ * (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM). This section does NOT
+ * touch lesson start/freeze logic (Task 3+) — `prepare`/`update` only
+ * operate on the pre-start DRAFT plan; nothing here writes `HouseholdState`.
+ */
+interface HouseholdAssignmentContext {
+  homeEconomics: HomeEconomicsContent
+  courseFormat: CourseFormat
+  teamIds: string[]
+  teamDisplayNames: Record<string, string>
+}
+
+/**
+ * Shared context loader for all three household-assignment Callables below.
+ * Takes the already-fetched `runSnap` (every caller reads it first anyway,
+ * to resolve `teacherRoles`/`orgId` for authorization) rather than
+ * re-fetching it, mirroring `processRoundCallable`'s single-read pattern.
+ */
+const loadHouseholdAssignmentContext = async (
+  lessonRunId: string,
+  runSnap: FirebaseFirestore.DocumentSnapshot,
+): Promise<HouseholdAssignmentContext> => {
+  const subject = runSnap.get('subject') as string | undefined
+  if (subject !== 'HOME_ECONOMICS') throw new HttpsError('failed-precondition', 'LessonRun subject is not HOME_ECONOMICS')
+  const templateSnapshot = runSnap.get('templateSnapshot') as { homeEconomics?: HomeEconomicsContent } | undefined
+  const homeEconomics = templateSnapshot?.homeEconomics
+  if (!homeEconomics) throw new HttpsError('failed-precondition', 'LessonRun has no homeEconomics content')
+
+  const db = getFirestore()
+  const teamsIndexSnap = await db.doc(`lessonRuns/${lessonRunId}/meta/teamsIndex`).get()
+  const teamIds = (teamsIndexSnap.exists ? (teamsIndexSnap.get('teamIds') as string[] | undefined) : undefined) ?? []
+
+  const teamsSnap = await db.collection(`lessonRuns/${lessonRunId}/teams`).get()
+  const teamDisplayNames: Record<string, string> = {}
+  for (const doc of teamsSnap.docs) teamDisplayNames[doc.id] = normalizeTeamDisplayName(doc.id, doc.data())
+
+  return { homeEconomics, courseFormat: homeEconomics.courseFormat, teamIds, teamDisplayNames }
+}
+
+/**
+ * Translates the pure/DI repository layer's bare Error messages into
+ * HttpsError codes, matching every other task's convention in this file
+ * (`translateSubmitHouseholdDecisionError`, `translateProcessRoundError`).
+ */
+const translateHouseholdAssignmentError = (error: unknown): unknown => {
+  if (error instanceof HttpsError) return error
+  if (error instanceof Error) {
+    if (error.message === 'Idempotency key payload mismatch') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdAssignment is frozen') return new HttpsError('failed-precondition', error.message)
+    if (error.message === 'HouseholdAssignment not found') return new HttpsError('not-found', error.message)
+    if (error.message === 'Revision mismatch') return new HttpsError('failed-precondition', error.message)
+    if (error.message.startsWith('HouseholdAssignmentEntry not found')) return new HttpsError('not-found', error.message)
+    if (error.message.includes('MULTI_PERSON_PER_TEAM does not support')) return new HttpsError('invalid-argument', error.message)
+  }
+  return error
+}
+
+interface GetHouseholdAssignmentRequest {
+  lessonRunId: string
+}
+
+/**
+ * Teacher-facing read-only projection — any teacher role with
+ * `VIEW_PROGRESS` (i.e. every role: PRIMARY/ASSISTANT/VIEWER) may call this,
+ * matching `getHouseholdTeacherDashboardCallable`'s precedent of using the
+ * broadest read action for a dashboard-style view.
+ */
+export const getHouseholdAssignmentCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as GetHouseholdAssignmentRequest
+  if (!data.lessonRunId || typeof data.lessonRunId !== 'string') {
+    throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'VIEW_PROGRESS')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const context = await loadHouseholdAssignmentContext(data.lessonRunId, runSnap)
+  const commonProfile = context.courseFormat === 'COMMON_CONDITIONS'
+    ? resolveCommonConditionsProfile(context.homeEconomics)
+    : undefined
+
+  return getHouseholdAssignmentView({
+    lessonRunId: data.lessonRunId,
+    courseFormat: context.courseFormat,
+    currentTeamIds: context.teamIds,
+    teamDisplayNames: context.teamDisplayNames,
+    profiles: context.homeEconomics.households,
+    commonProfile,
+    deps: householdAssignmentReadDepsWithAdminSdk(),
+  })
+})
+
+interface PrepareHouseholdAssignmentRequest {
+  lessonRunId: string
+  idempotencyKey: string
+}
+
+/**
+ * PRIMARY-only (`MANAGE_HOUSEHOLD_ASSIGNMENT`, see `authorization.ts`).
+ * First generation or STALE reconciliation for the 3 advanced formats —
+ * never for COMMON_CONDITIONS, which has no persisted assignment plan (see
+ * `householdAssignmentRepository.ts`'s `getHouseholdAssignmentView` doc
+ * comment). Rejects once the assignment is FROZEN (a later task's
+ * lesson-start flow sets that) — this Callable never freezes anything
+ * itself.
+ */
+export const prepareHouseholdAssignmentCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as PrepareHouseholdAssignmentRequest
+  if (!data.lessonRunId || typeof data.lessonRunId !== 'string' || !data.idempotencyKey || typeof data.idempotencyKey !== 'string') {
+    throw new HttpsError('invalid-argument', 'lessonRunId、idempotencyKey は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'MANAGE_HOUSEHOLD_ASSIGNMENT')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const context = await loadHouseholdAssignmentContext(data.lessonRunId, runSnap)
+  if (context.courseFormat === 'COMMON_CONDITIONS') {
+    throw new HttpsError('failed-precondition', 'COMMON_CONDITIONS では家庭割り当ての準備は不要です。')
+  }
+
+  try {
+    const result = await prepareHouseholdAssignment({
+      firestore: householdAssignmentRepositoryWithAdminSdk(),
+      lessonRunId: data.lessonRunId,
+      courseFormat: context.courseFormat as AdvancedHouseholdCourseFormat,
+      teamIds: context.teamIds,
+      profiles: context.homeEconomics.households,
+      actorUid: request.auth.uid,
+      idempotencyKey: data.idempotencyKey,
+      now: Date.now,
+    })
+    return buildHouseholdAssignmentView({
+      lessonRunId: data.lessonRunId,
+      courseFormat: context.courseFormat,
+      config: result.config,
+      entries: result.entries,
+      currentTeamIds: context.teamIds,
+      teamDisplayNames: context.teamDisplayNames,
+      profiles: context.homeEconomics.households,
+    })
+  } catch (error) {
+    throw translateHouseholdAssignmentError(error)
+  }
+})
+
+interface UpdateHouseholdAssignmentRequest {
+  lessonRunId: string
+  expectedRevision: number
+  changes: Array<{ householdId: string; profileId?: string; displayOrder?: number }>
+  idempotencyKey: string
+}
+
+const isValidHouseholdAssignmentChanges = (value: unknown): value is UpdateHouseholdAssignmentRequest['changes'] =>
+  Array.isArray(value) && value.length > 0 && value.every((change) =>
+    typeof change === 'object' && change !== null
+    && typeof (change as { householdId?: unknown }).householdId === 'string' && (change as { householdId: string }).householdId.length > 0
+    && ((change as { profileId?: unknown }).profileId === undefined || typeof (change as { profileId: unknown }).profileId === 'string')
+    && ((change as { displayOrder?: unknown }).displayOrder === undefined || (typeof (change as { displayOrder: unknown }).displayOrder === 'number' && Number.isInteger((change as { displayOrder: number }).displayOrder))))
+
+/**
+ * PRIMARY-only (`MANAGE_HOUSEHOLD_ASSIGNMENT`). Applies per-household
+ * `profileId`/`displayOrder` edits against `expectedRevision` (optimistic
+ * concurrency — see `updateHouseholdAssignment`'s doc comment). Rejects
+ * once FROZEN, exactly like `prepareHouseholdAssignmentCallable`.
+ */
+export const updateHouseholdAssignmentCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as UpdateHouseholdAssignmentRequest
+  if (
+    !data.lessonRunId || typeof data.lessonRunId !== 'string'
+    || typeof data.expectedRevision !== 'number' || !Number.isInteger(data.expectedRevision) || data.expectedRevision < 0
+    || !isValidHouseholdAssignmentChanges(data.changes)
+    || !data.idempotencyKey || typeof data.idempotencyKey !== 'string'
+  ) {
+    throw new HttpsError('invalid-argument', 'lessonRunId、expectedRevision、changes（1件以上）、idempotencyKey は必須です。')
+  }
+
+  const db = getFirestore()
+  const runSnap = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
+  if (!runSnap.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
+  const teacherRoles = runSnap.get('teacherRoles') as Record<string, LessonRunRole> | undefined
+  const role = teacherRoles?.[request.auth.uid]
+  if (!role || !canControlLesson(role, 'MANAGE_HOUSEHOLD_ASSIGNMENT')) {
+    throw new HttpsError('permission-denied', 'この操作を行う権限がありません。')
+  }
+  const orgId = runSnap.get('orgId') as string
+  await requireActiveOrgMember(db, orgId, request.auth.uid)
+
+  const context = await loadHouseholdAssignmentContext(data.lessonRunId, runSnap)
+  if (context.courseFormat === 'COMMON_CONDITIONS') {
+    throw new HttpsError('failed-precondition', 'COMMON_CONDITIONS では家庭割り当ての編集は不要です。')
+  }
+
+  try {
+    const result = await updateHouseholdAssignment({
+      firestore: householdAssignmentRepositoryWithAdminSdk(),
+      lessonRunId: data.lessonRunId,
+      courseFormat: context.courseFormat as AdvancedHouseholdCourseFormat,
+      teamIds: context.teamIds,
+      profiles: context.homeEconomics.households,
+      expectedRevision: data.expectedRevision,
+      changes: data.changes,
+      actorUid: request.auth.uid,
+      idempotencyKey: data.idempotencyKey,
+      now: Date.now,
+    })
+    return buildHouseholdAssignmentView({
+      lessonRunId: data.lessonRunId,
+      courseFormat: context.courseFormat,
+      config: result.config,
+      entries: result.entries,
+      currentTeamIds: context.teamIds,
+      teamDisplayNames: context.teamDisplayNames,
+      profiles: context.homeEconomics.households,
+    })
+  } catch (error) {
+    throw translateHouseholdAssignmentError(error)
+  }
+})
+
+interface ShowHouseholdComparisonOnDisplayRequest {
+  lessonRunId: string
+}
+
+/**
+ * Task 13: teacher-triggered classroom-projector switch to the privacy-safe
+ * final comparison ("教室画面に表示"). Auth mirrors
+ * `requireCheckpointAuthority` above — the same PRIMARY/ASSISTANT + active-
+ * org-member gate `writeHouseholdCheckpointCallable` uses — reused directly
+ * rather than re-implemented, so this Callable never has authorization logic
+ * to drift out of sync with its sibling.
+ *
+ * SECURITY-CRITICAL (this task's own highest-risk property): `request.data`
+ * carries ONLY `lessonRunId` — never a comparison payload. The safe
+ * `HouseholdClassComparisonPublicView` snapshot is read back from
+ * Firestore's `householdFinalComparison/result`
+ * (`readHouseholdFinalComparisonWithAdminSdk`, `finalComparison.ts` — the
+ * SAME already-computed, already-privacy-filtered document
+ * `afterReflectionTransition` republishes from) and written to
+ * `lessonRunDisplay/{lessonRunId}` VERBATIM. A malicious or buggy client
+ * cannot inject arbitrary content onto the shared classroom projector this
+ * way — there is no code path here that ever reads a comparison shape out
+ * of `request.data`.
+ *
+ * `failed-precondition` when no snapshot exists yet (lesson hasn't reached
+ * REFLECTION, or Task 12's gate never fired) — matches this file's
+ * established convention of `failed-precondition` for "the lesson isn't in
+ * the right state for this action yet" (e.g. `requireLessonRunRunning`,
+ * `translateProcessRoundError`'s unsubmitted-decision case above).
+ *
+ * DESIGN NOTE — accepted `.set()`-vs-`.update()` race with the generic
+ * publish path: `setDisplayState` (`publicProjection.ts`) still does a
+ * whole-node `.set()` on every generic `publishLessonProjectionWithAdminSdk`
+ * call (phase transitions) and on every `setTeacherGuidanceCallable` edit,
+ * and `toLessonRunDisplayState` always recomputes `mode` fresh from
+ * `deriveDisplayMode(status)` — so a publish that happens AFTER this
+ * Callable runs will silently revert the projector's `mode` (and drop
+ * `householdClassComparison` entirely, since `.set()` replaces the whole
+ * node) back to the status-derived value (`EXPLANATION` for REFLECTION,
+ * where this mode is exclusively meaningful). This write below
+ * deliberately uses `.update()` — not `.set()` — so it only ever touches
+ * `mode`/`householdClassComparison`/`updatedAtMillis`, leaving
+ * orgId/title/goal/teams/teacherGuidance exactly as the last generic
+ * publish left them; that is the full extent of the fix applied here.
+ * Making the reverse direction race-free (a generic publish preserving an
+ * already-HOUSEHOLD_COMPARISON mode) would require a read-before-write in
+ * `toLessonRunDisplayState`'s call site, which is otherwise a pure function
+ * — rejected as unwarranted complexity for what is, in practice, a rare,
+ * manually-toggled, low-consequence display mode: REFLECTION is a
+ * long-lived, mostly-static phase (the lesson has already stopped
+ * progressing through phases), so the realistic reset triggers are a
+ * teacher explicitly editing 説明スライド (an action they immediately see
+ * the result of and can redo) or a genuine phase transition (which SHOULD
+ * legitimately leave HOUSEHOLD_COMPARISON, since the class has moved on).
+ */
+export const showHouseholdComparisonOnDisplayCallable = onCall({ region: 'asia-northeast1' }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'サインインが必要です。')
+  const data = request.data as ShowHouseholdComparisonOnDisplayRequest
+  if (typeof data.lessonRunId !== 'string' || data.lessonRunId === '') {
+    throw new HttpsError('invalid-argument', 'lessonRunId は必須です。')
+  }
+
+  await requireCheckpointAuthority(data.lessonRunId, request.auth.uid)
+
+  const comparison = await readHouseholdFinalComparisonWithAdminSdk(data.lessonRunId)
+  if (!comparison) {
+    throw new HttpsError('failed-precondition', 'クラス比較がまだ準備されていません。授業がREFLECTIONに進んでから再試行してください。')
+  }
+
+  await getDatabase().ref(`lessonRunDisplay/${data.lessonRunId}`).update({
+    mode: 'HOUSEHOLD_COMPARISON',
+    householdClassComparison: comparison,
+    updatedAtMillis: Date.now(),
+  })
+})

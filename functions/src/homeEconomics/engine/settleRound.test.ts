@@ -3,7 +3,7 @@ import { settleRound } from './settleRound'
 import { PENSION_REPLACEMENT_RATE_PERCENT_PROVISIONAL_DEFAULT } from './retirement'
 
 const baseHousehold = {
-  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a',
+  householdId: 'case-b', lessonRunId: 'run-1', teamId: 'team-a', profileId: 'case-b',
   cashYen: 500000, assetHoldingsYen: { DOMESTIC_STOCK: 1000000 },
   activeInsuranceContracts: {}, activeLiabilities: {},
   lifeStage: 'CHILD_REARING', roundIndex: 0, goalDelayedRounds: 0, updatedAtServerMillis: 0,

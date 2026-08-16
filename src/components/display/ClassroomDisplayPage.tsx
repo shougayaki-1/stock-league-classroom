@@ -10,6 +10,7 @@ import { ExplanationSlide } from './ExplanationSlide'
 import { signInForClassroomDisplay, type ExchangeDisplaySessionTokenInput } from '../../lib/lessonRuns/displaySession'
 import { subscribeDisplayRun } from '../../lib/lessonRuns/liveRepository'
 import type { LessonRunDisplayState } from '../../lib/lessonRuns/liveTypes'
+import { HouseholdClassComparisonView } from '../homeEconomics/HouseholdClassComparisonView'
 
 type ConnectionStatus = 'CONNECTING' | 'CONNECTED' | 'ERROR'
 
@@ -110,7 +111,7 @@ export function ClassroomDisplayPage({
     )
   }
 
-  const { mode, title, goal, teams, teacherGuidance } = state
+  const { mode, title, goal, teams, teacherGuidance, householdClassComparison } = state
   if (mode === 'LIVE' || mode === 'END') lastNonExplanationModeRef.current = mode
 
   switch (mode) {
@@ -122,6 +123,15 @@ export function ClassroomDisplayPage({
       return <EndSlide title={title} teams={teams} teacherGuidance={teacherGuidance} />
     case 'EXPLANATION':
       return <ExplanationSlide title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
+    case 'HOUSEHOLD_COMPARISON':
+      // Teacher-triggered only (showHouseholdComparisonOnDisplayCallable
+      // always writes mode and householdClassComparison together in the
+      // same .update() — see that Callable's own JSDoc), but defensively
+      // fall back to ExplanationSlide (REFLECTION's own status-derived
+      // mode) rather than crash if the field is ever somehow absent.
+      return householdClassComparison
+        ? <HouseholdClassComparisonView comparison={householdClassComparison} />
+        : <ExplanationSlide title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
     default:
       return <StartSlide title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
   }

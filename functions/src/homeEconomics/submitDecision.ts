@@ -1,3 +1,5 @@
+import type { HouseholdDecisionRecord } from '../lessonRuns/households/repository'
+
 export interface HouseholdDecisionInput {
   lessonRunId: string
   householdId: string
@@ -35,17 +37,78 @@ export interface SubmitHouseholdDecisionDeps {
  * round's decision is assembled — the reason this Callable accepts the
  * decision as one bundle rather than N independent LessonResponse
  * submissions (see this task's own top-level rationale).
+ *
+ * Extracted as its own function (Task 5) so BOTH `submitHouseholdDecision`
+ * (Common) and `submitAdvancedHouseholdDecision` (the 3 advanced formats,
+ * below) run the exact same business-rule check rather than each Callable
+ * branch re-implementing or accidentally diverging from it — the advanced
+ * save path (`saveAdvancedHouseholdDecisionWithAdminSdk`,
+ * `lessonRuns/households/repository.ts`) is a different persistence
+ * function guarded by the `HouseholdRuntimeControl` document, but it must
+ * never be a way to bypass this field-level validation.
  */
-export const submitHouseholdDecision = async (
-  deps: SubmitHouseholdDecisionDeps & HouseholdDecisionInput,
-): Promise<{ decisionId: string; created: boolean }> => {
+const validateShortfallSellAssetsConsistency = (input: {
+  shortfallResolutionType: HouseholdDecisionInput['shortfallResolutionType']
+  shortfallResolutionAssetType?: string
+  assetAllocationChangesYen: Record<string, number>
+}): void => {
   if (
-    deps.shortfallResolutionType === 'SELL_ASSETS'
-    && deps.shortfallResolutionAssetType !== undefined
-    && (deps.assetAllocationChangesYen[deps.shortfallResolutionAssetType] ?? 0) > 0
+    input.shortfallResolutionType === 'SELL_ASSETS'
+    && input.shortfallResolutionAssetType !== undefined
+    && (input.assetAllocationChangesYen[input.shortfallResolutionAssetType] ?? 0) > 0
   ) {
     throw new Error('資金不足の解消に使う資産へ、同時に追加配分することはできません。')
   }
+}
+
+export const submitHouseholdDecision = async (
+  deps: SubmitHouseholdDecisionDeps & HouseholdDecisionInput,
+): Promise<{ decisionId: string; created: boolean }> => {
+  validateShortfallSellAssetsConsistency(deps)
+  const { saveDecision, ...input } = deps
+  return saveDecision(input)
+}
+
+/**
+ * Advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM) decision
+ * input — the fully-assembled `HouseholdDecisionRecord` fields (minus the
+ * server-stamped `submittedAtServerMillis`) plus the two `HouseholdRuntimeControl`
+ * consistency values `saveAdvancedHouseholdDecisionWithAdminSdk`
+ * (`lessonRuns/households/repository.ts`) requires. This mirrors that
+ * repository function's own input shape exactly, since `saveDecision` below
+ * is expected to be wired directly to it (same DI-callback composition
+ * `submitHouseholdDecision`/`saveHouseholdDecision` already establish for
+ * Common).
+ */
+export interface SubmitAdvancedHouseholdDecisionInput {
+  lessonRunId: string
+  householdId: string
+  decision: Omit<HouseholdDecisionRecord, 'submittedAtServerMillis'>
+  expectedSynchronizedRoundIndex: number
+  assignmentRevision: number
+  idempotencyKey: string
+  nowMillis: number
+}
+
+export interface SubmitAdvancedHouseholdDecisionDeps {
+  saveDecision: (input: SubmitAdvancedHouseholdDecisionInput) => Promise<HouseholdDecisionRecord>
+}
+
+/**
+ * Advanced-format counterpart to `submitHouseholdDecision` above. Runs the
+ * exact same §13.13 cross-field validation
+ * (`validateShortfallSellAssetsConsistency`) before delegating to
+ * `saveDecision` — preserving current decision field validation for the
+ * advanced course formats too, not just Common.
+ */
+export const submitAdvancedHouseholdDecision = async (
+  deps: SubmitAdvancedHouseholdDecisionDeps & SubmitAdvancedHouseholdDecisionInput,
+): Promise<HouseholdDecisionRecord> => {
+  validateShortfallSellAssetsConsistency({
+    shortfallResolutionType: deps.decision.shortfallResolutionType,
+    shortfallResolutionAssetType: deps.decision.shortfallResolutionAssetType,
+    assetAllocationChangesYen: deps.decision.assetAllocationChangesYen,
+  })
   const { saveDecision, ...input } = deps
   return saveDecision(input)
 }

@@ -2,9 +2,15 @@ import React, { useState } from 'react'
 import type {
   HouseholdTeacherDashboard as HouseholdTeacherDashboardType,
   HouseholdTeacherRow,
+  HouseholdTeacherTeamRow,
 } from '../../lib/homeEconomics/teacherDashboard'
+import type {
+  HouseholdAssignmentView,
+  UpdateHouseholdAssignmentInput,
+} from '../../lib/homeEconomics/householdAssignment'
 import { HouseholdSettlementConfirmationModal } from './HouseholdSettlementConfirmationModal'
 import { HouseholdCheckpointModal } from './HouseholdCheckpointModal'
+import { HouseholdAssignmentPanel } from './HouseholdAssignmentPanel'
 
 export interface HouseholdTeacherDashboardProps {
   dashboard: HouseholdTeacherDashboardType
@@ -15,7 +21,168 @@ export interface HouseholdTeacherDashboardProps {
   onProcessIndividualRound: (householdId: string, forceSettle: boolean) => Promise<void>
   onSaveManualCheckpoint: (label: string) => Promise<void>
   onRestoreCheckpoint: (checkpointId: string, reason: string) => Promise<void>
+  onPrepareAssignment?: () => Promise<void>
+  onUpdateAssignment?: (input: Omit<UpdateHouseholdAssignmentInput, 'lessonRunId' | 'idempotencyKey'>) => Promise<void>
   isActionInProgress?: boolean
+  /**
+   * Task 13: PRIMARY-or-ASSISTANT display-switch authority — the same gate
+   * `showHouseholdComparisonOnDisplayCallable`/`issueDisplaySessionTokenCallable`
+   * enforce server-side (functions/src/lessonRuns/projections/onCall.ts).
+   * Distinct from `isPrimaryTeacher` above (PRIMARY-only, used for the
+   * settlement actions) — an ASSISTANT teacher may switch the projector but
+   * may not run a bulk settlement.
+   */
+  canManageDisplay?: boolean
+  /** "クラス比較を見る" — renders `HouseholdClassComparisonView` for the teacher's own screen. Absent/undefined hides the action entirely. */
+  onViewClassComparison?: () => void
+  /** "教室画面に表示" — calls `showHouseholdComparisonOnDisplayCallable` to switch the shared classroom projector. Absent/undefined hides the action entirely. */
+  onShowOnDisplay?: () => void
+}
+
+const severityClass = (severity: 'ACTION_REQUIRED' | 'WARNING' | 'INFO') => {
+  switch (severity) {
+    case 'ACTION_REQUIRED':
+      return 'bg-red-50 text-red-700 border-red-200'
+    case 'WARNING':
+      return 'bg-amber-50 text-amber-800 border-amber-200'
+    case 'INFO':
+      return 'bg-blue-50 text-blue-800 border-blue-200'
+  }
+}
+
+const HouseholdWarnings: React.FC<{ warnings: HouseholdTeacherRow['warnings'] }> = ({ warnings }) => {
+  if (warnings.length === 0) {
+    return <span className="text-xs text-gray-400">なし</span>
+  }
+  return (
+    <div className="space-y-1">
+      {warnings.map((w, idx) => (
+        <div key={idx} className={`text-xs px-2 py-0.5 rounded border ${severityClass(w.severity)}`}>
+          {w.message}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const HouseholdSummaryRow: React.FC<{
+  row: HouseholdTeacherRow
+  isPrimaryTeacher: boolean
+  isBusy: boolean
+  isLeaseActive: boolean
+  showIndividualSettlement: boolean
+  onSelectIndividual: (row: HouseholdTeacherRow) => void
+}> = ({ row, isPrimaryTeacher, isBusy, isLeaseActive, showIndividualSettlement, onSelectIndividual }) => {
+  const isNegative = row.cashYen < 0
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center py-2 text-sm text-gray-600">
+      <div>
+        {/* Important I3 fix: `profileLabel` (lifeStage・family) instead of
+            bare `lifeStage` — a MULTI team's several household rows are
+            otherwise only distinguishable by the opaque runtime
+            householdId, since MULTI_PERSON_PER_TEAM can repeat the same
+            lifeStage across its full profile set. */}
+        <div className="font-medium text-gray-900">{row.profileLabel}</div>
+        <div className="text-xs text-gray-400">第{row.roundIndex + 1}R</div>
+      </div>
+      <div>
+        {row.submittedForRoundIndex ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+            提出済
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+            未提出
+          </span>
+        )}
+      </div>
+      <div>
+        <span className={`font-medium ${isNegative ? 'text-red-600 font-bold' : 'text-gray-900'}`}>
+          {row.cashYen.toLocaleString()} 円
+        </span>
+      </div>
+      <div className="text-gray-800">{row.totalAssetsYen.toLocaleString()} 円</div>
+      <div>
+        <HouseholdWarnings warnings={row.warnings} />
+      </div>
+      {isPrimaryTeacher && showIndividualSettlement && (
+        <div className="text-right">
+          <button
+            type="button"
+            onClick={() => onSelectIndividual(row)}
+            disabled={isBusy || isLeaseActive || !row.submittedForRoundIndex}
+            title={!row.submittedForRoundIndex ? '意思決定が未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。' : undefined}
+            className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition border border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            個別決算
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const TeamCard: React.FC<{
+  team: HouseholdTeacherTeamRow
+  isPrimaryTeacher: boolean
+  isBusy: boolean
+  isLeaseActive: boolean
+  showIndividualSettlement: boolean
+  onSelectIndividual: (row: HouseholdTeacherRow) => void
+}> = ({ team, isPrimaryTeacher, isBusy, isLeaseActive, showIndividualSettlement, onSelectIndividual }) => {
+  const isMulti = team.totalHouseholds > 1
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="font-semibold text-gray-900">{team.teamDisplayName}</div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+              team.allSubmitted ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+            }`}
+          >
+            {team.submittedCount} / {team.totalHouseholds} 提出済み
+          </span>
+        </div>
+      </div>
+
+      {team.warnings.length > 0 && (
+        <div className="mt-2">
+          <HouseholdWarnings warnings={team.warnings} />
+        </div>
+      )}
+
+      {!isMulti ? (
+        team.households[0] && (
+          <div className="mt-2 border-t border-gray-100 pt-2">
+            <HouseholdSummaryRow
+              row={team.households[0]}
+              isPrimaryTeacher={isPrimaryTeacher}
+              isBusy={isBusy}
+              isLeaseActive={isLeaseActive}
+              showIndividualSettlement={showIndividualSettlement}
+              onSelectIndividual={onSelectIndividual}
+            />
+          </div>
+        )
+      ) : (
+        <div className="mt-2 border-t border-gray-100 divide-y divide-gray-100">
+          {team.households.map((h) => (
+            <HouseholdSummaryRow
+              key={h.householdId}
+              row={h}
+              isPrimaryTeacher={isPrimaryTeacher}
+              isBusy={isBusy}
+              isLeaseActive={isLeaseActive}
+              showIndividualSettlement={showIndividualSettlement}
+              onSelectIndividual={onSelectIndividual}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps> = ({
@@ -27,7 +194,12 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   onProcessIndividualRound,
   onSaveManualCheckpoint,
   onRestoreCheckpoint,
+  onPrepareAssignment,
+  onUpdateAssignment,
   isActionInProgress = false,
+  canManageDisplay = false,
+  onViewClassComparison,
+  onShowOnDisplay,
 }) => {
   const [isSettlementModalOpen, setIsSettlementModalOpen] = useState(false)
   const [isCheckpointModalOpen, setIsCheckpointModalOpen] = useState(false)
@@ -36,11 +208,22 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
 
   const isBusy = isActionInProgress || isLocalSubmitting
   const isLeaseActive = dashboard.activeBulkOperation?.leaseActive ?? false
+  const isSettling = dashboard.roundStatus === 'SETTLING'
+  const isCommon = dashboard.courseFormat === 'COMMON_CONDITIONS'
+  const showIndividualSettlement = isCommon
 
-  const households = dashboard.households ?? []
+  const teams = dashboard.teams ?? []
   const checkpoints = dashboard.checkpoints ?? []
-  const submittedCount = households.filter((h) => h.submittedForRoundIndex).length
-  const totalCount = households.length
+  const allHouseholds = teams.flatMap((t) => t.households)
+  const submittedCount = allHouseholds.filter((h) => h.submittedForRoundIndex).length
+  const totalCount = allHouseholds.length
+
+  // Advanced formats block manual checkpoint creation and starting a NEW
+  // bulk settlement while SETTLING (Task 5/6/7's server-side SETTLING
+  // guards). Common has no roundStatus and stays governed by isLeaseActive
+  // alone, as before.
+  const checkpointDisabled = isBusy || isLeaseActive || (!isCommon && isSettling)
+  const bulkSettlementDisabled = isBusy || dashboard.currentRoundIndex === null || isLeaseActive || (!isCommon && isSettling)
 
   const handleBatchConfirm = async (forceUnsubmitted: boolean) => {
     if (dashboard.currentRoundIndex === null) return
@@ -93,17 +276,6 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
     }
   }
 
-  const severityClass = (severity: 'ACTION_REQUIRED' | 'WARNING' | 'INFO') => {
-    switch (severity) {
-      case 'ACTION_REQUIRED':
-        return 'bg-red-50 text-red-700 border-red-200'
-      case 'WARNING':
-        return 'bg-amber-50 text-amber-800 border-amber-200'
-      case 'INFO':
-        return 'bg-blue-50 text-blue-800 border-blue-200'
-    }
-  }
-
   return (
     <div className="space-y-6">
       {/* Header card */}
@@ -137,8 +309,8 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
             <button
               type="button"
               onClick={() => setIsCheckpointModalOpen(true)}
-              disabled={isBusy || isLeaseActive}
-              className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition"
+              disabled={checkpointDisabled}
+              className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               チェックポイント・復元
             </button>
@@ -146,10 +318,35 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               <button
                 type="button"
                 onClick={() => setIsSettlementModalOpen(true)}
-                disabled={isBusy || dashboard.currentRoundIndex === null || isLeaseActive}
+                disabled={bulkSettlementDisabled}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
               >
                 一括決算
+              </button>
+            )}
+            {/* Task 13: only once the class-wide comparison exists
+                (dashboard.finalComparisonAvailable, Task 10/12) AND this
+                teacher has display-switch authority (canManageDisplay,
+                PRIMARY/ASSISTANT — matches showHouseholdComparisonOnDisplayCallable's
+                server-side gate). */}
+            {dashboard.finalComparisonAvailable && canManageDisplay && onViewClassComparison && (
+              <button
+                type="button"
+                onClick={onViewClassComparison}
+                disabled={isBusy}
+                className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                クラス比較を見る
+              </button>
+            )}
+            {dashboard.finalComparisonAvailable && canManageDisplay && onShowOnDisplay && (
+              <button
+                type="button"
+                onClick={onShowOnDisplay}
+                disabled={isBusy}
+                className="px-3.5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                教室画面に表示
               </button>
             )}
           </div>
@@ -175,7 +372,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
           </div>
           <div className="space-y-1">
             <span className="text-xs text-gray-500">登録チーム数</span>
-            <div className="font-bold text-gray-900">{totalCount} チーム</div>
+            <div className="font-bold text-gray-900">{teams.length} チーム</div>
           </div>
           <div className="space-y-1">
             <span className="text-xs text-gray-500">最終更新</span>
@@ -185,6 +382,17 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
           </div>
         </div>
       </div>
+
+      {/* Assignment panel (advanced formats only) */}
+      {!isCommon && dashboard.assignment && onPrepareAssignment && onUpdateAssignment && (
+        <HouseholdAssignmentPanel
+          assignment={dashboard.assignment as HouseholdAssignmentView}
+          isPrimaryTeacher={isPrimaryTeacher}
+          isBusy={isBusy}
+          onPrepare={onPrepareAssignment}
+          onUpdate={onUpdateAssignment}
+        />
+      )}
 
       {/* Active bulk operation banner */}
       {dashboard.activeBulkOperation && (
@@ -221,107 +429,19 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         </div>
       )}
 
-      {/* Household table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-600">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-500 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 font-semibold">チーム名</th>
-                <th className="px-4 py-3 font-semibold">ラウンド</th>
-                <th className="px-4 py-3 font-semibold">提出状況</th>
-                <th className="px-4 py-3 font-semibold">現金残高</th>
-                <th className="px-4 py-3 font-semibold">金融資産</th>
-                <th className="px-4 py-3 font-semibold">保険 / 負債</th>
-                <th className="px-4 py-3 font-semibold">直近決算</th>
-                <th className="px-4 py-3 font-semibold">警告・要対応</th>
-                {isPrimaryTeacher && <th className="px-4 py-3 font-semibold text-right">操作</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {households.map((row) => {
-                const isNegative = row.cashYen < 0
-                return (
-                  <tr key={row.householdId} className="hover:bg-gray-50/80 transition">
-                    <td className="px-4 py-3.5">
-                      <div className="font-semibold text-gray-900">{row.teamDisplayName}</div>
-                      <div className="text-xs text-gray-400">{row.lifeStage}</div>
-                    </td>
-                    <td className="px-4 py-3.5 font-medium text-gray-800">
-                      第{row.roundIndex + 1}R
-                    </td>
-                    <td className="px-4 py-3.5">
-                      {row.submittedForRoundIndex ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                          提出済
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                          未提出
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className={`font-medium ${isNegative ? 'text-red-600 font-bold' : 'text-gray-900'}`}>
-                        {row.cashYen.toLocaleString()} 円
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5 text-gray-800">
-                      {row.totalAssetsYen.toLocaleString()} 円
-                    </td>
-                    <td className="px-4 py-3.5 text-xs text-gray-600 space-y-0.5">
-                      <div>保険: {Object.keys(row.activeInsuranceContracts).length} 件</div>
-                      <div>負債: {Object.keys(row.activeLiabilities).length} 件</div>
-                    </td>
-                    <td className="px-4 py-3.5 text-xs text-gray-600">
-                      {row.lastSettlementSummary ? (
-                        <div className="space-y-0.5">
-                          <div>収支: {row.lastSettlementSummary.netCashFlowYen >= 0 ? '+' : ''}{row.lastSettlementSummary.netCashFlowYen.toLocaleString()}円</div>
-                          {row.lastSettlementSummary.shortfallYen > 0 && (
-                            <div className="text-red-600 font-bold">
-                              不足: {row.lastSettlementSummary.shortfallYen.toLocaleString()}円
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      {row.warnings.length === 0 ? (
-                        <span className="text-xs text-gray-400">なし</span>
-                      ) : (
-                        <div className="space-y-1">
-                          {row.warnings.map((w, idx) => (
-                            <div
-                              key={idx}
-                              className={`text-xs px-2 py-0.5 rounded border ${severityClass(w.severity)}`}
-                            >
-                              {w.message}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    {isPrimaryTeacher && (
-                      <td className="px-4 py-3.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedIndividualHousehold(row)}
-                          disabled={isBusy || isLeaseActive || !row.submittedForRoundIndex}
-                          title={!row.submittedForRoundIndex ? '意思決定が未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。' : undefined}
-                          className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition border border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          個別決算
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* Team cards */}
+      <div className="space-y-3">
+        {teams.map((team) => (
+          <TeamCard
+            key={team.teamId}
+            team={team}
+            isPrimaryTeacher={isPrimaryTeacher}
+            isBusy={isBusy}
+            isLeaseActive={isLeaseActive}
+            showIndividualSettlement={showIndividualSettlement}
+            onSelectIndividual={setSelectedIndividualHousehold}
+          />
+        ))}
       </div>
 
       {/* Modals */}
@@ -329,7 +449,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         isOpen={isSettlementModalOpen}
         onClose={() => setIsSettlementModalOpen(false)}
         currentRoundIndex={dashboard.currentRoundIndex}
-        households={households}
+        teams={teams}
         onConfirm={handleBatchConfirm}
         isSubmitting={isLocalSubmitting}
       />
@@ -338,13 +458,18 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         isOpen={isCheckpointModalOpen}
         onClose={() => setIsCheckpointModalOpen(false)}
         checkpoints={checkpoints}
+        courseFormat={dashboard.courseFormat}
+        currentAssignmentRevision={dashboard.assignment?.assignmentRevision ?? null}
         onSaveManualCheckpoint={handleSaveManualCheckpoint}
         onRestoreCheckpoint={handleRestoreCheckpoint}
         isSubmitting={isLocalSubmitting}
       />
 
-      {/* Individual Settlement Confirm Modal */}
-      {selectedIndividualHousehold && (
+      {/* Individual Settlement Confirm Modal (COMMON_CONDITIONS only — advanced
+          formats never offer individual settlement, matching Task 6's
+          server-side rejection of per-household settlement for advanced
+          formats). */}
+      {showIndividualSettlement && selectedIndividualHousehold && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl space-y-4">
             <h3 className="text-lg font-bold text-gray-900">

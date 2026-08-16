@@ -108,10 +108,67 @@ export interface LessonRunPublicState {
   economicFactors?: { inflationPercent: number; interestRatePercent: number; marketReturnPercent: number }
   /** Student Research Desk projection (Phase 2). */
   researchDesk?: ResearchDeskPublicView
+  /**
+   * Task 12: the class-wide, privacy-safe final comparison, present the
+   * moment an advanced (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+   * Home Economics lesson transitions RUNNING -> REFLECTION. Absent before
+   * that (and always absent for a market lesson / COMMON_CONDITIONS, which
+   * has no per-team comparison to publish). Hand-synced with
+   * `functions/src/homeEconomics/statusTransition.ts`'s `afterStatusTransition`
+   * REFLECTION branch, which is the sole writer of this field — see
+   * `HouseholdClassComparisonPublicView`'s own JSDoc below for the
+   * cross-boundary hand-sync discipline (same as `HouseholdProfilePublicView`
+   * above).
+   */
+  householdClassComparison?: HouseholdClassComparisonPublicView
 }
 
-/** `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom projector should render. */
-export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION'
+/**
+ * Client counterpart of `@stock-league/household-public-content`'s
+ * `HouseholdClassComparisonHouseholdView` — hand-synced across the
+ * `functions/`-only package boundary the same way `HouseholdProfilePublicView`
+ * above is (`src/` cannot import that package; see its JSDoc). `profileId`
+ * is the LOGICAL template profile id — never a runtime householdId, never
+ * any participant identity, never a risk/probability/seed field. Keep
+ * field-for-field identical to the server-side allow-list.
+ */
+export interface HouseholdClassComparisonHouseholdView {
+  profileId: string
+  profile: HouseholdProfilePublicView
+  cashYen: number
+  totalAssetsYen: number
+  totalLiabilitiesYen: number
+  goalDelayedRounds: number
+  lifeGoalAchievementScore: number
+}
+
+export interface HouseholdClassComparisonTeamView {
+  teamDisplayName: string
+  households: HouseholdClassComparisonHouseholdView[]
+}
+
+/** Client counterpart of `@stock-league/household-public-content`'s `HouseholdClassComparisonPublicView`. Same hand-sync discipline as its sibling types above. */
+export interface HouseholdClassComparisonPublicView {
+  courseFormat: 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+  finalRoundCount: number
+  publishedAtMillis: number
+  teams: HouseholdClassComparisonTeamView[]
+}
+
+/**
+ * `lessonRunDisplay/{lessonRunId}`'s mode: which screen the classroom
+ * projector should render. Unlike the other four modes (derived purely from
+ * `LessonRun.status` by `deriveDisplayMode` — see
+ * `functions/src/lessonRuns/projections/displayProjection.ts`),
+ * `HOUSEHOLD_COMPARISON` (Task 13) is never status-derived: it is written
+ * exclusively by `showHouseholdComparisonOnDisplayCallable`
+ * (`functions/src/homeEconomics/onCall.ts`) when a teacher explicitly
+ * chooses "教室画面に表示" for the class comparison. See that Callable's
+ * own JSDoc for the accepted race with `setDisplayState`'s generic
+ * whole-node `.set()` publish (a subsequent phase-lifecycle/teacher-guidance
+ * publish reverts the projector back to the status-derived mode).
+ */
+export type LessonRunDisplayMode = 'START' | 'LIVE' | 'END' | 'EXPLANATION' | 'HOUSEHOLD_COMPARISON'
 
 /**
  * A single team's projector-safe summary. Never member identities, never
@@ -150,6 +207,15 @@ export interface LessonRunDisplayState {
   /** Teacher-authored guidance text meant for the whole class to see on the projector (e.g. "スマホを置いて前を見てください"). Never internal teacher-only notes. */
   teacherGuidance: string | null
   updatedAtMillis: number
+  /**
+   * Present only while `mode === 'HOUSEHOLD_COMPARISON'`. Written exclusively
+   * by `showHouseholdComparisonOnDisplayCallable`, which reads this EXACT
+   * already-privacy-safe object back from
+   * `lessonRuns/{lessonRunId}/householdFinalComparison/result` server-side
+   * and republishes it verbatim — never accepts one from client input. See
+   * `LessonRunDisplayMode`'s own JSDoc above for the field's lifecycle.
+   */
+  householdClassComparison?: HouseholdClassComparisonPublicView
 }
 
 /**
@@ -246,6 +312,60 @@ export interface TeamResearchNoteView {
 }
 
 /**
+ * Client counterpart of `functions/src/homeEconomics/toPublicView.ts`'s
+ * `toHouseholdProfilePublicView`'s output shape (originally defined in
+ * `@stock-league/household-public-content`, a `functions/`-only package —
+ * `src/` cannot import across the functions/src rootDir boundary, same
+ * constraint `HouseholdStateTeamView` above already documents). Hand-synced;
+ * keep field-for-field identical to that server-side allow-list.
+ */
+export interface HouseholdProfilePublicView {
+  householdId: string
+  age: number
+  householdIncomeYen: number
+  annualLivingExpensesYen: number
+  cashSavingsYen: number
+  family: string
+  housing: string
+  lifeGoal: string
+  lifeStage: string
+  isFictional: true
+}
+
+/**
+ * Advanced-format (ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM)
+ * counterpart of `HouseholdStateTeamView` above — one household's entry
+ * within an `AdvancedHouseholdTeamStateView`. Hand-duplicated from
+ * `functions/src/homeEconomics/realtimeProjection.ts`'s server-side type of
+ * the same name (Task 9) — see that file's JSDoc for why.
+ */
+export interface AdvancedHouseholdTeamEntryView {
+  householdId: string
+  profile: HouseholdProfilePublicView
+  state: HouseholdStateTeamView
+  /** Which round this household has an on-record submitted decision for, or `null` when it has not yet submitted for its CURRENT round (`state.roundIndex`). */
+  submittedRoundIndex: number | null
+}
+
+/**
+ * Advanced-format counterpart of `LessonRunTeamState.household` — a team
+ * running ROLE_VARIANT/STAGE_SPLIT/MULTI_PERSON_PER_TEAM can host more than
+ * one runtime household on the SAME team, so this carries a `households`
+ * map (keyed by runtime householdId) plus display order and the
+ * team-agnostic course-format/round-sync fields, instead of a single
+ * `household` field. Hand-duplicated from
+ * `functions/src/homeEconomics/realtimeProjection.ts`'s server-side type of
+ * the same name (Task 9) — see that file's JSDoc for why.
+ */
+export interface AdvancedHouseholdTeamStateView {
+  courseFormat: 'ROLE_VARIANT' | 'STAGE_SPLIT' | 'MULTI_PERSON_PER_TEAM'
+  synchronizedRoundIndex: number
+  roundStatus: 'OPEN' | 'SETTLING'
+  households: Record<string, AdvancedHouseholdTeamEntryView>
+  householdOrder: string[]
+}
+
+/**
  * Third visibility class alongside LessonRunPublicState (every participant)
  * and LessonRunPrivateState (teachers only): a team's own cash, holdings,
  * locked funds/shares, and order state must reach that team's members in
@@ -255,14 +375,31 @@ export interface TeamResearchNoteView {
  * teacher oversight) and this file's LessonRunPrivateState JSDoc for why
  * a nested path would defeat the isolation RTDB's read cascade requires.
  */
-export interface LessonRunTeamState {
+/**
+ * `LessonRunTeamState` (below) intersects with this so an advanced-format
+ * lessonRun's `lessonRunTeamState/{lessonRunId}/{teamId}` node's
+ * `courseFormat`/`synchronizedRoundIndex`/`roundStatus`/`households`/
+ * `householdOrder` fields are written FLAT on the node itself — not nested
+ * under a wrapper key — matching exactly what
+ * `functions/src/homeEconomics/processRound.ts`'s
+ * `publishRealtimeStateWithAdminSdk` and
+ * `functions/src/homeEconomics/statusTransition.ts`'s
+ * `afterStatusTransition` actually write (Task 9).
+ */
+export interface LessonRunTeamState extends Partial<AdvancedHouseholdTeamStateView> {
   cash: number
   holdings: Record<string, number>
   lockedBuyValue: number
   lockedSellQuantity: Record<string, number>
   myOrders: MyOrderView[]
   updatedAtMillis: number
-  /** Only present for HOME_ECONOMICS lessonRuns — mutually exclusive with the market fields above (a LessonRun's `subject` never changes after creation). */
+  /**
+   * Only present for HOME_ECONOMICS lessonRuns using COMMON_CONDITIONS —
+   * mutually exclusive with the market fields above (a LessonRun's
+   * `subject` never changes after creation) AND with the
+   * `AdvancedHouseholdTeamStateView` fields inherited above (a lessonRun's
+   * courseFormat never changes after creation either).
+   */
   household?: HouseholdStateTeamView
   /** Team Research Desk notes mirror. Scoped to this team only. */
   researchNote?: TeamResearchNoteView

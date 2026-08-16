@@ -25,6 +25,22 @@ describe('checkpoints (client)', () => {
     expect(result).toEqual(mockResult)
   })
 
+  it('passes through an advanced (v3) result including schemaVersion', async () => {
+    const mockResult = { checkpointId: 'hcp-v3-1', created: true, schemaVersion: 3 as const }
+    callable.mockResolvedValue({ data: mockResult })
+    const functions = {} as Functions
+
+    const input = {
+      lessonRunId: 'run-1',
+      label: '手動チェックポイント',
+      idempotencyKey: 'k-2',
+    }
+    const result = await writeHouseholdCheckpoint(functions, input)
+
+    expect(result).toEqual(mockResult)
+    expect(result.schemaVersion).toBe(3)
+  })
+
   it('calls restoreHouseholdCheckpointCallable with params', async () => {
     const mockResult = { newRestoreGeneration: 2, restoredHouseholdIds: ['team-a'], preRestoreCheckpointId: 'pre-1' }
     callable.mockResolvedValue({ data: mockResult })
@@ -41,5 +57,22 @@ describe('checkpoints (client)', () => {
     expect(httpsCallable).toHaveBeenCalledWith(functions, 'restoreHouseholdCheckpointCallable')
     expect(callable).toHaveBeenCalledWith(input)
     expect(result).toEqual(mockResult)
+  })
+
+  it('passes through an advanced (v3) restore result including schemaVersion', async () => {
+    const mockResult = { newRestoreGeneration: 4, restoredHouseholdIds: ['hh-1', 'hh-2'], preRestoreCheckpointId: 'pre-3', schemaVersion: 3 as const }
+    callable.mockResolvedValue({ data: mockResult })
+    const functions = {} as Functions
+
+    const input = {
+      lessonRunId: 'run-1',
+      checkpointId: 'cp-2',
+      reason: 'テスト復元',
+      idempotencyKey: 'k-2',
+    }
+    const result = await restoreHouseholdCheckpoint(functions, input)
+
+    expect(result).toEqual(mockResult)
+    expect(result.schemaVersion).toBe(3)
   })
 })

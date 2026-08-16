@@ -1,9 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import type { Database } from 'firebase/database'
 import type { Functions } from 'firebase/functions'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 import * as teacherDashboardLib from '../../lib/homeEconomics/teacherDashboard'
 import * as bulkSettlementLib from '../../lib/homeEconomics/bulkSettlement'
+import * as householdAssignmentLib from '../../lib/homeEconomics/householdAssignment'
+import * as finalComparisonLib from '../../lib/homeEconomics/finalComparison'
+import * as liveRepositoryLib from '../../lib/lessonRuns/liveRepository'
+import type { HouseholdClassComparisonPublicView } from '../../lib/lessonRuns/liveTypes'
 
 vi.mock('../../lib/homeEconomics/teacherDashboard', () => ({
   getHouseholdTeacherDashboard: vi.fn(),
@@ -23,6 +28,21 @@ vi.mock('../../lib/homeEconomics/checkpoints', () => ({
   restoreHouseholdCheckpoint: vi.fn(),
 }))
 
+vi.mock('../../lib/homeEconomics/householdAssignment', () => ({
+  prepareHouseholdAssignment: vi.fn(),
+  updateHouseholdAssignment: vi.fn(),
+}))
+
+vi.mock('../../lib/homeEconomics/finalComparison', () => ({
+  showHouseholdComparisonOnDisplay: vi.fn(),
+}))
+
+vi.mock('../../lib/lessonRuns/liveRepository', () => ({
+  subscribePublicRun: vi.fn(() => () => {}),
+}))
+
+const database = {} as Database
+
 describe('HouseholdTeacherDashboard (Container)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -32,40 +52,55 @@ describe('HouseholdTeacherDashboard (Container)', () => {
     lessonRunId: 'run-1',
     subject: 'HOME_ECONOMICS',
     courseFormat: 'COMMON_CONDITIONS',
+    assignment: null,
     restoreGeneration: 0,
+    synchronizedRoundIndex: 0,
+    roundStatus: null,
     currentRoundIndex: 0,
     householdsAligned: true,
     updatedAtServerMillis: 1000,
-    households: [
+    teams: [
       {
-        householdId: 'team-1',
         teamId: 'team-1',
         teamDisplayName: 'チーム1',
-        lifeStage: 'INDEPENDENT',
-        roundIndex: 0,
-        submittedForRoundIndex: true,
-        submittedAtServerMillis: 500,
-        lastSettledRoundIndex: null,
-        cashYen: 1000000,
-        assetHoldingsYen: {},
-        totalAssetsYen: 0,
-        activeInsuranceContracts: {},
-        activeLiabilities: {},
-        lastSettlementSummary: null,
-        goalDelayedRounds: 0,
-        revealedEvents: [],
+        submittedCount: 1,
+        totalHouseholds: 1,
+        allSubmitted: true,
         warnings: [],
+        households: [
+          {
+            householdId: 'team-1',
+            teamId: 'team-1',
+            teamDisplayName: 'チーム1',
+            lifeStage: 'INDEPENDENT',
+            profileLabel: 'INDEPENDENT',
+            roundIndex: 0,
+            submittedForRoundIndex: true,
+            submittedAtServerMillis: 500,
+            lastSettledRoundIndex: null,
+            cashYen: 1000000,
+            assetHoldingsYen: {},
+            totalAssetsYen: 0,
+            activeInsuranceContracts: {},
+            activeLiabilities: {},
+            lastSettlementSummary: null,
+            goalDelayedRounds: 0,
+            revealedEvents: [],
+            warnings: [],
+          },
+        ],
       },
     ],
     checkpoints: [],
     activeBulkOperation: null,
+    finalComparisonAvailable: false,
   }
 
   it('fetches dashboard on mount and renders content', async () => {
     vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockResolvedValue(mockDashboardData)
     const functions = {} as Functions
 
-    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} />)
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
 
     expect(screen.getByText('家庭科ダッシュボードを読み込み中...')).toBeInTheDocument()
 
@@ -97,7 +132,7 @@ describe('HouseholdTeacherDashboard (Container)', () => {
     })
     const functions = {} as Functions
 
-    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} />)
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
 
     await waitFor(() => {
       expect(screen.getByText('家庭経済・ライフプラン管理ダッシュボード')).toBeInTheDocument()
@@ -125,11 +160,160 @@ describe('HouseholdTeacherDashboard (Container)', () => {
     vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockRejectedValue(new Error('Network error'))
     const functions = {} as Functions
 
-    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} />)
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
 
     await waitFor(() => {
       expect(screen.getByText('ダッシュボードの読み込みエラー')).toBeInTheDocument()
     })
     expect(screen.getByText('Network error')).toBeInTheDocument()
+  })
+
+  it('wires the assignment panel prepare action to prepareHouseholdAssignment and reloads', async () => {
+    const advancedDashboard: teacherDashboardLib.HouseholdTeacherDashboard = {
+      ...mockDashboardData,
+      courseFormat: 'MULTI_PERSON_PER_TEAM',
+      assignment: {
+        lessonRunId: 'run-1',
+        courseFormat: 'MULTI_PERSON_PER_TEAM',
+        state: 'UNPREPARED',
+        validationStatus: 'INVALID',
+        assignmentRevision: null,
+        warnings: [],
+        teams: [],
+      },
+      teams: [],
+    }
+    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockResolvedValue(advancedDashboard)
+    vi.mocked(householdAssignmentLib.prepareHouseholdAssignment).mockResolvedValue(advancedDashboard.assignment!)
+    const functions = {} as Functions
+
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '割り当てを準備する' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '割り当てを準備する' }))
+
+    await waitFor(() => {
+      expect(householdAssignmentLib.prepareHouseholdAssignment).toHaveBeenCalledWith(
+        functions,
+        expect.objectContaining({ lessonRunId: 'run-1' }),
+      )
+    })
+    await waitFor(() => {
+      expect(teacherDashboardLib.getHouseholdTeacherDashboard).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('wires the assignment panel save action to updateHouseholdAssignment with expectedRevision/changes', async () => {
+    const draftAssignment: householdAssignmentLib.HouseholdAssignmentView = {
+      lessonRunId: 'run-1',
+      courseFormat: 'ROLE_VARIANT',
+      state: 'DRAFT',
+      validationStatus: 'READY',
+      assignmentRevision: 3,
+      warnings: [],
+      teams: [
+        { teamId: 'team-a', teamDisplayName: 'チーム A', entries: [
+          { householdId: 'h-a', profileId: 'p1', displayOrder: 0, assignmentSource: 'AUTO' },
+        ] },
+        { teamId: 'team-b', teamDisplayName: 'チーム B', entries: [
+          { householdId: 'h-b', profileId: 'p2', displayOrder: 0, assignmentSource: 'AUTO' },
+        ] },
+      ],
+    }
+    const advancedDashboard: teacherDashboardLib.HouseholdTeacherDashboard = {
+      ...mockDashboardData,
+      courseFormat: 'ROLE_VARIANT',
+      assignment: draftAssignment,
+      teams: [],
+    }
+    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockResolvedValue(advancedDashboard)
+    vi.mocked(householdAssignmentLib.updateHouseholdAssignment).mockResolvedValue(draftAssignment)
+    const functions = {} as Functions
+
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('チーム A のプロフィール')).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('チーム A のプロフィール'), { target: { value: 'p2' } })
+    fireEvent.click(screen.getByRole('button', { name: '変更を保存' }))
+
+    await waitFor(() => {
+      expect(householdAssignmentLib.updateHouseholdAssignment).toHaveBeenCalledWith(
+        functions,
+        expect.objectContaining({
+          lessonRunId: 'run-1',
+          expectedRevision: 3,
+          changes: [{ householdId: 'h-a', profileId: 'p2' }],
+        }),
+      )
+    })
+    await waitFor(() => {
+      expect(teacherDashboardLib.getHouseholdTeacherDashboard).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('wires the class-comparison actions end-to-end for a PRIMARY teacher once finalComparisonAvailable is true', async () => {
+    const comparisonDashboard: teacherDashboardLib.HouseholdTeacherDashboard = {
+      ...mockDashboardData,
+      finalComparisonAvailable: true,
+    }
+    const comparisonView: HouseholdClassComparisonPublicView = {
+      courseFormat: 'ROLE_VARIANT',
+      finalRoundCount: 3,
+      publishedAtMillis: 1000,
+      teams: [
+        {
+          teamDisplayName: 'チーム1',
+          households: [
+            {
+              profileId: 'p1',
+              profile: { lifeStage: 'INDEPENDENT' } as HouseholdClassComparisonPublicView['teams'][number]['households'][number]['profile'],
+              cashYen: 500000,
+              totalAssetsYen: 1000000,
+              totalLiabilitiesYen: 0,
+              goalDelayedRounds: 0,
+              lifeGoalAchievementScore: 80,
+            },
+          ],
+        },
+      ],
+    }
+    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockResolvedValue(comparisonDashboard)
+    vi.mocked(finalComparisonLib.showHouseholdComparisonOnDisplay).mockResolvedValue(undefined)
+    vi.mocked(liveRepositoryLib.subscribePublicRun).mockImplementation((_db, _lessonRunId, onUpdate) => {
+      onUpdate({
+        status: 'REFLECTION',
+        currentPhaseId: null,
+        stocks: {},
+        householdClassComparison: comparisonView,
+      } as unknown as Parameters<typeof onUpdate>[0])
+      return () => {}
+    })
+    const functions = {} as Functions
+
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '教室画面に表示' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '教室画面に表示' }))
+
+    await waitFor(() => {
+      expect(finalComparisonLib.showHouseholdComparisonOnDisplay).toHaveBeenCalledWith(functions, { lessonRunId: 'run-1' })
+    })
+
+    expect(screen.queryByText('クラス全体の比較')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'クラス比較を見る' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('クラス全体の比較')).toBeInTheDocument()
+    })
   })
 })

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LessonRunProjectionSource } from './source'
 import { toLessonRunPublicState } from './publicProjection'
 
@@ -83,5 +83,74 @@ describe('toLessonRunPublicState — allow-listed public fields', () => {
   it('reports publicTask as null when the current phase has none', () => {
     const publicState = toLessonRunPublicState({ ...privateRunFixture, currentPhasePublicTask: null }, 6_000)
     expect(publicState.publicTask).toBeNull()
+  })
+})
+
+/**
+ * Task 9 regression — `lessonRunPublic/{lessonRunId}` is a SHARED node:
+ * `homeEconomics/processRound.ts`'s `publishRealtimeStateWithAdminSdk`
+ * writes `economicFactors` onto the same node via RTDB `.update()`, and a
+ * future Task 12 write (`householdClassComparison`) will do the same —
+ * neither field is part of `LessonRunPublicState`'s own allow-list. A
+ * whole-node `.set()` here would wipe those out whenever this generic,
+ * subject-agnostic publisher ran afterward. This exercises the real Admin
+ * SDK wiring (`publishLessonProjectionWithAdminSdk`), not the injectable
+ * `publishLessonProjection` core, against a fake RTDB that distinguishes
+ * `.set()` (whole-node replace) from `.update()` (partial merge) so a
+ * regression back to `.set()` fails this test.
+ */
+const rtdbNodes = new Map<string, Record<string, unknown>>()
+const calls: Array<{ path: string; method: 'set' | 'update'; data: Record<string, unknown> }> = []
+
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (path: string) => ({
+      set: async (data: Record<string, unknown>) => {
+        calls.push({ path, method: 'set', data })
+        rtdbNodes.set(path, data)
+      },
+      update: async (data: Record<string, unknown>) => {
+        calls.push({ path, method: 'update', data })
+        rtdbNodes.set(path, { ...(rtdbNodes.get(path) ?? {}), ...data })
+      },
+    }),
+  }),
+}))
+
+describe('publishLessonProjectionWithAdminSdk — lessonRunPublic uses update(), not set() (Task 9)', () => {
+  beforeEach(() => {
+    rtdbNodes.clear()
+    calls.length = 0
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('calls .update() on lessonRunPublic, never .set()', async () => {
+    const { publishLessonProjectionWithAdminSdk } = await import('./publicProjection')
+    await publishLessonProjectionWithAdminSdk({ lessonRunId: 'run-1', source: privateRunFixture })
+
+    const publicCall = calls.find((call) => call.path === 'lessonRunPublic/run-1')
+    expect(publicCall?.method).toBe('update')
+  })
+
+  it('preserves a pre-existing sibling field (e.g. economicFactors written by processRound.ts) already on the node', async () => {
+    rtdbNodes.set('lessonRunPublic/run-1', { orgId: 'org-1', economicFactors: { inflationPercent: 1, interestRatePercent: 2, marketReturnPercent: 3 } })
+
+    const { publishLessonProjectionWithAdminSdk } = await import('./publicProjection')
+    await publishLessonProjectionWithAdminSdk({ lessonRunId: 'run-1', source: privateRunFixture })
+
+    const node = rtdbNodes.get('lessonRunPublic/run-1')
+    expect(node?.economicFactors).toEqual({ inflationPercent: 1, interestRatePercent: 2, marketReturnPercent: 3 })
+    expect(node?.status).toBe('RUNNING')
+  })
+
+  it('still calls .set() on lessonRunDisplay (no cross-write hazard there — left unchanged)', async () => {
+    const { publishLessonProjectionWithAdminSdk } = await import('./publicProjection')
+    await publishLessonProjectionWithAdminSdk({ lessonRunId: 'run-1', source: privateRunFixture })
+
+    const displayCall = calls.find((call) => call.path === 'lessonRunDisplay/run-1')
+    expect(displayCall?.method).toBe('set')
   })
 })

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   acquireBulkSettlementLease,
+  BulkSettlementOperationNotCancellableError,
+  cancelBulkSettlementOperation,
+  cancelInactiveUnresolvedBulkSettlementOperation,
   createOrReplayBulkSettlementOperation,
+  createOrReplayBulkSettlementOperationWithControlLock,
   finalizeBulkSettlementOperation,
   heartbeatBulkSettlementLease,
   HOUSEHOLD_BULK_LEASE_MS,
@@ -9,10 +13,34 @@ import {
   toHouseholdBulkSettlementOperationView,
   updateHouseholdBulkItemStatus,
   type HouseholdBulkSettlementOperation,
+  type HouseholdBulkTarget,
 } from './bulkSettlementOperation'
+import type { HouseholdRuntimeControl } from './statusTransition'
 
-const makeFakeFirestore = () => {
-  const docs = new Map<string, Record<string, unknown>>()
+// `finalizeBulkSettlementOperation` calls `getDatabase()` directly (no
+// injected dependency seam) to republish the control-derived trio to RTDB
+// on COMPLETED (Critical C1 fix) — same module-level mock convention as
+// `processRound.publishRealtimeState.test.ts`.
+const rtdbUpdates: Array<{ path: string; data: Record<string, unknown> }> = []
+
+vi.mock('firebase-admin/database', () => ({
+  getDatabase: () => ({
+    ref: (path: string) => ({
+      update: async (data: Record<string, unknown>) => { rtdbUpdates.push({ path, data }) },
+    }),
+  }),
+}))
+
+beforeEach(() => {
+  rtdbUpdates.length = 0
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
+
+const makeFakeFirestore = (initialDocs: Record<string, Record<string, unknown>> = {}) => {
+  const docs = new Map<string, Record<string, unknown>>(Object.entries(initialDocs))
   return {
     docs,
     runTransaction: async <T>(fn: (tx: {
@@ -31,6 +59,11 @@ const makeFakeFirestore = () => {
   }
 }
 
+const baseTargets: HouseholdBulkTarget[] = [
+  { householdId: 'team-b', teamId: 'team-b', profileId: 'profile-b' },
+  { householdId: 'team-a', teamId: 'team-a', profileId: 'profile-a' },
+]
+
 describe('bulkSettlementOperation', () => {
   const baseInput = {
     lessonRunId: 'run-1',
@@ -38,13 +71,14 @@ describe('bulkSettlementOperation', () => {
     actorUid: 'teacher-1',
     expectedRoundIndex: 2,
     restoreGeneration: 0,
+    assignmentRevision: null as number | null,
     forceUnsubmitted: false,
-    teamIds: ['team-b', 'team-a'],
+    targets: baseTargets,
     nowMillis: 1000,
   }
 
   describe('createOrReplayBulkSettlementOperation', () => {
-    it('creates a new operation with deterministic ID and sorted PENDING household items', async () => {
+    it('creates a new operation with deterministic ID and sorted PENDING household items, carrying teamId/profileId', async () => {
       const fake = makeFakeFirestore()
       const op = await createOrReplayBulkSettlementOperation({
         firestore: fake as never,
@@ -56,9 +90,10 @@ describe('bulkSettlementOperation', () => {
       expect(op.expectedRoundIndex).toBe(2)
       expect(op.restoreGeneration).toBe(0)
       expect(op.forceUnsubmitted).toBe(false)
+      expect(op.assignmentRevision).toBeNull()
       expect(Object.keys(op.households)).toEqual(['team-a', 'team-b'])
-      expect(op.households['team-a']).toEqual({ status: 'PENDING' })
-      expect(op.households['team-b']).toEqual({ status: 'PENDING' })
+      expect(op.households['team-a']).toEqual({ status: 'PENDING', teamId: 'team-a', profileId: 'profile-a' })
+      expect(op.households['team-b']).toEqual({ status: 'PENDING', teamId: 'team-b', profileId: 'profile-b' })
     })
 
     it('replays same key with same payload returning existing operation', async () => {
@@ -91,6 +126,152 @@ describe('bulkSettlementOperation', () => {
           expectedRoundIndex: 3,
         }),
       ).rejects.toThrow('Idempotency key payload mismatch')
+    })
+
+    it('rejects same key with a different target set (e.g. the team roster changed between the first attempt and a retry)', async () => {
+      const fake = makeFakeFirestore()
+      await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+      })
+
+      await expect(
+        createOrReplayBulkSettlementOperation({
+          firestore: fake as never,
+          ...baseInput,
+          targets: [
+            ...baseTargets,
+            { householdId: 'team-c', teamId: 'team-c', profileId: 'profile-c' },
+          ],
+        }),
+      ).rejects.toThrow('Idempotency key payload mismatch')
+    })
+
+    it('accepts a replay whose targets are the same set in a different array order (digest sorts by householdId)', async () => {
+      const fake = makeFakeFirestore()
+      const first = await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+        targets: baseTargets,
+      })
+
+      const second = await createOrReplayBulkSettlementOperation({
+        firestore: fake as never,
+        ...baseInput,
+        targets: [...baseTargets].reverse(),
+      })
+
+      expect(second.operationId).toBe(first.operationId)
+    })
+  })
+
+  describe('createOrReplayBulkSettlementOperationWithControlLock (advanced formats)', () => {
+    const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+    const openControl: HouseholdRuntimeControl = {
+      courseFormat: 'ROLE_VARIANT',
+      assignmentRevision: 5,
+      synchronizedRoundIndex: 2,
+      roundStatus: 'OPEN',
+      activeOperationId: null,
+      updatedAtServerMillis: 500,
+    }
+
+    const lockedInput = {
+      lessonRunId: 'run-1',
+      idempotencyKey: 'key-1',
+      actorUid: 'teacher-1',
+      expectedRoundIndex: 2,
+      restoreGeneration: 0,
+      assignmentRevision: 5,
+      forceUnsubmitted: false,
+      targets: baseTargets,
+      nowMillis: 1000,
+    }
+
+    it('atomically creates the operation AND flips the control document to SETTLING when OPEN + matching revision/round', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        ...lockedInput,
+      })
+
+      expect(op.status).toBe('PENDING')
+      expect(op.assignmentRevision).toBe(5)
+
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('SETTLING')
+      expect(control.activeOperationId).toBe(op.operationId)
+    })
+
+    it('rejects and creates nothing when the control document is not OPEN', async () => {
+      const fake = makeFakeFirestore({
+        [controlPath]: { ...openControl, roundStatus: 'SETTLING', activeOperationId: 'other-op' } as unknown as Record<string, unknown>,
+      })
+
+      await expect(
+        createOrReplayBulkSettlementOperationWithControlLock({ firestore: fake as never, ...lockedInput }),
+      ).rejects.toThrow('not OPEN')
+
+      // No new operation doc was written — only the pre-existing control doc key remains.
+      expect([...fake.docs.keys()]).toEqual([controlPath])
+    })
+
+    it('rejects on assignmentRevision mismatch without writing anything', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+
+      await expect(
+        createOrReplayBulkSettlementOperationWithControlLock({
+          firestore: fake as never,
+          ...lockedInput,
+          assignmentRevision: 999,
+        }),
+      ).rejects.toThrow('assignmentRevision')
+
+      expect([...fake.docs.keys()]).toEqual([controlPath])
+    })
+
+    it('rejects on synchronizedRoundIndex mismatch without writing anything', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+
+      await expect(
+        createOrReplayBulkSettlementOperationWithControlLock({
+          firestore: fake as never,
+          ...lockedInput,
+          expectedRoundIndex: 99,
+        }),
+      ).rejects.toThrow('synchronizedRoundIndex')
+
+      expect([...fake.docs.keys()]).toEqual([controlPath])
+    })
+
+    it('rejects same key with a different target set (e.g. the team roster changed between the first attempt and a retry)', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      await createOrReplayBulkSettlementOperationWithControlLock({ firestore: fake as never, ...lockedInput })
+
+      await expect(
+        createOrReplayBulkSettlementOperationWithControlLock({
+          firestore: fake as never,
+          ...lockedInput,
+          targets: [
+            ...baseTargets,
+            { householdId: 'team-c', teamId: 'team-c', profileId: 'profile-c' },
+          ],
+        }),
+      ).rejects.toThrow('Idempotency key payload mismatch')
+    })
+
+    it('replaying the same idempotencyKey does not re-touch the control document', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const first = await createOrReplayBulkSettlementOperationWithControlLock({ firestore: fake as never, ...lockedInput })
+
+      // Simulate the control doc having since moved on (e.g. finalize already unlocked it).
+      fake.docs.set(controlPath, { ...openControl, roundStatus: 'OPEN', activeOperationId: null, synchronizedRoundIndex: 3 })
+
+      const replayed = await createOrReplayBulkSettlementOperationWithControlLock({ firestore: fake as never, ...lockedInput })
+      expect(replayed.operationId).toBe(first.operationId)
+      // Control doc is exactly what we set it to above — untouched by the replay.
+      expect(fake.docs.get(controlPath)).toEqual({ ...openControl, roundStatus: 'OPEN', activeOperationId: null, synchronizedRoundIndex: 3 })
     })
   })
 
@@ -165,6 +346,28 @@ describe('bulkSettlementOperation', () => {
       expect(reacquired.status).toBe('RUNNING')
     })
 
+    it('rejects lease acquisition on an already-completed operation', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-a', status: 'SUCCEEDED', nowMillis: 1500 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-b', status: 'SUCCEEDED', nowMillis: 1500 })
+      await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'COMPLETED', nowMillis: 1600 })
+
+      await expect(
+        acquireBulkSettlementLease({ firestore: fake as never, operationId: op.operationId, actorUid: 'teacher-1', nowMillis: 2000 }),
+      ).rejects.toThrow('already completed')
+    })
+
+    it('rejects lease acquisition on a CANCELLED operation', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      await cancelBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, nowMillis: 1600 })
+
+      await expect(
+        acquireBulkSettlementLease({ firestore: fake as never, operationId: op.operationId, actorUid: 'teacher-1', nowMillis: 2000 }),
+      ).rejects.toThrow('already cancelled')
+    })
+
     it('extends lease on heartbeat', async () => {
       const fake = makeFakeFirestore()
       const op = await createOrReplayBulkSettlementOperation({
@@ -188,7 +391,7 @@ describe('bulkSettlementOperation', () => {
       expect(updated.leaseExpiresAtServerMillis).toBe(5000 + HOUSEHOLD_BULK_LEASE_MS)
     })
 
-    it('updates item status and saves preSettlementCheckpointId', async () => {
+    it('updates item status (preserving teamId/profileId) and saves preSettlementCheckpointId', async () => {
       const fake = makeFakeFirestore()
       const op = await createOrReplayBulkSettlementOperation({
         firestore: fake as never,
@@ -218,10 +421,448 @@ describe('bulkSettlementOperation', () => {
       })
 
       expect(finalOp.preSettlementCheckpointId).toBe('hcp-1')
-      expect(finalOp.households['team-a'].status).toBe('SUCCEEDED')
-      expect(finalOp.households['team-b'].status).toBe('PENDING')
+      expect(finalOp.households['team-a']).toEqual({ status: 'SUCCEEDED', teamId: 'team-a', profileId: 'profile-a' })
+      expect(finalOp.households['team-b']).toEqual({ status: 'PENDING', teamId: 'team-b', profileId: 'profile-b' })
       expect(finalOp.status).toBe('FAILED')
       expect(finalOp.leaseExpiresAtServerMillis).toBeNull()
+    })
+  })
+
+  describe('finalizeBulkSettlementOperation control-document unlock (advanced formats)', () => {
+    const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+    const lockedControl: HouseholdRuntimeControl = {
+      courseFormat: 'ROLE_VARIANT',
+      assignmentRevision: 5,
+      synchronizedRoundIndex: 2,
+      roundStatus: 'SETTLING',
+      activeOperationId: '',
+      updatedAtServerMillis: 900,
+    }
+
+    const setUpLockedOperation = async () => {
+      const fake = makeFakeFirestore({ [controlPath]: { ...lockedControl, roundStatus: 'OPEN', activeOperationId: null } as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+      return { fake, op }
+    }
+
+    it('completion: all items successful -> operation COMPLETED + control OPEN + activeOperationId null + synchronizedRoundIndex N+1, atomically', async () => {
+      const { fake, op } = await setUpLockedOperation()
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-a', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-b', status: 'SUCCEEDED', nowMillis: 1100 })
+
+      const finalized = await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'COMPLETED', nowMillis: 2000 })
+      expect(finalized.status).toBe('COMPLETED')
+
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN')
+      expect(control.activeOperationId).toBeNull()
+      expect(control.synchronizedRoundIndex).toBe(3)
+    })
+
+    /**
+     * Critical C1 (whole-branch review): before this fix, completing a bulk
+     * settlement flipped Firestore's control doc back to `OPEN` but never
+     * touched RTDB — `lessonRunTeamState/{lessonRunId}/{teamId}` stayed
+     * stuck at `roundStatus: 'SETTLING'` forever (`processRound.ts` only
+     * ever writes 'SETTLING' there mid-bulk-loop, and `afterStatusTransition`
+     * only writes the initial 'OPEN' once, at lesson start), permanently
+     * hiding the student submit button after the FIRST completed bulk
+     * round. This proves the RTDB republish actually happens, with the
+     * NEW (post-completion) values, once per DISTINCT team — not once per
+     * household — covering a MULTI_PERSON_PER_TEAM-shaped operation where
+     * two households share the same team.
+     */
+    it('completion republishes roundStatus OPEN + advanced synchronizedRoundIndex to RTDB, once per distinct team (Critical C1)', async () => {
+      const multiTargets: HouseholdBulkTarget[] = [
+        { householdId: 'hh-1', teamId: 'team-a', profileId: 'profile-1' },
+        { householdId: 'hh-2', teamId: 'team-a', profileId: 'profile-2' },
+        { householdId: 'hh-3', teamId: 'team-b', profileId: 'profile-3' },
+      ]
+      const fake = makeFakeFirestore({ [controlPath]: { ...lockedControl, roundStatus: 'OPEN', activeOperationId: null } as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-multi',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: multiTargets,
+        nowMillis: 1000,
+      })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-1', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-2', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'hh-3', status: 'SUCCEEDED', nowMillis: 1100 })
+
+      await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'COMPLETED', nowMillis: 2000 })
+
+      const teamAUpdates = rtdbUpdates.filter((u) => u.path === 'lessonRunTeamState/run-1/team-a')
+      const teamBUpdates = rtdbUpdates.filter((u) => u.path === 'lessonRunTeamState/run-1/team-b')
+      // Once per distinct team, not once per household (team-a hosts 2).
+      expect(teamAUpdates).toHaveLength(1)
+      expect(teamBUpdates).toHaveLength(1)
+
+      for (const update of [...teamAUpdates, ...teamBUpdates]) {
+        expect(update.data.roundStatus).toBe('OPEN')
+        expect(update.data.synchronizedRoundIndex).toBe(3)
+        expect(update.data.courseFormat).toBe('ROLE_VARIANT')
+      }
+    })
+
+    it('partial failure: control stays SETTLING at the SAME round — the lock is NOT released and the round is NOT advanced', async () => {
+      const { fake, op } = await setUpLockedOperation()
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-a', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-b', status: 'FAILED', errorCode: 'EXECUTION_ERROR', errorMessage: 'boom', nowMillis: 1100 })
+
+      const finalized = await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'FAILED', nowMillis: 2000 })
+      expect(finalized.status).toBe('FAILED')
+      expect(finalized.households['team-a'].status).toBe('SUCCEEDED')
+
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('SETTLING')
+      expect(control.activeOperationId).toBe(op.operationId)
+      expect(control.synchronizedRoundIndex).toBe(2)
+      // No control unlock happened, so no RTDB republish either — a
+      // partial failure must not tell students the round is OPEN again.
+      expect(rtdbUpdates).toHaveLength(0)
+    })
+
+    it('never touches the control document for COMMON_CONDITIONS (assignmentRevision null)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-a', status: 'SUCCEEDED', nowMillis: 1100 })
+      await updateHouseholdBulkItemStatus({ firestore: fake as never, operationId: op.operationId, householdId: 'team-b', status: 'SUCCEEDED', nowMillis: 1100 })
+
+      await finalizeBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, status: 'COMPLETED', nowMillis: 2000 })
+
+      expect(fake.docs.has(controlPath)).toBe(false)
+    })
+  })
+
+  describe('cancelBulkSettlementOperation (preflight-cancel)', () => {
+    const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+    const openControl: HouseholdRuntimeControl = {
+      courseFormat: 'ROLE_VARIANT',
+      assignmentRevision: 5,
+      synchronizedRoundIndex: 2,
+      roundStatus: 'OPEN',
+      activeOperationId: null,
+      updatedAtServerMillis: 500,
+    }
+
+    it('CANCELLED terminal status releases the control-document lock without advancing the round', async () => {
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+
+      const cancelled = await cancelBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, nowMillis: 2000 })
+      expect(cancelled.status).toBe('CANCELLED')
+      expect(cancelled.leaseExpiresAtServerMillis).toBeNull()
+
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN')
+      expect(control.activeOperationId).toBeNull()
+      expect(control.synchronizedRoundIndex).toBe(2) // unchanged — nothing was actually settled
+    })
+
+    it('never touches the control document for COMMON_CONDITIONS (assignmentRevision null)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+
+      const cancelled = await cancelBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, nowMillis: 2000 })
+      expect(cancelled.status).toBe('CANCELLED')
+      expect(fake.docs.has(controlPath)).toBe(false)
+    })
+
+    it('throws BulkSettlementOperationNotCancellableError instead of overwriting an already-COMPLETED operation', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'COMPLETED', leaseExpiresAtServerMillis: null } as unknown as Record<string, unknown>,
+      )
+
+      await expect(
+        cancelBulkSettlementOperation({ firestore: fake as never, operationId: op.operationId, nowMillis: 2000 }),
+      ).rejects.toBeInstanceOf(BulkSettlementOperationNotCancellableError)
+
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('COMPLETED') // untouched
+    })
+
+    it('throws BulkSettlementOperationNotCancellableError instead of force-cancelling a RUNNING op with an active lease held by a different actor', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'RUNNING', actorUid: 'teacher-2', leaseExpiresAtServerMillis: 9000 } as unknown as Record<string, unknown>,
+      )
+
+      await expect(
+        cancelBulkSettlementOperation({
+          firestore: fake as never,
+          operationId: op.operationId,
+          nowMillis: 2000,
+          expectedActorUid: 'teacher-1',
+        }),
+      ).rejects.toBeInstanceOf(BulkSettlementOperationNotCancellableError)
+
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('RUNNING')
+      expect(stored.leaseExpiresAtServerMillis).toBe(9000)
+    })
+
+    it('allows cancelling a RUNNING op with an active lease when expectedActorUid matches the lease holder (preflight self-abort)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      fake.docs.set(
+        `householdBulkSettlementOperations/${op.operationId}`,
+        { ...op, status: 'RUNNING', actorUid: 'teacher-1', leaseExpiresAtServerMillis: 9000 } as unknown as Record<string, unknown>,
+      )
+
+      const cancelled = await cancelBulkSettlementOperation({
+        firestore: fake as never,
+        operationId: op.operationId,
+        nowMillis: 2000,
+        expectedActorUid: 'teacher-1',
+      })
+
+      expect(cancelled.status).toBe('CANCELLED')
+      expect(cancelled.leaseExpiresAtServerMillis).toBeNull()
+    })
+
+    it('is unresolved: false and retryable: false after cancellation (terminal, not retryable)', () => {
+      const op: HouseholdBulkSettlementOperation = {
+        operationId: 'op-1', lessonRunId: 'run-1', actorUid: 'teacher-1', expectedRoundIndex: 1,
+        restoreGeneration: 0, assignmentRevision: 5, forceUnsubmitted: false, status: 'CANCELLED',
+        preSettlementCheckpointId: null, requestDigest: 'd', attempt: 1, leaseExpiresAtServerMillis: null,
+        lastHeartbeatAtServerMillis: null, households: {}, createdAtServerMillis: 1000, updatedAtServerMillis: 1000,
+      }
+      const view = toHouseholdBulkSettlementOperationView(op, 5000)
+      expect(view.status).toBe('CANCELLED')
+      expect(view.retryable).toBe(false)
+      expect(view.leaseActive).toBe(false)
+    })
+  })
+
+  describe('cancelInactiveUnresolvedBulkSettlementOperation (restore-time cleanup)', () => {
+    it('returns null when there is no unresolved candidate', async () => {
+      const fake = makeFakeFirestore()
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: null,
+        nowMillis: 2000,
+      })
+      expect(result).toBeNull()
+    })
+
+    it.each(['PENDING', 'RUNNING', 'FAILED'] as const)(
+      'cancels a %s operation with no active lease',
+      async (status) => {
+        const fake = makeFakeFirestore()
+        const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+        const candidate: HouseholdBulkSettlementOperation = {
+          ...op,
+          status,
+          leaseExpiresAtServerMillis: status === 'RUNNING' ? 1500 : null, // expired lease for RUNNING
+        }
+
+        const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+          firestore: fake as never,
+          candidate,
+          nowMillis: 2000,
+        })
+
+        expect(result?.status).toBe('CANCELLED')
+        const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+        expect(stored.status).toBe('CANCELLED')
+      },
+    )
+
+    it.each(['COMPLETED', 'CANCELLED'] as const)(
+      'does not re-cancel a candidate already %s by the time it runs (safe no-op, closes the by-id race)',
+      async (status) => {
+        // Simulates the by-id restore path: `findUnresolvedBulkOperationId`
+        // captured this operation while it was still unresolved, but by the
+        // time `cancelInactiveUnresolvedBulkOperationById` re-fetched and
+        // called this function, something else had already finished/cancelled
+        // it. Must be a safe no-op, not a re-open of a terminal operation.
+        const fake = makeFakeFirestore()
+        const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+        const candidate: HouseholdBulkSettlementOperation = { ...op, status, leaseExpiresAtServerMillis: null }
+        // Seed the stored doc with the terminal status too, so we can assert
+        // it stays untouched.
+        fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, candidate as unknown as Record<string, unknown>)
+
+        const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+          firestore: fake as never,
+          candidate,
+          nowMillis: 2000,
+        })
+
+        expect(result).toBeNull()
+        const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+        expect(stored.status).toBe(status) // untouched
+      },
+    )
+
+    it('does not cancel a RUNNING operation with a still-active lease', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+      const candidate: HouseholdBulkSettlementOperation = {
+        ...op,
+        status: 'RUNNING',
+        leaseExpiresAtServerMillis: 5000,
+      }
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull()
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('PENDING') // untouched — never wrote CANCELLED
+    })
+
+    it('does not force-cancel when the operation transitions to an active lease between the outer read and the cancel transaction (TOCTOU)', async () => {
+      const fake = makeFakeFirestore()
+      const op = await createOrReplayBulkSettlementOperation({ firestore: fake as never, ...baseInput })
+
+      // The outer, non-transactional check (`cancelInactiveUnresolvedBulkSettlementOperationByIdWithAdminSdk`'s
+      // `.get()`) observed this operation as PENDING with no lease — safe to
+      // cancel. This is the stale snapshot passed in as `candidate`.
+      const staleCandidate: HouseholdBulkSettlementOperation = { ...op, status: 'PENDING', leaseExpiresAtServerMillis: null }
+
+      // Between that outer read and `cancelBulkSettlementOperation`'s own
+      // transaction running, someone legitimately acquired the lease and
+      // started processing this SAME operation — simulated here by mutating
+      // the fake Firestore's stored doc directly, which is exactly what
+      // `cancelBulkSettlementOperation`'s `tx.get()` will observe.
+      const raceWinner: HouseholdBulkSettlementOperation = {
+        ...op, status: 'RUNNING', actorUid: 'teacher-2', leaseExpiresAtServerMillis: 9000,
+      }
+      fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, raceWinner as unknown as Record<string, unknown>)
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: staleCandidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull() // safe no-op — the stale pre-check does not propagate a hard failure
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('RUNNING') // legitimate progress preserved, not force-cancelled
+      expect(stored.leaseExpiresAtServerMillis).toBe(9000)
+    })
+
+    it('does not force-cancel or release the control lock when the operation transitions to COMPLETED between the outer read and the cancel transaction (TOCTOU, advanced format)', async () => {
+      const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+      const openControl: HouseholdRuntimeControl = {
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 5,
+        synchronizedRoundIndex: 2,
+        roundStatus: 'OPEN',
+        activeOperationId: null,
+        updatedAtServerMillis: 500,
+      }
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+
+      const staleCandidate: HouseholdBulkSettlementOperation = { ...op, status: 'PENDING', leaseExpiresAtServerMillis: null }
+
+      // The operation legitimately ran to completion (and, per
+      // `finalizeBulkSettlementOperation`, the control lock was already
+      // released and the round advanced) between the outer read and this
+      // cancel attempt.
+      const completed: HouseholdBulkSettlementOperation = { ...op, status: 'COMPLETED', leaseExpiresAtServerMillis: null }
+      fake.docs.set(`householdBulkSettlementOperations/${op.operationId}`, completed as unknown as Record<string, unknown>)
+      fake.docs.set(controlPath, {
+        ...openControl, roundStatus: 'OPEN', activeOperationId: null, synchronizedRoundIndex: 3,
+      } as unknown as Record<string, unknown>)
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: staleCandidate,
+        nowMillis: 2000,
+      })
+
+      expect(result).toBeNull()
+      const stored = fake.docs.get(`householdBulkSettlementOperations/${op.operationId}`) as unknown as HouseholdBulkSettlementOperation
+      expect(stored.status).toBe('COMPLETED') // not force-cancelled
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN') // untouched by this cancel — already correctly advanced
+      expect(control.synchronizedRoundIndex).toBe(3)
+    })
+
+    it('also releases the HouseholdRuntimeControl lock for an advanced-format candidate', async () => {
+      const controlPath = 'lessonRuns/run-1/householdRuntime/control'
+      const openControl: HouseholdRuntimeControl = {
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 5,
+        synchronizedRoundIndex: 2,
+        roundStatus: 'OPEN',
+        activeOperationId: null,
+        updatedAtServerMillis: 500,
+      }
+      const fake = makeFakeFirestore({ [controlPath]: openControl as unknown as Record<string, unknown> })
+      const op = await createOrReplayBulkSettlementOperationWithControlLock({
+        firestore: fake as never,
+        lessonRunId: 'run-1',
+        idempotencyKey: 'key-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 2,
+        restoreGeneration: 0,
+        assignmentRevision: 5,
+        forceUnsubmitted: false,
+        targets: baseTargets,
+        nowMillis: 1000,
+      })
+
+      const result = await cancelInactiveUnresolvedBulkSettlementOperation({
+        firestore: fake as never,
+        candidate: op,
+        nowMillis: 2000,
+      })
+
+      expect(result?.status).toBe('CANCELLED')
+      const control = fake.docs.get(controlPath) as unknown as HouseholdRuntimeControl
+      expect(control.roundStatus).toBe('OPEN')
+      expect(control.activeOperationId).toBeNull()
     })
   })
 
@@ -233,6 +874,7 @@ describe('bulkSettlementOperation', () => {
         actorUid: 'teacher-1',
         expectedRoundIndex: 1,
         restoreGeneration: 0,
+        assignmentRevision: null,
         forceUnsubmitted: false,
         status: 'RUNNING',
         preSettlementCheckpointId: 'cp-1',
@@ -241,8 +883,8 @@ describe('bulkSettlementOperation', () => {
         leaseExpiresAtServerMillis: 5000,
         lastHeartbeatAtServerMillis: 1000,
         households: {
-          'team-1': { status: 'SUCCEEDED' },
-          'team-2': { status: 'FAILED', errorCode: 'error', errorMessage: 'msg' },
+          'team-1': { status: 'SUCCEEDED', teamId: 'team-1', profileId: 'profile-1' },
+          'team-2': { status: 'FAILED', teamId: 'team-2', profileId: 'profile-2', errorCode: 'error', errorMessage: 'msg' },
         },
         createdAtServerMillis: 1000,
         updatedAtServerMillis: 1000,

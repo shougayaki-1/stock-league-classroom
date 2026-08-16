@@ -5,13 +5,16 @@ import { appendLessonEventInTransaction, type FirestoreTx } from '../lessonRuns/
 import {
   getHouseholdDecisionForRoundWithAdminSdk,
   getHouseholdStateWithAdminSdk,
+  resolveStoredHouseholdState,
   type HouseholdState,
+  type StoredHouseholdState,
 } from '../lessonRuns/households/repository'
 import { settleRound, type SettleRoundInput, type SettleRoundResult } from './engine/settleRound'
 import { buildEventDisclosureView } from './engine/lifeEvents'
 import { resolveVisibleConcepts } from './goalPackage'
-import { toHouseholdStateTeamView } from './realtimeProjection'
+import { toAdvancedHouseholdTeamEntryView, toHouseholdStateTeamView } from './realtimeProjection'
 import type { HouseholdDecisionInput } from './submitDecision'
+import type { HouseholdRuntimeControl } from './statusTransition'
 
 /**
  * `processRound` is the Admin SDK wrapper around the pure `settleRound`
@@ -82,7 +85,7 @@ export interface ProcessRoundDeps {
     restoreGeneration: number
     homeEconomics: HomeEconomicsContent
   }>
-  readHouseholdState: (lessonRunId: string, householdId: string) => Promise<HouseholdState | null>
+  readHouseholdState: (lessonRunId: string, householdId: string) => Promise<StoredHouseholdState | null>
   readHouseholdDecision: (lessonRunId: string, householdId: string, roundIndex: number) => Promise<HouseholdDecisionInput | null>
   settleRoundFn: (input: SettleRoundInput) => SettleRoundResult
   commitRoundSettlement: (input: {
@@ -93,6 +96,16 @@ export interface ProcessRoundDeps {
     result: SettleRoundResult
     actorId: string
     forcedSettlement: boolean
+    /**
+     * Task 4 fix (task-4 review finding): the template-snapshot content
+     * needed to normalize a possibly-legacy re-read `HouseholdState` via
+     * `resolveStoredHouseholdState()` on the `ALREADY_SETTLED` race-guard
+     * path below — the SAME `config.homeEconomics` the caller (`processRound`)
+     * already normalized its own initial read against, just forwarded so
+     * this Admin SDK implementation doesn't need to re-read Firestore for
+     * content the caller already has in scope.
+     */
+    homeEconomicsContent: HomeEconomicsContent
   }) => Promise<CommitRoundSettlementResult>
   /**
    * Task 15: broadcasts this round's settlement to RTDB. Receives every
@@ -144,29 +157,24 @@ export interface ProcessRoundInput {
 }
 
 export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundInput): Promise<ProcessRoundExecutionResult> => {
-  const [config, household] = await Promise.all([
+  const [config, storedHousehold] = await Promise.all([
     deps.readLessonRunConfig(input.lessonRunId),
     deps.readHouseholdState(input.lessonRunId, input.householdId),
   ])
-  if (!household) throw new Error('HouseholdState not found')
+  if (!storedHousehold) throw new Error('HouseholdState not found')
 
-  // Critical Fix #1 (final whole-branch review): under the COMMON_CONDITIONS
-  // course format `templateValidation.ts` guarantees exactly one
-  // `HouseholdProfile` in `households`, and `HouseholdState.householdId` is
-  // team-scoped (`householdId === teamId`, see `onCall.ts`'s
-  // `lazyInitHouseholdWithAdminSdk`) rather than equal to the profile's own
-  // `householdId` — so an exact-match `.find` would never resolve a
-  // COMMON_CONDITIONS household's profile. This single-profile fallback is
-  // gated on courseFormat === 'COMMON_CONDITIONS', NOT just array length,
-  // to prevent silent mismatches in other course formats (e.g. ROLE_VARIANT)
-  // where a single-profile template with mismatched householdId should
-  // correctly fall through to the exact-match `.find()` and raise an error.
-  // This is unchanged/backward compatible for every existing caller:
-  // single-profile fixtures already use a matching id, and the multi-profile
-  // `.find` path (ROLE_VARIANT/etc, out of this fix's scope) is untouched.
-  const profile = (config.homeEconomics.households.length === 1 && config.homeEconomics.courseFormat === 'COMMON_CONDITIONS')
-    ? config.homeEconomics.households[0]
-    : config.homeEconomics.households.find((p) => p.householdId === input.householdId)
+  // Task 4: `household.profileId` is the runtime household's unambiguous
+  // record of which authored `HouseholdProfile` it is actually using —
+  // normalize the possibly-legacy stored document through
+  // `resolveStoredHouseholdState()` FIRST (infers `profileId` only for the
+  // COMMON_CONDITIONS single-profile case; fails closed for the 3 advanced
+  // formats), then resolve the profile by a simple, unambiguous exact
+  // match. This replaces the prior courseFormat+array-length positional
+  // heuristic, which could never disambiguate two teams running the same
+  // profile (MULTI_PERSON_PER_TEAM) or a team's runtime householdId
+  // differing from its profile's id (ROLE_VARIANT/STAGE_SPLIT).
+  const household = resolveStoredHouseholdState({ stored: storedHousehold, content: config.homeEconomics })
+  const profile = config.homeEconomics.households.find((p) => p.householdId === household.profileId)
   if (!profile) throw new Error('HouseholdProfile not found in template snapshot')
 
   const decision = await deps.readHouseholdDecision(input.lessonRunId, input.householdId, household.roundIndex)
@@ -202,6 +210,7 @@ export const processRound = async (deps: ProcessRoundDeps, input: ProcessRoundIn
     result,
     actorId: input.actorId,
     forcedSettlement,
+    homeEconomicsContent: config.homeEconomics,
   })
 
   if (commitResult.status === 'ALREADY_SETTLED') {
@@ -299,7 +308,7 @@ const readHouseholdDecisionWithAdminSdk: ProcessRoundDeps['readHouseholdDecision
  * idempotency pattern, per the Global Constraints instruction to prefer
  * `lib/idempotency.ts`'s established pattern over a new one).
  */
-const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement'] = async (input) => {
+export const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement'] = async (input) => {
   const db = getFirestore()
   return db.runTransaction(async (tx) => {
     const txAdapter: FirestoreTx = {
@@ -311,8 +320,15 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
     const householdPath = `lessonRuns/${input.lessonRunId}/households/${input.householdId}`
     const householdSnap = await txAdapter.get(householdPath)
     if (!householdSnap.exists) throw new Error('HouseholdState not found')
-    const currentHousehold = householdSnap.data() as unknown as HouseholdState
-    if (currentHousehold.roundIndex !== input.expectedPriorRoundIndex) {
+    const storedHousehold = householdSnap.data() as unknown as StoredHouseholdState
+    if (storedHousehold.roundIndex !== input.expectedPriorRoundIndex) {
+      // Task 4 fix: this re-read may hit a legacy `COMMON_CONDITIONS`
+      // document written before `profileId` became required — normalize it
+      // through the same `resolveStoredHouseholdState()` path `processRound`
+      // uses for its own initial read, so the `ALREADY_SETTLED` result's
+      // `householdState.profileId` is a real, guaranteed value rather than
+      // a type-only guarantee over a runtime-missing field.
+      const currentHousehold = resolveStoredHouseholdState({ stored: storedHousehold, content: input.homeEconomicsContent })
       return { status: 'ALREADY_SETTLED', householdState: currentHousehold }
     }
 
@@ -384,10 +400,23 @@ const commitRoundSettlementWithAdminSdk: ProcessRoundDeps['commitRoundSettlement
  *   Keyed by householdId (not overwritten wholesale) so settling one
  *   household's round never clobbers another household's already-published
  *   log entry on the same shared node.
- * - `lessonRunTeamState/{lessonRunId}/{teamId}` gets only the
- *   `household` field, built via `toHouseholdStateTeamView` (Task 15 Step
- *   3's allow-list — never `{...household}`) — this team's own household
- *   view only, never another team's, and never the internal fields above.
+ * - `lessonRunTeamState/{lessonRunId}/{teamId}` — Task 9 branches this on
+ *   course format. COMMON_CONDITIONS (unchanged from Task 15) writes only
+ *   the `household` field, built via `toHouseholdStateTeamView` (Task 15
+ *   Step 3's allow-list — never `{...household}`) — this team's own
+ *   household view only, never another team's, and never the internal
+ *   fields above. The 3 advanced formats (ROLE_VARIANT/STAGE_SPLIT/
+ *   MULTI_PERSON_PER_TEAM) instead write a SCOPED update at
+ *   `households/${householdId}` — a slash-containing RTDB update key
+ *   addresses that nested path only, so settling one household never
+ *   overwrites the `households` map's other entries (siblings on the same
+ *   MULTI_PERSON_PER_TEAM team) — plus the team-agnostic
+ *   `courseFormat`/`synchronizedRoundIndex`/`roundStatus` fields, read fresh
+ *   from `HouseholdRuntimeControl` (`statusTransition.ts`) at publish time
+ *   since this function has no other source for them. `householdOrder` is
+ *   NOT rewritten here — it was already published once, in full, by
+ *   `afterStatusTransition`'s initial projection (Task 9), and a single
+ *   household's settlement never changes team membership.
  */
 export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtimeState'] = async (input) => {
   const rtdb = getDatabase()
@@ -411,8 +440,6 @@ export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtime
   // already `[]` when `shortfallYen === 0` (Critical C1 fix: no shortfall
   // prompt broadcast on a surplus round).
   const shortfallOptions = result.shortfallOptionsConsidered
-
-  const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
 
   // ---- lessonRunPublic: class-wide economic assumptions only, via update() ----
   await rtdb.ref(`lessonRunPublic/${input.lessonRunId}`).update({
@@ -442,12 +469,37 @@ export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtime
     },
   })
 
-  // ---- lessonRunTeamState: this team's own household view only, via update() ----
-  await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
-    orgId: input.orgId,
-    household: householdView,
-    updatedAtMillis: Date.now(),
-  })
+  // ---- lessonRunTeamState: branch on course format (see this function's doc comment) ----
+  if (homeEconomics.courseFormat === 'COMMON_CONDITIONS') {
+    const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
+    await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
+      orgId: input.orgId,
+      household: householdView,
+      updatedAtMillis: Date.now(),
+    })
+  } else {
+    const controlSnap = await getFirestore().doc(`lessonRuns/${input.lessonRunId}/householdRuntime/control`).get()
+    if (!controlSnap.exists) throw new Error('HouseholdRuntimeControl not found — cannot publish advanced team state.')
+    const control = controlSnap.data() as unknown as HouseholdRuntimeControl
+
+    // submittedRoundIndex: this household just consumed its submitted
+    // decision for the round that was JUST settled — it has not yet
+    // submitted anything for the round it is now on
+    // (`newHousehold.roundIndex`, already advanced by settleRound), so this
+    // is always null immediately after settlement. See task-9-report.md for
+    // the full reasoning on why sibling households' submittedRoundIndex
+    // values are intentionally left untouched by this scoped update.
+    const entryView = toAdvancedHouseholdTeamEntryView(profile, newHousehold, visibleConcepts, eventDisclosures, shortfallOptions, null)
+
+    await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
+      orgId: input.orgId,
+      courseFormat: control.courseFormat,
+      synchronizedRoundIndex: control.synchronizedRoundIndex,
+      roundStatus: control.roundStatus,
+      [`households/${newHousehold.householdId}`]: entryView,
+      updatedAtMillis: Date.now(),
+    })
+  }
 }
 
 export const processRoundDepsWithAdminSdk = (): ProcessRoundDeps => ({

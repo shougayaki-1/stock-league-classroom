@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import type { Database } from 'firebase/database'
 import type { Functions } from 'firebase/functions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
 import {
@@ -14,12 +15,22 @@ import {
   writeHouseholdCheckpoint,
   restoreHouseholdCheckpoint,
 } from '../../lib/homeEconomics/checkpoints'
+import {
+  prepareHouseholdAssignment,
+  updateHouseholdAssignment,
+  type UpdateHouseholdAssignmentInput,
+} from '../../lib/homeEconomics/householdAssignment'
+import { showHouseholdComparisonOnDisplay } from '../../lib/homeEconomics/finalComparison'
+import { subscribePublicRun } from '../../lib/lessonRuns/liveRepository'
+import type { HouseholdClassComparisonPublicView } from '../../lib/lessonRuns/liveTypes'
 import { HouseholdTeacherDashboard as HouseholdTeacherDashboardView } from '../homeEconomics/HouseholdTeacherDashboard'
+import { HouseholdClassComparisonView } from '../homeEconomics/HouseholdClassComparisonView'
 
 export interface HouseholdTeacherDashboardProps {
   lessonRunId: string
   role: LessonRunRole
   functions: Functions
+  database: Database
 }
 
 const generateIdempotencyKey = (prefix: string): string =>
@@ -29,13 +40,21 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   lessonRunId,
   role,
   functions,
+  database,
 }) => {
   const [dashboard, setDashboard] = useState<HouseholdTeacherDashboardData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isActionInProgress, setIsActionInProgress] = useState(false)
+  const [comparison, setComparison] = useState<HouseholdClassComparisonPublicView | null>(null)
+  const [isComparisonVisible, setIsComparisonVisible] = useState(false)
 
   const isPrimaryTeacher = role === 'PRIMARY'
+  // Same PRIMARY-or-ASSISTANT display-switch authority
+  // `showHouseholdComparisonOnDisplayCallable` enforces server-side
+  // (functions/src/homeEconomics/onCall.ts) — mirrors LessonControlRoom.tsx's
+  // own `canEditGuidance` gate for the other display-affecting action.
+  const canManageDisplay = role === 'PRIMARY' || role === 'ASSISTANT'
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -52,6 +71,17 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   useEffect(() => {
     void loadDashboard()
   }, [loadDashboard])
+
+  // Task 13's class-wide comparison (`HouseholdClassComparisonPublicView`)
+  // is never returned by `getHouseholdTeacherDashboard` (that Callable only
+  // reports `finalComparisonAvailable: boolean`) — it lives at
+  // `lessonRunPublic/{lessonRunId}`'s `householdClassComparison` field,
+  // published by `afterReflectionTransition`. Same subscription this data
+  // already has on the student side (HouseholdTeamScreen.tsx).
+  useEffect(
+    () => subscribePublicRun(database, lessonRunId, (publicState) => setComparison(publicState?.householdClassComparison ?? null)),
+    [database, lessonRunId],
+  )
 
   const handleProcessRoundBatch = async (expectedRoundIndex: number, forceUnsubmitted: boolean) => {
     setIsActionInProgress(true)
@@ -142,6 +172,53 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
     }
   }
 
+  const handlePrepareAssignment = async () => {
+    setIsActionInProgress(true)
+    setError(null)
+    try {
+      await prepareHouseholdAssignment(functions, {
+        lessonRunId,
+        idempotencyKey: generateIdempotencyKey('prepare-assignment'),
+      })
+      await loadDashboard()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '割り当ての準備に失敗しました')
+    } finally {
+      setIsActionInProgress(false)
+    }
+  }
+
+  const handleUpdateAssignment = async (
+    input: Omit<UpdateHouseholdAssignmentInput, 'lessonRunId' | 'idempotencyKey'>,
+  ) => {
+    setIsActionInProgress(true)
+    setError(null)
+    try {
+      await updateHouseholdAssignment(functions, {
+        lessonRunId,
+        idempotencyKey: generateIdempotencyKey('update-assignment'),
+        ...input,
+      })
+      await loadDashboard()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '割り当ての更新に失敗しました')
+    } finally {
+      setIsActionInProgress(false)
+    }
+  }
+
+  const handleShowOnDisplay = async () => {
+    setIsActionInProgress(true)
+    setError(null)
+    try {
+      await showHouseholdComparisonOnDisplay(functions, { lessonRunId })
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'クラス比較の教室画面表示に失敗しました')
+    } finally {
+      setIsActionInProgress(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-500 text-sm">
@@ -189,8 +266,15 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
         onProcessIndividualRound={handleProcessIndividualRound}
         onSaveManualCheckpoint={handleSaveManualCheckpoint}
         onRestoreCheckpoint={handleRestoreCheckpoint}
+        onPrepareAssignment={handlePrepareAssignment}
+        onUpdateAssignment={handleUpdateAssignment}
         isActionInProgress={isActionInProgress}
+        canManageDisplay={canManageDisplay}
+        onViewClassComparison={() => setIsComparisonVisible((prev) => !prev)}
+        onShowOnDisplay={() => void handleShowOnDisplay()}
       />
+
+      {isComparisonVisible && comparison && <HouseholdClassComparisonView comparison={comparison} />}
     </div>
   )
 }

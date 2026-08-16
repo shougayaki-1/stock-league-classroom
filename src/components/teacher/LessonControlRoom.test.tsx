@@ -92,6 +92,15 @@ describe('LessonControlRoom', () => {
     expect(screen.getByText('山田太郎')).toBeInTheDocument()
   })
 
+  it('labels the HOUSEHOLD_COMPARISON display mode (DISPLAY_MODE_LABEL exhaustiveness, Task 13)', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'REFLECTION', currentPhaseId: 'phase-1' })
+    emitDisplay({ mode: 'HOUSEHOLD_COMPARISON', title: 'クラス比較' })
+    emitParticipants([])
+
+    expect(screen.getByText(/クラス比較画面/)).toBeInTheDocument()
+  })
+
   it('a PRIMARY teacher sees the start-lesson CTA while the run is READY and it invokes onStartLesson', async () => {
     const user = userEvent.setup()
     const onStartLesson = vi.fn()
@@ -268,25 +277,28 @@ describe('LessonControlRoom', () => {
     expect(screen.getByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
   })
 
-  it('renders unsupported format alert when subject is HOME_ECONOMICS and courseFormat is not COMMON_CONDITIONS', () => {
-    render(
-      <LessonControlRoom
-        lessonRunId="run-1"
-        role="PRIMARY"
-        subject="HOME_ECONOMICS"
-        homeEconomicsCourseFormat="ROLE_VARIANT"
-        functions={functions}
-        firestore={firestore}
-        database={database}
-      />,
-    )
-    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
-    emitDisplay()
-    emitParticipants([])
+  it.each(['ROLE_VARIANT', 'STAGE_SPLIT', 'MULTI_PERSON_PER_TEAM'] as const)(
+    'renders HouseholdTeacherDashboard (not an unsupported-format alert) for the advanced course format %s',
+    (courseFormat) => {
+      render(
+        <LessonControlRoom
+          lessonRunId="run-1"
+          role="PRIMARY"
+          subject="HOME_ECONOMICS"
+          homeEconomicsCourseFormat={courseFormat}
+          functions={functions}
+          firestore={firestore}
+          database={database}
+        />,
+      )
+      emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+      emitDisplay()
+      emitParticipants([])
 
-    expect(screen.getByText(/このコース形式の家庭科ダッシュボード表示には未対応です/)).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '家庭科管理ダッシュボード' })).not.toBeInTheDocument()
-  })
+      expect(screen.getByRole('region', { name: '家庭科管理ダッシュボード' })).toBeInTheDocument()
+      expect(screen.queryByText(/未対応です/)).not.toBeInTheDocument()
+    },
+  )
 
   it('does not render HouseholdTeacherDashboard when subject is SOCIAL_STUDIES', () => {
     render(

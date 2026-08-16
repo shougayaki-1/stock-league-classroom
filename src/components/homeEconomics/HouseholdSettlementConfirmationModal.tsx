@@ -1,20 +1,25 @@
 import React, { useState } from 'react'
-import type { HouseholdTeacherRow } from '../../lib/homeEconomics/teacherDashboard'
+import type { HouseholdTeacherTeamRow } from '../../lib/homeEconomics/teacherDashboard'
 
 export interface HouseholdSettlementConfirmationModalProps {
   isOpen: boolean
   onClose: () => void
   currentRoundIndex: number | null
-  households: HouseholdTeacherRow[]
+  teams: HouseholdTeacherTeamRow[]
   onConfirm: (forceUnsubmitted: boolean) => Promise<void>
   isSubmitting: boolean
+}
+
+interface MissingHouseholdLabel {
+  householdId: string
+  label: string
 }
 
 export const HouseholdSettlementConfirmationModal: React.FC<HouseholdSettlementConfirmationModalProps> = ({
   isOpen,
   onClose,
   currentRoundIndex,
-  households,
+  teams,
   onConfirm,
   isSubmitting,
 }) => {
@@ -23,9 +28,32 @@ export const HouseholdSettlementConfirmationModal: React.FC<HouseholdSettlementC
   if (!isOpen) return null
 
   const roundDisplay = currentRoundIndex !== null ? currentRoundIndex + 1 : '?'
-  const unsubmittedHouseholds = households.filter((h) => !h.submittedForRoundIndex)
-  const hasUnsubmitted = unsubmittedHouseholds.length > 0
+
+  const allHouseholds = teams.flatMap((t) => t.households)
+  const totalHouseholdCount = allHouseholds.length
+  const totalTeamCount = teams.length
+
+  // Missing is reported per-HOUSEHOLD (not per-team) since a
+  // MULTI_PERSON_PER_TEAM team can have some households submitted and
+  // others not — an exact "チームA — 田中家" style label distinguishes
+  // which household within a team is missing.
+  const missingHouseholds: MissingHouseholdLabel[] = []
+  for (const team of teams) {
+    const isMultiHousehold = team.totalHouseholds > 1
+    for (const household of team.households) {
+      if (household.submittedForRoundIndex) continue
+      missingHouseholds.push({
+        householdId: household.householdId,
+        label: isMultiHousehold
+          ? `${team.teamDisplayName} — ${household.lifeStage}`
+          : team.teamDisplayName,
+      })
+    }
+  }
+
+  const hasUnsubmitted = missingHouseholds.length > 0
   const canExecute = !hasUnsubmitted || forceUnsubmitted
+  const submittedHouseholdCount = totalHouseholdCount - missingHouseholds.length
 
   const handleExecute = async () => {
     if (!canExecute || isSubmitting) return
@@ -42,19 +70,19 @@ export const HouseholdSettlementConfirmationModal: React.FC<HouseholdSettlementC
         <div className="space-y-4 text-sm text-gray-600 mb-6">
           {!hasUnsubmitted ? (
             <p className="text-green-700 bg-green-50 p-3 rounded-lg border border-green-200">
-              全 {households.length} チームの意思決定が提出されています。
+              全 {totalHouseholdCount} 世帯（{totalTeamCount} チーム）の意思決定が提出されています。
             </p>
           ) : (
             <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 space-y-2">
               <p className="font-semibold text-amber-800">
-                未提出のチームがあります（{households.length - unsubmittedHouseholds.length} / {households.length} チーム提出済み）
+                未提出の家庭があります（{submittedHouseholdCount} / {totalHouseholdCount} 世帯提出済み、対象 {totalTeamCount} チーム）
               </p>
               <p className="text-xs text-amber-700">
-                以下のチームがまだ意思決定を提出していません：
+                以下の家庭がまだ意思決定を提出していません：
               </p>
               <ul className="list-disc list-inside text-xs text-amber-900 pl-2">
-                {unsubmittedHouseholds.map((h) => (
-                  <li key={h.householdId}>{h.teamDisplayName}</li>
+                {missingHouseholds.map((m) => (
+                  <li key={m.householdId}>{m.label}</li>
                 ))}
               </ul>
               <label className="flex items-center gap-2 pt-2 text-xs font-medium text-gray-800 cursor-pointer">
@@ -65,7 +93,7 @@ export const HouseholdSettlementConfirmationModal: React.FC<HouseholdSettlementC
                   disabled={isSubmitting}
                   className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                未提出チームを含めて強制決算を行う
+                未提出の家庭を含めて強制決算を行う
               </label>
             </div>
           )}

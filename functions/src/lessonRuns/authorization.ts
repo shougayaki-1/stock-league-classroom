@@ -16,6 +16,11 @@ import type { LessonRunRole } from '@stock-league/lesson-runtime-types'
  * 専属とする: ラウンド確定は住宅ローン・保険・資産配分・不足解消をまとめて
  * 1つの`HouseholdState`更新へ確定させる操作であり、TRANSITION_PHASEと同様
  * 「進行を単一の意思決定点に保つ」性質を持つ。
+ *
+ * MANAGE_HOUSEHOLD_ASSIGNMENT（家庭割り当ての準備・編集、Task 2）も同じ
+ * 独自判断で主担当専属とする: 授業開始前の家庭割り当て（誰がどのプロフィー
+ * ルを担当するか）は CHANGE_SETTINGS と同種の「授業全体の前提を決める」操作
+ * であり、複数教師が同時に編集すると競合しうるため、単一の意思決定点に保つ。
  */
 export type LessonControlAction =
   | 'START_LESSON'
@@ -25,6 +30,7 @@ export type LessonControlAction =
   | 'TRANSFER_PRIMARY'
   | 'TRANSITION_PHASE'
   | 'PROCESS_ROUND'
+  | 'MANAGE_HOUSEHOLD_ASSIGNMENT'
   | 'PUBLISH_NOTICE'
   | 'EXTEND_TIME'
   | 'SUPPORT_STUDENT'
@@ -40,6 +46,7 @@ export const lessonControlActions: LessonControlAction[] = [
   'TRANSFER_PRIMARY',
   'TRANSITION_PHASE',
   'PROCESS_ROUND',
+  'MANAGE_HOUSEHOLD_ASSIGNMENT',
   'PUBLISH_NOTICE',
   'EXTEND_TIME',
   'SUPPORT_STUDENT',
@@ -58,6 +65,7 @@ export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole
   // 独自判断（コメント参照）: 主担当専属として扱う
   TRANSITION_PHASE: ['PRIMARY'],
   PROCESS_ROUND: ['PRIMARY'],
+  MANAGE_HOUSEHOLD_ASSIGNMENT: ['PRIMARY'],
   // 主担当・補助担当ともに可
   PUBLISH_NOTICE: ['PRIMARY', 'ASSISTANT'],
   EXTEND_TIME: ['PRIMARY', 'ASSISTANT'],

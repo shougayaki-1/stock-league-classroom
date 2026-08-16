@@ -438,3 +438,79 @@ describe('lessonRunPublic/lessonRunTeamState: student OR-branch added without we
   // enforced. That test name overstated its own coverage; it has been
   // replaced by the parameterized table.
 })
+
+// Task 14: advanced Home Economics household course formats (ROLE_VARIANT/
+// STAGE_SPLIT/MULTI_PERSON_PER_TEAM) add new FIELDS to the already-secured
+// lessonRunTeamState/lessonRunPublic nodes above (a `.households` map for
+// MULTI_PERSON_PER_TEAM, a `householdClassComparison` field on the public
+// node during REFLECTION) rather than new top-level RTDB paths. Since
+// per-field visibility cannot differ from the node's own `.read`/`.write`
+// rule in RTDB, this suite proves the existing team/public visibility
+// classes established above cover these new fields too, and that no client
+// can ever write them.
+describe('advanced household course format fields ride the existing lessonRunTeamState/lessonRunPublic rules', () => {
+  const seedMembership = async (runId: string, uid: string, entry: { access: 'ACTIVE' | 'REVOKED'; teamId?: string }) =>
+    environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref(`lessonRunMembership/${runId}/${uid}`).set(entry)
+    })
+
+  it('lets a participant read their own team\'s .households map (MULTI_PERSON_PER_TEAM) but not another team\'s', async () => {
+    await seedMembership('run-adv', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunTeamState/run-adv/team-a').set({
+        households: {
+          'household-1': { lifeStage: 'YOUNG_FAMILY', roundStatus: 'SETTLED' },
+          'household-2': { lifeStage: 'RETIREE', roundStatus: 'OPEN' },
+        },
+      })
+      await context.database().ref('lessonRunTeamState/run-adv/team-b').set({
+        households: { 'household-3': { lifeStage: 'SINGLE', roundStatus: 'OPEN' } },
+      })
+    })
+    const studentA = environment.authenticatedContext('student-a').database()
+    const ownHouseholds = await get(ref(studentA, 'lessonRunTeamState/run-adv/team-a/households'))
+    expect(ownHouseholds.val()).toEqual({
+      'household-1': { lifeStage: 'YOUNG_FAMILY', roundStatus: 'SETTLED' },
+      'household-2': { lifeStage: 'RETIREE', roundStatus: 'OPEN' },
+    })
+    await assertFails(get(ref(studentA, 'lessonRunTeamState/run-adv/team-b/households')))
+    await assertFails(get(ref(studentA, 'lessonRunTeamState/run-adv/team-b')))
+  })
+
+  it('lets an active lesson participant read a public householdClassComparison field once present', async () => {
+    await seedMembership('run-adv-2', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await context.database().ref('lessonRunPublic/run-adv-2').set({
+        status: 'REFLECTION',
+        currentPhaseId: null,
+        updatedAtMillis: 1,
+        orgId: 'personal_teacher-a',
+        householdClassComparison: {
+          classAverageSavings: 12000,
+          teamCount: 4,
+          generatedAtMillis: 1,
+        },
+      })
+    })
+    const studentA = environment.authenticatedContext('student-a').database()
+    const comparison = await get(ref(studentA, 'lessonRunPublic/run-adv-2/householdClassComparison'))
+    expect(comparison.val()).toEqual({ classAverageSavings: 12000, teamCount: 4, generatedAtMillis: 1 })
+  })
+
+  it('rejects any client write to the .households map, even by a participant of the target team', async () => {
+    await seedMembership('run-adv', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertFails(set(ref(studentA, 'lessonRunTeamState/run-adv/team-a/households'), {
+      'household-1': { lifeStage: 'YOUNG_FAMILY', roundStatus: 'SETTLED' },
+    }))
+    await assertFails(set(ref(studentA, 'lessonRunTeamState/run-adv/team-a/households/household-1'), { roundStatus: 'SETTLED' }))
+  })
+
+  it('rejects any client write to the public householdClassComparison field, from a participant or a teacher alike', async () => {
+    await seedMembership('run-adv-2', 'student-a', { access: 'ACTIVE', teamId: 'team-a' })
+    const studentA = environment.authenticatedContext('student-a').database()
+    await assertFails(set(ref(studentA, 'lessonRunPublic/run-adv-2/householdClassComparison'), { classAverageSavings: 0 }))
+    const teacher = environment.authenticatedContext('teacher-a', teacherToken).database()
+    await assertFails(set(ref(teacher, 'lessonRunPublic/run-adv-2/householdClassComparison'), { classAverageSavings: 0 }))
+  })
+})

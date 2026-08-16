@@ -1,19 +1,45 @@
 import React, { useState } from 'react'
 import type { HouseholdCheckpointManifest } from '../../lib/homeEconomics/teacherDashboard'
+import type { CourseFormat } from '../../lib/homeEconomics/householdAssignment'
 
 export interface HouseholdCheckpointModalProps {
   isOpen: boolean
   onClose: () => void
   checkpoints: HouseholdCheckpointManifest[]
+  /** Used only to label the checkpoint list; not required for the incompatible-restore guard (that uses each checkpoint's own `schemaVersion`). */
+  courseFormat?: CourseFormat
+  /**
+   * The lesson's CURRENT `HouseholdAssignmentConfig.assignmentRevision`
+   * (null for Common, which has no per-team assignment). Compared against
+   * each v3 checkpoint's own `assignmentRevision` (when present — see
+   * `HouseholdCheckpointManifest.assignmentRevision`'s doc comment for why
+   * this is not populated by any real server path yet) to disable restoring
+   * a checkpoint taken under a since-changed assignment. The server's
+   * `restoreHouseholdCheckpointV3` already rejects this case outright; this
+   * is a UX improvement so the teacher doesn't attempt a restore the server
+   * will reject anyway, not a new security boundary.
+   */
+  currentAssignmentRevision?: number | null
   onSaveManualCheckpoint: (label: string) => Promise<void>
   onRestoreCheckpoint: (checkpointId: string, reason: string) => Promise<void>
   isSubmitting: boolean
+}
+
+const isIncompatibleV3Checkpoint = (
+  checkpoint: HouseholdCheckpointManifest,
+  currentAssignmentRevision: number | null | undefined,
+): boolean => {
+  if (checkpoint.schemaVersion !== 3) return false
+  if (checkpoint.assignmentRevision === undefined) return false
+  if (currentAssignmentRevision === null || currentAssignmentRevision === undefined) return false
+  return checkpoint.assignmentRevision !== currentAssignmentRevision
 }
 
 export const HouseholdCheckpointModal: React.FC<HouseholdCheckpointModalProps> = ({
   isOpen,
   onClose,
   checkpoints,
+  currentAssignmentRevision = null,
   onSaveManualCheckpoint,
   onRestoreCheckpoint,
   isSubmitting,
@@ -98,33 +124,42 @@ export const HouseholdCheckpointModal: React.FC<HouseholdCheckpointModalProps> =
             <p className="text-sm text-gray-500 py-4 text-center">保存されたチェックポイントはありません。</p>
           ) : (
             <div className="divide-y border rounded-lg overflow-hidden">
-              {checkpoints.map((cp) => (
-                <div key={cp.checkpointId} className="p-3 flex items-center justify-between hover:bg-gray-50 gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      {kindBadge(cp.kind)}
-                      <span className="text-sm font-medium text-gray-900">{cp.label}</span>
+              {checkpoints.map((cp) => {
+                const incompatible = isIncompatibleV3Checkpoint(cp, currentAssignmentRevision)
+                return (
+                  <div key={cp.checkpointId} className="p-3 flex items-center justify-between hover:bg-gray-50 gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        {kindBadge(cp.kind)}
+                        <span className="text-sm font-medium text-gray-900">{cp.label}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 flex gap-3">
+                        <span>作成: {new Date(cp.createdAtServerMillis).toLocaleString('ja-JP')}</span>
+                        {cp.expectedRoundIndex !== null && <span>対象ラウンド: 第{cp.expectedRoundIndex + 1}R</span>}
+                        {cp.restoreGeneration > 0 && <span>第{cp.restoreGeneration}世代</span>}
+                      </div>
+                      {incompatible && (
+                        <div className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 inline-block">
+                          割り当て内容が変更されているため復元できません
+                        </div>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500 flex gap-3">
-                      <span>作成: {new Date(cp.createdAtServerMillis).toLocaleString('ja-JP')}</span>
-                      {cp.expectedRoundIndex !== null && <span>対象ラウンド: 第{cp.expectedRoundIndex + 1}R</span>}
-                      {cp.restoreGeneration > 0 && <span>第{cp.restoreGeneration}世代</span>}
-                    </div>
-                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedCheckpoint(cp)
-                      setRestoreReason('')
-                    }}
-                    disabled={isSubmitting}
-                    className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg transition"
-                  >
-                    復元...
-                  </button>
-                </div>
-              ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCheckpoint(cp)
+                        setRestoreReason('')
+                      }}
+                      disabled={isSubmitting || incompatible}
+                      title={incompatible ? 'このチェックポイントが記録された時点の家庭割り当てから、現在の割り当てが変更されているため復元できません。' : undefined}
+                      className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      復元...
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

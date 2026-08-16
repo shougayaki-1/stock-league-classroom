@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { LessonRunPrivateState, LessonRunPublicState, LessonRunTeamState } from './liveTypes'
+import type {
+  AdvancedHouseholdTeamStateView,
+  HouseholdClassComparisonPublicView,
+  LessonRunPrivateState,
+  LessonRunPublicState,
+  LessonRunTeamState,
+} from './liveTypes'
 
 describe('LessonRunPublicState / LessonRunPrivateState field separation', () => {
   it('LessonRunPublicState has no field named randomSeed or containing "seed"', () => {
@@ -45,5 +51,76 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
       updatedAtMillis: 1,
     }
     expect(state.cash).toBe(14000)
+  })
+
+  it('LessonRunTeamState carries AdvancedHouseholdTeamStateView fields flat on the node (Task 9), not nested under a wrapper key', () => {
+    const view: AdvancedHouseholdTeamStateView = {
+      courseFormat: 'MULTI_PERSON_PER_TEAM',
+      synchronizedRoundIndex: 2,
+      roundStatus: 'OPEN',
+      households: {
+        'household-a': {
+          householdId: 'household-a',
+          profile: {
+            householdId: 'profile-a', age: 30, householdIncomeYen: 5000000, annualLivingExpensesYen: 3000000,
+            cashSavingsYen: 1000000, family: '独身', housing: '賃貸', lifeGoal: '貯蓄', lifeStage: 'INDEPENDENT',
+            isFictional: true,
+          },
+          state: {
+            householdId: 'household-a', isFictional: true, cashYen: 100000, assetHoldingsYen: {},
+            activeInsuranceContractYearsRemaining: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT',
+            roundIndex: 2, goalDelayedRounds: 0, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+          },
+          submittedRoundIndex: null,
+        },
+      },
+      householdOrder: ['household-a'],
+    }
+    const state: LessonRunTeamState = {
+      cash: 0, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1,
+      ...view,
+    }
+    expect(state.courseFormat).toBe('MULTI_PERSON_PER_TEAM')
+    expect(state.households?.['household-a'].submittedRoundIndex).toBeNull()
+    expect(state.household).toBeUndefined()
+  })
+
+  it('LessonRunPublicState.householdClassComparison is optional and absent by default (market lesson)', () => {
+    const state: LessonRunPublicState = {
+      status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
+      orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      marketPaused: false, nextBatchAtMillis: null, stocks: {},
+    }
+    expect(state.householdClassComparison).toBeUndefined()
+  })
+
+  it('LessonRunPublicState.householdClassComparison (Task 12), when present, carries only profileId + allow-listed household fields under team display names', () => {
+    const comparison: HouseholdClassComparisonPublicView = {
+      courseFormat: 'ROLE_VARIANT',
+      finalRoundCount: 6,
+      publishedAtMillis: 1_700_000_000_000,
+      teams: [{
+        teamDisplayName: 'チームA',
+        households: [{
+          profileId: 'profile-a',
+          profile: {
+            householdId: 'profile-a', age: 32, householdIncomeYen: 6000000, annualLivingExpensesYen: 3000000,
+            cashSavingsYen: 2000000, family: '配偶者・子2人', housing: '賃貸マンション',
+            lifeGoal: '住宅購入と教育資金', lifeStage: 'CHILD_REARING', isFictional: true,
+          },
+          cashYen: 1200000, totalAssetsYen: 3400000, totalLiabilitiesYen: 500000,
+          goalDelayedRounds: 1, lifeGoalAchievementScore: 80,
+        }],
+      }],
+    }
+    const state: LessonRunPublicState = {
+      status: 'REFLECTION', currentPhaseId: 'phase-1', updatedAtMillis: 1,
+      orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      marketPaused: false, nextBatchAtMillis: null, stocks: {},
+      householdClassComparison: comparison,
+    }
+    expect(state.householdClassComparison?.teams[0].teamDisplayName).toBe('チームA')
+    expect(Object.keys(state.householdClassComparison!.teams[0].households[0])).not.toContain('householdId')
+    expect(JSON.stringify(state.householdClassComparison)).not.toContain('internalRiskFactors')
   })
 })
