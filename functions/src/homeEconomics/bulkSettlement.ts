@@ -261,24 +261,32 @@ export const processHouseholdRoundBatch = async (
   }
 
   for (const target of targets) {
-    // Important I2 fix: a household this SAME operation already settled
-    // (via a prior attempt under this idempotency key — `op` here is the
-    // REPLAYED operation `createOrReplayOperation(WithControlLock)` above
-    // returned, not a fresh one) is expected to now be one round AHEAD of
-    // `expectedRoundIndex`. That is not a "round mismatch" — it is exactly
-    // what a resumed replay should see for an item it already resolved.
-    // Before this fix, the round check below fired on the SUCCEEDED item's
-    // now-advanced round and CANCELLED the whole operation — permanently
-    // stranding any household that had NOT yet been retried, since a
-    // CANCELLED operation can never be retried and every fresh attempt
-    // would hit the exact same false mismatch. Skip already-SUCCEEDED items
-    // here entirely (same "only re-attempt non-SUCCEEDED items" rule
-    // `executeBulkItems` below independently applies on its own pass).
+    // Important I2 fix (extended): a household this SAME operation already
+    // resolved — via a prior attempt under this idempotency key (`op` here
+    // is the REPLAYED operation `createOrReplayOperation(WithControlLock)`
+    // above returned, not a fresh one) — must not be re-validated against
+    // `expectedRoundIndex`. Two cases land here:
+    //   1. Item status already SUCCEEDED.
+    //   2. Item status still RUNNING/PENDING but the household's own state
+    //      already advanced to `expectedRoundIndex + 1` — the crash window
+    //      where `processRoundFn` committed but the item-status write never
+    //      ran (see the comment at the `roundIndex === expectedRoundIndex + 1`
+    //      check in `executeBulkItems` below, which already heals this by
+    //      marking the item SUCCEEDED without re-running `processRoundFn`).
+    // Before this fix, either case fired the round-mismatch check below and
+    // CANCELLED the whole operation — permanently stranding any household
+    // that had NOT yet been retried, since a CANCELLED operation can never
+    // be retried and every fresh attempt would hit the same false mismatch.
+    // Skip both cases here; `executeBulkItems` independently heals case 2
+    // on its own pass.
     if (op.households[target.householdId]?.status === 'SUCCEEDED') {
       continue
     }
 
     const state = await deps.readHouseholdState(input.lessonRunId, target.householdId)
+    if (state && state.roundIndex === input.expectedRoundIndex + 1) {
+      continue
+    }
     if (!state || state.roundIndex !== input.expectedRoundIndex) {
       await preflightFail('家庭間でラウンドが不一致または期待ラウンドと異なります')
     }

@@ -799,5 +799,139 @@ describe('bulkSettlement', () => {
       // hh-a was never re-settled — still exactly the one call from attempt 1.
       expect(hhASettleCalls).toBe(1)
     })
+
+    /**
+     * Follow-up to I2 (opus re-review): the SUCCEEDED-skip added above does
+     * not cover an adjacent, structurally identical crash window. If
+     * `processRoundFn` commits the round advance but the item-status write
+     * to SUCCEEDED never happens (crash between the two), the household's
+     * own state has genuinely advanced to `expectedRoundIndex + 1` while the
+     * operation's item map still shows it RUNNING. `executeBulkItems`
+     * already heals this (bulkSettlement.ts: `roundIndex === expectedRoundIndex
+     * + 1` → mark SUCCEEDED without re-running `processRoundFn`), but the
+     * preflight loop did not have the same check: it would read the
+     * household's advanced state, see `roundIndex !== expectedRoundIndex`,
+     * and CANCEL the whole operation — the exact same permanent class-split
+     * failure mode as I2, just reached via a stale-RUNNING item instead of a
+     * missing-from-op item.
+     */
+    it('resuming: household 1 is RUNNING but its state already advanced to expectedRoundIndex + 1 (crash between processRoundFn commit and item-status write) — preflight heals it instead of cancelling', async () => {
+      const householdStates: Record<string, HouseholdState> = {
+        'hh-a': makeBaseHousehold('hh-a', 2), // already advanced past expectedRoundIndex (1)
+        'hh-b': makeBaseHousehold('hh-b', 1),
+        'hh-c': makeBaseHousehold('hh-c', 1),
+      }
+      const decisions: Record<string, boolean> = { 'hh-a': true, 'hh-b': true, 'hh-c': true }
+
+      let operation: HouseholdBulkSettlementOperation = {
+        operationId: 'op-replay-2',
+        lessonRunId: 'run-1',
+        actorUid: 'teacher-1',
+        expectedRoundIndex: 1,
+        restoreGeneration: 0,
+        assignmentRevision: 9,
+        forceUnsubmitted: false,
+        status: 'PENDING',
+        preSettlementCheckpointId: 'cp-existing',
+        requestDigest: 'digest-replay-2',
+        attempt: 1,
+        leaseExpiresAtServerMillis: null,
+        lastHeartbeatAtServerMillis: null,
+        households: {
+          // hh-a: crash left the item RUNNING even though the household's
+          // own state already advanced — this is the case under test.
+          'hh-a': { status: 'RUNNING', teamId: 'team-a', profileId: 'profile-a' },
+          'hh-b': { status: 'PENDING', teamId: 'team-b', profileId: 'profile-b' },
+          'hh-c': { status: 'PENDING', teamId: 'team-c', profileId: 'profile-c' },
+        },
+        createdAtServerMillis: 1000,
+        updatedAtServerMillis: 1000,
+      }
+
+      const hhASettleCalls = { count: 0 }
+
+      const createOrReplayOperationWithControlLock = vi.fn().mockImplementation(async () => operation)
+
+      const deps: BulkSettlementDeps = {
+        readLessonRun: vi.fn().mockResolvedValue({
+          status: 'RUNNING', subject: 'HOME_ECONOMICS', courseFormat: 'ROLE_VARIANT', restoreGeneration: 0,
+        }),
+        readRuntimeControl: vi.fn().mockResolvedValue(control),
+        listTargets: vi.fn().mockResolvedValue(targets),
+        createOrReplayOperation: vi.fn(),
+        createOrReplayOperationWithControlLock,
+        acquireLease: vi.fn().mockImplementation(async () => {
+          operation = { ...operation, status: 'RUNNING', attempt: operation.attempt + 1, leaseExpiresAtServerMillis: Date.now() + 60000 }
+          return operation
+        }),
+        heartbeatLease: vi.fn().mockImplementation(async () => operation),
+        ensureHousehold: vi.fn().mockImplementation(async (_runId, target) => householdStates[target.householdId]),
+        readHouseholdState: vi.fn().mockImplementation(async (_runId, householdId) => householdStates[householdId]),
+        readHouseholdDecision: vi.fn().mockImplementation(async (_runId, householdId, round) => {
+          if (!decisions[householdId]) return null
+          return { decisionId: `dec-${householdId}-${round}` }
+        }),
+        writePreSettlementCheckpoint: vi.fn().mockResolvedValue({ checkpointId: 'cp-replay-2', created: true }),
+        setOperationCheckpointId: vi.fn().mockImplementation(async (_opId, cpId) => {
+          operation = { ...operation, preSettlementCheckpointId: cpId }
+          return operation
+        }),
+        processRoundFn: vi.fn().mockImplementation(async (input): Promise<ProcessRoundExecutionResult> => {
+          if (input.householdId === 'hh-a') hhASettleCalls.count += 1
+          const current = householdStates[input.householdId]
+          householdStates[input.householdId] = { ...current, roundIndex: current.roundIndex + 1 }
+          return {
+            status: 'COMMITTED',
+            settlement: {
+              newHouseholdState: householdStates[input.householdId],
+              occurredEventIds: [], incomeYen: 100, expensesYen: 50, netCashFlowYen: 50,
+              shortfallYen: 0, insuranceBenefitsYen: 0, shortfallOptionsConsidered: [],
+            },
+          }
+        }),
+        updateItemStatus: vi.fn().mockImplementation(async (input) => {
+          const prior = operation.households[input.householdId]
+          operation = {
+            ...operation,
+            households: {
+              ...operation.households,
+              [input.householdId]: {
+                teamId: prior?.teamId ?? input.householdId,
+                profileId: prior?.profileId ?? 'profile-a',
+                status: input.status,
+                errorCode: input.errorCode,
+                errorMessage: input.errorMessage,
+              },
+            },
+          }
+          return operation
+        }),
+        finalizeOperation: vi.fn().mockImplementation(async (input) => {
+          operation = { ...operation, status: input.status, leaseExpiresAtServerMillis: null }
+          return operation
+        }),
+        cancelOperation: vi.fn().mockImplementation(async () => {
+          operation = { ...operation, status: 'CANCELLED', leaseExpiresAtServerMillis: null }
+          return operation
+        }),
+        getOperation: vi.fn().mockImplementation(async () => operation),
+        findUnresolvedOperation: vi.fn().mockResolvedValue(null),
+      }
+
+      const result = await processHouseholdRoundBatch(deps, {
+        lessonRunId: 'run-1', expectedRoundIndex: 1, forceUnsubmitted: false,
+        actorUid: 'teacher-1', idempotencyKey: 'replay-key-2', nowMillis: 3000,
+      })
+
+      expect(deps.cancelOperation).not.toHaveBeenCalled()
+      expect(result.status).not.toBe('CANCELLED')
+      expect(result.status).toBe('COMPLETED')
+      // hh-a healed to SUCCEEDED without processRoundFn being invoked for it.
+      expect(operation.households['hh-a'].status).toBe('SUCCEEDED')
+      expect(hhASettleCalls.count).toBe(0)
+      // The other targets still resolve normally.
+      expect(operation.households['hh-b'].status).toBe('SUCCEEDED')
+      expect(operation.households['hh-c'].status).toBe('SUCCEEDED')
+    })
   })
 })
