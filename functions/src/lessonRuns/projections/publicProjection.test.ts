@@ -54,7 +54,7 @@ describe('toLessonRunPublicState — forbidden information (Step 1, security-cri
 })
 
 describe('toLessonRunPublicState — allow-listed public fields', () => {
-  it('projects status/phase/remaining-time/publicTask/notifications only', () => {
+  it('projects status/phase/remaining-time/publicTask/notifications/title/teams only', () => {
     const publicState = toLessonRunPublicState(privateRunFixture, 6_000)
     expect(publicState).toEqual({
       status: 'RUNNING',
@@ -67,7 +67,16 @@ describe('toLessonRunPublicState — allow-listed public fields', () => {
         { id: 'evt-1', type: 'PHASE_CHANGED', severity: 'IMPORTANT', occurredAtMillis: 4_000 },
         { id: 'evt-2', type: 'RESPONSE_SAVED', severity: 'REFERENCE', occurredAtMillis: 4_500 },
       ],
+      title: '株式投資シミュレーション',
+      teams: [{ teamId: 'team-a', displayName: 'Aチーム' }],
     })
+  })
+
+  it('never leaks per-team publicAggregateLabel, individualResponses, or unsubmittedParticipantIds through the new teams field', () => {
+    const publicState = toLessonRunPublicState(privateRunFixture, 6_000)
+    const serialized = JSON.stringify(publicState)
+    expect(serialized).not.toContain('publicAggregateLabel')
+    expect(serialized).not.toContain('1位')
   })
 
   it('clamps remainingPhaseSeconds to 0 instead of going negative once the phase end has passed', () => {

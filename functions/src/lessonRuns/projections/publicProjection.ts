@@ -22,6 +22,12 @@ export interface LessonRunPublicNotification {
  * duplicates the shape instead of importing across the functions/src
  * rootDir boundary). Keep both in sync by hand.
  */
+/** Allow-listed per-team summary safe for the whole-class-broadcast node — teamId/displayName only, never publicAggregateLabel/individualResponses/unsubmittedParticipantIds (those stay on LessonRunDisplayState, the projector-only node). */
+export interface LessonRunPublicTeamSummary {
+  teamId: string
+  displayName: string
+}
+
 export interface LessonRunPublicState {
   status: string
   currentPhaseId: string | null
@@ -30,6 +36,8 @@ export interface LessonRunPublicState {
   remainingPhaseSeconds: number | null
   publicTask: string | null
   notifications: LessonRunPublicNotification[]
+  title: string
+  teams: LessonRunPublicTeamSummary[]
 }
 
 /**
@@ -57,6 +65,8 @@ export const toLessonRunPublicState = (source: LessonRunProjectionSource, nowMil
     severity: classifyNotification(event.type),
     occurredAtMillis: event.occurredAtMillis,
   })),
+  title: source.title,
+  teams: source.teams.map((team) => ({ teamId: team.id, displayName: team.displayName })),
 })
 
 /** Plain countdown, clamped so a phase whose end has already passed reports 0 rather than a negative number. */
