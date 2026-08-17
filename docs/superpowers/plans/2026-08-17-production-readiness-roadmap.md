@@ -51,8 +51,10 @@
 
 **重要な発見:** `functions/src/lessonRuns/analytics/buildAnalytics.ts` は純粋関数として存在するが、`onCall` でラップされておらず `functions/src/index.ts` からもexportされていない。クライアントラッパーも存在しない。`TeacherAnalyticsRoute` の `DeferredDataNotice` を外すには、Callable自体を新規実装する必要がある。
 
-- Phase 5a（バックエンド）: `buildLessonAnalytics` にFirestoreの `events`/`responses`/`surveys` を実際にクエリして渡す `onCall` を新設。教師権限チェックを追加
-- Phase 5b（フロントエンド）: クライアントラッパー新設 + `TeacherAnalyticsRoute` を `LessonAnalyticsPage` に接続（`LessonAnalyticsAggregateView` と `LessonAnalytics` の型差分を吸収する変換層が必要）
+- Phase 5a（バックエンド）: `buildLessonAnalytics` にFirestoreの `events`/`responses`/`surveys` を実際にクエリして渡す `onCall` を新設。教師権限チェックを追加（完了）
+- Phase 5b（フロントエンド）: クライアントラッパー新設 + `TeacherAnalyticsRoute` を `LessonAnalyticsPage` に接続（`LessonAnalyticsAggregateView` と `LessonAnalytics` の型差分を吸収する変換層が必要）（完了）
+
+→ 詳細計画: [2026-08-17-phase5-teacher-analytics.md](2026-08-17-phase5-teacher-analytics.md)
 
 ## Phase 6 — Control Roomからの開始/進行操作
 
