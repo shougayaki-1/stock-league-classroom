@@ -88,6 +88,9 @@ const httpsCallableMock = vi.fn((_functions: unknown, name: string) => {
   if (name === 'getHouseholdTeacherDashboardCallable') {
     return vi.fn().mockResolvedValue({ data: defaultDashboardData })
   }
+  if (name === 'getMyLessonResultCallable') {
+    return vi.fn().mockResolvedValue({ data: { found: false, lessonRunId: 'run-1', items: [] } })
+  }
   return callableMock
 })
 vi.mock('firebase/functions', () => ({
@@ -420,6 +423,39 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     callableMock.mockRejectedValue(new Error('exchange failed'))
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     expect(await screen.findByRole('alert')).toHaveTextContent(/この教室表示を表示できません/)
+    window.history.pushState({}, '', '/')
+  })
+
+  it('shows a not-yet-generated message at /results when no result exists', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/results')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({ status: 'REFLECTION', title: '株式投資シミュレーション', teams: [{ teamId: 'team-a', displayName: 'Aチーム' }] })
+    expect(await screen.findByText('まだ結果が発表されていません。教師の案内をお待ちください。')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('renders LessonResultsPage at /results once a result is found', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/results')
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getMyLessonResultCallable') {
+        return vi.fn().mockResolvedValue({
+          data: {
+            found: true, lessonRunId: 'run-1',
+            items: [{ responseId: 'r-1', scope: 'participant', displayValue: '選択肢A', decisionExplanation: { whatHappened: 'a', whyItHappened: 'b', alternative: 'c', nextAction: 'd' } }],
+          },
+        })
+      }
+      return callableMock
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({ status: 'COMPLETED', title: '株式投資シミュレーション', teams: [{ teamId: 'team-a', displayName: 'Aチーム' }] })
+    expect(await screen.findByText('選択肢A')).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 })

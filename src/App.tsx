@@ -14,6 +14,7 @@ import { getOrCreateStudentUid } from './lib/auth/studentAuth'
 import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonWaitingPage } from './components/student/LessonWaitingPage'
+import { LessonResultsPage } from './components/student/LessonResultsPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
@@ -21,7 +22,7 @@ import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScr
 import { MarketPlayScreen } from './components/student/MarketPlayScreen'
 import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
 import type { LessonRunPublicState, LessonRunTeamState } from './lib/lessonRuns/liveTypes'
-import { generateLessonResult } from './lib/lessonRuns/results'
+import { generateLessonResult, getMyLessonResult, type GetMyLessonResultResult } from './lib/lessonRuns/results'
 import { submitOrder } from './lib/market/submitOrder'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
@@ -1257,12 +1258,53 @@ function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
   return <TuningDashboardPage data={data} error={error} />
 }
 
-function StudentLessonRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
+/**
+ * `/lessons/:runId/results` only. `displayName`/`teamName` come from the
+ * same live sources `StudentWaitingRoute` uses (location.state / the
+ * public-state teams list) rather than being duplicated inside the
+ * result-fetch response, which only carries response items.
+ */
+function StudentResultsRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
+  const location = useLocation()
   const access = useStudentLessonAccess(runId ?? '', services)
+  const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
+  const [myResult, setMyResult] = useState<GetMyLessonResultResult | null>(null)
+
+  useEffect(() => {
+    if (!runId) return
+    return subscribePublicRun(services.database, runId, setPublicState)
+  }, [runId, services])
+
+  useEffect(() => {
+    if (access.status !== 'GRANTED' || !runId) return
+    getMyLessonResult(services.functions, { lessonRunId: runId }).then(setMyResult)
+  }, [access.status, runId, services])
+
   if (access.status === 'LOADING') return <GuardLoading />
   if (access.status === 'DENIED') return <Navigate replace to="/join" />
-  return <DeferredDataNotice heading={heading} />
+  if (!publicState || !myResult) return <GuardLoading />
+
+  if (!myResult.found) {
+    return (
+      <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }} spacing={1}>
+        <Typography variant="h6" component="h1">{publicState.title}</Typography>
+        <Typography variant="body2">まだ結果が発表されていません。教師の案内をお待ちください。</Typography>
+      </Stack>
+    )
+  }
+
+  const displayName = (location.state as { displayName?: string } | null)?.displayName ?? '(表示名不明)'
+  const teamName = access.teamId ? publicState.teams.find((team) => team.teamId === access.teamId)?.displayName : undefined
+
+  return <LessonResultsPage
+    lessonTitle={publicState.title}
+    displayName={displayName}
+    teamName={teamName}
+    results={myResult.items.map((item) => ({ responseId: item.responseId, scope: item.scope, displayValue: item.displayValue, decisionExplanation: item.decisionExplanation }))}
+    externalTaskUrl={myResult.externalTaskUrl}
+    externalResultUrl={myResult.externalResultUrl}
+  />
 }
 
 /**
@@ -1410,7 +1452,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/results" element={enabled && services ? <StudentResultsRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher" element={enabled && services ? <TemplateRouteGuard services={services}><TeacherHomeRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
