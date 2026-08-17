@@ -128,7 +128,7 @@ interface TeacherAccess {
   subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
   homeEconomicsCourseFormat?: string
 }
-interface StudentAccess { status: AccessStatus; teamId?: string }
+interface StudentAccess { status: AccessStatus; teamId?: string; participantId?: string }
 
 /**
  * Resolves whether the signed-in user is a teacher assigned a role on this
@@ -201,8 +201,8 @@ function useStudentLessonAccess(runId: string, services: FirebaseServices): Stud
           membershipRef,
           (snapshot: { val: () => unknown }) => {
             if (cancelled) return
-            const value = snapshot.val() as { access?: string; teamId?: string } | null
-            setAccess(value?.access === 'ACTIVE' ? { status: 'GRANTED', teamId: value.teamId } : { status: 'DENIED' })
+            const value = snapshot.val() as { access?: string; teamId?: string; participantId?: string } | null
+            setAccess(value?.access === 'ACTIVE' ? { status: 'GRANTED', teamId: value.teamId, participantId: value.participantId } : { status: 'DENIED' })
           },
           () => { if (!cancelled) setAccess({ status: 'DENIED' }) },
         )
