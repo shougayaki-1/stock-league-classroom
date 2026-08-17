@@ -26,7 +26,7 @@ export interface ExplanationSlideProps {
 /** 説明画面(EXPLANATION mode)。教師の補足説明・チームの匿名集計のみを表示し、直前mode(LIVE/END)への復帰見込みをテキストで示す。 */
 export function ExplanationSlide({ title, teams, teacherGuidance, previousMode }: ExplanationSlideProps) {
   return (
-    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4 }}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h4" component="h1">{title}</Typography>
 
       {teacherGuidance && <Typography variant="h5">{teacherGuidance}</Typography>}

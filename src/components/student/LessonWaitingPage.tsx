@@ -34,7 +34,7 @@ export function LessonWaitingPage({
   lessonTitle, teamName, displayName, teamMemberNames, recoveryCode,
 }: LessonWaitingPageProps) {
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: 480, p: 2 }}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: 480, p: 2, mx: 'auto' }}>
       <Typography variant="h6" component="h1">{lessonTitle}</Typography>
       <Typography variant="body1">開始までしばらくお待ちください。準備ができたら自動的に始まります。</Typography>
 

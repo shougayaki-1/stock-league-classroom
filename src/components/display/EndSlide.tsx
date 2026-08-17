@@ -20,7 +20,7 @@ export interface EndSlideProps {
 /** 終了画面(END mode)。結果・観点別ランキング・出来事・因果・振り返り問いのみを表示する。本名・個人回答・内部係数は一切扱わない。 */
 export function EndSlide({ title, teams, events, causalExplanation, reflectionQuestions, teacherGuidance }: EndSlideProps) {
   return (
-    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4 }}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h3" component="h1">{title}</Typography>
 
       <Stack spacing={1}>

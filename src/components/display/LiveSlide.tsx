@@ -26,7 +26,7 @@ export interface LiveSlideProps {
 /** 授業中画面(LIVE mode)。フェーズ名・残り時間・公開情報・匿名集計・案内のみを表示する。個人回答・未提出者・正解は一切扱わない。 */
 export function LiveSlide({ title, phaseName, remainingSeconds, publicInfo, teams, teacherGuidance }: LiveSlideProps) {
   return (
-    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4 }}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <Typography variant="h4" component="h1">{title}</Typography>
         {phaseName && <Chip label={phaseName} color="primary" />}

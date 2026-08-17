@@ -135,7 +135,7 @@ export function LessonAnalyticsPage({
   const comprehensionUnanswered = individualRows.length - comprehensionAnswered.length
 
   return (
-    <Stack spacing={3} sx={{ width: '100%', maxWidth: 800, p: 2 }}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: 800, p: 2, mx: 'auto' }}>
       <Typography variant="h6" component="h1">{lessonTitle} — 分析</Typography>
 
       <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>

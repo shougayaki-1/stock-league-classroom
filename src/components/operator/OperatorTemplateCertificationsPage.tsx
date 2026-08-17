@@ -86,7 +86,7 @@ export function OperatorTemplateCertificationsPage({
   }
 
   return (
-    <Stack spacing={2} sx={{ p: 2, maxWidth: 900 }}>
+    <Stack spacing={2} sx={{ p: 2, maxWidth: 900, mx: 'auto' }}>
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="h5">公開教材の認定管理</Typography>
         <Stack direction="row" spacing={1}>

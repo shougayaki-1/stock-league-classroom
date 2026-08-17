@@ -81,7 +81,7 @@ export function LessonJoinPage({ functions, initialJoinCode, onJoined }: LessonJ
     <Stack
       component="form"
       spacing={2}
-      sx={{ width: '100%', maxWidth: 480, p: 2 }}
+      sx={{ width: '100%', maxWidth: 480, p: 2, mx: 'auto' }}
       onSubmit={(e) => { e.preventDefault(); void handleSubmit() }}
     >
       <Typography variant="h6" component="h1">授業に参加する</Typography>

@@ -54,7 +54,7 @@ export function LessonResultsPage({
   lessonTitle, displayName, teamName, results, externalTaskUrl, externalResultUrl,
 }: LessonResultsPageProps) {
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: 560, p: 2 }}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: 560, p: 2, mx: 'auto' }}>
       <Typography variant="h6" component="h1">{lessonTitle} — 結果</Typography>
 
       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>

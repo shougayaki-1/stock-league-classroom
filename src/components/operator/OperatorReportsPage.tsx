@@ -21,7 +21,7 @@ export function OperatorReportsPage({
   onNavigateToAiBeta,
 }: OperatorReportsPageProps) {
   if (accessDenied) return <Stack sx={{ p: 2 }}><Typography color="error">この画面は運営者のみ利用できます。</Typography></Stack>
-  return <Stack spacing={2} sx={{ p: 2, maxWidth: 900 }}>
+  return <Stack spacing={2} sx={{ p: 2, maxWidth: 900, mx: 'auto' }}>
     <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
       <Typography variant="h5">通報の審査</Typography>
       <Stack direction="row" spacing={1}>

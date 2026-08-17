@@ -57,7 +57,7 @@ export function TeamNotesPage({ note, onSaveNote, disabled = false }: TeamNotesP
   const isDirty = localText !== (note?.text ?? '')
 
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: 720 }}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: 720, mx: 'auto' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="subtitle2" color="text.secondary">
           チーム共有ノート (リビジョン: {expectedRevision})

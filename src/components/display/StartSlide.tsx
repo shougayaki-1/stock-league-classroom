@@ -44,7 +44,7 @@ export interface StartSlideProps {
 /** 開始画面(START mode)。タイトル・目標・流れ・ルール・操作方法・QR/参加コードのみを表示する。 */
 export function StartSlide({ title, goal, joinUrl, joinCode }: StartSlideProps) {
   return (
-    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4 }}>
+    <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h3" component="h1">{title}</Typography>
       {goal && (
         <Typography variant="h5" component="p" data-testid="start-slide-goal">{goal}</Typography>

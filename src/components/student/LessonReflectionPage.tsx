@@ -48,7 +48,7 @@ export function LessonReflectionPage({
   surveyQuestions, surveyAnswers, onSurveyAnswerChange, onSubmitSurvey, surveySubmitted,
 }: LessonReflectionPageProps) {
   return (
-    <Stack spacing={2} sx={{ width: '100%', maxWidth: 560, p: 2 }}>
+    <Stack spacing={2} sx={{ width: '100%', maxWidth: 560, p: 2, mx: 'auto' }}>
       <Typography variant="h6" component="h1">{lessonTitle} — 振り返り</Typography>
       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
         <Typography variant="body2">{displayName}</Typography>
