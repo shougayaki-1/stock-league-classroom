@@ -34,6 +34,7 @@ import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repositor
 import { publishLessonVersion } from './lib/lessonTemplates/publishLessonVersion'
 import { useAiBetaAccess } from './hooks/useAiBetaAccess'
 import { personalOrgId } from './lib/org/personalOrgId'
+import { ensurePersonalOrg } from './lib/org/ensurePersonalOrg'
 import { TemplateListPage } from './components/teacher/templates/TemplateListPage'
 import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilderWizard'
 import { TemplateOverviewPage } from './components/teacher/templates/TemplateOverviewPage'
@@ -327,6 +328,16 @@ function TeacherAnalyticsRoute({ services }: { services: FirebaseServices }) {
   />
 }
 
+/**
+ * `ensurePersonalOrg` is called here, before the membership check, because
+ * nothing else in the app ever calls it — a teacher's first sign-in has no
+ * `organizations/personal_{uid}/members/{uid}` doc yet, so without this the
+ * membership check below always denies and every teacher route bounces to
+ * /about forever, even right after a successful Google login. Idempotent
+ * (see functions/src/organizations/personalOrg.ts's own doc comment), so
+ * calling it on every auth-state resolution is safe and also self-heals
+ * any session that authenticated before this fix existed.
+ */
 function useTemplateAccess(services: FirebaseServices): AccessStatus {
   const [status, setStatus] = useState<AccessStatus>('LOADING')
   useEffect(() => {
@@ -336,7 +347,9 @@ function useTemplateAccess(services: FirebaseServices): AccessStatus {
         if (!cancelled) setStatus('DENIED')
         return
       }
-      getDoc(doc(services.firestore, 'organizations', personalOrgId(user.uid), 'members', user.uid))
+      ensurePersonalOrg(services.functions)
+        .catch(() => {})
+        .then(() => getDoc(doc(services.firestore, 'organizations', personalOrgId(user.uid), 'members', user.uid)))
         .then((snapshot) => { if (!cancelled) setStatus(snapshot.exists() && snapshot.data()?.status === 'active' ? 'GRANTED' : 'DENIED') })
         .catch(() => { if (!cancelled) setStatus('DENIED') })
     })
@@ -1329,7 +1342,7 @@ function StudentResultsRoute({ services }: { services: FirebaseServices }) {
 
   if (!myResult.found) {
     return (
-      <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }} spacing={1}>
+      <Stack sx={{ width: '100%', maxWidth: 480, p: 4, mx: 'auto' }} spacing={1}>
         <Typography variant="h6" component="h1">{publicState.title}</Typography>
         <Typography variant="body2">まだ結果が発表されていません。教師の案内をお待ちください。</Typography>
       </Stack>
@@ -1457,7 +1470,7 @@ function JoinRoute({ services }: { services: FirebaseServices }) {
       .catch(() => { if (!cancelled) setFailed(true) })
     return () => { cancelled = true }
   }, [services])
-  if (failed) return <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }}><Typography role="alert">ログインを確認できませんでした。もう一度お試しください。</Typography></Stack>
+  if (failed) return <Stack sx={{ width: '100%', maxWidth: 480, p: 4, mx: 'auto' }}><Typography role="alert">ログインを確認できませんでした。もう一度お試しください。</Typography></Stack>
   if (!ready) return <GuardLoading />
   return <LessonJoinPage
     functions={services.functions}

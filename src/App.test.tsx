@@ -89,15 +89,29 @@ const defaultDashboardData = {
   activeBulkOperation: null,
 }
 const callableMock = vi.fn().mockResolvedValue({ data: {} })
-const httpsCallableMock = vi.fn((_functions: unknown, name: string) => {
+const ensurePersonalOrgMock = vi.fn().mockResolvedValue({ data: { orgId: 'personal_teacher-uid', created: false } })
+// Extracted so beforeEach can restore it verbatim — several tests call
+// httpsCallableMock.mockImplementation(...) to special-case one Callable for
+// that test only, and without restoring this default afterward, the override
+// silently persists into every later test in the file (mockClear() does not
+// undo mockImplementation()).
+const defaultHttpsCallableImplementation = (_functions: unknown, name: string) => {
   if (name === 'getHouseholdTeacherDashboardCallable') {
     return vi.fn().mockResolvedValue({ data: defaultDashboardData })
   }
   if (name === 'getMyLessonResultCallable') {
     return vi.fn().mockResolvedValue({ data: { found: false, lessonRunId: 'run-1', items: [] } })
   }
+  // Called on every resolved teacher auth state (see useTemplateAccess in
+  // App.tsx) — must not share the generic callableMock, or it silently
+  // consumes mockResolvedValueOnce slots other tests queued for the
+  // Callable actually under test.
+  if (name === 'ensurePersonalOrgCallable') {
+    return (...args: unknown[]) => ensurePersonalOrgMock(...args)
+  }
   return callableMock
-})
+}
+const httpsCallableMock = vi.fn(defaultHttpsCallableImplementation)
 vi.mock('firebase/functions', () => ({
   httpsCallable: (...args: Parameters<typeof httpsCallableMock>) => httpsCallableMock(...args),
 }))
@@ -135,6 +149,7 @@ beforeEach(() => {
   signInWithCustomTokenMock.mockClear()
   getRedirectResultMock.mockClear().mockResolvedValue(null)
   signInWithRedirectMock.mockClear().mockResolvedValue(undefined)
+  ensurePersonalOrgMock.mockClear().mockResolvedValue({ data: { orgId: 'personal_teacher-uid', created: false } })
   getDocMock.mockReset()
   docMock.mockClear()
   collectionMock.mockClear()
@@ -143,8 +158,8 @@ beforeEach(() => {
   refMock.mockClear()
   onValueMock.mockClear()
   offMock.mockClear()
-  callableMock.mockClear().mockResolvedValue({ data: {} })
-  httpsCallableMock.mockClear()
+  callableMock.mockReset().mockResolvedValue({ data: {} })
+  httpsCallableMock.mockReset().mockImplementation(defaultHttpsCallableImplementation)
 })
 
 describe('App', () => {
@@ -529,6 +544,17 @@ describe('Guided Lesson Builder routes', () => {
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
     authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
     expect(await screen.findByRole('heading', { name: '教材一覧' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('calls ensurePersonalOrgCallable before granting access, so a first-time teacher is not stuck bouncing to /about', async () => {
+    window.history.pushState({}, '', '/teacher/templates')
+    callableMock.mockResolvedValue({ data: [] })
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid', emailVerified: true, providerData: [{ providerId: 'google.com' }] })
+    expect(await screen.findByRole('heading', { name: '教材一覧' })).toBeInTheDocument()
+    expect(ensurePersonalOrgMock).toHaveBeenCalled()
     window.history.pushState({}, '', '/')
   })
 

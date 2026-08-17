@@ -35,6 +35,14 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/testSetup.ts',
+    // Forces a deterministic value regardless of a developer's local
+    // .env.local (which carries the real production flag value for `npm
+    // run dev`/`firebase deploy`) — tests that don't explicitly pass
+    // `isLessonPlatformV2Enabled` must keep getting `enabled: false` and
+    // never invoke the real Firebase bootstrapper, or every test run
+    // becomes dependent on whatever this developer's local flag happens
+    // to be set to.
+    env: { VITE_FEATURE_LESSON_PLATFORM_V2: 'false' },
     // Security/emulator tests require the RTDB or Firestore emulator and run only via test:rules.
     // `test/*.acceptance.test.ts` (Task 18) is the one exception: it imports
     // functions/src/lessonRuns/* directly (no Firestore/RTDB emulator, no
