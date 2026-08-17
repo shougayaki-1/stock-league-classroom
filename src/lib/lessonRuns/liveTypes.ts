@@ -1,3 +1,8 @@
+export interface LessonRunPublicTeamSummary {
+  teamId: string
+  displayName: string
+}
+
 /**
  * A single broadcast-safe notification surfaced on the shared
  * `lessonRunPublic/{lessonRunId}` node (Phase B/Task10). Deliberately
@@ -88,6 +93,10 @@ export interface LessonRunPublicState {
   publicTask: string | null
   /** Broadcast-safe notifications only — see LessonRunPublicNotification's JSDoc. */
   notifications: LessonRunPublicNotification[]
+  /** Lesson title, safe for every participant (see functions/src/lessonRuns/projections/publicProjection.ts's toLessonRunPublicState — kept in sync by hand). */
+  title: string
+  /** Allow-listed per-team summary — teamId/displayName only. A student resolves their own team's displayName by matching against their own membership mirror's teamId. */
+  teams: LessonRunPublicTeamSummary[]
   marketPaused: boolean
   /** Server-written value. Clients render only a countdown to this timestamp and never advance
    * their own timer (contradiction-resolution A, mandatory item 1) — never recompute batch cadence client-side. */

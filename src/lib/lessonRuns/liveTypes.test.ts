@@ -21,6 +21,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
     const state: LessonRunPublicState = {
       status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
       orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      title: '株式投資シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: 1003000,
       stocks: {
         acme: {
@@ -89,6 +90,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
     const state: LessonRunPublicState = {
       status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
       orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      title: '株式投資シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: null, stocks: {},
     }
     expect(state.householdClassComparison).toBeUndefined()
@@ -116,6 +118,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
     const state: LessonRunPublicState = {
       status: 'REFLECTION', currentPhaseId: 'phase-1', updatedAtMillis: 1,
       orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      title: '家庭科シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: null, stocks: {},
       householdClassComparison: comparison,
     }
