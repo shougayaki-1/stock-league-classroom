@@ -13,11 +13,13 @@ import { isLessonPlatformV2Enabled as isLessonPlatformV2EnabledDefault } from '.
 import { getOrCreateStudentUid } from './lib/auth/studentAuth'
 import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
+import { LessonWaitingPage } from './components/student/LessonWaitingPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
 import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScreen'
-import { subscribeOwnTeamState } from './lib/lessonRuns/liveRepository'
+import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
+import type { LessonRunPublicState } from './lib/lessonRuns/liveTypes'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
 import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repository'
@@ -1245,6 +1247,43 @@ function StudentLessonRoute({ services, heading }: { services: FirebaseServices;
   return <DeferredDataNotice heading={heading} />
 }
 
+/**
+ * `/lessons/:runId/waiting` only. `StudentLessonRoute` keeps its
+ * `DeferredDataNotice` fallback for `/results` unchanged (Phase 4 wires
+ * that up once a student-scoped results-read path exists).
+ *
+ * `displayName` comes from `location.state` (set by `JoinRoute` right after
+ * a successful join) because no server-readable path currently persists
+ * it — a page reload or a reconnect via a different route loses it. This
+ * is a known, deliberate gap: reconnect UX for displayName is out of scope
+ * for this phase (see the roadmap's Phase 2 section).
+ */
+function StudentWaitingRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const access = useStudentLessonAccess(runId ?? '', services)
+  const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
+
+  useEffect(() => {
+    if (!runId) return
+    return subscribePublicRun(services.database, runId, setPublicState)
+  }, [runId, services])
+
+  useEffect(() => {
+    if (publicState?.status === 'RUNNING' && runId) navigate(`/lessons/${runId}/play`, { replace: true })
+  }, [publicState?.status, runId, navigate])
+
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/join" />
+  if (!publicState) return <GuardLoading />
+
+  const displayName = (location.state as { displayName?: string } | null)?.displayName ?? '(表示名不明)'
+  const teamName = access.teamId ? publicState.teams.find((team) => team.teamId === access.teamId)?.displayName : undefined
+
+  return <LessonWaitingPage lessonTitle={publicState.title} displayName={displayName} teamName={teamName} />
+}
+
 type HouseholdModeStatus = 'LOADING' | 'YES' | 'NO'
 
 /**
@@ -1336,7 +1375,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/" element={<LandingPage />} />
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentLessonRoute services={services} heading="開始をお待ちください" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} heading="授業中" /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
