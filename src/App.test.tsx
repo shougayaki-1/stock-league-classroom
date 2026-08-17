@@ -315,14 +315,42 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('shows the deferred-data notice at /play for a non-household lessonRun (team state has neither .household nor .households)', async () => {
+  it('renders MarketPlayScreen at /play for a non-household lessonRun (team state has neither .household nor .households)', async () => {
     window.history.pushState({}, '', '/lessons/run-1/play')
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     await waitFor(() => expect(membershipListener).toBeDefined())
     emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
     await waitFor(() => expect(teamStateListener).toBeDefined())
     emitTeamState({ cash: 100000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1 })
-    expect(await screen.findByRole('heading', { level: 1, name: /授業中/ })).toBeInTheDocument()
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({
+      status: 'RUNNING',
+      title: '株式投資シミュレーション',
+      teams: [{ teamId: 'team-a', displayName: 'Aチーム' }],
+      stocks: {},
+      marketPaused: false,
+      researchDesk: { phaseId: 'phase-1', phaseType: 'TRADING', availablePanels: ['ORDERS'], companies: [], informationItems: [], economicIndicators: [], updatedAtMillis: 1 },
+    })
+    expect(await screen.findByRole('tab', { name: '取引' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('automatically navigates from /play to /results once public state status becomes REFLECTION', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/play')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(teamStateListener).toBeDefined())
+    emitTeamState({ cash: 100000, holdings: {}, lockedBuyValue: 0, lockedSellQuantity: {}, myOrders: [], updatedAtMillis: 1 })
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({
+      status: 'REFLECTION',
+      title: '株式投資シミュレーション',
+      teams: [{ teamId: 'team-a', displayName: 'Aチーム' }],
+      stocks: {},
+      marketPaused: false,
+    })
+    await waitFor(() => expect(window.location.pathname).toBe('/lessons/run-1/results'))
     window.history.pushState({}, '', '/')
   })
 
