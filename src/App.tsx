@@ -24,6 +24,7 @@ import { MarketPlayScreen } from './components/student/MarketPlayScreen'
 import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
 import type { LessonRunPublicState, LessonRunTeamState } from './lib/lessonRuns/liveTypes'
 import { generateLessonResult, getMyLessonResult, type GetMyLessonResultResult } from './lib/lessonRuns/results'
+import { transitionPhase } from './lib/lessonRuns/transitionPhase'
 import { getLessonAnalytics, type GetLessonAnalyticsResult } from './lib/lessonRuns/analytics'
 import { submitOrder } from './lib/market/submitOrder'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
@@ -228,6 +229,16 @@ const GuardLoading = () => (
 )
 
 
+/**
+ * Mirrors functions/src/lessonRuns/phases/defaultPhases.ts's fixed 4-phase
+ * sequence — this hardcoded duplication is a deliberate, documented
+ * placeholder (see that file's own JSDoc) until a real per-template phase
+ * graph exists; Control Room has no other way to know "what phase comes
+ * next" without fetching and walking templateSnapshot.phases itself.
+ */
+const defaultPhaseSequence = (subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined): string[] =>
+  subject === 'HOME_ECONOMICS' ? ['intro', 'decision', 'result', 'reflection'] : ['intro', 'market', 'result', 'reflection']
+
 function TeacherControlRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useTeacherLessonAccess(runId ?? '', services)
@@ -254,6 +265,29 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
         })
       } finally {
         setGeneratingResults(false)
+      }
+    }}
+    onStartLesson={async () => {
+      if (!runId) return
+      await transitionPhase(services.functions, {
+        lessonRunId: runId, targetStatus: 'RUNNING', reason: '教師操作: 授業開始', idempotencyKey: crypto.randomUUID(),
+      })
+      await transitionPhase(services.functions, {
+        lessonRunId: runId, targetPhaseId: 'intro', reason: '教師操作: 授業開始', idempotencyKey: crypto.randomUUID(),
+      })
+    }}
+    onAdvancePhase={async (currentPhaseId) => {
+      if (!runId) return
+      const sequence = defaultPhaseSequence(access.subject)
+      const currentIndex = currentPhaseId ? sequence.indexOf(currentPhaseId) : -1
+      const nextPhaseId = sequence[currentIndex + 1] ?? sequence[sequence.length - 1]
+      await transitionPhase(services.functions, {
+        lessonRunId: runId, targetPhaseId: nextPhaseId, reason: '教師操作: 次のフェーズへ進む', idempotencyKey: crypto.randomUUID(),
+      })
+      if (nextPhaseId === 'reflection') {
+        await transitionPhase(services.functions, {
+          lessonRunId: runId, targetStatus: 'REFLECTION', reason: '教師操作: 次のフェーズへ進む', idempotencyKey: crypto.randomUUID(),
+        })
       }
     }}
   />

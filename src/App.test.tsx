@@ -243,6 +243,27 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('calls transitionPhaseCallable twice (RUNNING then intro) when starting a lesson from the control room', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', teacherRoles: { 'teacher-uid': 'PRIMARY' } }) })
+    const transitionCalls: unknown[] = []
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'transitionPhaseCallable') {
+        return vi.fn((input: unknown) => { transitionCalls.push(input); return Promise.resolve({ data: { status: 'RUNNING', currentPhaseId: 'intro', deduplicated: false } }) })
+      }
+      return callableMock
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    const user = userEvent.setup()
+    const startButton = await screen.findByRole('button', { name: '授業を開始' })
+    await user.click(startButton)
+    await waitFor(() => expect(transitionCalls).toHaveLength(2))
+    expect(transitionCalls[0]).toEqual(expect.objectContaining({ lessonRunId: 'run-1', targetStatus: 'RUNNING' }))
+    expect(transitionCalls[1]).toEqual(expect.objectContaining({ lessonRunId: 'run-1', targetPhaseId: 'intro' }))
+    window.history.pushState({}, '', '/')
+  })
+
   it('renders HouseholdTeacherDashboard in control room when subject is HOME_ECONOMICS and courseFormat is COMMON_CONDITIONS', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
     getDocMock.mockResolvedValue({
