@@ -79,11 +79,20 @@
 - [ ] App Check enforcement（`enforceAppCheck: true`）— **意図的に見送り**。Firebase ConsoleのApp Checkメトリクスで正規リクエストの状況を確認してから判断すべき項目で、今回のスコープ外とした。Cloud Functions側（callableへの `enforceAppCheck: true` 追加）は判断確定後にコード変更として対応可能
 - [ ] 予算アラート — 未確認（Blaze自体は設定済みだが、アラート設定の有無は別途要確認）
 
-## Phase 8 — 公開文書の整合
+## Phase 8 — 公開文書の整合（完了）
 
-- LP/About/Privacy/Terms/Guide をPhase 1-6の実装状況に合わせて改訂
-- 料金表示とStripe実装の整合（現在「無償」表記と矛盾）
-- AI機能: プロバイダを実装するか、UIごとβ非表示にするかの意思決定
+**方針:** 授業機能をベータ公開として案内する。料金は構造（個人無償/学校有償）のみ公開し、実際の金額は問い合わせ窓口に誘導する（金額はまだ未確定のため）。AI機能は「準備中」と明記する。
+
+- [x] About/Terms/Privacy/Guide/Contact を、Phase 1-6で実際に動く機能（教材作成→授業開始→生徒参加→売買/家計シミュレーション→結果→分析）を前提にベータ公開として全面改訂（完了）
+- [x] Privacy: 実際に取得しているデータ（匿名UID・表示名・チーム・回答・アンケート・監査ログ・Stripe課金データ）と、学校ごとに設定可能な30日〜10年の保存期間を明記（完了）
+- [x] 料金: 個人無償/学校有償の構造を公開し、金額は問い合わせ窓口へ誘導（完了）
+- [x] AI機能: 「準備中」と明記（完了）
+- [x] ランディングページ: 「準備中」表現をベータ公開表現に更新、教師ログイン・生徒参加の実導線をCTAに追加（完了）
+
+> **Phase 8着手中に発覚し、あわせて修正した欠落（本来Phase 1の範囲）:**
+> `signInTeacherWithGoogle()`（教師のGoogleログイン開始関数）が実装済みなのにアプリのどこからも呼ばれておらず、未ログインで `/teacher` にアクセスすると `/about` へリダイレクトされるだけでログインを開始する手段が存在しなかった。ランディングページにログインCTAを追加し、`AppRoutes` に `getTeacherGoogleRedirectResult` によるリダイレクト完了後の `/teacher` への自動遷移を実装して解消した（完了）。
+
+→ 関連コミット: `content: rewrite public docs for beta lesson-platform launch`, `feat: wire the teacher Google login entry point that was never triggered anywhere`
 
 ## 進め方
 
