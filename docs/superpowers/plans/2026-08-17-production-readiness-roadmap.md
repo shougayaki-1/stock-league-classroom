@@ -29,12 +29,14 @@
 
 → 詳細計画: [2026-08-17-phase2-student-waiting.md](2026-08-17-phase2-student-waiting.md)
 
-## Phase 3 — 市場モードの授業中画面（play）
+## Phase 3 — 市場モードの授業中画面（play）（完了）
 
-家庭科モード（`HouseholdTeamScreen`）は既に動作している。市場モードは `StudentPlayRoute` が `DeferredDataNotice` に落ちたままなので、それを実データに接続する。
+**ゴール:** `/lessons/:runId/play` を、市場モード（家庭科モード以外）の生徒に対しても `DeferredDataNotice` から実際の取引画面へ接続。既存の `OrderScreen`/`CompanyResearchPage`/`NewsListPage` をタブ切り替えで表示し、`status` が `REFLECTION`/`COMPLETED` に進んだら自動的に `/lessons/:runId/results` へ遷移する。（完了）
 
-- Phase 3a: `subscribePublicRun`（`researchDesk.companies`/`informationItems`）+ `subscribeOwnTeamState<LessonRunTeamState>` を束ねる `MarketPlayRoute` コンテナを新設し、`OrderScreen`/`NewsListPage`/`CompanyResearchPage` をタブ切り替えで表示
-- Phase 3b: Phase 2b の自動遷移フックを拡張し、`status` が `REFLECTION`/`COMPLETED` になったら `/lessons/:runId/results` へ自動遷移
+- Phase 3a: `MarketPlayScreen` プレゼンテーション部品を新設し、`availablePanels` でタブ（取引/企業情報/ニュース）をゲート（完了）
+- Phase 3b: `StudentPlayRoute` を市場データ（RTDB `lessonRunTeamState` / `lessonRunPublic`）および `submitOrder` に接続、`REFLECTION`/`COMPLETED` への自動遷移を実装（完了）
+
+→ 詳細計画: [2026-08-17-phase3-market-play.md](2026-08-17-phase3-market-play.md)
 
 ## Phase 4 — 結果表示（バックエンド新規実装が必要）
 
