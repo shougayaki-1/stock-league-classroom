@@ -15,12 +15,19 @@
 
 → 詳細計画: [2026-08-17-phase1-teacher-lesson-start.md](2026-08-17-phase1-teacher-lesson-start.md)
 
-## Phase 2 — 生徒導線: 参加者情報の伝搬 + 待機画面
+## Phase 2 — 生徒導線: 参加者情報の伝搬 + 待機画面（完了）
 
-**現状の欠落（調査で確認済み）:** `JoinRoute` は `joinLessonRun` の結果から `lessonRunId` しか使わず、`participantId`/`displayName`/`teamId` は握りつぶされて waiting 画面以降に渡っていない。`LessonWaitingPage` 自体は `displayName`/`teamName` などのpropsを要求するプレゼンテーション部品として既に存在するが、リアルタイムデータへの接続経路がまだない。
+**ゴール:** 生徒が参加コードで参加した後の `/lessons/:runId/waiting` を、`LessonWaitingPage` に接続。授業タイトル・自チーム名・自分の表示名を実データで表示し、教師が授業を開始（`status` が `RUNNING`）した瞬間に自動的に `/lessons/:runId/play` へ遷移させる。（完了）
 
-- Phase 2a: Join結果（`participantId`/`displayName`/`teamId`）をルート間で保持する仕組み（React Router の `location.state`、またはRTDB `lessonRunMembership` からの再取得のいずれかを設計判断した上で採用）
-- Phase 2b: `StudentLessonRoute`（waiting用）を `LessonWaitingPage` に実データで接続。`subscribePublicRun` で `status` を監視し、`RUNNING` に遷移したら自動的に `/lessons/:runId/play` へ遷移する監視フックを新設
+- Phase 2a: Join結果（`displayName`）を `location.state` で `/waiting` へ伝搬、`participantId` も membership mirror から取得可能に拡張（完了）
+- Phase 2b: バックエンドの `LessonRunPublicState` に `title`/`teams` を投影し、フロントエンド型を同期（完了）
+- Phase 2c: `StudentWaitingRoute` を新設して `LessonWaitingPage` に接続、`status === 'RUNNING'` での自動遷移を実装（完了）
+
+> **Phase 2完了時点の既知の制約（次フェーズへの引き継ぎ）:**
+> - `displayName` はページリロード/再接続で失われる（`location.state` 頼み）。恒久対応にはサーバー側での永続化とRTDB投影が必要 — Phase 18の「再接続UX」で扱う
+> - `teamMemberNames`（自チームメンバー名一覧）と `recoveryCode`（復帰コード自己確認）はまだ生徒が読める経路が無く、`LessonWaitingPage` には渡していない
+
+→ 詳細計画: [2026-08-17-phase2-student-waiting.md](2026-08-17-phase2-student-waiting.md)
 
 ## Phase 3 — 市場モードの授業中画面（play）
 
