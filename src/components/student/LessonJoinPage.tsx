@@ -36,7 +36,7 @@ export interface LessonJoinPageProps {
    * 教師のParticipantMonitor(Task11)だけが表示する設計(ブリーフStep1)。
    * 呼び出し側(親)がこの結果を使って待機画面へ遷移する。
    */
-  onJoined: (result: JoinLessonRunResult) => void
+  onJoined: (result: JoinLessonRunResult, displayName: string) => void
 }
 
 /**
@@ -69,7 +69,7 @@ export function LessonJoinPage({ functions, initialJoinCode, onJoined }: LessonJ
       })
       // duplicateIdentifierWarning is intentionally dropped here — never
       // surfaced to the student (see this component's JSDoc / onJoined's).
-      onJoined(result)
+      onJoined(result, displayName.trim())
     } catch (error) {
       setErrorMessage(ERROR_MESSAGES[mapJoinLessonRunError(error)])
     } finally {

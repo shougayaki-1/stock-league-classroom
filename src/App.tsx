@@ -1305,7 +1305,7 @@ function JoinRoute({ services }: { services: FirebaseServices }) {
   if (!ready) return <GuardLoading />
   return <LessonJoinPage
     functions={services.functions}
-    onJoined={(result) => navigate(`/lessons/${result.lessonRunId}/waiting`)}
+    onJoined={(result, displayName) => navigate(`/lessons/${result.lessonRunId}/waiting`, { state: { displayName } })}
   />
 }
 

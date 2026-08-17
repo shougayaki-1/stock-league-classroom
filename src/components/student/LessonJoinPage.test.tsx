@@ -47,6 +47,7 @@ describe('LessonJoinPage', () => {
 
     await waitFor(() => expect(onJoined).toHaveBeenCalledWith(
       expect.objectContaining({ lessonRunId: 'run-1', participantId: 'p-1', duplicateIdentifierWarning: true }),
+      'たなか',
     ))
 
     // The student must never see any text revealing the duplicate-identifier
