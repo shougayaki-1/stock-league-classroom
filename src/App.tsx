@@ -21,6 +21,7 @@ import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScr
 import { MarketPlayScreen } from './components/student/MarketPlayScreen'
 import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
 import type { LessonRunPublicState, LessonRunTeamState } from './lib/lessonRuns/liveTypes'
+import { generateLessonResult } from './lib/lessonRuns/results'
 import { submitOrder } from './lib/market/submitOrder'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
@@ -247,6 +248,7 @@ const DeferredDataNotice = ({ heading }: { heading: string }) => (
 function TeacherControlRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useTeacherLessonAccess(runId ?? '', services)
+  const [generatingResults, setGeneratingResults] = useState(false)
   if (access.status === 'LOADING') return <GuardLoading />
   if (access.status === 'DENIED') return <Navigate replace to="/about" />
   return <LessonControlRoom
@@ -257,6 +259,20 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
     functions={services.functions}
     firestore={services.firestore}
     database={services.database}
+    generatingResults={generatingResults}
+    onGenerateResults={async (currentPhaseId) => {
+      if (!runId || !currentPhaseId) return
+      setGeneratingResults(true)
+      try {
+        await generateLessonResult(services.functions, {
+          lessonRunId: runId,
+          phaseId: currentPhaseId,
+          idempotencyKey: crypto.randomUUID(),
+        })
+      } finally {
+        setGeneratingResults(false)
+      }
+    }}
   />
 }
 

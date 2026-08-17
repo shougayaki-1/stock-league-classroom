@@ -317,4 +317,27 @@ describe('LessonControlRoom', () => {
 
     expect(screen.queryByRole('region', { name: '家庭科管理ダッシュボード' })).not.toBeInTheDocument()
   })
+
+  it('shows a 結果を生成する button in REFLECTION status for PRIMARY and calls onGenerateResults with the current phaseId', async () => {
+    const onGenerateResults = vi.fn()
+    const user = userEvent.setup()
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} onGenerateResults={onGenerateResults} />)
+    emitPublic({ status: 'REFLECTION', currentPhaseId: 'phase-3' })
+
+    const button = await screen.findByRole('button', { name: '結果を生成する' })
+    await user.click(button)
+    expect(onGenerateResults).toHaveBeenCalledWith('phase-3')
+  })
+
+  it('hides the 結果を生成する button for a VIEWER role', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="VIEWER" functions={functions} firestore={firestore} database={database} onGenerateResults={vi.fn()} />)
+    emitPublic({ status: 'REFLECTION', currentPhaseId: 'phase-3' })
+    expect(screen.queryByRole('button', { name: '結果を生成する' })).not.toBeInTheDocument()
+  })
+
+  it('hides the 結果を生成する button outside REFLECTION status', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} onGenerateResults={vi.fn()} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-3' })
+    expect(screen.queryByRole('button', { name: '結果を生成する' })).not.toBeInTheDocument()
+  })
 })

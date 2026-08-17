@@ -21,6 +21,7 @@ export type LessonControlAction =
   | 'HANDLE_CONNECTION'
   | 'VIEW_PROGRESS'
   | 'VIEW_RESULTS'
+  | 'GENERATE_RESULTS'
 
 export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole[]> = {
   START_LESSON: ['PRIMARY'],
@@ -35,6 +36,7 @@ export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole
   HANDLE_CONNECTION: ['PRIMARY', 'ASSISTANT'],
   VIEW_PROGRESS: ['PRIMARY', 'ASSISTANT', 'VIEWER'],
   VIEW_RESULTS: ['PRIMARY', 'ASSISTANT', 'VIEWER'],
+  GENERATE_RESULTS: ['PRIMARY', 'ASSISTANT'],
 }
 
 export const canControlLesson = (role: LessonRunRole, action: LessonControlAction): boolean =>

@@ -82,6 +82,17 @@ export interface LessonControlRoomProps {
   startLessonLabel?: string
   advancePhaseLabel?: string
   aiEnabled?: boolean
+  /**
+   * Invoked when the teacher clicks 結果を生成する (status REFLECTION,
+   * GENERATE_RESULTS-authorized roles only). Receives this screen's own
+   * `publicState.currentPhaseId` — the caller (TeacherControlRoom's parent)
+   * has no other way to learn which phase is currently REFLECTION, since
+   * only this component subscribes to `lessonRunPublic`. `null` should not
+   * normally happen while `status === 'REFLECTION'`, but the type stays
+   * honest about what the subscription can actually report.
+   */
+  onGenerateResults?: (currentPhaseId: string | null) => void
+  generatingResults?: boolean
 }
 
 /**
@@ -116,6 +127,8 @@ export function LessonControlRoom({
   startLessonLabel = '授業を開始',
   advancePhaseLabel = '次のフェーズへ進む',
   aiEnabled = false,
+  onGenerateResults,
+  generatingResults = false,
 }: LessonControlRoomProps) {
   const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
   const [displayState, setDisplayState] = useState<LessonRunDisplayState | null>(null)
@@ -167,6 +180,7 @@ export function LessonControlRoom({
     return undefined
   }, [nextAction, interrupted, role])
 
+  const canGenerateResults = canControlLesson(role, 'GENERATE_RESULTS') && status === 'REFLECTION'
   const canEndLesson = canControlLesson(role, 'END_LESSON') && (status === 'RUNNING' || status === 'REFLECTION')
   const canHandleConnection = canControlLesson(role, 'HANDLE_CONNECTION')
   const canEditGuidance = role === 'PRIMARY' || role === 'ASSISTANT'
@@ -253,6 +267,16 @@ export function LessonControlRoom({
           {!interrupted && canHandleConnection && (
             <Button variant="outlined" onClick={handleInterrupt} sx={{ minHeight: MIN_TOUCH_TARGET }}>
               授業を安全停止
+            </Button>
+          )}
+          {canGenerateResults && onGenerateResults && (
+            <Button
+              variant="outlined"
+              onClick={() => onGenerateResults(publicState?.currentPhaseId ?? null)}
+              disabled={generatingResults || !publicState?.currentPhaseId}
+              sx={{ minHeight: MIN_TOUCH_TARGET }}
+            >
+              結果を生成する
             </Button>
           )}
           {canEndLesson && (
