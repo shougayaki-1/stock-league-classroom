@@ -41,86 +41,145 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
     </Stack>
   </section>
 
+  <section className="landing-overview" aria-labelledby="landing-overview-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">3つの画面で動きます</p>
+      <h2 id="landing-overview-title">先生・生徒・教室のスクリーンで、ひとつの授業をつくる</h2>
+    </div>
+    <div className="overview-grid">
+      <article className="overview-card">
+        <p className="overview-card-tag">先生の画面</p>
+        <h3>授業を進める</h3>
+        <p>教材を選び、クラスの様子を見ながら次のステップに進めます。</p>
+      </article>
+      <article className="overview-card">
+        <p className="overview-card-tag">生徒の端末</p>
+        <h3>情報を読み、判断する</h3>
+        <p>1人1台でも、チームで1台を共有しても参加できます。</p>
+      </article>
+      <article className="overview-card">
+        <p className="overview-card-tag">教室のスクリーン</p>
+        <h3>問い・結果・解説を共有する</h3>
+        <p>プロジェクターや大型モニターに、クラス全体で見るものを映します。</p>
+      </article>
+    </div>
+  </section>
+
   <section className="landing-journey" aria-labelledby="landing-journey-title">
     <div className="landing-section-heading">
       <p className="landing-section-kicker">1回の授業の流れ</p>
       <h2 id="landing-journey-title">8つの学習活動で、判断から振り返りまでつなげます</h2>
       <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら先生が次のステップに進めます。目安は1コマ（45〜50分）です。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
     </div>
-    <ol className="journey-steps">
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">01</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">導入</p>
-          <h3>今日の問いを確認する</h3>
-          <p>先生が授業の目標を教室画面に表示。生徒は参加コードから授業に入ります。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">教室表示</span><p>参加コード：123456</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">02</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">情報収集</p>
-          <h3>まず、判断するための材料を集める</h3>
-          <p>企業情報・ニュース・統計資料を読み、「何が影響しそうか」を考えます。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">Research Desk</span><p>企業情報・ニュース・統計資料</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">03</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">個人で予想</p>
-          <h3>話し合う前に、自分の考えを持つ</h3>
-          <p>「どの会社が上がりそうか」「どの情報を重視するか」などを個人で回答します。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">個人回答</span><p>順位づけ／理由つき選択</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">04</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">チームで相談</p>
-          <h3>違う予想と根拠を持ち寄る</h3>
-          <p>チームノートを使いながら、なぜその判断になったかを比較。必要に応じてチームとして1つの回答をまとめます。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">チームノート</span><p>チームメンバー：4人</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">05</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">意思決定</p>
-          <h3>考えたことを実際の選択に変える</h3>
-          <p>社会科なら買う・売る、家庭科なら資産・保険・生活上の選択を行います。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">注文</span><p>A社を10株　買う</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">06</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">結果が起こる</p>
-          <h3>クラスの判断や設定された情報によって、結果が変わる</h3>
-          <p>市場なら価格が動き、家庭科なら時間が進み、イベントや家計の変化が起こります。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">結果画面</span><p>A社 ¥1,240 ▲3.2%</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">07</span><span className="journey-step-line" aria-hidden="true" /></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">解説</p>
-          <h3>結果だけを見て終わらない</h3>
-          <p>先生が教室画面を使って、「何が影響したのか」を整理します。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">説明スライド</span><p>先生が要因を解説</p></div>
-      </li>
-      <li className="journey-step">
-        <div className="journey-step-num-col"><span className="journey-step-dot">08</span></div>
-        <div className="journey-step-body">
-          <p className="journey-step-kicker">振り返り</p>
-          <h3>予想・判断・結果をつなぎ直す</h3>
-          <p>クラス・チーム・個人の違いを見ながら、「なぜそうなったか」「次ならどうするか」を考えます。</p>
-        </div>
-        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">分析画面</span><p>クラス → チーム → 個人</p></div>
-      </li>
-    </ol>
+
+    <div className="journey-cluster">
+      <p className="journey-cluster-label">考える</p>
+      <ol className="journey-steps">
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">01</span><span className="journey-step-line" aria-hidden="true" /></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">導入</p>
+            <h3>今日の問いを確認する</h3>
+            <p>先生が授業の目標を教室画面に表示。生徒は参加コードから授業に入ります。</p>
+          </div>
+          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">教室表示</span><p>参加コード：123456</p></div>
+        </li>
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">02</span><span className="journey-step-line" aria-hidden="true" /></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">情報収集</p>
+            <h3>まず、判断するための材料を集める</h3>
+            <p>企業情報・ニュース・統計資料を読み、「何が影響しそうか」を考えます。</p>
+          </div>
+          <div className="journey-step-visual journey-step-visual-rich" aria-hidden="true">
+            <div className="mock-tabs"><span className="mock-tab-active">企業情報</span><span>ニュース</span><span>統計資料</span><span>チームノート</span><span>注文</span></div>
+            <p className="mock-line-title">A社（再生可能エネルギー）</p>
+            <p className="mock-line-sub">現在価格 ¥1,200　業界：エネルギー</p>
+          </div>
+        </li>
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">03</span></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">個人で予想</p>
+            <h3>話し合う前に、自分の考えを持つ</h3>
+            <p>「どの会社が上がりそうか」「どの情報を重視するか」などを個人で回答します。</p>
+          </div>
+          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">個人回答</span><p>順位づけ／理由つき選択</p></div>
+        </li>
+      </ol>
+    </div>
+
+    <div className="journey-cluster">
+      <p className="journey-cluster-label">決める</p>
+      <ol className="journey-steps">
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">04</span><span className="journey-step-line" aria-hidden="true" /></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">チームで相談</p>
+            <h3>違う予想と根拠を持ち寄る</h3>
+            <p>チームノートを使いながら、なぜその判断になったかを比較。必要に応じてチームとして1つの回答をまとめます。</p>
+          </div>
+          <div className="journey-step-visual journey-step-visual-rich" aria-hidden="true">
+            <p className="mock-eyebrow">チーム3</p>
+            <div className="mock-team-members"><span>あおい</span><span>ゆうと</span><span>みなみ</span><span>そうた</span></div>
+            <p className="mock-note-title">チームノート</p>
+            <p className="mock-note-body">「補助金のニュースはA社に有利そう」</p>
+          </div>
+        </li>
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">05</span></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">意思決定</p>
+            <h3>考えたことを実際の選択に変える</h3>
+            <p>社会科なら買う・売る、家庭科なら資産・保険・生活上の選択を行います。</p>
+          </div>
+          <div className="journey-step-visual journey-step-visual-rich" aria-hidden="true">
+            <div className="mock-order-row"><span>銘柄</span><strong>A社</strong></div>
+            <div className="mock-order-row"><span>売買</span><strong>買う</strong></div>
+            <div className="mock-order-row"><span>株数</span><strong>10株</strong></div>
+            <div className="mock-order-row"><span>概算金額</span><strong>¥12,000</strong></div>
+          </div>
+        </li>
+      </ol>
+    </div>
+
+    <div className="journey-cluster">
+      <p className="journey-cluster-label">結果から考え直す</p>
+      <ol className="journey-steps">
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">06</span><span className="journey-step-line" aria-hidden="true" /></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">結果が起こる</p>
+            <h3>クラスの判断や設定された情報によって、結果が変わる</h3>
+            <p>市場なら価格が動き、家庭科なら時間が進み、イベントや家計の変化が起こります。</p>
+          </div>
+          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">結果画面</span><p>A社 ¥1,240 ▲3.2%</p></div>
+        </li>
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">07</span><span className="journey-step-line" aria-hidden="true" /></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">解説</p>
+            <h3>結果だけを見て終わらない</h3>
+            <p>先生が教室画面を使って、「何が影響したのか」を整理します。</p>
+          </div>
+          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">説明スライド</span><p>先生が要因を解説</p></div>
+        </li>
+        <li className="journey-step">
+          <div className="journey-step-num-col"><span className="journey-step-dot">08</span></div>
+          <div className="journey-step-body">
+            <p className="journey-step-kicker">振り返り</p>
+            <h3>予想・判断・結果をつなぎ直す</h3>
+            <p>クラス・チーム・個人の違いを見ながら、「なぜそうなったか」「次ならどうするか」を考えます。</p>
+          </div>
+          <div className="journey-step-visual journey-step-visual-rich" aria-hidden="true">
+            <div className="mock-analytics-row"><span>根拠を使った生徒</span><strong>78%</strong></div>
+            <div className="mock-analytics-row"><span>判断を変更した生徒</span><strong>12人</strong></div>
+            <div className="mock-analytics-row"><span>理解が難しかった生徒</span><strong>4人</strong></div>
+            <p className="mock-drilldown">クラス → チーム → 個人</p>
+          </div>
+        </li>
+      </ol>
+    </div>
   </section>
 
   <section className="landing-subjects" aria-labelledby="landing-subjects-title">
@@ -177,11 +236,28 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
   <section className="landing-develop" aria-labelledby="landing-develop-title">
     <div className="landing-section-heading">
       <p className="landing-section-kicker">同じ教材から</p>
-      <h2 id="landing-develop-title">問いの深さを、授業に合わせて変えられる</h2>
-      <p>同じニュースや家庭の状況でも、聞き方を変えるだけで活動の難易度を調整できます。</p>
+      <h2 id="landing-develop-title">教材を、授業目的に合わせて発展させられる</h2>
+      <p>1回作った教材を、50分の1コマにも、複数コマの発展授業にも使えます。</p>
     </div>
-    <p className="develop-flow"><strong>上がると思う？</strong><span aria-hidden="true"> → </span><strong>どの会社が最も影響を受ける？</strong><span aria-hidden="true"> → </span><strong>100万円をどう配分する？</strong><span aria-hidden="true"> → </span><strong>賛成か反対か？</strong><span aria-hidden="true"> → </span><strong>そう判断した理由は？</strong></p>
-    <p className="develop-note">選ぶだけの問いから、比較する・配分する・順位をつける・根拠を説明する問いまで、同じ教材のまま発展させられます。</p>
+    <div className="develop-grid">
+      <article className="develop-card">
+        <p className="develop-card-label">問いを深くする</p>
+        <p className="develop-card-flow"><strong>選ぶ</strong><span aria-hidden="true"> → </span><strong>比較する</strong><span aria-hidden="true"> → </span><strong>順位をつける</strong><span aria-hidden="true"> → </span><strong>配分する</strong><span aria-hidden="true"> → </span><strong>根拠を説明する</strong></p>
+      </article>
+      <article className="develop-card">
+        <p className="develop-card-label">条件を変える</p>
+        <p>企業数、難易度、情報と需給のバランス、イベントの公開度などを設定し直せます。</p>
+      </article>
+      <article className="develop-card">
+        <p className="develop-card-label">学び方を変える</p>
+        <p className="develop-card-flow"><strong>個人</strong><span aria-hidden="true"> → </span><strong>チーム</strong><span aria-hidden="true"> → </span><strong>クラス</strong></p>
+      </article>
+      <article className="develop-card">
+        <p className="develop-card-label">教材自体を変える</p>
+        <p>企業、ニュース、家庭のプロフィール、ライフイベントなどを編集できます。</p>
+      </article>
+    </div>
+    <p className="develop-example"><span className="develop-example-label">問いを深くする例：</span>「上がると思う？」<span aria-hidden="true"> → </span>「どの会社が最も影響を受ける？」<span aria-hidden="true"> → </span>「100万円をどう配分する？」<span aria-hidden="true"> → </span>「そう判断した理由は？」</p>
   </section>
 
   <section className="landing-team" aria-labelledby="landing-team-title">
@@ -190,7 +266,23 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <h2 id="landing-team-title">ひとりで考えてから、チームで決める</h2>
       <p>1人1台の生徒環境が前提ではありません。チームで1台の端末を共有して参加することもできます。</p>
     </div>
-    <p className="team-flow"><strong>個人で考える</strong><span aria-hidden="true"> → </span><strong>チームノートに持ち寄る</strong><span aria-hidden="true"> → </span><strong>チームとして判断する</strong><span aria-hidden="true"> → </span><strong>クラスで比較する</strong></p>
+    <div className="team-layout">
+      <div className="team-diagram">
+        <div className="team-diagram-step"><p className="team-diagram-label">個人</p><p className="team-diagram-quote">「私はA社だと思う」</p></div>
+        <span className="team-diagram-arrow" aria-hidden="true">↓</span>
+        <div className="team-diagram-step"><p className="team-diagram-label">チーム</p><p className="team-diagram-quote">「なぜ？」「このニュースは？」</p></div>
+        <span className="team-diagram-arrow" aria-hidden="true">↓</span>
+        <div className="team-diagram-step"><p className="team-diagram-label">チームの判断</p><p className="team-diagram-quote">「A社を買う」</p></div>
+        <span className="team-diagram-arrow" aria-hidden="true">↓</span>
+        <div className="team-diagram-step"><p className="team-diagram-label">クラス</p><p className="team-diagram-quote">「他のチームはどう考えた？」</p></div>
+      </div>
+      <div className="team-mock" aria-hidden="true">
+        <p className="mock-eyebrow">チームノート</p>
+        <p className="mock-note-body">「補助金のニュースはA社に有利そう」</p>
+        <p className="mock-eyebrow">チームの回答</p>
+        <div className="mock-order-row"><span>状態</span><strong>承認待ち → 確定</strong></div>
+      </div>
+    </div>
     <p className="team-note">チームの回答は、誰かが提案し、チームで承認し、最終的に確定する形にできます。個人の考えを持ち寄り、チームとして1つの判断をつくるプロセスです。</p>
   </section>
 
@@ -206,6 +298,25 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <li><strong>授業を開始して進行する</strong><span>導入から振り返りまでの学習活動を、クラスの状況を見ながら先生が進めます。</span></li>
       <li><strong>結果をクラスで振り返る</strong><span>判断と結果を見比べ、「なぜ」を考える時間につなげます。</span></li>
     </ol>
+  </section>
+
+  <section className="landing-control" aria-labelledby="landing-control-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">授業中</p>
+      <h2 id="landing-control-title">先生は「次へ」を押すだけではありません</h2>
+      <p>クラスの状態を見ながら、授業をコントロールできます。</p>
+    </div>
+    <div className="control-mock" aria-hidden="true">
+      <div className="control-mock-header"><span>現在：チーム相談</span><span className="control-mock-next">次へ進む</span></div>
+      <div className="control-mock-stats">
+        <div className="control-mock-callout"><strong>32人</strong><span>参加中</span></div>
+        <div className="control-mock-callout"><strong>1人</strong><span>切断中</span></div>
+        <div className="control-mock-callout"><strong>2チーム</strong><span>人数の偏りあり</span></div>
+        <div className="control-mock-callout"><strong>1人</strong><span>困っている</span></div>
+      </div>
+      <div className="control-mock-footer">教室表示：チーム相談中</div>
+    </div>
+    <p className="control-note">接続トラブルや進行の遅れがあっても、時間延長・再接続・教室表示の切り替えなどで先生側から授業を立て直せます。</p>
   </section>
 
   <section className="landing-results" aria-labelledby="landing-results-title">
@@ -259,40 +370,24 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
         <p>正式版の料金体系は今後お知らせします。</p>
       </article>
     </div>
-  </section>
-
-  <section className="landing-reassurance" aria-labelledby="landing-reassurance-title">
-    <div className="landing-section-heading">
-      <p className="landing-section-kicker">学校での導入に向けて</p>
-      <h2 id="landing-reassurance-title">学校で使ううえで気になること</h2>
-      <p>導入時に確認されやすい点を、技術用語ではなく授業での扱いに沿って説明します。</p>
-    </div>
-    <div className="landing-faq-list">
-      <article className="landing-faq-item">
-        <h3>実際のお金は動く？</h3>
-        <p>動きません。授業のためのシミュレーションで、実際の金融商品の購入や投資助言を行うものではありません。</p>
-      </article>
-      <article className="landing-faq-item">
-        <h3>実在企業の株価を扱う？</h3>
-        <p>扱いません。会社・価格・ニュースは授業用に作成した架空データです。</p>
-      </article>
-      <article className="landing-faq-item">
-        <h3>生徒の個人情報はどう扱う？</h3>
+    <div className="landing-faq-accordion">
+      <details className="landing-faq-item">
+        <summary>生徒の個人情報はどう扱う？</summary>
         <p>生徒の個人情報を不要に取得しない方針で、表示名には本名を使わないよう案内します。取得項目と保存期間は<Link component={RouterLink} to="/privacy">プライバシーポリシー</Link>で公開しています。</p>
-      </article>
-      <article className="landing-faq-item">
-        <h3>先生の端末が一時的に不安定になったら？</h3>
+      </details>
+      <details className="landing-faq-item">
+        <summary>先生の端末が一時的に不安定になったら？</summary>
         <p>授業の進行を先生の1台の端末だけに依存させない設計です。授業中のトラブルで進行そのものが失われにくい構成を目指しています。</p>
-      </article>
+      </details>
     </div>
   </section>
 
   <section className="landing-closing">
     <p>授業機能はベータ公開中です。</p>
-    <h2>{onTeacherLogin ? 'まずは5分で、最初の教材を作ってみましょう。' : 'まずは、学校で使うための条件をご確認ください。'}</h2>
+    <h2>{onTeacherLogin ? 'まずは、最初の教材を作ってみましょう。' : 'まずは、学校で使うための条件をご確認ください。'}</h2>
     {onTeacherLogin
-      ? <Button onClick={onTeacherLogin} variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>教師としてログイン <span aria-hidden="true">→</span></Button>
-      : <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button>}
+      ? <Button onClick={onTeacherLogin} variant="contained" size="large" sx={landingCtaSx}>教師として始める <span aria-hidden="true">→</span></Button>
+      : <Button component={RouterLink} to="/about" variant="contained" size="large" sx={landingCtaSx}>サービス概要を見る <span aria-hidden="true">→</span></Button>}
   </section>
 
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>

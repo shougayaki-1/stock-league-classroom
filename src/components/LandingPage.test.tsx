@@ -35,8 +35,7 @@ describe('LandingPage', () => {
     expect(screen.getByText('授業を開始して進行する')).toBeInTheDocument()
     expect(screen.getByText('結果をクラスで振り返る')).toBeInTheDocument()
 
-    expect(screen.getByRole('heading', { name: '学校で使ううえで気になること' })).toBeInTheDocument()
-    expect(screen.getByText(/実在企業の株価を扱う/)).toBeInTheDocument()
+    expect(screen.getByText('生徒の個人情報はどう扱う？')).toBeInTheDocument()
     expect(screen.getByText(/表示名には本名を使わない/)).toBeInTheDocument()
     expect(screen.getByText(/先生の1台の端末だけに依存させない/)).toBeInTheDocument()
   })
@@ -48,7 +47,10 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: '今日の問いを確認する' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '違う予想と根拠を持ち寄る' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '予想・判断・結果をつなぎ直す' })).toBeInTheDocument()
-    expect(screen.getByText(/Research Desk/)).toBeInTheDocument()
+    expect(screen.getByText('考える')).toBeInTheDocument()
+    expect(screen.getByText('決める')).toBeInTheDocument()
+    expect(screen.getByText('結果から考え直す')).toBeInTheDocument()
+    expect(screen.getByText('企業情報')).toBeInTheDocument()
 
     expect(screen.queryByText(/8つのフェーズ/)).not.toBeInTheDocument()
     expect(screen.queryByText(/システムの8フェーズ/)).not.toBeInTheDocument()
@@ -61,7 +63,9 @@ describe('LandingPage', () => {
     expect(screen.getByText(/教材マーケットプレイス/)).toBeInTheDocument()
     expect(screen.getByText(/通常公開・認証済み・公式/)).toBeInTheDocument()
 
-    expect(screen.getByRole('heading', { name: '問いの深さを、授業に合わせて変えられる' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '教材を、授業目的に合わせて発展させられる' })).toBeInTheDocument()
+    expect(screen.getByText('問いを深くする')).toBeInTheDocument()
+    expect(screen.getByText('教材自体を変える')).toBeInTheDocument()
     expect(screen.getByText(/そう判断した理由は？/)).toBeInTheDocument()
 
     expect(screen.getByRole('heading', { name: 'ひとりで考えてから、チームで決める' })).toBeInTheDocument()
@@ -77,6 +81,19 @@ describe('LandingPage', () => {
 
     expect(screen.getByText(/アカウント登録は不要です/)).toBeInTheDocument()
     expect(screen.getByText(/ベータ期間中は無料でお試しいただけます/)).toBeInTheDocument()
+  })
+
+  it('shows the 3-screen overview and the teacher control-room mock during a live lesson', () => {
+    renderLandingPage()
+
+    expect(screen.getByRole('heading', { name: '先生・生徒・教室のスクリーンで、ひとつの授業をつくる' })).toBeInTheDocument()
+    expect(screen.getByText('先生の画面')).toBeInTheDocument()
+    expect(screen.getByText('生徒の端末')).toBeInTheDocument()
+    expect(screen.getByText('教室のスクリーン')).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: '先生は「次へ」を押すだけではありません' })).toBeInTheDocument()
+    expect(screen.getByText('参加中')).toBeInTheDocument()
+    expect(screen.getByText('困っている')).toBeInTheDocument()
   })
 
   it('keeps the public guidance and policy routes reachable', () => {
