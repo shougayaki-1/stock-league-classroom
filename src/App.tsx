@@ -18,8 +18,10 @@ import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
 import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScreen'
+import { MarketPlayScreen } from './components/student/MarketPlayScreen'
 import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
-import type { LessonRunPublicState } from './lib/lessonRuns/liveTypes'
+import type { LessonRunPublicState, LessonRunTeamState } from './lib/lessonRuns/liveTypes'
+import { submitOrder } from './lib/market/submitOrder'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
 import { createLessonTemplate, saveDraft } from './lib/lessonTemplates/repository'
@@ -1284,49 +1286,64 @@ function StudentWaitingRoute({ services }: { services: FirebaseServices }) {
   return <LessonWaitingPage lessonTitle={publicState.title} displayName={displayName} teamName={teamName} />
 }
 
-type HouseholdModeStatus = 'LOADING' | 'YES' | 'NO'
-
 /**
- * `/lessons/:runId/play` only (Task 13) — every other student route
- * (`/waiting`, `/results`) keeps `StudentLessonRoute`'s
- * `DeferredDataNotice` fallback unchanged; only the "授業中" screen needs to
- * decide whether to render `HouseholdTeamScreen`.
- *
- * Detects "is this a household-mode lessonRun" by SHAPE, not by a
- * routing-only field: subscribes to this team's own
- * `lessonRunTeamState/{runId}/{teamId}` node (the exact node
- * `HouseholdTeamScreen` itself subscribes to) and checks whether it carries
- * EITHER `.household` (Common/legacy) or `.households` (advanced, Task 9) —
- * never a `subject`/`courseFormat` field added solely for this decision, per
- * this task's brief ("detect by shape, not by a routing-only flag" is this
- * codebase's established convention — see e.g. how `HouseholdTeamScreen`
- * itself branches Common vs advanced by which field is present, not by a
- * separate flag). A market lessonRun's team-state node has neither field, so
- * it falls through to the unchanged `DeferredDataNotice` fallback.
+ * `/lessons/:runId/play`. Detects "is this a household-mode lessonRun" by
+ * SHAPE, not by a routing-only field: `LessonRunTeamState` carries EITHER
+ * `.household` (Common/legacy) or `.households` (advanced) only for
+ * HOME_ECONOMICS lessonRuns — a market lessonRun's team-state node has
+ * neither, so it renders `MarketPlayScreen` instead. The same subscription
+ * doubles as both the mode-detection signal and (for the market branch)
+ * the live cash/holdings/orders data source — `LessonRunTeamState` is
+ * designed to carry both shapes' fields on one type (see its own JSDoc in
+ * liveTypes.ts), so there is no need for two separate subscriptions.
  */
-function StudentPlayRoute({ services, heading }: { services: FirebaseServices; heading: string }) {
+function StudentPlayRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
   const access = useStudentLessonAccess(runId ?? '', services)
-  const [householdMode, setHouseholdMode] = useState<HouseholdModeStatus>('LOADING')
+  const [teamState, setTeamState] = useState<LessonRunTeamState | null>(null)
+  const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
 
   useEffect(() => {
     if (access.status !== 'GRANTED' || !access.teamId || !runId) return
-    setHouseholdMode('LOADING')
-    return subscribeOwnTeamState<{ household?: unknown; households?: unknown }>(
-      services.database,
-      runId,
-      access.teamId,
-      (state) => setHouseholdMode(state && (state.household !== undefined || state.households !== undefined) ? 'YES' : 'NO'),
-    )
+    setTeamState(null)
+    return subscribeOwnTeamState<LessonRunTeamState>(services.database, runId, access.teamId, setTeamState)
   }, [access.status, access.teamId, runId, services])
+
+  useEffect(() => {
+    if (!runId) return
+    return subscribePublicRun(services.database, runId, setPublicState)
+  }, [runId, services])
+
+  useEffect(() => {
+    if (!runId) return
+    if (publicState?.status === 'REFLECTION' || publicState?.status === 'COMPLETED') {
+      navigate(`/lessons/${runId}/results`, { replace: true })
+    }
+  }, [publicState?.status, runId, navigate])
 
   if (access.status === 'LOADING') return <GuardLoading />
   if (access.status === 'DENIED') return <Navigate replace to="/join" />
-  if (householdMode === 'LOADING') return <GuardLoading />
-  if (householdMode === 'YES' && runId && access.teamId) {
+  if (!teamState) return <GuardLoading />
+
+  if ((teamState.household !== undefined || teamState.households !== undefined) && runId && access.teamId) {
     return <HouseholdTeamScreen lessonRunId={runId} teamId={access.teamId} database={services.database} functions={services.functions} />
   }
-  return <DeferredDataNotice heading={heading} />
+
+  if (!publicState) return <GuardLoading />
+
+  return <MarketPlayScreen
+    companies={publicState.researchDesk?.companies ?? []}
+    informationItems={publicState.researchDesk?.informationItems ?? []}
+    stocks={publicState.stocks}
+    teamState={teamState}
+    marketPaused={publicState.marketPaused}
+    availablePanels={publicState.researchDesk?.availablePanels ?? []}
+    onSubmitOrder={async ({ stockId, side, quantity }) => {
+      if (!runId || !access.teamId) return
+      await submitOrder(services.functions, { lessonRunId: runId, teamId: access.teamId, stockId, side, quantity, idempotencyKey: crypto.randomUUID() })
+    }}
+  />
 }
 
 function JoinRoute({ services }: { services: FirebaseServices }) {
@@ -1376,7 +1393,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} heading="授業中" /> : <Navigate replace to="/about" />} />
+  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
