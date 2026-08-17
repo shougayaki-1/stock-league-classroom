@@ -14,6 +14,7 @@ import { getOrCreateStudentUid } from './lib/auth/studentAuth'
 import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
+import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
 import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScreen'
 import { subscribeOwnTeamState } from './lib/lessonRuns/liveRepository'
@@ -281,6 +282,11 @@ function TemplateRouteGuard({ services, children }: { services: FirebaseServices
   const access = useTemplateAccess(services)
   if (access === 'LOADING') return <GuardLoading />
   return access === 'GRANTED' ? children : <Navigate replace to="/about" />
+}
+
+function TeacherHomeRoute(_props: { services: FirebaseServices }) {
+  const navigate = useNavigate()
+  return <TeacherHomePage onOpenTemplates={() => navigate('/teacher/templates')} onOpenMarketplace={() => navigate('/teacher/marketplace')} />
 }
 
 function TemplateListRoute({ services }: { services: FirebaseServices }) {
@@ -1295,6 +1301,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/lessons/:runId/results" element={enabled && services ? <StudentLessonRoute services={services} heading="結果" /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
+  <Route path="/teacher" element={enabled && services ? <TemplateRouteGuard services={services}><TeacherHomeRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
