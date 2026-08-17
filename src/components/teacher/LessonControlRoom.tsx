@@ -77,8 +77,15 @@ export interface LessonControlRoomProps {
    * of `targetStatus`/`targetPhaseId` must be supplied, never inferred.
    */
   onStartLesson?: () => void
-  /** Invoked when the primary CTA is "次のフェーズへ進む" (status RUNNING). Same phase-graph-knowledge reasoning as `onStartLesson`. */
-  onAdvancePhase?: () => void
+  /**
+   * Invoked when the primary CTA is "次のフェーズへ進む" (status RUNNING).
+   * Receives this screen's own `publicState.currentPhaseId` — same
+   * "only this component subscribes to lessonRunPublic" reasoning as
+   * `onGenerateResults` (Phase 4). The caller is responsible for phase-
+   * graph knowledge (which phase comes next, and whether that also
+   * requires a status change) — this screen does not have it.
+   */
+  onAdvancePhase?: (currentPhaseId: string | null) => void
   startLessonLabel?: string
   advancePhaseLabel?: string
   aiEnabled?: boolean
@@ -169,10 +176,10 @@ export function LessonControlRoom({
     }
     if (status === 'RUNNING' && onAdvancePhase) {
       if (!canControlLesson(role, 'TRANSITION_PHASE')) return null
-      return { label: advancePhaseLabel, onActivate: onAdvancePhase }
+      return { label: advancePhaseLabel, onActivate: () => onAdvancePhase(publicState?.currentPhaseId ?? null) }
     }
     return null
-  }, [interrupted, status, onStartLesson, onAdvancePhase, role, startLessonLabel, advancePhaseLabel])
+  }, [interrupted, status, onStartLesson, onAdvancePhase, role, startLessonLabel, advancePhaseLabel, publicState?.currentPhaseId])
 
   const noActionReason = useMemo(() => {
     if (nextAction || interrupted) return undefined

@@ -119,6 +119,24 @@ describe('LessonControlRoom', () => {
     expect(onStartLesson).toHaveBeenCalledTimes(1)
   })
 
+  it('a PRIMARY teacher sees the advance-phase CTA while the run is RUNNING and it invokes onAdvancePhase with currentPhaseId', async () => {
+    const user = userEvent.setup()
+    const onAdvancePhase = vi.fn()
+    render(
+      <LessonControlRoom
+        lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database}
+        onAdvancePhase={onAdvancePhase}
+      />,
+    )
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'intro' })
+    emitDisplay()
+    emitParticipants([])
+
+    const button = screen.getByRole('button', { name: '次のフェーズへ進む' })
+    await user.click(button)
+    expect(onAdvancePhase).toHaveBeenCalledWith('intro')
+  })
+
   it('a VIEWER teacher sees no CTA button and an authorization-based explanation instead (not a disabled button)', () => {
     render(
       <LessonControlRoom
