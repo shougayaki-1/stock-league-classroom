@@ -51,6 +51,7 @@ vi.mock('firebase/firestore', () => ({
 
 let membershipListener: ((snapshot: { val: () => unknown }) => void) | undefined
 let teamStateListener: ((snapshot: { val: () => unknown }) => void) | undefined
+let publicStateListener: ((snapshot: { val: () => unknown }) => void) | undefined
 const refMock = vi.fn((_database: unknown, path: string) => ({ __path: path }))
 const onValueMock = vi.fn((nodeRef: { __path: string }, onNext: (s: { val: () => unknown }) => void) => {
   if (nodeRef.__path.startsWith('lessonRunMembership/')) membershipListener = onNext
@@ -60,6 +61,7 @@ const onValueMock = vi.fn((nodeRef: { __path: string }, onNext: (s: { val: () =>
   // this shared variable ends up capturing, matching the real RTDB
   // semantics where each `onValue` call is independent.
   if (nodeRef.__path.startsWith('lessonRunTeamState/')) teamStateListener = onNext
+  if (nodeRef.__path.startsWith('lessonRunPublic/')) publicStateListener = onNext
   return () => {}
 })
 const offMock = vi.fn()
@@ -110,11 +112,16 @@ function emitTeamState(value: unknown) {
   teamStateListener?.({ val: () => value })
 }
 
+function emitPublicState(value: unknown) {
+  publicStateListener?.({ val: () => value })
+}
+
 beforeEach(() => {
   authStateCallback = undefined
   ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = null
   membershipListener = undefined
   teamStateListener = undefined
+  publicStateListener = undefined
   onAuthStateChangedMock.mockClear()
   signInAnonymouslyMock.mockClear()
   signInWithCustomTokenMock.mockClear()
@@ -285,12 +292,26 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('grants a student with an ACTIVE lessonRunMembership entry and shows the deferred-data notice', async () => {
+  it('grants a student with an ACTIVE lessonRunMembership entry and renders the waiting page once public state is published', async () => {
     window.history.pushState({}, '', '/lessons/run-1/waiting')
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     await waitFor(() => expect(membershipListener).toBeDefined())
     emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
-    expect(await screen.findByRole('heading', { level: 1, name: /開始をお待ちください/ })).toBeInTheDocument()
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({ status: 'WAITING_FOR_STUDENTS', title: '株式投資シミュレーション', teams: [{ teamId: 'team-a', displayName: 'Aチーム' }] })
+    expect(await screen.findByRole('heading', { level: 1, name: '株式投資シミュレーション' })).toBeInTheDocument()
+    expect(screen.getByText('チーム: Aチーム')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('automatically navigates from /waiting to /play once public state status becomes RUNNING', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/waiting')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(membershipListener).toBeDefined())
+    emitMembership({ access: 'ACTIVE', teamId: 'team-a' })
+    await waitFor(() => expect(publicStateListener).toBeDefined())
+    emitPublicState({ status: 'RUNNING', title: '株式投資シミュレーション', teams: [{ teamId: 'team-a', displayName: 'Aチーム' }] })
+    await waitFor(() => expect(window.location.pathname).toBe('/lessons/run-1/play'))
     window.history.pushState({}, '', '/')
   })
 
