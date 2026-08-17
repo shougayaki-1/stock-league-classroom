@@ -37,6 +37,7 @@ export type LessonControlAction =
   | 'HANDLE_CONNECTION'
   | 'VIEW_PROGRESS'
   | 'VIEW_RESULTS'
+  | 'GENERATE_RESULTS'
 
 export const lessonControlActions: LessonControlAction[] = [
   'START_LESSON',
@@ -53,6 +54,7 @@ export const lessonControlActions: LessonControlAction[] = [
   'HANDLE_CONNECTION',
   'VIEW_PROGRESS',
   'VIEW_RESULTS',
+  'GENERATE_RESULTS',
 ]
 
 export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole[]> = {
@@ -71,6 +73,7 @@ export const lessonControlPermissions: Record<LessonControlAction, LessonRunRole
   EXTEND_TIME: ['PRIMARY', 'ASSISTANT'],
   SUPPORT_STUDENT: ['PRIMARY', 'ASSISTANT'],
   HANDLE_CONNECTION: ['PRIMARY', 'ASSISTANT'],
+  GENERATE_RESULTS: ['PRIMARY', 'ASSISTANT'],
   // 全ロール可
   VIEW_PROGRESS: ['PRIMARY', 'ASSISTANT', 'VIEWER'],
   VIEW_RESULTS: ['PRIMARY', 'ASSISTANT', 'VIEWER'],

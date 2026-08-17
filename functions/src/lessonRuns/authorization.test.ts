@@ -71,4 +71,13 @@ describe('canControlLesson', () => {
       }
     }
   })
+
+  describe('GENERATE_RESULTS', () => {
+    it('allows PRIMARY and ASSISTANT but not VIEWER', () => {
+      expect(canControlLesson('PRIMARY', 'GENERATE_RESULTS')).toBe(true)
+      expect(canControlLesson('ASSISTANT', 'GENERATE_RESULTS')).toBe(true)
+      expect(canControlLesson('VIEWER', 'GENERATE_RESULTS')).toBe(false)
+    })
+  })
 })
+

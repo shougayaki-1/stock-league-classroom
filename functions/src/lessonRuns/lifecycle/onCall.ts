@@ -28,7 +28,7 @@ const translateLifecycleError = (error: unknown): unknown => {
   return error
 }
 
-const loadAuthorizedRun = async (
+export const loadAuthorizedRun = async (
   request: { auth?: { uid: string } | null },
   lessonRunId: string | undefined,
   action: Parameters<typeof canControlLesson>[1],
