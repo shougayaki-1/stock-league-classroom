@@ -23,10 +23,15 @@ const onAuthStateChangedMock = vi.fn((_auth: unknown, callback: (user: AuthUser 
 })
 const signInAnonymouslyMock = vi.fn().mockResolvedValue({ user: { uid: 'student-uid' } })
 const signInWithCustomTokenMock = vi.fn().mockResolvedValue({ user: { uid: 'display-uid' } })
+const getRedirectResultMock = vi.fn().mockResolvedValue(null)
+const signInWithRedirectMock = vi.fn().mockResolvedValue(undefined)
 vi.mock('firebase/auth', () => ({
   onAuthStateChanged: (...args: Parameters<typeof onAuthStateChangedMock>) => onAuthStateChangedMock(...args),
   signInAnonymously: () => signInAnonymouslyMock(),
   signInWithCustomToken: (...args: unknown[]) => signInWithCustomTokenMock(...args),
+  getRedirectResult: (...args: unknown[]) => getRedirectResultMock(...args),
+  signInWithRedirect: (...args: unknown[]) => signInWithRedirectMock(...args),
+  GoogleAuthProvider: class { addScope() {} setCustomParameters() {} },
 }))
 
 const getDocMock = vi.fn()
@@ -128,6 +133,8 @@ beforeEach(() => {
   onAuthStateChangedMock.mockClear()
   signInAnonymouslyMock.mockClear()
   signInWithCustomTokenMock.mockClear()
+  getRedirectResultMock.mockClear().mockResolvedValue(null)
+  signInWithRedirectMock.mockClear().mockResolvedValue(undefined)
   getDocMock.mockReset()
   docMock.mockClear()
   collectionMock.mockClear()
@@ -141,6 +148,22 @@ beforeEach(() => {
 })
 
 describe('App', () => {
+  it('starts the Google redirect sign-in when the teacher-login CTA is clicked', async () => {
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    const user = userEvent.setup()
+    const loginButton = screen.getAllByRole('button', { name: /教師としてログイン|先生はこちら/ })[0]
+    await user.click(loginButton)
+    expect(signInWithRedirectMock).toHaveBeenCalled()
+  })
+
+  it('navigates to /teacher once the Google redirect sign-in result resolves', async () => {
+    getRedirectResultMock.mockResolvedValue({ user: { uid: 'teacher-uid' } })
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    await waitFor(() => expect(window.location.pathname).toBe('/teacher'))
+    window.history.pushState({}, '', '/')
+  })
+
   it('keeps every landing-page CTA within the surviving public routes', () => {
     render(<App />)
     expect(screen.getByRole('link', { name: '使い方' })).toHaveAttribute('href', '/guide')

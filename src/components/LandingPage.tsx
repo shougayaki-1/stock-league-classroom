@@ -7,28 +7,38 @@ const landingCtaSx = {
   '&:hover': { backgroundColor: 'var(--landing-cta-hover)' },
 }
 
+export interface LandingPageProps {
+  /** Present only once Firebase services are ready (feature flag on). Starts the Google sign-in redirect — see src/lib/auth/teacherAuth.ts. */
+  onTeacherLogin?: () => void
+}
+
 /**
- * The lesson functions are still being prepared. Keep every CTA within the
- * public surface until teachers can actually start a lesson from the product.
+ * Beta launch: lesson features (material creation through results/analytics,
+ * Phase 1-6) are now reachable, so the hero leads with the two real
+ * entry points — teacher login and student join — instead of only linking
+ * deeper into the public docs.
  */
-export const LandingPage = () => <main className="landing-page">
+export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main className="landing-page">
   <Box component="header" className="landing-nav">
     <Link component={RouterLink} className="brand" to="/" underline="none" color="inherit" aria-label="Stock League Classroom ホーム" sx={{ minHeight: 48, display: 'inline-flex', alignItems: 'center' }}>Stock League <span>Classroom</span></Link>
     <Stack component="nav" direction="row" aria-label="主要ナビゲーション" sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
       <Link component={RouterLink} to="/guide" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>使い方</Link>
       <Link component={RouterLink} to="/about" color="inherit" sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 1 }}>特徴</Link>
-      <Button component={RouterLink} className="nav-cta" to="/about" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>詳しく見る</Button>
+      {onTeacherLogin
+        ? <Button className="nav-cta" onClick={onTeacherLogin} variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>教師としてログイン</Button>
+        : <Button component={RouterLink} className="nav-cta" to="/about" variant="contained" sx={{ ...landingCtaSx, minHeight: 44 }}>詳しく見る</Button>}
     </Stack>
   </Box>
 
   <section className="landing-hero">
     <p className="landing-hero-badge">教室向け 授業シミュレーター</p>
     <h1>社会科・家庭科に、<br className="landing-hero-break" />判断して振り返るシミュレーション授業を。</h1>
-    <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。そんな授業を教室で行えるよう、準備を進めています。</p>
-    <Alert severity="info" className="landing-hero-notice">現在は公開ページを提供しています。授業機能の公開に向けて準備を進めています。</Alert>
+    <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。そんな授業を教室で行えます。</p>
+    <Alert severity="info" className="landing-hero-notice">授業機能はベータ公開中です。教材作成から結果確認まで、実際にお試しいただけます。</Alert>
     <Stack direction="row" spacing={2} className="landing-hero-ctas">
-      <Button component={RouterLink} to="/about" variant="contained" size="large" sx={landingCtaSx}>サービス概要を見る</Button>
-      <Button component={RouterLink} to="/guide" variant="outlined" size="large">教師向け案内を見る</Button>
+      {onTeacherLogin && <Button onClick={onTeacherLogin} variant="contained" size="large" sx={landingCtaSx}>先生はこちら（ログイン）</Button>}
+      <Button component={RouterLink} to="/join" variant={onTeacherLogin ? 'outlined' : 'contained'} size="large" sx={onTeacherLogin ? undefined : landingCtaSx}>生徒はこちら（授業に参加）</Button>
+      <Button component={RouterLink} to="/about" variant="outlined" size="large">サービス概要を見る</Button>
     </Stack>
   </section>
 
@@ -60,8 +70,8 @@ export const LandingPage = () => <main className="landing-page">
       </article>
       <article className="landing-fact-card landing-fact-card-status">
         <span>現在の提供状況</span>
-        <strong>授業機能は準備中です。</strong>
-        <p>現在は利用条件や情報の取り扱いなどの公開情報をご確認いただけます。</p>
+        <strong>授業機能はベータ公開中です。</strong>
+        <p>教材作成、授業実施、結果・分析の確認までお試しいただけます。</p>
       </article>
     </div>
   </section>
@@ -119,7 +129,7 @@ export const LandingPage = () => <main className="landing-page">
       </article>
       <article className="landing-faq-item">
         <h3>生徒の個人情報はどう扱う？</h3>
-        <p>生徒の個人情報を不要に取得しない方針で、表示名には本名を使わないよう案内します。授業機能の提供開始前に、取得項目と保存期間を公開します。</p>
+        <p>生徒の個人情報を不要に取得しない方針で、表示名には本名を使わないよう案内します。取得項目と保存期間は<Link component={RouterLink} to="/privacy">プライバシーポリシー</Link>で公開しています。</p>
       </article>
       <article className="landing-faq-item">
         <h3>先生の端末が一時的に不安定になったら？</h3>
@@ -129,9 +139,11 @@ export const LandingPage = () => <main className="landing-page">
   </section>
 
   <section className="landing-closing">
-    <p>現在は授業機能の提供準備を進めています。</p>
-    <h2>まずは、学校で使うための条件をご確認ください。</h2>
-    <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button>
+    <p>授業機能はベータ公開中です。</p>
+    <h2>{onTeacherLogin ? 'まずはログインして、教材を作成してみましょう。' : 'まずは、学校で使うための条件をご確認ください。'}</h2>
+    {onTeacherLogin
+      ? <Button onClick={onTeacherLogin} variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>教師としてログイン <span aria-hidden="true">→</span></Button>
+      : <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button>}
   </section>
 
   <Box component="footer"><Typography component="span" variant="body2">© 2026 Stock League Classroom</Typography><Stack component="nav" direction="row" aria-label="サービス情報" sx={{ flexWrap: 'wrap', gap: { xs: 0.5, sm: 1.5 } }}>{[['/about', 'サービス概要'], ['/guide', '操作マニュアル'], ['/terms', '利用規約'], ['/privacy', 'プライバシーポリシー'], ['/contact', '問い合わせ']].map(([to, label]) => <Link component={RouterLink} to={to} color="inherit" key={to} sx={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', px: 0.5 }}>{label}</Link>)}</Stack></Box>

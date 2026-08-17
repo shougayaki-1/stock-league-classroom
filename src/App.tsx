@@ -11,6 +11,7 @@ import { NotFoundPage } from './components/ui/NotFoundPage'
 import { bootstrapFirebase, type FirebaseServices } from './lib/firebase/bootstrap'
 import { isLessonPlatformV2Enabled as isLessonPlatformV2EnabledDefault } from './lib/features/lessonPlatformV2'
 import { getOrCreateStudentUid } from './lib/auth/studentAuth'
+import { getTeacherGoogleRedirectResult, signInTeacherWithGoogle } from './lib/auth/teacherAuth'
 import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonWaitingPage } from './components/student/LessonWaitingPage'
@@ -1487,8 +1488,14 @@ function DisplayRoute({ services }: { services: FirebaseServices }) {
 
 interface AppRoutesProps { enabled: boolean; services?: FirebaseServices }
 
-const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRedirect /><Routes>
-  <Route path="/" element={<LandingPage />} />
+const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!services) return
+    getTeacherGoogleRedirectResult(services.auth).then((result) => { if (result) navigate('/teacher') })
+  }, [services, navigate])
+  return <><TrailingSlashRedirect /><Routes>
+  <Route path="/" element={<LandingPage onTeacherLogin={services ? () => { void signInTeacherWithGoogle(services.auth) } : undefined} />} />
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
@@ -1516,6 +1523,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => <><TrailingSlashRed
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
 </Routes></>
+}
 
 export interface AppProps {
   /** Test-only override; production always reads `isLessonPlatformV2Enabled()`. */
