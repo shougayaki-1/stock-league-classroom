@@ -20,6 +20,13 @@ describe('LandingPage', () => {
 
     expect(screen.queryByText(/サーバーが進行を守る/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Firestore|Realtime Database|RTDB|Cloud Functions/)).not.toBeInTheDocument()
+
+    // Hero must not overclaim that class-wide demand alone determines results (only social-studies market pricing works that way).
+    expect(screen.queryByText(/クラス全員の判断が、そのまま結果に反映されます/)).not.toBeInTheDocument()
+    // The 45-50 minute timing is one example, not a fixed spec.
+    expect(screen.getByText(/たとえば、1コマ（45〜50分）ならこんな流れです/)).toBeInTheDocument()
+    // Student join has multiple modes; the LP must not state account-free join as the only path.
+    expect(screen.queryByText(/生徒はアカウント登録不要/)).not.toBeInTheDocument()
   })
 
   it('shows what students do, what teachers do, and the main school-use reassurances', () => {
@@ -79,7 +86,7 @@ describe('LandingPage', () => {
     expect(screen.getByText(/クラス全体から、気になるチームや生徒だけを選んで/)).toBeInTheDocument()
     expect(screen.queryByText(/CSV/)).not.toBeInTheDocument()
 
-    expect(screen.getByText(/アカウント登録は不要です/)).toBeInTheDocument()
+    expect(screen.getByText(/簡単参加なら、名前と出席番号などで参加できます/)).toBeInTheDocument()
     expect(screen.getByText(/ベータ期間中は無料でお試しいただけます/)).toBeInTheDocument()
   })
 

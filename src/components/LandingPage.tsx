@@ -33,7 +33,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
   <section className="landing-hero">
     <p className="landing-hero-badge">教室向け 授業シミュレーター</p>
     <h1>社会科・家庭科に、<br className="landing-hero-break" />判断して振り返るシミュレーション授業を。</h1>
-    <p className="landing-hero-subtitle">生徒が情報を読み、個人で考え、チームで話し合い、判断し、その結果から「なぜ」を考える。クラス全員の判断が、そのまま結果に反映されます。</p>
+    <p className="landing-hero-subtitle">生徒が情報を読み、個人で考え、チームで話し合い、判断する。その判断がクラスの結果の一部となり、「なぜそうなったか」を振り返ります。</p>
     <Alert severity="info" className="landing-hero-notice">授業機能はベータ公開中です。教材作成から結果確認まで、実際にお試しいただけます。</Alert>
     <Stack direction="row" spacing={2} className="landing-hero-ctas">
       <Button href="#landing-journey-title" variant="contained" size="large" sx={landingCtaSx}>授業の流れを見る</Button>
@@ -69,7 +69,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
     <div className="landing-section-heading">
       <p className="landing-section-kicker">1回の授業の流れ</p>
       <h2 id="landing-journey-title">8つの学習活動で、判断から振り返りまでつなげます</h2>
-      <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら先生が次のステップに進めます。目安は1コマ（45〜50分）です。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
+      <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら先生が次のステップに進めます。たとえば、1コマ（45〜50分）ならこんな流れです。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
     </div>
 
     <div className="journey-cluster">
@@ -294,7 +294,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
     </div>
     <ol className="landing-flow-steps">
       <li><strong>授業を選ぶ・つくる</strong><span>プリセット教材を選べばすぐ使えます。会社名やニュース文章を自分で追加・編集することもできます。</span></li>
-      <li><strong>生徒に参加方法を案内する</strong><span>生徒はアカウント登録不要。名前と出席番号を入力するだけで参加できます。</span></li>
+      <li><strong>生徒に参加方法を案内する</strong><span>簡単参加なら、名前と出席番号などを入力するだけで参加できます。</span></li>
       <li><strong>授業を開始して進行する</strong><span>導入から振り返りまでの学習活動を、クラスの状況を見ながら先生が進めます。</span></li>
       <li><strong>結果をクラスで振り返る</strong><span>判断と結果を見比べ、「なぜ」を考える時間につなげます。</span></li>
     </ol>
@@ -345,24 +345,13 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
         <strong>社会科（公共・政治経済）<br />家庭科（家庭基礎・家庭総合）</strong>
       </article>
       <article className="landing-fact-card">
-        <span>実際のお金</span>
-        <strong>実際のお金は使いません。</strong>
-        <p>授業用のシミュレーションです。</p>
-      </article>
-      <article className="landing-fact-card">
-        <span>教材内のデータ</span>
-        <strong>架空の会社・価格・ニュースを使用</strong>
-        <p>実在する企業の売買や投資の勧誘を目的としません。</p>
-      </article>
-      <article className="landing-fact-card">
-        <span>利用方法</span>
+        <span>利用環境</span>
         <strong>ブラウザで使う教室向けサービス</strong>
-        <p>先生と生徒が授業の中で使うことを想定しています。</p>
+        <p>インストール不要。先生と生徒が授業の中で使うことを想定しています。</p>
       </article>
       <article className="landing-fact-card">
         <span>生徒の参加</span>
-        <strong>アカウント登録は不要です。</strong>
-        <p>名前と出席番号を入力するだけで参加できます。</p>
+        <strong>簡単参加なら、名前と出席番号などで参加できます。</strong>
       </article>
       <article className="landing-fact-card">
         <span>利用料金</span>
@@ -371,6 +360,14 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       </article>
     </div>
     <div className="landing-faq-accordion">
+      <details className="landing-faq-item">
+        <summary>実際のお金は動く？</summary>
+        <p>動きません。実際のお金は使いません。授業のためのシミュレーションで、実際の金融商品の購入や投資助言を行うものではありません。</p>
+      </details>
+      <details className="landing-faq-item">
+        <summary>実在企業の株価を扱う？</summary>
+        <p>扱いません。会社・価格・ニュースは授業用に作成した架空の会社データです。</p>
+      </details>
       <details className="landing-faq-item">
         <summary>生徒の個人情報はどう扱う？</summary>
         <p>生徒の個人情報を不要に取得しない方針で、表示名には本名を使わないよう案内します。取得項目と保存期間は<Link component={RouterLink} to="/privacy">プライバシーポリシー</Link>で公開しています。</p>

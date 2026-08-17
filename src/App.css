@@ -45,7 +45,7 @@
 .landing-section-kicker { margin: 0; color: var(--landing-accent); font-size: 13px; font-weight: 750; letter-spacing: .05em; }
 
 .landing-quick { max-width: 1112px; margin: 0 auto; padding: 56px 32px 64px; }
-.landing-fact-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.landing-fact-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .landing-fact-card { min-height: 148px; padding: 22px; border: 1px solid #d9e6f7; border-radius: 18px; background: #fff; box-shadow: 0 6px 20px #164a8a0d; }
 .landing-fact-card > span { display: block; margin-bottom: 12px; color: var(--landing-accent); font-size: 12px; font-weight: 750; letter-spacing: .04em; }
 .landing-fact-card > strong { display: block; color: var(--landing-text); font-size: 17px; line-height: 1.55; }
