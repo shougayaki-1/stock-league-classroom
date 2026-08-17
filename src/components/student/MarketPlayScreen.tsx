@@ -23,7 +23,13 @@ const PANEL_TABS: { panel: ResearchDeskPanelId; label: string }[] = [
 ]
 
 export function MarketPlayScreen({
-  companies, informationItems, stocks, teamState, marketPaused, availablePanels, onSubmitOrder,
+  companies,
+  informationItems,
+  stocks,
+  teamState,
+  marketPaused,
+  availablePanels,
+  onSubmitOrder,
 }: MarketPlayScreenProps) {
   const visibleTabs = PANEL_TABS.filter((tab) => availablePanels.includes(tab.panel))
   const [tab, setTab] = useState(0)
@@ -32,10 +38,19 @@ export function MarketPlayScreen({
   return (
     <Box sx={{ width: '100%' }}>
       <Tabs value={tab} onChange={(_, value) => setTab(value)}>
-        {visibleTabs.map((t) => <Tab key={t.panel} label={t.label} />)}
+        {visibleTabs.map((t) => (
+          <Tab key={t.panel} label={t.label} />
+        ))}
       </Tabs>
       {activePanel === 'ORDERS' && (
-        <OrderScreen companies={companies} stocks={stocks} teamState={teamState} marketPaused={marketPaused} onSubmitOrder={onSubmitOrder} disabled={!teamState} />
+        <OrderScreen
+          companies={companies}
+          stocks={stocks}
+          teamState={teamState}
+          marketPaused={marketPaused}
+          onSubmitOrder={onSubmitOrder}
+          disabled={!teamState}
+        />
       )}
       {activePanel === 'COMPANIES' && <CompanyResearchPage companies={companies} />}
       {activePanel === 'NEWS' && <NewsListPage informationItems={informationItems} companies={companies} />}
