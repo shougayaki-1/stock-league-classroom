@@ -33,13 +33,122 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
   <section className="landing-hero">
     <p className="landing-hero-badge">教室向け 授業シミュレーター</p>
     <h1>社会科・家庭科に、<br className="landing-hero-break" />判断して振り返るシミュレーション授業を。</h1>
-    <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。そんな授業を教室で行えます。</p>
+    <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。クラス全員の判断が、そのまま結果に反映されます。</p>
     <Alert severity="info" className="landing-hero-notice">授業機能はベータ公開中です。教材作成から結果確認まで、実際にお試しいただけます。</Alert>
     <Stack direction="row" spacing={2} className="landing-hero-ctas">
-      {onTeacherLogin && <Button onClick={onTeacherLogin} variant="contained" size="large" sx={landingCtaSx}>先生はこちら（ログイン）</Button>}
-      <Button component={RouterLink} to="/join" variant={onTeacherLogin ? 'outlined' : 'contained'} size="large" sx={onTeacherLogin ? undefined : landingCtaSx}>生徒はこちら（授業に参加）</Button>
-      <Button component={RouterLink} to="/about" variant="outlined" size="large">サービス概要を見る</Button>
+      <Button href="#landing-preview-title" variant="contained" size="large" sx={landingCtaSx}>授業の流れを見る</Button>
+      <Button component={RouterLink} to="/join" variant="outlined" size="large">生徒はこちら（授業に参加）</Button>
     </Stack>
+  </section>
+
+  <section className="landing-preview" aria-labelledby="landing-preview-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">授業のイメージ</p>
+      <h2 id="landing-preview-title">実際の授業では、こう進みます</h2>
+      <p>市場経済シミュレーションの例です。クラス全員が読んで判断したことが、そのままクラス全体の結果に反映されます。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
+    </div>
+    <div className="preview-flow">
+      <figure className="preview-card">
+        <div className="preview-card-frame" aria-hidden="true">
+          <p className="preview-card-tag">ニュース</p>
+          <p className="preview-card-body">政府が再生可能エネルギーへの補助金を発表</p>
+        </div>
+        <figcaption><strong>①ニュースを読む</strong><span>生徒は教材の企業情報やニュースを確認します。</span></figcaption>
+      </figure>
+      <span className="preview-arrow" aria-hidden="true">→</span>
+      <figure className="preview-card">
+        <div className="preview-card-frame" aria-hidden="true">
+          <p className="preview-card-tag">判断</p>
+          <div className="preview-card-buttons"><span>買う</span><span>様子を見る</span><span>売る</span></div>
+        </div>
+        <figcaption><strong>②自分で判断する</strong><span>買う・売る・様子を見るを生徒それぞれが選びます。</span></figcaption>
+      </figure>
+      <span className="preview-arrow" aria-hidden="true">→</span>
+      <figure className="preview-card">
+        <div className="preview-card-frame" aria-hidden="true">
+          <p className="preview-card-tag">価格変動</p>
+          <p className="preview-card-price">A社 ¥1,240 <span className="up">▲3.2%</span></p>
+        </div>
+        <figcaption><strong>③クラス全体の判断で価格が動く</strong><span>買った生徒が多い会社ほど、価格が上がります。</span></figcaption>
+      </figure>
+      <span className="preview-arrow" aria-hidden="true">→</span>
+      <figure className="preview-card">
+        <div className="preview-card-frame" aria-hidden="true">
+          <p className="preview-card-tag">先生の結果画面</p>
+          <p className="preview-card-stat">A社を買った：28人</p>
+          <p className="preview-card-stat">様子を見た：7人</p>
+        </div>
+        <figcaption><strong>④結果を見ながら振り返る</strong><span>「なぜこの結果になったか」をクラスで議論します。</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section className="landing-subjects" aria-labelledby="landing-subjects-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">生徒が授業でやること</p>
+      <h2 id="landing-subjects-title">どんな授業ができる？</h2>
+      <p>知識を読むだけでなく、自分で判断し、その結果を材料に考える学習活動を想定しています。</p>
+    </div>
+    <div className="subject-card-list">
+      <article className="subject-card">
+        <p className="subject-card-label">市場経済シミュレーション</p>
+        <h3>社会科・公共・政治経済</h3>
+        <p className="subject-card-journey"><strong>情報やニュースを読む</strong><span aria-hidden="true"> → </span>投資判断をする<span aria-hidden="true"> → </span>市場の変化を見る<span aria-hidden="true"> → </span>価格が動いた理由を考える</p>
+        <p>クラス全員の売買が需要となって価格に反映されるため、同じニュースでもクラスごとに結果が変わります。企業や産業、景気や政策などの情報を手がかりに、予想と結果の違いまで振り返ります。</p>
+      </article>
+      <article className="subject-card">
+        <p className="subject-card-label">生活設計シミュレーション</p>
+        <h3>家庭科・家庭基礎・家庭総合</h3>
+        <p className="subject-card-journey"><strong>収入・支出・住宅・保険・資産形成</strong>などを選ぶ<span aria-hidden="true"> → </span>人生を進める<span aria-hidden="true"> → </span>選択の違いを比較して振り返る</p>
+        <p>結婚・子育て・病気などのライフイベントも起こります。人生の各段階で起こる選択を疑似体験し、家計や生活目標との関係を考えます。</p>
+      </article>
+    </div>
+  </section>
+
+  <section className="landing-timeline" aria-labelledby="landing-timeline-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">1回の授業の流れ</p>
+      <h2 id="landing-timeline-title">進行は8つのフェーズ。先生がその場で操作します</h2>
+      <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら「次へ」で先生が進行します。目安は1コマ（45〜50分）です。</p>
+    </div>
+    <ol className="timeline-steps">
+      <li><span className="timeline-num">1</span><span>導入</span></li>
+      <li><span className="timeline-num">2</span><span>情報収集</span></li>
+      <li><span className="timeline-num">3</span><span>個人予想</span></li>
+      <li><span className="timeline-num">4</span><span>チーム相談</span></li>
+      <li><span className="timeline-num">5</span><span>売買</span></li>
+      <li><span className="timeline-num">6</span><span>価格変動</span></li>
+      <li><span className="timeline-num">7</span><span>解説</span></li>
+      <li><span className="timeline-num">8</span><span>振り返り</span></li>
+    </ol>
+  </section>
+
+  <section className="landing-flow" aria-labelledby="landing-flow-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">先生側の流れ</p>
+      <h2 id="landing-flow-title">先生は何をすればいい？</h2>
+      <p>授業前の準備から振り返りまで、先生が行うことを4段階に整理します。</p>
+    </div>
+    <ol className="landing-flow-steps">
+      <li><strong>授業を選ぶ・つくる</strong><span>プリセット教材を選べばすぐ使えます。会社名やニュース文章を自分で追加・編集することもできます。</span></li>
+      <li><strong>生徒に参加方法を案内する</strong><span>生徒はアカウント登録不要。名前と出席番号を入力するだけで参加できます。</span></li>
+      <li><strong>授業を開始して進行する</strong><span>8つのフェーズを、クラスの状況を見ながら「次へ」で進めます。</span></li>
+      <li><strong>結果をクラスで振り返る</strong><span>判断と結果を見比べ、「なぜ」を考える時間につなげます。</span></li>
+    </ol>
+  </section>
+
+  <section className="landing-results" aria-labelledby="landing-results-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">授業のあとにわかること</p>
+      <h2 id="landing-results-title">生徒ごとの判断を、あとから確認できます</h2>
+      <p>誰が何を選び、どんな根拠で判断したかを、先生の画面から振り返ることができます。</p>
+    </div>
+    <div className="results-grid">
+      <article className="results-card"><strong>生徒ごとの選択</strong><p>誰がどの会社を買った・売った・様子を見たかを確認できます。</p></article>
+      <article className="results-card"><strong>判断の根拠</strong><p>ニュースや企業情報をどれだけ参考にしたかの目安を確認できます。</p></article>
+      <article className="results-card"><strong>予測の的中度</strong><p>生徒の予想と実際の結果がどれだけ一致していたかを確認できます。</p></article>
+      <article className="results-card"><strong>CSVで書き出し</strong><p>結果は表示名を匿名化した状態でCSV出力できます（実名表示は個別に選択可能）。</p></article>
+    </div>
   </section>
 
   <section className="landing-quick" aria-labelledby="landing-quick-title">
@@ -68,48 +177,17 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
         <strong>ブラウザで使う教室向けサービス</strong>
         <p>先生と生徒が授業の中で使うことを想定しています。</p>
       </article>
-      <article className="landing-fact-card landing-fact-card-status">
-        <span>現在の提供状況</span>
-        <strong>授業機能はベータ公開中です。</strong>
-        <p>教材作成、授業実施、結果・分析の確認までお試しいただけます。</p>
+      <article className="landing-fact-card">
+        <span>生徒の参加</span>
+        <strong>アカウント登録は不要です。</strong>
+        <p>名前と出席番号を入力するだけで参加できます。</p>
+      </article>
+      <article className="landing-fact-card">
+        <span>利用料金</span>
+        <strong>ベータ期間中は無料でお試しいただけます。</strong>
+        <p>正式版の料金体系は今後お知らせします。</p>
       </article>
     </div>
-  </section>
-
-  <section className="landing-subjects" aria-labelledby="landing-subjects-title">
-    <div className="landing-section-heading">
-      <p className="landing-section-kicker">生徒が授業でやること</p>
-      <h2 id="landing-subjects-title">どんな授業ができる？</h2>
-      <p>知識を読むだけでなく、自分で判断し、その結果を材料に考える学習活動を想定しています。</p>
-    </div>
-    <div className="subject-card-list">
-      <article className="subject-card">
-        <p className="subject-card-label">市場経済シミュレーション</p>
-        <h3>社会科・公共・政治経済</h3>
-        <p className="subject-card-journey"><strong>情報やニュースを読む</strong><span aria-hidden="true"> → </span>投資判断をする<span aria-hidden="true"> → </span>市場の変化を見る<span aria-hidden="true"> → </span>価格が動いた理由を考える</p>
-        <p>企業や産業、需要と供給、景気や政策などの情報を手がかりに、予想と結果の違いまで振り返ります。</p>
-      </article>
-      <article className="subject-card">
-        <p className="subject-card-label">生活設計シミュレーション</p>
-        <h3>家庭科・家庭基礎・家庭総合</h3>
-        <p className="subject-card-journey"><strong>収入・支出・住宅・保険・資産形成</strong>などを選ぶ<span aria-hidden="true"> → </span>人生を進める<span aria-hidden="true"> → </span>選択の違いを比較して振り返る</p>
-        <p>人生の各段階で起こる選択を疑似体験し、家計や生活目標との関係を考えます。</p>
-      </article>
-    </div>
-  </section>
-
-  <section className="landing-flow" aria-labelledby="landing-flow-title">
-    <div className="landing-section-heading">
-      <p className="landing-section-kicker">先生側の流れ</p>
-      <h2 id="landing-flow-title">先生は何をすればいい？</h2>
-      <p>授業前の準備から振り返りまで、先生が行うことを4段階に整理します。</p>
-    </div>
-    <ol className="landing-flow-steps">
-      <li><strong>授業を選ぶ・つくる</strong><span>授業の目標や内容に合わせて教材を用意します。</span></li>
-      <li><strong>生徒に参加方法を案内する</strong><span>授業への参加方法をクラスに共有します。</span></li>
-      <li><strong>授業を開始して進行する</strong><span>クラスの状況を確認しながら授業を進めます。</span></li>
-      <li><strong>結果をクラスで振り返る</strong><span>判断と結果を見比べ、「なぜ」を考える時間につなげます。</span></li>
-    </ol>
   </section>
 
   <section className="landing-reassurance" aria-labelledby="landing-reassurance-title">
@@ -140,7 +218,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
 
   <section className="landing-closing">
     <p>授業機能はベータ公開中です。</p>
-    <h2>{onTeacherLogin ? 'まずはログインして、教材を作成してみましょう。' : 'まずは、学校で使うための条件をご確認ください。'}</h2>
+    <h2>{onTeacherLogin ? 'まずは5分で、最初の教材を作ってみましょう。' : 'まずは、学校で使うための条件をご確認ください。'}</h2>
     {onTeacherLogin
       ? <Button onClick={onTeacherLogin} variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>教師としてログイン <span aria-hidden="true">→</span></Button>
       : <Button component={RouterLink} to="/about" variant="contained" size="large" sx={{ backgroundColor: 'var(--landing-closing-cta)', color: 'var(--landing-closing-on-cta)', '&:hover': { backgroundColor: 'var(--landing-closing-cta-hover)' } }}>サービス概要を見る <span aria-hidden="true">→</span></Button>}

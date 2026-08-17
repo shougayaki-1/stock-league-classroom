@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
@@ -39,6 +39,25 @@ describe('LandingPage', () => {
     expect(screen.getByText(/実在企業の株価を扱う/)).toBeInTheDocument()
     expect(screen.getByText(/表示名には本名を使わない/)).toBeInTheDocument()
     expect(screen.getByText(/先生の1台の端末だけに依存させない/)).toBeInTheDocument()
+  })
+
+  it('shows a concrete preview of the lesson flow, the 8-phase timeline, and post-lesson results', () => {
+    renderLandingPage()
+
+    const previewHeading = screen.getByRole('heading', { name: '実際の授業では、こう進みます' })
+    const previewSection = previewHeading.closest('section') as HTMLElement
+    expect(within(previewSection).getByText(/①ニュースを読む/)).toBeInTheDocument()
+    expect(within(previewSection).getByText(/クラス全体の判断で価格が動く/)).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: '進行は8つのフェーズ。先生がその場で操作します' })).toBeInTheDocument()
+    expect(screen.getByText('個人予想')).toBeInTheDocument()
+    expect(screen.getByText('振り返り')).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: '生徒ごとの判断を、あとから確認できます' })).toBeInTheDocument()
+    expect(screen.getByText(/CSV出力できます/)).toBeInTheDocument()
+
+    expect(screen.getByText(/アカウント登録は不要です/)).toBeInTheDocument()
+    expect(screen.getByText(/ベータ期間中は無料でお試しいただけます/)).toBeInTheDocument()
   })
 
   it('keeps the public guidance and policy routes reachable', () => {
