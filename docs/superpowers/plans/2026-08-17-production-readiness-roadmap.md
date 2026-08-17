@@ -38,12 +38,14 @@
 
 → 詳細計画: [2026-08-17-phase3-market-play.md](2026-08-17-phase3-market-play.md)
 
-## Phase 4 — 結果表示（バックエンド新規実装が必要）
+## Phase 4 — 結果表示（完了）
 
-**重要な発見:** `LessonResult` はFirestore `lessonRuns/{runId}/results/{resultId}` に保存されるが、`firestore.rules` で生徒の読み取りは明示的に禁止されている（教師のみ `get`/`list` 可）。生徒が自分の結果を読むための経路が**存在しない**。これはフロントエンド配線ではなく、バックエンドの新規設計が要る。
+**ゴール:** 教師が Control Room から「結果を生成する」を実行できるようにし、生徒が `/lessons/:runId/results` で自分自身（または自チーム）の結果を閲覧できるようにする。（完了）
 
-- Phase 4a（バックエンド）: 生徒が自分の結果だけを取得できる新しい Callable（例: `getMyLessonResultCallable`）を設計・実装。既存の `buildAndPersistLessonResult` パイプラインの出力を、呼び出し元の `participantId`/`teamId` でフィルタして返す
-- Phase 4b（フロントエンド）: 上記Callableのクライアントラッパーを作成し、`StudentLessonRoute`（results用）を `LessonResultsPage` に接続
+- Phase 4a（バックエンド）: `GENERATE_RESULTS` 操作権限の追加、教師用 `generateLessonResultCallable`、生徒用 `getMyLessonResultCallable`（アイデンティティフィルタリング済み）を実装（完了）
+- Phase 4b（フロントエンド）: クライアントラッパー作成、`LessonControlRoom` に「結果を生成する」ボタンを配線、`/lessons/:runId/results` を `StudentResultsRoute` 経由で `LessonResultsPage` に実データ接続（完了）
+
+→ 詳細計画: [2026-08-17-phase4-results.md](2026-08-17-phase4-results.md)
 
 ## Phase 5 — 教師分析画面（バックエンド新規実装が必要）
 
