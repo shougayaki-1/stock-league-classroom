@@ -97,6 +97,24 @@ describe('createLessonRun', () => {
     })
   })
 
+  it('attaches a default phase graph (phases/initialPhaseId) to templateSnapshot so the lesson can later transition to RUNNING', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', { templateId: 'tpl-1', orgId: 'personal_teacher-a', content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES' } })
+    const result = await createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'fixed-test-seed',
+      generateLessonRunId: () => 'run-fixed',
+      lessonRunIdempotencyKey: 'idem-1',
+      orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })
+    const run = fake.docs.get(`lessonRuns/${result.lessonRunId}`) as { templateSnapshot: { phases: Array<{ id: string; type: string }>; initialPhaseId: string; title: string } }
+    expect(run.templateSnapshot.initialPhaseId).toBe('intro')
+    expect(run.templateSnapshot.phases.map((phase) => phase.id)).toEqual(['intro', 'market', 'result', 'reflection'])
+    // The rest of the original template content must still be preserved, not replaced.
+    expect(run.templateSnapshot.title).toBe('t')
+  })
+
   it('writes the fixed service-wide maxParticipants alongside the caller-provided expectedParticipants', async () => {
     const fake = makeFakeFirestore()
     fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })

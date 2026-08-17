@@ -3,6 +3,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore'
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../lib/idempotency'
 import { validateSocialStudiesMarketContent } from '../market/templateValidation'
 import { validateHomeEconomicsContent } from '../homeEconomics/templateValidation'
+import { buildDefaultPhases } from './phases/defaultPhases'
 import { canIncreaseLimitedResource, type DowngradeStatus } from '../organizations/downgradeEnforcement'
 import {
   reserveSharedQuota,
@@ -174,9 +175,16 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
         createdAt: nowValue,
       })
     }
+    const contentSubject = (version.content as { subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' }).subject
+    const defaultPhaseGraph = buildDefaultPhases(contentSubject)
     tx.set(`lessonRuns/${lessonRunId}`, {
       orgId: deps.orgId, templateId: deps.templateId, templateVersionId: template.currentPublishedVersionId,
-      templateSnapshot: version.content, subject: (version.content as { subject: string }).subject,
+      templateSnapshot: {
+        ...(version.content as Record<string, unknown>),
+        phases: defaultPhaseGraph.phases,
+        initialPhaseId: defaultPhaseGraph.initialPhaseId,
+      },
+      subject: contentSubject,
       status: 'DRAFT', primaryTeacherUid: deps.primaryTeacherUid, teacherRoles: { [deps.primaryTeacherUid]: 'PRIMARY' },
       currentPhaseId: null, randomSeed, restoreGeneration: 0,
       startedAt: null, endedAt: null, createdAt: nowValue,
