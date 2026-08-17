@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
@@ -41,20 +41,39 @@ describe('LandingPage', () => {
     expect(screen.getByText(/先生の1台の端末だけに依存させない/)).toBeInTheDocument()
   })
 
-  it('shows a concrete preview of the lesson flow, the 8-phase timeline, and post-lesson results', () => {
+  it('shows the 8-activity lesson journey as a single vertical sequence with concrete descriptions', () => {
     renderLandingPage()
 
-    const previewHeading = screen.getByRole('heading', { name: '実際の授業では、こう進みます' })
-    const previewSection = previewHeading.closest('section') as HTMLElement
-    expect(within(previewSection).getByText(/①ニュースを読む/)).toBeInTheDocument()
-    expect(within(previewSection).getByText(/クラス全体の判断で価格が動く/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '8つの学習活動で、判断から振り返りまでつなげます' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '今日の問いを確認する' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '違う予想と根拠を持ち寄る' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '予想・判断・結果をつなぎ直す' })).toBeInTheDocument()
+    expect(screen.getByText(/Research Desk/)).toBeInTheDocument()
 
-    expect(screen.getByRole('heading', { name: '進行は8つのフェーズ。先生がその場で操作します' })).toBeInTheDocument()
-    expect(screen.getByText('個人予想')).toBeInTheDocument()
-    expect(screen.getByText('振り返り')).toBeInTheDocument()
+    expect(screen.queryByText(/8つのフェーズ/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/システムの8フェーズ/)).not.toBeInTheDocument()
+  })
+
+  it('shows how lessons stay easy to prepare, deepen from the same material, and support team learning', () => {
+    renderLandingPage()
+
+    expect(screen.getByRole('heading', { name: '教材はゼロから作らなくていい' })).toBeInTheDocument()
+    expect(screen.getByText(/教材マーケットプレイス/)).toBeInTheDocument()
+    expect(screen.getByText(/通常公開・認証済み・公式/)).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: '問いの深さを、授業に合わせて変えられる' })).toBeInTheDocument()
+    expect(screen.getByText(/そう判断した理由は？/)).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: 'ひとりで考えてから、チームで決める' })).toBeInTheDocument()
+    expect(screen.getByText(/1人1台の生徒環境が前提ではありません/)).toBeInTheDocument()
+  })
+
+  it('shows post-lesson results without overclaiming an unbuilt CSV export button', () => {
+    renderLandingPage()
 
     expect(screen.getByRole('heading', { name: '生徒ごとの判断を、あとから確認できます' })).toBeInTheDocument()
-    expect(screen.getByText(/CSV出力できます/)).toBeInTheDocument()
+    expect(screen.getByText(/クラス全体から、気になるチームや生徒だけを選んで/)).toBeInTheDocument()
+    expect(screen.queryByText(/CSV/)).not.toBeInTheDocument()
 
     expect(screen.getByText(/アカウント登録は不要です/)).toBeInTheDocument()
     expect(screen.getByText(/ベータ期間中は無料でお試しいただけます/)).toBeInTheDocument()

@@ -33,54 +33,94 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
   <section className="landing-hero">
     <p className="landing-hero-badge">教室向け 授業シミュレーター</p>
     <h1>社会科・家庭科に、<br className="landing-hero-break" />判断して振り返るシミュレーション授業を。</h1>
-    <p className="landing-hero-subtitle">生徒が情報を読み、選び、結果を見て、「なぜそうなったか」を考える。クラス全員の判断が、そのまま結果に反映されます。</p>
+    <p className="landing-hero-subtitle">生徒が情報を読み、個人で考え、チームで話し合い、判断し、その結果から「なぜ」を考える。クラス全員の判断が、そのまま結果に反映されます。</p>
     <Alert severity="info" className="landing-hero-notice">授業機能はベータ公開中です。教材作成から結果確認まで、実際にお試しいただけます。</Alert>
     <Stack direction="row" spacing={2} className="landing-hero-ctas">
-      <Button href="#landing-preview-title" variant="contained" size="large" sx={landingCtaSx}>授業の流れを見る</Button>
+      <Button href="#landing-journey-title" variant="contained" size="large" sx={landingCtaSx}>授業の流れを見る</Button>
       <Button component={RouterLink} to="/join" variant="outlined" size="large">生徒はこちら（授業に参加）</Button>
     </Stack>
   </section>
 
-  <section className="landing-preview" aria-labelledby="landing-preview-title">
+  <section className="landing-journey" aria-labelledby="landing-journey-title">
     <div className="landing-section-heading">
-      <p className="landing-section-kicker">授業のイメージ</p>
-      <h2 id="landing-preview-title">実際の授業では、こう進みます</h2>
-      <p>市場経済シミュレーションの例です。クラス全員が読んで判断したことが、そのままクラス全体の結果に反映されます。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
+      <p className="landing-section-kicker">1回の授業の流れ</p>
+      <h2 id="landing-journey-title">8つの学習活動で、判断から振り返りまでつなげます</h2>
+      <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら先生が次のステップに進めます。目安は1コマ（45〜50分）です。※画面はイメージで、実際のデザインとは異なる場合があります。</p>
     </div>
-    <div className="preview-flow">
-      <figure className="preview-card">
-        <div className="preview-card-frame" aria-hidden="true">
-          <p className="preview-card-tag">ニュース</p>
-          <p className="preview-card-body">政府が再生可能エネルギーへの補助金を発表</p>
+    <ol className="journey-steps">
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">01</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">導入</p>
+          <h3>今日の問いを確認する</h3>
+          <p>先生が授業の目標を教室画面に表示。生徒は参加コードから授業に入ります。</p>
         </div>
-        <figcaption><strong>①ニュースを読む</strong><span>生徒は教材の企業情報やニュースを確認します。</span></figcaption>
-      </figure>
-      <span className="preview-arrow" aria-hidden="true">→</span>
-      <figure className="preview-card">
-        <div className="preview-card-frame" aria-hidden="true">
-          <p className="preview-card-tag">判断</p>
-          <div className="preview-card-buttons"><span>買う</span><span>様子を見る</span><span>売る</span></div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">教室表示</span><p>参加コード：123456</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">02</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">情報収集</p>
+          <h3>まず、判断するための材料を集める</h3>
+          <p>企業情報・ニュース・統計資料を読み、「何が影響しそうか」を考えます。</p>
         </div>
-        <figcaption><strong>②自分で判断する</strong><span>買う・売る・様子を見るを生徒それぞれが選びます。</span></figcaption>
-      </figure>
-      <span className="preview-arrow" aria-hidden="true">→</span>
-      <figure className="preview-card">
-        <div className="preview-card-frame" aria-hidden="true">
-          <p className="preview-card-tag">価格変動</p>
-          <p className="preview-card-price">A社 ¥1,240 <span className="up">▲3.2%</span></p>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">Research Desk</span><p>企業情報・ニュース・統計資料</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">03</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">個人で予想</p>
+          <h3>話し合う前に、自分の考えを持つ</h3>
+          <p>「どの会社が上がりそうか」「どの情報を重視するか」などを個人で回答します。</p>
         </div>
-        <figcaption><strong>③クラス全体の判断で価格が動く</strong><span>買った生徒が多い会社ほど、価格が上がります。</span></figcaption>
-      </figure>
-      <span className="preview-arrow" aria-hidden="true">→</span>
-      <figure className="preview-card">
-        <div className="preview-card-frame" aria-hidden="true">
-          <p className="preview-card-tag">先生の結果画面</p>
-          <p className="preview-card-stat">A社を買った：28人</p>
-          <p className="preview-card-stat">様子を見た：7人</p>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">個人回答</span><p>順位づけ／理由つき選択</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">04</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">チームで相談</p>
+          <h3>違う予想と根拠を持ち寄る</h3>
+          <p>チームノートを使いながら、なぜその判断になったかを比較。必要に応じてチームとして1つの回答をまとめます。</p>
         </div>
-        <figcaption><strong>④結果を見ながら振り返る</strong><span>「なぜこの結果になったか」をクラスで議論します。</span></figcaption>
-      </figure>
-    </div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">チームノート</span><p>チームメンバー：4人</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">05</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">意思決定</p>
+          <h3>考えたことを実際の選択に変える</h3>
+          <p>社会科なら買う・売る、家庭科なら資産・保険・生活上の選択を行います。</p>
+        </div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">注文</span><p>A社を10株　買う</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">06</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">結果が起こる</p>
+          <h3>クラスの判断や設定された情報によって、結果が変わる</h3>
+          <p>市場なら価格が動き、家庭科なら時間が進み、イベントや家計の変化が起こります。</p>
+        </div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">結果画面</span><p>A社 ¥1,240 ▲3.2%</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">07</span><span className="journey-step-line" aria-hidden="true" /></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">解説</p>
+          <h3>結果だけを見て終わらない</h3>
+          <p>先生が教室画面を使って、「何が影響したのか」を整理します。</p>
+        </div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">説明スライド</span><p>先生が要因を解説</p></div>
+      </li>
+      <li className="journey-step">
+        <div className="journey-step-num-col"><span className="journey-step-dot">08</span></div>
+        <div className="journey-step-body">
+          <p className="journey-step-kicker">振り返り</p>
+          <h3>予想・判断・結果をつなぎ直す</h3>
+          <p>クラス・チーム・個人の違いを見ながら、「なぜそうなったか」「次ならどうするか」を考えます。</p>
+        </div>
+        <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">分析画面</span><p>クラス → チーム → 個人</p></div>
+      </li>
+    </ol>
   </section>
 
   <section className="landing-subjects" aria-labelledby="landing-subjects-title">
@@ -105,22 +145,53 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
     </div>
   </section>
 
-  <section className="landing-timeline" aria-labelledby="landing-timeline-title">
+  <section className="landing-prep" aria-labelledby="landing-prep-title">
     <div className="landing-section-heading">
-      <p className="landing-section-kicker">1回の授業の流れ</p>
-      <h2 id="landing-timeline-title">進行は8つのフェーズ。先生がその場で操作します</h2>
-      <p>タイマーで自動的に進むのではなく、クラスの様子を見ながら「次へ」で先生が進行します。目安は1コマ（45〜50分）です。</p>
+      <p className="landing-section-kicker">授業準備</p>
+      <h2 id="landing-prep-title">教材はゼロから作らなくていい</h2>
+      <p>他の先生の教材を土台にする方法と、質問に答えながら自分で作る方法、どちらからでも始められます。</p>
     </div>
-    <ol className="timeline-steps">
-      <li><span className="timeline-num">1</span><span>導入</span></li>
-      <li><span className="timeline-num">2</span><span>情報収集</span></li>
-      <li><span className="timeline-num">3</span><span>個人予想</span></li>
-      <li><span className="timeline-num">4</span><span>チーム相談</span></li>
-      <li><span className="timeline-num">5</span><span>売買</span></li>
-      <li><span className="timeline-num">6</span><span>価格変動</span></li>
-      <li><span className="timeline-num">7</span><span>解説</span></li>
-      <li><span className="timeline-num">8</span><span>振り返り</span></li>
-    </ol>
+    <div className="prep-paths">
+      <article className="prep-path-card">
+        <p className="prep-path-label">他の先生の教材から始める</p>
+        <p>教材マーケットプレイスで公開教材（通常公開・認証済み・公式）を探し、複製して自分のクラスで使えます。「分かりやすさ」「実施のしやすさ」「生徒の反応」のレビューも参考にできます。</p>
+      </article>
+      <article className="prep-path-card">
+        <p className="prep-path-label">質問に答えながら作る</p>
+        <p>学習目標や授業時間を選ぶだけで授業の土台ができます。企業やニュース、家庭のプロフィールなど、必要な部分だけあとから編集できます。</p>
+      </article>
+    </div>
+    <p className="prep-flow"><strong>教材を選ぶ</strong><span aria-hidden="true"> → </span><strong>授業条件を決める</strong><span aria-hidden="true"> → </span><strong>必要なところだけ直す</strong><span aria-hidden="true"> → </span><strong>開始する</strong></p>
+    <div className="prep-chip-groups">
+      <div className="prep-chip-group">
+        <span className="prep-chip-group-label">社会科の設定例</span>
+        <div className="prep-chips"><span>授業時間 50分</span><span>企業 5社</span><span>難易度 標準</span><span>情報と需給 バランス</span></div>
+      </div>
+      <div className="prep-chip-group">
+        <span className="prep-chip-group-label">家庭科の設定例</span>
+        <div className="prep-chips"><span>人物比較</span><span>1ラウンド 5年</span><span>イベント 一部公開</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section className="landing-develop" aria-labelledby="landing-develop-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">同じ教材から</p>
+      <h2 id="landing-develop-title">問いの深さを、授業に合わせて変えられる</h2>
+      <p>同じニュースや家庭の状況でも、聞き方を変えるだけで活動の難易度を調整できます。</p>
+    </div>
+    <p className="develop-flow"><strong>上がると思う？</strong><span aria-hidden="true"> → </span><strong>どの会社が最も影響を受ける？</strong><span aria-hidden="true"> → </span><strong>100万円をどう配分する？</strong><span aria-hidden="true"> → </span><strong>賛成か反対か？</strong><span aria-hidden="true"> → </span><strong>そう判断した理由は？</strong></p>
+    <p className="develop-note">選ぶだけの問いから、比較する・配分する・順位をつける・根拠を説明する問いまで、同じ教材のまま発展させられます。</p>
+  </section>
+
+  <section className="landing-team" aria-labelledby="landing-team-title">
+    <div className="landing-section-heading">
+      <p className="landing-section-kicker">個人 → チーム → クラス</p>
+      <h2 id="landing-team-title">ひとりで考えてから、チームで決める</h2>
+      <p>1人1台の生徒環境が前提ではありません。チームで1台の端末を共有して参加することもできます。</p>
+    </div>
+    <p className="team-flow"><strong>個人で考える</strong><span aria-hidden="true"> → </span><strong>チームノートに持ち寄る</strong><span aria-hidden="true"> → </span><strong>チームとして判断する</strong><span aria-hidden="true"> → </span><strong>クラスで比較する</strong></p>
+    <p className="team-note">チームの回答は、誰かが提案し、チームで承認し、最終的に確定する形にできます。個人の考えを持ち寄り、チームとして1つの判断をつくるプロセスです。</p>
   </section>
 
   <section className="landing-flow" aria-labelledby="landing-flow-title">
@@ -132,7 +203,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
     <ol className="landing-flow-steps">
       <li><strong>授業を選ぶ・つくる</strong><span>プリセット教材を選べばすぐ使えます。会社名やニュース文章を自分で追加・編集することもできます。</span></li>
       <li><strong>生徒に参加方法を案内する</strong><span>生徒はアカウント登録不要。名前と出席番号を入力するだけで参加できます。</span></li>
-      <li><strong>授業を開始して進行する</strong><span>8つのフェーズを、クラスの状況を見ながら「次へ」で進めます。</span></li>
+      <li><strong>授業を開始して進行する</strong><span>導入から振り返りまでの学習活動を、クラスの状況を見ながら先生が進めます。</span></li>
       <li><strong>結果をクラスで振り返る</strong><span>判断と結果を見比べ、「なぜ」を考える時間につなげます。</span></li>
     </ol>
   </section>
@@ -147,7 +218,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <article className="results-card"><strong>生徒ごとの選択</strong><p>誰がどの会社を買った・売った・様子を見たかを確認できます。</p></article>
       <article className="results-card"><strong>判断の根拠</strong><p>ニュースや企業情報をどれだけ参考にしたかの目安を確認できます。</p></article>
       <article className="results-card"><strong>予測の的中度</strong><p>生徒の予想と実際の結果がどれだけ一致していたかを確認できます。</p></article>
-      <article className="results-card"><strong>CSVで書き出し</strong><p>結果は表示名を匿名化した状態でCSV出力できます（実名表示は個別に選択可能）。</p></article>
+      <article className="results-card"><strong>クラス→チーム→個人</strong><p>クラス全体から、気になるチームや生徒だけを選んで詳しく確認できます。</p></article>
     </div>
   </section>
 
