@@ -19,6 +19,10 @@
 
 通常テストは `npm test`、Firestore/RTDB Rulesテストは `npm run test:rules`、全検証は `npm run verify` です。
 
+### CI（GitHub Actions）について
+
+`.github/workflows/ci.yml` は自動発火しません（`workflow_dispatch` の手動トリガーのみ）。プライベートリポジトリではActionsの実行分数がコストに直結するため、push/PRのたびに自動実行する構成をやめ、代わりに**pushする前に必ずローカルで `npm run verify` を実行する**運用にしています。`npm run verify` はCIと同じ内容（lint・typecheck・テスト・Rulesテスト・ビルド）を実行します。
+
 ## Firebase本番設定
 
 - [x] AuthenticationでGoogleと匿名プロバイダを有効化し、Hostingの公開ドメインを承認済みドメインへ追加

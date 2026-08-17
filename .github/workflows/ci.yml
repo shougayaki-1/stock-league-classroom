@@ -1,9 +1,11 @@
 name: CI
 
+# GitHub Actions minutes cost money on a private repo, so this no longer
+# fires automatically on every push/PR — `npm run verify` locally before
+# pushing is the enforced gate instead (see README). Kept as a manual
+# workflow for the rare case a run in a clean CI environment is useful.
 on:
-  pull_request:
-  push:
-    branches: [main, codex/classroom]
+  workflow_dispatch:
 
 jobs:
   verify:
