@@ -28,6 +28,9 @@ import { TemplateListPage } from './components/teacher/templates/TemplateListPag
 import { GuidedBuilderWizard } from './components/teacher/templates/GuidedBuilderWizard'
 import { TemplateOverviewPage } from './components/teacher/templates/TemplateOverviewPage'
 import { TemplateEditorPage } from './components/teacher/templates/TemplateEditorPage'
+import { StartLessonDialog } from './components/teacher/templates/StartLessonDialog'
+import { createLessonRun } from './lib/lessonRuns/createLessonRun'
+import { describeError } from './lib/monitoring/describeError'
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
 import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
 import { OperatorTemplateCertificationsPage } from './components/operator/OperatorTemplateCertificationsPage'
@@ -579,8 +582,12 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
   const [derivatives, setDerivatives] = useState<CommunityTemplate[]>([])
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [startDialogOpen, setStartDialogOpen] = useState(false)
+  const [startingLesson, setStartingLesson] = useState(false)
+  const [startLessonError, setStartLessonError] = useState<string>()
   const [aiEnabled, setAiEnabled] = useState(false)
   const [materialsUploadEnabled, setMaterialsUploadEnabled] = useState(false)
+  const navigate = useNavigate()
   const uid = services.auth.currentUser?.uid
 
   const loadTemplate = useCallback(() => {
@@ -616,42 +623,75 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
     return () => { cancelled = true }
   }, [services, targetOrgId])
 
+  const handleStartLesson = async (expectedParticipants: number) => {
+    if (!templateId) return
+    setStartingLesson(true)
+    setStartLessonError(undefined)
+    try {
+      const { lessonRunId } = await createLessonRun(services.functions, {
+        templateId,
+        lessonRunIdempotencyKey: crypto.randomUUID(),
+        expectedParticipants,
+      })
+      navigate(`/teacher/lessons/${lessonRunId}/control`)
+    } catch (error) {
+      setStartLessonError(describeError(error, '授業の開始に失敗しました。もう一度お試しください。'))
+    } finally {
+      setStartingLesson(false)
+    }
+  }
+
   if (!templateId || !draft || !template) return <GuardLoading />
   return (
-    <TemplateEditorPage
-      draft={draft}
-      templateId={templateId}
-      orgId={template.orgId}
-      storage={services.storage}
-      firestore={services.firestore}
-      functions={services.functions}
-      aiEnabled={aiEnabled}
-      materialsUploadEnabled={materialsUploadEnabled}
-      aiBetaState={aiBetaState}
-      saving={saving}
-      publishing={publishing}
-      sourceTemplateTitle={sourceTemplateTitle}
-      derivatives={derivatives}
-      moveOperationId={template.moveOperationId}
-      onReloadTemplate={loadTemplate}
-      onSaveDraft={async (content) => {
-        setSaving(true)
-        try {
-          await saveDraft(services.firestore, templateId, content)
-          setDraft(content)
-        } finally {
-          setSaving(false)
-        }
-      }}
-      onPublish={async () => {
-        setPublishing(true)
-        try {
-          await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() })
-        } finally {
-          setPublishing(false)
-        }
-      }}
-    />
+    <>
+      <TemplateEditorPage
+        draft={draft}
+        templateId={templateId}
+        orgId={template.orgId}
+        storage={services.storage}
+        firestore={services.firestore}
+        functions={services.functions}
+        aiEnabled={aiEnabled}
+        materialsUploadEnabled={materialsUploadEnabled}
+        aiBetaState={aiBetaState}
+        saving={saving}
+        publishing={publishing}
+        sourceTemplateTitle={sourceTemplateTitle}
+        derivatives={derivatives}
+        moveOperationId={template.moveOperationId}
+        onReloadTemplate={loadTemplate}
+        onSaveDraft={async (content) => {
+          setSaving(true)
+          try {
+            await saveDraft(services.firestore, templateId, content)
+            setDraft(content)
+          } finally {
+            setSaving(false)
+          }
+        }}
+        onPublish={async () => {
+          setPublishing(true)
+          try {
+            await publishLessonVersion(services.functions, { templateId, idempotencyKey: crypto.randomUUID() })
+            await loadTemplate()
+          } finally {
+            setPublishing(false)
+          }
+        }}
+      />
+      {template.currentPublishedVersionId && (
+        <Button variant="contained" color="secondary" onClick={() => setStartDialogOpen(true)} sx={{ m: 2 }}>
+          この教材で授業を開始
+        </Button>
+      )}
+      <StartLessonDialog
+        open={startDialogOpen}
+        onClose={() => setStartDialogOpen(false)}
+        onStart={(expectedParticipants) => { void handleStartLesson(expectedParticipants) }}
+        starting={startingLesson}
+        error={startLessonError}
+      />
+    </>
   )
 }
 
