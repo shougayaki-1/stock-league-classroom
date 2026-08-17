@@ -68,13 +68,16 @@
 
 → 詳細計画: [2026-08-17-phase6-lesson-start-advance.md](2026-08-17-phase6-lesson-start-advance.md)
 
-## Phase 7 — インフラ/CD
+## Phase 7 — インフラ/CD（一部完了・一部方針変更）
 
-- `deploy.yml` に `functions`, `storage` を追加
-- ビルド時のFirebase設定用環境変数（API key等7項目）をワークフローに追加
-- `VITE_FEATURE_LESSON_PLATFORM_V2`, `VITE_SENTRY_DSN` をワークフローに追加
-- GitHub `production` Environment・`FIREBASE_SERVICE_ACCOUNT` の設定（リポジトリ外の作業、ユーザー確認必須）
-- App Check enforcement（`enforceAppCheck: true`）を主要callableに追加するかどうかの判断
+**方針転換:** プライベートリポジトリでGitHub Actionsの実行分数がコストに直結する懸念から、「Actionsを自動発火させない」方針に転換した。当初想定していた「`deploy.yml`をActions経由の本番デプロイパイプラインとして整備する」路線は取らず、ローカルデプロイを正式な運用として維持する。
+
+- [x] `.github/workflows/ci.yml` の自動発火（push/pull_request）を停止し `workflow_dispatch`（手動）のみに変更。代わりに `npm run verify` をpush前にローカル実行する運用をREADMEに明記（完了）
+- [x] `.env.example` に `VITE_FEATURE_LESSON_PLATFORM_V2=false` を追加（`VITE_SENTRY_DSN` は元から存在）（完了）
+- [x] Blazeプラン — ユーザー確認済み、設定済み（完了）
+- [ ] `deploy.yml` に `functions`/`storage` を追加、GitHub `production` Environment・`FIREBASE_SERVICE_ACCOUNT` の設定 — **意図的にスキップ**。ファイルは残すが手を入れず、ローカルデプロイ（README記載の `firebase deploy` 手順）を正式な運用として継続する
+- [ ] App Check enforcement（`enforceAppCheck: true`）— **意図的に見送り**。Firebase ConsoleのApp Checkメトリクスで正規リクエストの状況を確認してから判断すべき項目で、今回のスコープ外とした。Cloud Functions側（callableへの `enforceAppCheck: true` 追加）は判断確定後にコード変更として対応可能
+- [ ] 予算アラート — 未確認（Blaze自体は設定済みだが、アラート設定の有無は別途要確認）
 
 ## Phase 8 — 公開文書の整合
 
