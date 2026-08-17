@@ -47,21 +47,26 @@
 
 → 詳細計画: [2026-08-17-phase4-results.md](2026-08-17-phase4-results.md)
 
-## Phase 5 — 教師分析画面（バックエンド新規実装が必要）
+## Phase 5 — 教師分析画面（完了）
 
-**重要な発見:** `functions/src/lessonRuns/analytics/buildAnalytics.ts` は純粋関数として存在するが、`onCall` でラップされておらず `functions/src/index.ts` からもexportされていない。クライアントラッパーも存在しない。`TeacherAnalyticsRoute` の `DeferredDataNotice` を外すには、Callable自体を新規実装する必要がある。
+**ゴール:** `TeacherAnalyticsRoute` の `DeferredDataNotice` を外し、教師が過去/開催中の授業分析を `LessonAnalyticsPage` で閲覧できるようにする。（完了）
 
-- Phase 5a（バックエンド）: `buildLessonAnalytics` にFirestoreの `events`/`responses`/`surveys` を実際にクエリして渡す `onCall` を新設。教師権限チェックを追加（完了）
-- Phase 5b（フロントエンド）: クライアントラッパー新設 + `TeacherAnalyticsRoute` を `LessonAnalyticsPage` に接続（`LessonAnalyticsAggregateView` と `LessonAnalytics` の型差分を吸収する変換層が必要）（完了）
+- Phase 5a（バックエンド）: `buildLessonAnalytics` にFirestoreの `events`/`responses`/`surveys` を実際にクエリして渡す `getLessonAnalyticsCallable` を新設。教師権限チェックを追加（完了）
+- Phase 5b（フロントエンド）: クライアントラッパー新設 + `TeacherAnalyticsRoute` を `LessonAnalyticsPage` に接続（`LessonAnalyticsAggregateView` と `LessonAnalytics` の型差分を吸収する変換層 `adaptAnalyticsForView` を実装）（完了）
 
 → 詳細計画: [2026-08-17-phase5-teacher-analytics.md](2026-08-17-phase5-teacher-analytics.md)
 
-## Phase 6 — Control Roomからの開始/進行操作
+## Phase 6 — Control Roomからの開始/進行操作（完了）
 
-**重要な発見:** `LessonControlRoom` は表示専用に近く、`TeacherControlRoute` は `onStartLesson`/`onAdvancePhase` を一切渡していない。介入・終了系Callableは配線済みだが、フェーズ進行の主導線が欠けている。
+**ゴール:** 教師が Control Room から「授業を開始」「次のフェーズへ進む」を実際に実行できるようにする。（完了）
 
-- Phase 6a: フェーズグラフ（どのフェーズからどのフェーズへ遷移できるか）を教材の `LessonContent` から解決するロジックを設計
-- Phase 6b: `TeacherControlRoute` に `onStartLesson`/`onAdvancePhase` を配線
+- Phase 6a（バックエンド）: 教材作成UIが `phases` を生成しない制約への暫定措置として、LessonRun作成時に教材の `subject` から固定4フェーズ（`TEACHER_CONTROLLED`）のグラフを自動生成して `templateSnapshot` に保存する `buildDefaultPhases` を実装（完了）
+- Phase 6b（フロントエンド）: `LessonControlRoom` の `onAdvancePhase` に `currentPhaseId` を渡すよう拡張し、`TeacherControlRoute` に `onStartLesson`/`onAdvancePhase` を接続（完了）
+
+> **Phase 6完了時点の既知の制約（次フェーズへの引き継ぎ）:**
+> - フェーズグラフは教材作成UIで編集されたものではなく、LessonRun作成時に自動生成される固定4フェーズ（社会科: intro → market → result → reflection、家庭科: intro → decision → result → reflection）の暫定実装。将来教材作成UIにフェーズエディタが追加されたら置き換える想定。
+
+→ 詳細計画: [2026-08-17-phase6-lesson-start-advance.md](2026-08-17-phase6-lesson-start-advance.md)
 
 ## Phase 7 — インフラ/CD
 
