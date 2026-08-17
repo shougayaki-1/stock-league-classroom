@@ -15,6 +15,7 @@ import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
 import { LessonWaitingPage } from './components/student/LessonWaitingPage'
 import { LessonResultsPage } from './components/student/LessonResultsPage'
+import { LessonAnalyticsPage } from './components/teacher/LessonAnalyticsPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
 import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
@@ -23,6 +24,7 @@ import { MarketPlayScreen } from './components/student/MarketPlayScreen'
 import { subscribeOwnTeamState, subscribePublicRun } from './lib/lessonRuns/liveRepository'
 import type { LessonRunPublicState, LessonRunTeamState } from './lib/lessonRuns/liveTypes'
 import { generateLessonResult, getMyLessonResult, type GetMyLessonResultResult } from './lib/lessonRuns/results'
+import { getLessonAnalytics, type GetLessonAnalyticsResult } from './lib/lessonRuns/analytics'
 import { submitOrder } from './lib/market/submitOrder'
 import type { LessonContent, LessonTemplate } from './lib/lessonTemplates/types'
 import type { LearningGoal, WizardAnswers } from './lib/lessonTemplates/guidedBuilderTypes'
@@ -225,26 +227,6 @@ const GuardLoading = () => (
   </Stack>
 )
 
-/**
- * Placeholder for routes whose guard is real but whose data wiring is not:
- * `LessonAnalyticsPage`(Task15)/`LessonWaitingPage`/`LessonPlayPage`/
- * `LessonResultsPage`(Task12/14) all require fully-resolved data (an
- * analytics aggregate, a lesson title, a participant's own display name...)
- * that no client wrapper in this repo currently produces — confirmed absent
- * for analytics (task-15-report.md: "Callable は追加していない") and for
- * the student screens (`LessonRunPublicState` carries no title/displayName
- * field; task-12-report.md notes no結線コンテナ exists yet). Rendering
- * those components with fabricated placeholder data would be more
- * misleading than this notice, so this task stops at "route exists, guard
- * enforced" and defers the data wiring to a future task, per this task's
- * brief allowing exactly that scope cut.
- */
-const DeferredDataNotice = ({ heading }: { heading: string }) => (
-  <Stack sx={{ width: '100%', maxWidth: 480, p: 4 }} spacing={1}>
-    <Typography variant="h6" component="h1">{heading}</Typography>
-    <Typography variant="body2">アクセス権限を確認しました。この画面のデータ表示は別タスクで実装予定です。</Typography>
-  </Stack>
-)
 
 function TeacherControlRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
@@ -280,9 +262,34 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
 function TeacherAnalyticsRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useTeacherLessonAccess(runId ?? '', services)
+  const [analytics, setAnalytics] = useState<GetLessonAnalyticsResult>()
+
+  useEffect(() => {
+    if (access.status !== 'GRANTED' || !runId) return
+    getLessonAnalytics(services.functions, { lessonRunId: runId }).then(setAnalytics)
+  }, [access.status, runId, services])
+
   if (access.status === 'LOADING') return <GuardLoading />
   if (access.status === 'DENIED') return <Navigate replace to="/about" />
-  return <DeferredDataNotice heading="授業分析" />
+  if (!analytics) return <GuardLoading />
+
+  return <LessonAnalyticsPage
+    lessonTitle={analytics.lessonTitle}
+    totalParticipantCount={analytics.totalParticipantCount}
+    aggregate={{
+      responseCount: analytics.aggregate.responseCount,
+      confirmedResponseCount: analytics.aggregate.confirmedResponseCount,
+      surveyRespondentCount: analytics.aggregate.surveyRespondentCount,
+      rationaleInformationUsageRate: analytics.aggregate.rationaleInformationUsageRate,
+      judgmentChangeCount: analytics.aggregate.judgmentChangeCount,
+      judgmentChangeRate: analytics.aggregate.judgmentChangeRate,
+      comprehensionDifficultyCount: analytics.aggregate.comprehensionDifficultyCount,
+      comprehensionAverage: analytics.aggregate.comprehensionAverage,
+      strugglingParticipantCount: analytics.aggregate.strugglingParticipantCount,
+    }}
+    teams={analytics.teams.map((team) => ({ teamId: team.teamId, teamName: team.teamName }))}
+    individualRows={analytics.individualRows}
+  />
 }
 
 function useTemplateAccess(services: FirebaseServices): AccessStatus {

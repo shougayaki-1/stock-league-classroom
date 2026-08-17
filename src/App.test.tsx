@@ -277,12 +277,29 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('grants a teacher analytics route and shows the deferred-data notice (no analytics client wrapper exists yet)', async () => {
+  it('grants a teacher analytics route and renders computed analytics', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/analytics')
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', teacherRoles: { 'teacher-uid': 'ASSISTANT' } }) })
+    httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
+      if (name === 'getLessonAnalyticsCallable') {
+        return vi.fn().mockResolvedValue({
+          data: {
+            lessonRunId: 'run-1', lessonTitle: '株式投資シミュレーション', totalParticipantCount: 1,
+            aggregate: {
+              responseCount: 0, confirmedResponseCount: 0, surveyRespondentCount: 0,
+              rationaleInformationUsageRate: null, rationaleInformationCounts: {},
+              judgmentChangeCount: null, judgmentChangeRate: null, comprehensionDifficultyCount: null,
+              comprehensionAverage: null, predictionAccuracyAverage: null, strugglingParticipantCount: null,
+            },
+            teams: [], individualRows: [],
+          },
+        })
+      }
+      return callableMock
+    })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
-    expect(await screen.findByRole('heading', { level: 1, name: '授業分析' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: /株式投資シミュレーション/ })).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 
