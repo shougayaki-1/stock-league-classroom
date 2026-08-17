@@ -46,22 +46,21 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <p className="landing-section-kicker">3つの画面で動きます</p>
       <h2 id="landing-overview-title">先生・生徒・教室のスクリーンで、ひとつの授業をつくる</h2>
     </div>
-    <div className="overview-grid">
-      <article className="overview-card">
-        <p className="overview-card-tag">先生の画面</p>
-        <h3>授業を進める</h3>
-        <p>教材を選び、クラスの様子を見ながら次のステップに進めます。</p>
-      </article>
-      <article className="overview-card">
-        <p className="overview-card-tag">生徒の端末</p>
-        <h3>情報を読み、判断する</h3>
-        <p>1人1台でも、チームで1台を共有しても参加できます。</p>
-      </article>
-      <article className="overview-card">
-        <p className="overview-card-tag">教室のスクリーン</p>
-        <h3>問い・結果・解説を共有する</h3>
-        <p>プロジェクターや大型モニターに、クラス全体で見るものを映します。</p>
-      </article>
+    <div className="overview-diagram">
+      <div className="overview-node">
+        <p className="overview-node-tag">先生の画面</p>
+        <p className="overview-node-desc">教材を選び、クラスの様子を見ながら次のステップに進めます。</p>
+      </div>
+      <span className="overview-arrow" aria-hidden="true">→</span>
+      <div className="overview-node overview-node-center">
+        <p className="overview-node-tag">教室のスクリーン</p>
+        <p className="overview-node-desc">プロジェクターや大型モニターに、問い・結果・解説を共有します。</p>
+      </div>
+      <span className="overview-arrow overview-arrow-reverse" aria-hidden="true">←</span>
+      <div className="overview-node">
+        <p className="overview-node-tag">生徒の端末</p>
+        <p className="overview-node-desc">1人1台でも、チームで1台を共有しても参加できます。</p>
+      </div>
     </div>
   </section>
 
@@ -239,23 +238,35 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <h2 id="landing-develop-title">教材を、授業目的に合わせて発展させられる</h2>
       <p>1回作った教材を、50分の1コマにも、複数コマの発展授業にも使えます。</p>
     </div>
-    <div className="develop-grid">
-      <article className="develop-card">
-        <p className="develop-card-label">問いを深くする</p>
-        <p className="develop-card-flow"><strong>選ぶ</strong><span aria-hidden="true"> → </span><strong>比較する</strong><span aria-hidden="true"> → </span><strong>順位をつける</strong><span aria-hidden="true"> → </span><strong>配分する</strong><span aria-hidden="true"> → </span><strong>根拠を説明する</strong></p>
-      </article>
-      <article className="develop-card">
-        <p className="develop-card-label">条件を変える</p>
-        <p>企業数、難易度、情報と需給のバランス、イベントの公開度などを設定し直せます。</p>
-      </article>
-      <article className="develop-card">
-        <p className="develop-card-label">学び方を変える</p>
-        <p className="develop-card-flow"><strong>個人</strong><span aria-hidden="true"> → </span><strong>チーム</strong><span aria-hidden="true"> → </span><strong>クラス</strong></p>
-      </article>
-      <article className="develop-card">
-        <p className="develop-card-label">教材自体を変える</p>
-        <p>企業、ニュース、家庭のプロフィール、ライフイベントなどを編集できます。</p>
-      </article>
+    <div className="develop-diagram">
+      <p className="develop-root">教材</p>
+      <div className="develop-stem" aria-hidden="true" />
+      <div className="develop-branches">
+        <div className="develop-branch">
+          <p className="develop-branch-label">問いを深くする</p>
+          <ul className="develop-branch-leaves">
+            <li>選ぶ</li><li>比較する</li><li>順位をつける</li><li>配分する</li><li>根拠を説明する</li>
+          </ul>
+        </div>
+        <div className="develop-branch">
+          <p className="develop-branch-label">条件を変える</p>
+          <ul className="develop-branch-leaves">
+            <li>企業数</li><li>難易度</li><li>情報と需給のバランス</li><li>イベントの公開度</li>
+          </ul>
+        </div>
+        <div className="develop-branch">
+          <p className="develop-branch-label">学び方を変える</p>
+          <ul className="develop-branch-leaves">
+            <li>個人</li><li>チーム</li><li>クラス</li>
+          </ul>
+        </div>
+        <div className="develop-branch">
+          <p className="develop-branch-label">教材自体を変える</p>
+          <ul className="develop-branch-leaves">
+            <li>企業</li><li>ニュース</li><li>家庭のプロフィール</li><li>ライフイベント</li>
+          </ul>
+        </div>
+      </div>
     </div>
     <p className="develop-example"><span className="develop-example-label">問いを深くする例：</span>「上がると思う？」<span aria-hidden="true"> → </span>「どの会社が最も影響を受ける？」<span aria-hidden="true"> → </span>「100万円をどう配分する？」<span aria-hidden="true"> → </span>「そう判断した理由は？」</p>
   </section>
@@ -307,6 +318,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <p>クラスの状態を見ながら、授業をコントロールできます。</p>
     </div>
     <div className="control-mock" aria-hidden="true">
+      <div className="mock-chrome"><span /><span /><span /></div>
       <div className="control-mock-header"><span>現在：チーム相談</span><span className="control-mock-next">次へ進む</span></div>
       <div className="control-mock-stats">
         <div className="control-mock-callout"><strong>32人</strong><span>参加中</span></div>
@@ -325,12 +337,22 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
       <h2 id="landing-results-title">生徒ごとの判断を、あとから確認できます</h2>
       <p>誰が何を選び、どんな根拠で判断したかを、先生の画面から振り返ることができます。</p>
     </div>
-    <div className="results-grid">
-      <article className="results-card"><strong>生徒ごとの選択</strong><p>誰がどの会社を買った・売った・様子を見たかを確認できます。</p></article>
-      <article className="results-card"><strong>判断の根拠</strong><p>ニュースや企業情報をどれだけ参考にしたかの目安を確認できます。</p></article>
-      <article className="results-card"><strong>予測の的中度</strong><p>生徒の予想と実際の結果がどれだけ一致していたかを確認できます。</p></article>
-      <article className="results-card"><strong>クラス→チーム→個人</strong><p>クラス全体から、気になるチームや生徒だけを選んで詳しく確認できます。</p></article>
+    <div className="analytics-mock" aria-hidden="true">
+      <div className="mock-chrome"><span /><span /><span /></div>
+      <div className="analytics-mock-stats">
+        <div className="analytics-mock-stat"><strong>78%</strong><span>根拠を使った生徒</span></div>
+        <div className="analytics-mock-stat"><strong>12人</strong><span>判断を変更した生徒</span></div>
+        <div className="analytics-mock-stat"><strong>82%</strong><span>予測の的中度</span></div>
+      </div>
+      <div className="analytics-mock-breakdown">
+        <p className="mock-eyebrow">生徒ごとの選択</p>
+        <div className="mock-order-row"><span>A社を買った</span><strong>28人</strong></div>
+        <div className="mock-order-row"><span>様子を見た</span><strong>7人</strong></div>
+        <div className="mock-order-row"><span>売った</span><strong>5人</strong></div>
+      </div>
+      <p className="analytics-mock-drilldown">クラス → チーム → 個人</p>
     </div>
+    <p className="analytics-note">クラス全体から、気になるチームや生徒だけを選んで詳しく確認できます。</p>
   </section>
 
   <section className="landing-quick" aria-labelledby="landing-quick-title">
