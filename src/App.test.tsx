@@ -167,11 +167,11 @@ describe('App', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('states the current Phase A privacy posture', () => {
+  it('states the current beta lesson-platform privacy posture', () => {
     window.history.pushState({}, '', '/privacy')
     render(<App />)
-    expect(screen.getByText(/現在は、生徒の授業データを取得していません/)).toBeInTheDocument()
-    expect(screen.getByText(/保存期間と自動削除は、授業機能の提供開始前に明示/)).toBeInTheDocument()
+    expect(screen.getByText(/匿名のFirebase UID、表示名、チーム所属、セッション情報/)).toBeInTheDocument()
+    expect(screen.getByText(/30日〜10年の範囲で設定します/)).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
 
