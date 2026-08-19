@@ -13,15 +13,15 @@ import { LessonStatusHeader } from './LessonStatusHeader'
 import { ParticipantMonitor } from './ParticipantMonitor'
 import { InterventionPanel, type InterventionApplyInput } from './InterventionPanel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
-import { TeacherGuidanceDialog } from './TeacherGuidanceDialog'
+import { ClassroomMessageDialog } from './ClassroomMessageDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 
 const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
-  START: '開始待機画面',
-  LIVE: '進行中の画面',
-  END: '終了画面',
-  EXPLANATION: '説明スライド',
-  HOUSEHOLD_COMPARISON: 'クラス比較画面',
+  START: '開始待機の画面',
+  LIVE: '授業中の画面',
+  END: '終了の画面',
+  EXPLANATION: '解説の画面',
+  HOUSEHOLD_COMPARISON: 'クラス比較の画面',
 }
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([
@@ -270,7 +270,7 @@ export function LessonControlRoom({
               介入操作を開く
             </Button>
           )}
-          {canEditGuidance && <Button variant="outlined" onClick={() => setGuidanceDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>説明スライドを編集</Button>}
+          {canEditGuidance && <Button variant="outlined" onClick={() => setGuidanceDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>教室表示のメッセージ</Button>}
           {!interrupted && canHandleConnection && (
             <Button variant="outlined" onClick={handleInterrupt} sx={{ minHeight: MIN_TOUCH_TARGET }}>
               授業を安全停止
@@ -313,7 +313,7 @@ export function LessonControlRoom({
         role={role}
         onApply={handleApplyIntervention}
       />
-      {canEditGuidance && <TeacherGuidanceDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
+      {canEditGuidance && <ClassroomMessageDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
     </Stack>
   )
 }

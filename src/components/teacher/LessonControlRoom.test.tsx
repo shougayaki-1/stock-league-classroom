@@ -98,7 +98,7 @@ describe('LessonControlRoom', () => {
     emitDisplay({ mode: 'HOUSEHOLD_COMPARISON', title: 'クラス比較' })
     emitParticipants([])
 
-    expect(screen.getByText(/クラス比較画面/)).toBeInTheDocument()
+    expect(screen.getByText(/クラス比較の画面/)).toBeInTheDocument()
   })
 
   it('a PRIMARY teacher sees the start-lesson CTA while the run is READY and it invokes onStartLesson', async () => {
@@ -357,5 +357,15 @@ describe('LessonControlRoom', () => {
     render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} onGenerateResults={vi.fn()} />)
     emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-3' })
     expect(screen.queryByRole('button', { name: '結果を生成する' })).not.toBeInTheDocument()
+  })
+
+  it('教室表示のメッセージのボタンを新しい用語で表示する', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay({ mode: 'LIVE', title: 'フェーズ1の説明' })
+    emitParticipants([])
+
+    expect(screen.getByRole('button', { name: '教室表示のメッセージ' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '説明スライドを編集' })).not.toBeInTheDocument()
   })
 })

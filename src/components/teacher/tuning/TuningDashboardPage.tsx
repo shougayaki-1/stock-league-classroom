@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Alert, CircularProgress, Stack, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, Typography } from '@mui/material'
+import { Alert, Button, CircularProgress, Stack, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, Typography } from '@mui/material'
 import type { TuningConstantsResponse } from '../../../lib/platformConfig/getTuningConstants'
 
-export interface TuningDashboardPageProps { data: TuningConstantsResponse | undefined; error: string | undefined }
+export interface TuningDashboardPageProps { data: TuningConstantsResponse | undefined; error: string | undefined; onNavigateHome?: () => void }
 interface Row { label: string; value: string; meaning: string; definedIn: string }
 
 const socialRows = (data: TuningConstantsResponse): Row[] => [
@@ -19,10 +19,10 @@ const homeRows = (data: TuningConstantsResponse): Row[] => [
   { label: '年金の所得代替率（%）', value: String(data.homeEconomics.pensionReplacementRatePercentProvisionalDefault), meaning: '退職前収入に対する年金給付の既定割合', definedIn: 'functions/src/homeEconomics/engine/retirement.ts' },
 ]
 
-export function TuningDashboardPage({ data, error }: TuningDashboardPageProps) {
+export function TuningDashboardPage({ data, error, onNavigateHome }: TuningDashboardPageProps) {
   const [tab, setTab] = useState(0)
   if (error) return <Alert severity="error">読み込みに失敗しました</Alert>
   if (!data) return <CircularProgress aria-label="読み込み中" />
   const rows = tab === 0 ? socialRows(data) : homeRows(data)
-  return <Stack spacing={2} sx={{ p: 2 }}><Typography variant="h5">試運転用パラメータ一覧</Typography><Alert severity="info">これらの値はコードで固定されており、変更するにはソースコードの編集と再デプロイが必要です。</Alert><Tabs value={tab} onChange={(_, value) => setTab(value)}><Tab label="社会科" /><Tab label="家庭科" /></Tabs><Table size="small"><TableHead><TableRow><TableCell>項目</TableCell><TableCell>現在値</TableCell><TableCell>意味</TableCell><TableCell>定義場所</TableCell></TableRow></TableHead><TableBody>{rows.map((row) => <TableRow key={row.label}><TableCell>{row.label}</TableCell><TableCell>{row.value}</TableCell><TableCell>{row.meaning}</TableCell><TableCell><code>{row.definedIn}</code></TableCell></TableRow>)}</TableBody></Table></Stack>
+  return <Stack spacing={2} sx={{ p: 2 }}>{onNavigateHome && <Button variant="text" onClick={onNavigateHome} sx={{ alignSelf: 'flex-start' }}>運営者ページへ</Button>}<Typography variant="h5">試運転用パラメータ一覧</Typography><Alert severity="info">これらの値はコードで固定されており、変更するにはソースコードの編集と再デプロイが必要です。</Alert><Tabs value={tab} onChange={(_, value) => setTab(value)}><Tab label="社会科" /><Tab label="家庭科" /></Tabs><Table size="small"><TableHead><TableRow><TableCell>項目</TableCell><TableCell>現在値</TableCell><TableCell>意味</TableCell><TableCell>定義場所</TableCell></TableRow></TableHead><TableBody>{rows.map((row) => <TableRow key={row.label}><TableCell>{row.label}</TableCell><TableCell>{row.value}</TableCell><TableCell>{row.meaning}</TableCell><TableCell><code>{row.definedIn}</code></TableCell></TableRow>)}</TableBody></Table></Stack>
 }
