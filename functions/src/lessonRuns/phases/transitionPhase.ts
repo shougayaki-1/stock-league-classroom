@@ -109,6 +109,12 @@ export interface TransitionPhaseDeps {
    */
   writeCheckpoint: WriteCheckpointFn
   publishResearchDeskProjection?: (lessonRunId: string) => Promise<void>
+  /**
+   * トランザクションのコミット後に教室表示 (`lessonRunDisplay`) と公開状態
+   * (`lessonRunPublic`) を発行し直すフック。`publishResearchDeskProjection`
+   * と同じ「Firestore commit の後に副作用」順序に従う。
+   */
+  publishLessonProjection?: (lessonRunId: string) => Promise<void>
   now?: () => unknown
   /**
    * エポックミリ秒の時計。`now` は `serverOccurredAt` 用の ISO 文字列を返す
@@ -392,6 +398,10 @@ export const transitionPhase = async (
     await deps.publishResearchDeskProjection(input.lessonRunId)
   }
 
+  if (deps.publishLessonProjection) {
+    await deps.publishLessonProjection(input.lessonRunId)
+  }
+
   // Post-commit subject-adapter hook. Fires even on a deduplicated replay
   // (see its JSDoc) — `outcome` is populated identically on both paths.
   if (deps.afterStatusTransition) {
@@ -428,6 +438,7 @@ export const transitionPhaseWithAdminSdk = async (
 ): Promise<TransitionPhaseResult> => {
   const db = getFirestore()
   const { publishResearchDeskProjectionWithAdminSdk } = await import('../../market/researchDeskProjection')
+  const { publishLessonProjectionForRunWithAdminSdk } = await import('../projections/publicProjection')
   const { prepareStatusTransition, afterStatusTransition } = await import('../../homeEconomics/statusTransition')
   const { actorId, actorType, ...rest } = input
   return transitionPhase({
@@ -446,6 +457,7 @@ export const transitionPhaseWithAdminSdk = async (
     actorType,
     writeCheckpoint: writeCheckpointWithAdminSdk,
     publishResearchDeskProjection: publishResearchDeskProjectionWithAdminSdk,
+    publishLessonProjection: publishLessonProjectionForRunWithAdminSdk,
     prepareStatusTransition,
     afterStatusTransition,
   }, rest)

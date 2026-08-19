@@ -152,3 +152,19 @@ export const publishLessonProjectionWithAdminSdk = (
     // changing either writer.
     setDisplayState: async (lessonRunId, state) => { await getDatabase().ref(`lessonRunDisplay/${lessonRunId}`).set(state) },
   }, input)
+
+/**
+ * lessonRunId だけを受け取って教室表示と公開状態を発行し直す本番用の入口。
+ *
+ * `publishLessonProjectionWithAdminSdk` は source を呼び出し側が用意する
+ * 前提だったため誰も呼べていなかった。この関数が `buildProjectionSource` と
+ * 繋いで「授業の状態が変わったらこれを呼ぶ」だけで済むようにする。
+ * lessonRun が存在しない場合は何もしない（削除済み run に対する遅延呼び出しを
+ * エラーにしない）。
+ */
+export const publishLessonProjectionForRunWithAdminSdk = async (lessonRunId: string): Promise<void> => {
+  const { buildProjectionSourceWithAdminSdk } = await import('./buildProjectionSource')
+  const source = await buildProjectionSourceWithAdminSdk(lessonRunId)
+  if (!source) return
+  await publishLessonProjectionWithAdminSdk({ lessonRunId, source })
+}

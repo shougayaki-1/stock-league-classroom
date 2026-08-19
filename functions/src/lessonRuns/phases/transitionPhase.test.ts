@@ -714,3 +714,28 @@ describe('currentPhaseEndsAtMillis', () => {
   })
 })
 
+describe('publishLessonProjection', () => {
+  it('遷移のコミット後に教室表示を発行する', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { status: 'RUNNING', currentPhaseId: 'phase-a' })
+    const published: string[] = []
+
+    await transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+      publishLessonProjection: async (id: string) => { published.push(id) },
+    }, { lessonRunId: 'run-1', targetPhaseId: 'phase-b', reason: '次へ', idempotencyKey: 'tx-pub-1' })
+
+    expect(published).toEqual(['run-1'])
+  })
+
+  it('publishLessonProjection 未設定でも遷移は成功する', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { status: 'RUNNING', currentPhaseId: 'phase-a' })
+
+    await expect(transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+    }, { lessonRunId: 'run-1', targetPhaseId: 'phase-b', reason: '次へ', idempotencyKey: 'tx-pub-2' }))
+      .resolves.toBeDefined()
+  })
+})
+
