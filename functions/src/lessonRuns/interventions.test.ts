@@ -204,6 +204,7 @@ const makeDelegates = () => ({
   reconnectParticipant: vi.fn().mockResolvedValue({ participantId: 'p-1', newAuthUid: 'auth-new', deduplicated: false }),
   transitionPhase: vi.fn().mockResolvedValue({ status: 'RUNNING', currentPhaseId: 'phase-1', deduplicated: false }),
   extendPhaseTimer: vi.fn().mockResolvedValue({ currentPhaseEndsAtMillis: 1_700_000_240_000 }),
+  setDisplayModeOverride: vi.fn().mockResolvedValue({ displayModeOverride: 'EXPLANATION' }),
   stopNewOperations: vi.fn().mockResolvedValue(undefined),
 })
 

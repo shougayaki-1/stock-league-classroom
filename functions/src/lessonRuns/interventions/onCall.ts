@@ -144,6 +144,7 @@ const translateInterventionError = (error: unknown): unknown => {
     if (error.message === 'Phase is no longer current') return new HttpsError('failed-precondition', 'フェーズが既に進んでいます。画面を更新してもう一度お試しください。')
     if (error.message === 'Phase has no timer') return new HttpsError('failed-precondition', 'このフェーズには制限時間がありません。')
     if (error.message.startsWith('additionalSeconds must be between')) return new HttpsError('invalid-argument', error.message)
+    if (error.message === 'Unknown display mode') return new HttpsError('invalid-argument', '指定された画面が存在しません。')
   }
   return error
 }

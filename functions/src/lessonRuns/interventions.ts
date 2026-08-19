@@ -236,7 +236,7 @@ const assertInterventionDetail = (type: LessonInterventionType, detail: Record<s
 const TERMINAL_OR_POST_RUN_STATUSES: LessonRunStatus[] = ['REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED']
 
 /** Intervention types with no delegated existing operation: their only effect is a generic Firestore state write (`after`) alongside the audit event. Phase C/D are expected to give these concrete meaning; Phase B's job (this task) is only to record them auditable and idempotent. */
-const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'HIDE_INFORMATION'])
+const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE', 'HIDE_INFORMATION'])
 
 export interface ApplyTeacherInterventionInput {
   lessonRunId: string
@@ -276,7 +276,8 @@ export interface InterventionDelegates {
   extendPhaseTimer: (input: {
     lessonRunId: string; phaseId: string; additionalSeconds: number; idempotencyKey: string
   }) => Promise<unknown>
-  stopNewOperations: (lessonRunId: string) => Promise<void>
+  setDisplayModeOverride: (input: { lessonRunId: string; displayMode: string | null }) => Promise<unknown>
+  stopNewOperations: (lessonRunId) => Promise<void>
 }
 
 export interface ApplyTeacherInterventionDeps {
@@ -405,11 +406,17 @@ export const applyTeacherIntervention = async (
         idempotencyKey: `intervention:${input.idempotencyKey}`,
       })
       break
+    case 'SWITCH_DISPLAY_MODE':
+      delegatedResult = await deps.delegates.setDisplayModeOverride({
+        lessonRunId: input.lessonRunId,
+        displayMode: (input.detail.displayMode as string | null) ?? null,
+      })
+      break
     case 'EMERGENCY_STOP':
       await deps.delegates.stopNewOperations(input.lessonRunId)
       break
     default:
-      // SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION:
+      // CORRECT_STATE, HIDE_INFORMATION:
       // no existing function to delegate to (see GENERIC_STATE_TYPES).
       break
   }
@@ -513,6 +520,13 @@ export const applyTeacherInterventionWithAdminSdk = (
       const { extendPhaseTimerWithAdminSdk } = await import('./interventions/extendPhaseTimer')
       return extendPhaseTimerWithAdminSdk({
         lessonRunId: i.lessonRunId, phaseId: i.phaseId, additionalSeconds: i.additionalSeconds,
+      })
+    },
+    setDisplayModeOverride: async (i) => {
+      const { setDisplayModeOverrideWithAdminSdk } = await import('./interventions/setDisplayModeOverride')
+      return setDisplayModeOverrideWithAdminSdk({
+        lessonRunId: i.lessonRunId,
+        displayMode: i.displayMode as never,
       })
     },
     stopNewOperations: (lessonRunId) => lifecycleAdapter.stopNewOperations(lessonRunId),
