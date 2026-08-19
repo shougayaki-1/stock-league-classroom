@@ -375,5 +375,18 @@ describe('joinLessonRun', () => {
         expect.objectContaining({ teamId: 'team-a', status: 'ACTIVE', sessionVersion: 1 }),
       )
     })
+
+    it('参加成立後に教室表示を発行する', async () => {
+      const fake = makeFakeFirestore()
+      setUpLessonRun(fake.docs)
+      const published: string[] = []
+      const deps = makeDeps(fake, {
+        publishLessonProjection: async (id: string) => { published.push(id) },
+      })
+
+      await joinLessonRun(deps, baseInput())
+
+      expect(published).toEqual(['run-1'])
+    })
   })
 })

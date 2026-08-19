@@ -14,6 +14,11 @@ export interface TeamFirestoreDeps {
   now?: () => unknown
 }
 
+export interface AssignParticipantToTeamDeps extends TeamFirestoreDeps {
+  /** トランザクションのコミット後に教室表示を発行し直すフック（teams が教室表示に出るため）。 */
+  publishLessonProjection?: (lessonRunId: string) => Promise<void>
+}
+
 export interface AssignParticipantToTeamInput {
   lessonRunId: string
   participantId: ParticipantId
@@ -49,14 +54,14 @@ export interface AssignParticipantToTeamResult {
  * the participant doc, and finally the idempotency doc.
  */
 export const assignParticipantToTeam = async (
-  deps: TeamFirestoreDeps,
+  deps: AssignParticipantToTeamDeps,
   input: AssignParticipantToTeamInput,
 ): Promise<AssignParticipantToTeamResult> => {
   const nowValue = deps.now ? deps.now() : new Date().toISOString()
   const idempotencyPath = `lessonRuns/${input.lessonRunId}/assignTeamIdempotency/${idempotencyDocumentId(input.participantId, input.idempotencyKey)}`
   const requestDigest = computeRequestDigest({ participantId: input.participantId })
 
-  return deps.firestore.runTransaction(async (tx) => {
+  const result = await deps.firestore.runTransaction(async (tx) => {
     // ---- READ PHASE ----
     const existingIdempotency = await tx.get(idempotencyPath)
     if (existingIdempotency.exists) {
@@ -109,6 +114,12 @@ export const assignParticipantToTeam = async (
 
     return { teamId: chosenTeamId, version: newVersion, deduplicated: false }
   })
+
+  if (deps.publishLessonProjection) {
+    await deps.publishLessonProjection(input.lessonRunId)
+  }
+
+  return result
 }
 
 export interface RotateRepresentativeInput {
@@ -235,7 +246,14 @@ export const assignParticipantToTeamWithAdminSdk = (
   input: AssignParticipantToTeamInput & { actorId: string },
 ): Promise<AssignParticipantToTeamResult> => {
   const { actorId, ...rest } = input
-  return assignParticipantToTeam({ firestore: adminSdkFirestore(), actorId }, rest)
+  return assignParticipantToTeam({
+    firestore: adminSdkFirestore(),
+    actorId,
+    publishLessonProjection: async (id) => {
+      const { publishLessonProjectionForRunWithAdminSdk } = await import('../projections/publicProjection')
+      await publishLessonProjectionForRunWithAdminSdk(id)
+    },
+  }, rest)
 }
 
 export const rotateRepresentativeWithAdminSdk = (

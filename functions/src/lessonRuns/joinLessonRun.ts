@@ -90,6 +90,8 @@ export interface JoinLessonRunDeps {
   generateParticipantId: () => string
   /** Called strictly after the Firestore transaction commits successfully. */
   syncMembership: (input: JoinLessonRunSyncMembershipInput) => Promise<unknown>
+  /** トランザクションのコミット後に教室表示を発行し直すフック（teams が教室表示に出るため）。 */
+  publishLessonProjection?: (lessonRunId: string) => Promise<void>
   now?: () => unknown
 }
 
@@ -424,6 +426,10 @@ export const joinLessonRun = async (
     membershipVersion: outcome.membershipVersion,
   })
 
+  if (deps.publishLessonProjection) {
+    await deps.publishLessonProjection(outcome.result.lessonRunId)
+  }
+
   return outcome.result
 }
 
@@ -469,5 +475,9 @@ export const joinLessonRunWithAdminSdk = (
       },
       membershipVersion: syncInput.membershipVersion,
     }),
+    publishLessonProjection: async (id) => {
+      const { publishLessonProjectionForRunWithAdminSdk } = await import('./projections/publicProjection')
+      await publishLessonProjectionForRunWithAdminSdk(id)
+    },
   }, rest)
 }

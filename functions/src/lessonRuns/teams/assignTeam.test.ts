@@ -88,6 +88,19 @@ describe('assignParticipantToTeam', () => {
       { lessonRunId: 'run-1', participantId: 'p-1', idempotencyKey: 'assign-2' },
     )).rejects.toThrow('Participant is already assigned to a team')
   })
+
+  it('チーム割り当て後に教室表示を発行する', async () => {
+    const fake = makeFakeFirestore()
+    setUpTeams(fake.docs)
+    const published: string[] = []
+
+    await assignParticipantToTeam({
+      firestore: fake as never, actorId: 'teacher-1', now: () => 'fixed-now',
+      publishLessonProjection: async (id: string) => { published.push(id) },
+    }, { lessonRunId: 'run-1', participantId: 'p-new', idempotencyKey: 'assign-pub-1' })
+
+    expect(published).toEqual(['run-1'])
+  })
 })
 
 describe('rotateRepresentative', () => {
