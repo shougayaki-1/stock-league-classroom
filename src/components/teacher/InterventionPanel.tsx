@@ -3,6 +3,10 @@ import { Box, Button, Drawer, List, ListItemButton, ListItemText, Stack, TextFie
 import { canApplyIntervention, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
+import { ExtendTimeForm } from './interventionForms/ExtendTimeForm'
+import { DisplayModeForm } from './interventionForms/DisplayModeForm'
+import { HideInformationForm } from './interventionForms/HideInformationForm'
+import { CorrectStateForm } from './interventionForms/CorrectStateForm'
 
 interface DetailFieldSpec {
   key: string
@@ -27,8 +31,8 @@ interface InterventionCatalogEntry {
  */
 const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEntry> = {
   EXTEND_TIME: {
-    label: '時間延長', description: '現在のフェーズの残り時間を延長します',
-    fields: [{ key: 'phaseId', label: 'フェーズID' }, { key: 'additionalSeconds', label: '延長秒数' }],
+    label: '時間を延ばす', description: 'いま進行中のフェーズの残り時間を延ばします',
+    fields: [],
   },
   PROXY_CONFIRM: {
     label: '代理確定', description: '生徒に代わって回答を確定します',
@@ -44,11 +48,11 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
   },
   SWITCH_DISPLAY_MODE: {
     label: '教室表示の画面を切り替える', description: '教室に投影している画面を手動で切り替えます',
-    fields: [{ key: 'displayMode', label: '表示する画面' }],
+    fields: [],
   },
   CORRECT_STATE: {
-    label: '状態の手動修正', description: '内部状態を直接修正します(最終手段。慎重に使用してください)',
-    fields: [{ key: 'targetPath', label: '対象パス' }],
+    label: '名前を直す', description: '生徒の表示名やチーム名の打ち間違いを直します',
+    fields: [],
   },
   RESTORE_PREVIOUS_PHASE: {
     label: '前フェーズへ復元', description: '直前のフェーズへ戻します',
@@ -59,8 +63,8 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
     fields: [],
   },
   HIDE_INFORMATION: {
-    label: '情報の非表示化', description: '公開済みの情報を非表示にします',
-    fields: [{ key: 'informationId', label: '情報ID' }],
+    label: '情報を隠す', description: '公開済みのニュースを一時的に非表示にします',
+    fields: [],
   },
 }
 
@@ -79,6 +83,13 @@ export interface InterventionPanelProps {
   open: boolean
   onClose: () => void
   role: LessonRunRole
+  currentPhaseId: string | null
+  phaseHasTimer: boolean
+  displayModeOverride: string | null
+  informationItems: Array<{ id: string; body: string }>
+  hiddenInformationIds: string[]
+  participants: Array<{ id: string; displayName: string }>
+  teams: Array<{ teamId: string; displayName: string }>
   onApply: (input: InterventionApplyInput) => void
 }
 
@@ -92,7 +103,19 @@ export interface InterventionPanelProps {
  * no disabledReason path in this panel because every visible row IS
  * authorized — the only gate is visibility itself.
  */
-export function InterventionPanel({ open, onClose, role, onApply }: InterventionPanelProps) {
+export function InterventionPanel({
+  open,
+  onClose,
+  role,
+  currentPhaseId,
+  phaseHasTimer,
+  displayModeOverride,
+  informationItems,
+  hiddenInformationIds,
+  participants,
+  teams,
+  onApply,
+}: InterventionPanelProps) {
   const [selected, setSelected] = useState<LessonInterventionType | null>(null)
   const [reason, setReason] = useState('')
   const [detail, setDetail] = useState<Record<string, string>>({})
@@ -132,19 +155,60 @@ export function InterventionPanel({ open, onClose, role, onApply }: Intervention
               multiline
               minRows={2}
             />
-            {selectedEntry.fields.map((field) => (
-              <TextField
-                key={field.key}
-                id={`intervention-detail-${field.key}`}
-                label={field.label}
-                value={detail[field.key] ?? ''}
-                onChange={(e) => setDetail((prev) => ({ ...prev, [field.key]: e.target.value }))}
+            {selected === 'EXTEND_TIME' && (
+              <ExtendTimeForm
+                currentPhaseId={currentPhaseId}
+                hasTimer={phaseHasTimer}
+                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
               />
-            ))}
-            <Stack direction="row" spacing={1}>
-              <Button variant="contained" onClick={handleSubmit} sx={{ minHeight: MIN_TOUCH_TARGET }}>実行</Button>
-              <Button variant="text" onClick={resetForm} sx={{ minHeight: MIN_TOUCH_TARGET }}>戻る</Button>
-            </Stack>
+            )}
+            {selected === 'SWITCH_DISPLAY_MODE' && (
+              <DisplayModeForm
+                currentOverride={displayModeOverride}
+                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+              />
+            )}
+            {selected === 'HIDE_INFORMATION' && (
+              <HideInformationForm
+                informationItems={informationItems}
+                hiddenInformationIds={hiddenInformationIds}
+                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+              />
+            )}
+            {selected === 'CORRECT_STATE' && (
+              <CorrectStateForm
+                participants={participants}
+                teams={teams}
+                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+              />
+            )}
+            {selected === 'EMERGENCY_STOP' && (
+              <Button
+                variant="contained"
+                color="error"
+                sx={{ minHeight: MIN_TOUCH_TARGET }}
+                onClick={handleSubmit}
+              >
+                授業を緊急停止する
+              </Button>
+            )}
+            {selectedEntry.fields.length > 0 && (
+              <>
+                {selectedEntry.fields.map((field) => (
+                  <TextField
+                    key={field.key}
+                    id={`intervention-detail-${field.key}`}
+                    label={field.label}
+                    value={detail[field.key] ?? ''}
+                    onChange={(e) => setDetail((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  />
+                ))}
+                <Stack direction="row" spacing={1}>
+                  <Button variant="contained" onClick={handleSubmit} sx={{ minHeight: MIN_TOUCH_TARGET }}>実行</Button>
+                </Stack>
+              </>
+            )}
+            <Button variant="text" onClick={resetForm} sx={{ minHeight: MIN_TOUCH_TARGET }}>戻る</Button>
           </Stack>
         ) : (
           <List>

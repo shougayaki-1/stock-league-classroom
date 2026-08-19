@@ -256,7 +256,7 @@ describe('LessonControlRoom', () => {
     const emergencyStop = await screen.findByRole('button', { name: /緊急停止/ })
     await user.click(emergencyStop)
     await user.type(screen.getByLabelText('理由'), '不審な操作')
-    await user.click(screen.getByRole('button', { name: '実行' }))
+    await user.click(screen.getByRole('button', { name: '授業を緊急停止する' }))
 
     expect(httpsCallableMock).toHaveBeenCalledWith(functions, 'applyTeacherInterventionCallable')
     expect(callableMock).toHaveBeenCalledWith(

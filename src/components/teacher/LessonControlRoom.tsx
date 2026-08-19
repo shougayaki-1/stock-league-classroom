@@ -142,6 +142,8 @@ export function LessonControlRoom({
   const [participants, setParticipants] = useState<LessonParticipantView[]>([])
   const [interventionOpen, setInterventionOpen] = useState(false)
   const [guidanceDialogOpen, setGuidanceDialogOpen] = useState(false)
+  const [displayModeOverride, setDisplayModeOverride] = useState<string | null>(null)
+  const [hiddenInformationIds, setHiddenInformationIds] = useState<string[]>([])
 
   useEffect(() => subscribePublicRun(database, lessonRunId, setPublicState), [database, lessonRunId])
   useEffect(() => subscribeDisplayRun(database, lessonRunId, setDisplayState), [database, lessonRunId])
@@ -208,27 +210,25 @@ export function LessonControlRoom({
   }, [functions, lessonRunId])
 
   const handleEndLesson = useCallback(() => {
-    // completeLessonCallable's client-facing input is just
-    // {lessonRunId, reason, idempotencyKey} (see lifecycle.ts's
-    // CompleteLessonInput / functions/src/lessonRuns/lifecycle/onCall.ts) —
-    // finalResults/checkpointId are derived server-side by
-    // completeLessonWithAdminSdk, not supplied by the caller. So this screen
-    // has everything it needs to invoke the real "授業を終了" flow (Task 8's
-    // 5-stage completeLesson sequence) instead of interruptLesson (中断).
     void completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
   }, [functions, lessonRunId])
 
   const handleApplyIntervention = useCallback((input: InterventionApplyInput) => {
+    if (input.type === 'SWITCH_DISPLAY_MODE') {
+      setDisplayModeOverride((input.detail.displayMode as string | null) ?? null)
+    }
+    if (input.type === 'HIDE_INFORMATION') {
+      const id = input.detail.informationId as string
+      setHiddenInformationIds((prev) => input.detail.hidden === true
+        ? (prev.includes(id) ? prev : [...prev, id])
+        : prev.filter((item) => item !== id))
+    }
     void applyTeacherIntervention(functions, {
       lessonRunId,
       type: input.type,
       reason: input.reason,
       before: null,
       after: null,
-      // A per-type impact-scope picker (PARTICIPANT/TEAM) is out of this
-      // task's scope — see InterventionPanel.tsx's own comment on generic
-      // detail fields. LESSON is the safe default (broadest, matches "whole
-      // lesson affected" audit semantics) until a bespoke picker exists.
       impactScope: { level: 'LESSON' },
       detail: input.detail,
       idempotencyKey: generateIdempotencyKey(),
@@ -255,12 +255,14 @@ export function LessonControlRoom({
       )}
 
       <LessonStatusHeader
+        status={status}
         phaseLabel={phaseLabel}
-        nextAction={nextAction}
-        noActionReason={noActionReason}
+        interrupted={interrupted}
         participationSummary={participationSummary}
         openIssues={openIssues}
         displayPreview={displayPreview}
+        nextAction={nextAction}
+        noActionReason={noActionReason}
       />
 
       <Box component="section" aria-label="操作">
@@ -311,6 +313,13 @@ export function LessonControlRoom({
         open={interventionOpen}
         onClose={() => setInterventionOpen(false)}
         role={role}
+        currentPhaseId={publicState?.currentPhaseId ?? null}
+        phaseHasTimer={publicState?.remainingPhaseSeconds != null}
+        displayModeOverride={displayModeOverride}
+        informationItems={(publicState?.researchDesk?.informationItems ?? []).map((item) => ({ id: item.id, body: item.body }))}
+        hiddenInformationIds={hiddenInformationIds}
+        participants={participants.map((p) => ({ id: p.id, displayName: p.displayName }))}
+        teams={publicState?.teams ?? []}
         onApply={handleApplyIntervention}
       />
       {canEditGuidance && <ClassroomMessageDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
