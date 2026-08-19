@@ -32,6 +32,8 @@ export interface BuildResearchDeskPublicViewInput {
   phaseId: string | null
   phases?: Array<{ id: string; phaseType: string }>
   socialStudiesMarket?: SocialStudiesMarketContent | null
+  /** 教師が `HIDE_INFORMATION` 介入で非表示にしたニュースの id。未指定は「非表示なし」。 */
+  hiddenInformationIds?: string[]
   nowMillis: number
 }
 
@@ -60,9 +62,11 @@ export const buildResearchDeskPublicView = (
     ? market.companies.map((c) => toCompanyPublicView(c, market.companyDifficultyTier ?? 'BASIC'))
     : []
 
+  const hiddenInformationIds = input.hiddenInformationIds ?? []
   const informationItems: InformationPublicView[] = (availablePanels.includes('NEWS') && market?.informationItems)
     ? market.informationItems
         .filter((item) => item.publishedAtMillis <= input.nowMillis)
+        .filter((item) => !hiddenInformationIds.includes(item.id))
         .map((item) => toInformationPublicView(item))
     : []
 
@@ -86,6 +90,7 @@ export const buildResearchDeskPublicView = (
 export interface PublishResearchDeskProjectionDeps {
   getLessonRun: (lessonRunId: string) => Promise<{
     currentPhaseId?: string | null
+    hiddenInformationIds?: string[]
     templateSnapshot?: {
       phases?: Array<{ id: string; phaseType: string }>
       socialStudiesMarket?: SocialStudiesMarketContent | null
@@ -107,6 +112,7 @@ export const publishResearchDeskProjection = async (
     phaseId: run.currentPhaseId ?? null,
     phases: run.templateSnapshot?.phases,
     socialStudiesMarket: run.templateSnapshot?.socialStudiesMarket,
+    hiddenInformationIds: run.hiddenInformationIds,
     nowMillis,
   })
 
@@ -125,6 +131,7 @@ export const publishResearchDeskProjectionWithAdminSdk = async (
       if (!snap.exists) return null
       return snap.data() as {
         currentPhaseId?: string | null
+        hiddenInformationIds?: string[]
         templateSnapshot?: {
           phases?: Array<{ id: string; phaseType: string }>
           socialStudiesMarket?: SocialStudiesMarketContent | null

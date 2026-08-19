@@ -240,3 +240,25 @@ describe('publishResearchDeskProjection', () => {
     })
   })
 })
+
+const newsDeskInput = {
+  phaseId: 'phase-news',
+  phases: [{ id: 'phase-news', phaseType: 'INFORMATION' }],
+  socialStudiesMarket: fixtureMarketContent,
+  nowMillis: 100_000,
+}
+
+describe('hiddenInformationIds', () => {
+  it('非表示指定のニュースを除外する', () => {
+    const view = buildResearchDeskPublicView({ ...newsDeskInput, hiddenInformationIds: ['info-past'] })
+    expect(view.informationItems.map((item) => item.id)).not.toContain('info-past')
+  })
+
+  it('未指定なら何も除外しない', () => {
+    const withoutHidden = buildResearchDeskPublicView(newsDeskInput)
+    const withEmpty = buildResearchDeskPublicView({ ...newsDeskInput, hiddenInformationIds: [] })
+
+    expect(withoutHidden.informationItems.map((item) => item.id)).toContain('info-past')
+    expect(withEmpty.informationItems).toEqual(withoutHidden.informationItems)
+  })
+})

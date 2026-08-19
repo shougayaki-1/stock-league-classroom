@@ -195,7 +195,7 @@ const REQUIRED_DETAIL: Record<LessonInterventionType, Record<string, unknown>> =
   CORRECT_STATE: { targetPath: 'lessonRuns/run-1/teams/team-a' },
   RESTORE_PREVIOUS_PHASE: { targetPhaseId: 'phase-1' },
   EMERGENCY_STOP: {},
-  HIDE_INFORMATION: { informationId: 'info-1' },
+  HIDE_INFORMATION: { informationId: 'info-1', hidden: true },
 }
 
 const makeDelegates = () => ({
@@ -205,6 +205,7 @@ const makeDelegates = () => ({
   transitionPhase: vi.fn().mockResolvedValue({ status: 'RUNNING', currentPhaseId: 'phase-1', deduplicated: false }),
   extendPhaseTimer: vi.fn().mockResolvedValue({ currentPhaseEndsAtMillis: 1_700_000_240_000 }),
   setDisplayModeOverride: vi.fn().mockResolvedValue({ displayModeOverride: 'EXPLANATION' }),
+  setInformationHidden: vi.fn().mockResolvedValue({ hiddenInformationIds: ['info-1'] }),
   stopNewOperations: vi.fn().mockResolvedValue(undefined),
 })
 

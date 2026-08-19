@@ -222,7 +222,7 @@ const REQUIRED_DETAIL_KEYS: Record<LessonInterventionType, readonly string[]> = 
   CORRECT_STATE: ['targetPath'],
   RESTORE_PREVIOUS_PHASE: ['targetPhaseId'],
   EMERGENCY_STOP: [],
-  HIDE_INFORMATION: ['informationId'],
+  HIDE_INFORMATION: ['informationId', 'hidden'],
 }
 
 const assertInterventionDetail = (type: LessonInterventionType, detail: Record<string, unknown>): void => {
@@ -236,7 +236,7 @@ const assertInterventionDetail = (type: LessonInterventionType, detail: Record<s
 const TERMINAL_OR_POST_RUN_STATUSES: LessonRunStatus[] = ['REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED']
 
 /** Intervention types with no delegated existing operation: their only effect is a generic Firestore state write (`after`) alongside the audit event. Phase C/D are expected to give these concrete meaning; Phase B's job (this task) is only to record them auditable and idempotent. */
-const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE', 'HIDE_INFORMATION'])
+const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE'])
 
 export interface ApplyTeacherInterventionInput {
   lessonRunId: string
@@ -277,6 +277,7 @@ export interface InterventionDelegates {
     lessonRunId: string; phaseId: string; additionalSeconds: number; idempotencyKey: string
   }) => Promise<unknown>
   setDisplayModeOverride: (input: { lessonRunId: string; displayMode: string | null }) => Promise<unknown>
+  setInformationHidden: (input: { lessonRunId: string; informationId: string; hidden: boolean }) => Promise<unknown>
   stopNewOperations: (lessonRunId) => Promise<void>
 }
 
@@ -412,11 +413,18 @@ export const applyTeacherIntervention = async (
         displayMode: (input.detail.displayMode as string | null) ?? null,
       })
       break
+    case 'HIDE_INFORMATION':
+      delegatedResult = await deps.delegates.setInformationHidden({
+        lessonRunId: input.lessonRunId,
+        informationId: input.detail.informationId as string,
+        hidden: input.detail.hidden === true,
+      })
+      break
     case 'EMERGENCY_STOP':
       await deps.delegates.stopNewOperations(input.lessonRunId)
       break
     default:
-      // CORRECT_STATE, HIDE_INFORMATION:
+      // CORRECT_STATE:
       // no existing function to delegate to (see GENERIC_STATE_TYPES).
       break
   }
@@ -456,9 +464,7 @@ export const applyTeacherIntervention = async (
     }, nowValue)
 
     if (GENERIC_STATE_TYPES.has(input.type)) {
-      tx.set(`lessonRuns/${input.lessonRunId}/teacherInterventionState/${input.type}`, {
-        type: input.type, after: input.after, updatedAt: nowValue, updatedBy: deps.actorId,
-      })
+      tx.set(`lessonRuns/${input.lessonRunId}`, { [input.type]: input.after })
     }
 
     const stored: StoredIntervention = { requestDigest, eventId: event.eventId, sequence: event.sequence }
@@ -528,6 +534,10 @@ export const applyTeacherInterventionWithAdminSdk = (
         lessonRunId: i.lessonRunId,
         displayMode: i.displayMode as never,
       })
+    },
+    setInformationHidden: async (i) => {
+      const { setInformationHiddenWithAdminSdk } = await import('./interventions/setInformationHidden')
+      return setInformationHiddenWithAdminSdk(i)
     },
     stopNewOperations: (lessonRunId) => lifecycleAdapter.stopNewOperations(lessonRunId),
   }
