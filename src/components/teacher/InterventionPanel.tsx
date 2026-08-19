@@ -42,9 +42,9 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
     label: '参加者の再接続', description: '参加者を新しい端末に再接続します',
     fields: [{ key: 'participantId', label: '参加者ID' }, { key: 'newAuthUid', label: '新しい認証UID' }],
   },
-  SWITCH_DISPLAY_SLIDE: {
-    label: '教室表示の切り替え', description: '教室の投影表示のスライドを切り替えます',
-    fields: [{ key: 'slideId', label: 'スライドID' }],
+  SWITCH_DISPLAY_MODE: {
+    label: '教室表示の画面を切り替える', description: '教室に投影している画面を手動で切り替えます',
+    fields: [{ key: 'displayMode', label: '表示する画面' }],
   },
   CORRECT_STATE: {
     label: '状態の手動修正', description: '内部状態を直接修正します(最終手段。慎重に使用してください)',
@@ -66,7 +66,7 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
 
 const INTERVENTION_ORDER: LessonInterventionType[] = [
   'EXTEND_TIME', 'PROXY_CONFIRM', 'CHANGE_REPRESENTATIVE', 'RECONNECT_PARTICIPANT',
-  'SWITCH_DISPLAY_SLIDE', 'CORRECT_STATE', 'RESTORE_PREVIOUS_PHASE', 'EMERGENCY_STOP', 'HIDE_INFORMATION',
+  'SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'RESTORE_PREVIOUS_PHASE', 'EMERGENCY_STOP', 'HIDE_INFORMATION',
 ]
 
 export interface InterventionApplyInput {

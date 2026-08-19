@@ -151,7 +151,7 @@ export const lessonInterventionTypes = [
   'PROXY_CONFIRM',
   'CHANGE_REPRESENTATIVE',
   'RECONNECT_PARTICIPANT',
-  'SWITCH_DISPLAY_SLIDE',
+  'SWITCH_DISPLAY_MODE',
   'CORRECT_STATE',
   'RESTORE_PREVIOUS_PHASE',
   'EMERGENCY_STOP',
@@ -180,7 +180,7 @@ export type InterventionImpactScope =
  *    `RECONNECT_PARTICIPANT` mirror the existing `SUPPORT_STUDENT`/
  *    `HANDLE_CONNECTION` tier that participants/onCall.ts already gates
  *    `assignParticipantToTeamCallable`/`rotateRepresentativeCallable`/
- *    `issueRecoveryCodeCallable` on. `SWITCH_DISPLAY_SLIDE` and
+ *    `issueRecoveryCodeCallable` on. `SWITCH_DISPLAY_MODE` and
  *    `HIDE_INFORMATION` mirror `PUBLISH_NOTICE`'s tier (both are
  *    classroom-display-facing actions).
  */
@@ -188,7 +188,7 @@ export const interventionPermissions: Record<Exclude<LessonInterventionType, 'EX
   PROXY_CONFIRM: ['PRIMARY', 'ASSISTANT'],
   CHANGE_REPRESENTATIVE: ['PRIMARY', 'ASSISTANT'],
   RECONNECT_PARTICIPANT: ['PRIMARY', 'ASSISTANT'],
-  SWITCH_DISPLAY_SLIDE: ['PRIMARY', 'ASSISTANT'],
+  SWITCH_DISPLAY_MODE: ['PRIMARY', 'ASSISTANT'],
   CORRECT_STATE: ['PRIMARY'],
   RESTORE_PREVIOUS_PHASE: ['PRIMARY'],
   EMERGENCY_STOP: ['PRIMARY'],
@@ -218,7 +218,7 @@ const REQUIRED_DETAIL_KEYS: Record<LessonInterventionType, readonly string[]> = 
   PROXY_CONFIRM: ['phaseId', 'inputId', 'onBehalfOfParticipantId'],
   CHANGE_REPRESENTATIVE: ['teamId', 'newRepresentativeParticipantId'],
   RECONNECT_PARTICIPANT: ['participantId', 'newAuthUid'],
-  SWITCH_DISPLAY_SLIDE: ['slideId'],
+  SWITCH_DISPLAY_MODE: ['displayMode'],
   CORRECT_STATE: ['targetPath'],
   RESTORE_PREVIOUS_PHASE: ['targetPhaseId'],
   EMERGENCY_STOP: [],
@@ -236,7 +236,7 @@ const assertInterventionDetail = (type: LessonInterventionType, detail: Record<s
 const TERMINAL_OR_POST_RUN_STATUSES: LessonRunStatus[] = ['REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED']
 
 /** Intervention types with no delegated existing operation: their only effect is a generic Firestore state write (`after`) alongside the audit event. Phase C/D are expected to give these concrete meaning; Phase B's job (this task) is only to record them auditable and idempotent. */
-const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['EXTEND_TIME', 'SWITCH_DISPLAY_SLIDE', 'CORRECT_STATE', 'HIDE_INFORMATION'])
+const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['EXTEND_TIME', 'SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'HIDE_INFORMATION'])
 
 export interface ApplyTeacherInterventionInput {
   lessonRunId: string
@@ -323,7 +323,7 @@ interface StoredIntervention {
  *     `appendLessonEventInTransaction` (TEACHER_INTERVENTION_APPLIED,
  *     carrying `before`/`after`/`impactScope`/`detail`/`delegatedResult`),
  *     then — for the 4 types with no delegate (EXTEND_TIME,
- *     SWITCH_DISPLAY_SLIDE, CORRECT_STATE, HIDE_INFORMATION) — a generic
+ *     SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION) — a generic
  *     Firestore state write recording `after` at
  *     `lessonRuns/{id}/teacherInterventionState/{type}`. READ PHASE
  *     (idempotency doc) completes before any write;
@@ -398,7 +398,7 @@ export const applyTeacherIntervention = async (
       await deps.delegates.stopNewOperations(input.lessonRunId)
       break
     default:
-      // EXTEND_TIME, SWITCH_DISPLAY_SLIDE, CORRECT_STATE, HIDE_INFORMATION:
+      // EXTEND_TIME, SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION:
       // no existing function to delegate to (see GENERIC_STATE_TYPES).
       break
   }

@@ -28,28 +28,28 @@ describe('transferPrimaryTeacher (client)', () => {
 
 describe('applyTeacherIntervention (client)', () => {
   it('calls applyTeacherInterventionCallable with the full intervention envelope', async () => {
-    callable.mockResolvedValueOnce({ data: { type: 'SWITCH_DISPLAY_SLIDE', eventId: 'ev-1', deduplicated: false } })
+    callable.mockResolvedValueOnce({ data: { type: 'SWITCH_DISPLAY_MODE', eventId: 'ev-1', deduplicated: false } })
     const functions = {} as Functions
     const result = await applyTeacherIntervention(functions, {
       lessonRunId: 'run-1',
-      type: 'SWITCH_DISPLAY_SLIDE',
-      reason: '次のスライドへ',
-      before: { slideId: 'slide-1' },
-      after: { slideId: 'slide-2' },
+      type: 'SWITCH_DISPLAY_MODE',
+      reason: '画面を切り替え',
+      before: { displayMode: 'LIVE' },
+      after: { displayMode: 'EXPLANATION' },
       impactScope: { level: 'LESSON' },
-      detail: { slideId: 'slide-2' },
+      detail: { displayMode: 'EXPLANATION' },
       idempotencyKey: 'intervention-1',
     })
-    expect(result).toEqual({ type: 'SWITCH_DISPLAY_SLIDE', eventId: 'ev-1', deduplicated: false })
+    expect(result).toEqual({ type: 'SWITCH_DISPLAY_MODE', eventId: 'ev-1', deduplicated: false })
     expect(httpsCallable).toHaveBeenCalledWith(functions, 'applyTeacherInterventionCallable')
     expect(callable).toHaveBeenCalledWith({
       lessonRunId: 'run-1',
-      type: 'SWITCH_DISPLAY_SLIDE',
-      reason: '次のスライドへ',
-      before: { slideId: 'slide-1' },
-      after: { slideId: 'slide-2' },
+      type: 'SWITCH_DISPLAY_MODE',
+      reason: '画面を切り替え',
+      before: { displayMode: 'LIVE' },
+      after: { displayMode: 'EXPLANATION' },
       impactScope: { level: 'LESSON' },
-      detail: { slideId: 'slide-2' },
+      detail: { displayMode: 'EXPLANATION' },
       idempotencyKey: 'intervention-1',
     })
   })

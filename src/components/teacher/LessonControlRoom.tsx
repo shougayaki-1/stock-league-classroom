@@ -194,7 +194,7 @@ export function LessonControlRoom({
   const hasAnyIntervention = useMemo(() => {
     const types: LessonInterventionType[] = [
       'EXTEND_TIME', 'PROXY_CONFIRM', 'CHANGE_REPRESENTATIVE', 'RECONNECT_PARTICIPANT',
-      'SWITCH_DISPLAY_SLIDE', 'CORRECT_STATE', 'RESTORE_PREVIOUS_PHASE', 'EMERGENCY_STOP', 'HIDE_INFORMATION',
+      'SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'RESTORE_PREVIOUS_PHASE', 'EMERGENCY_STOP', 'HIDE_INFORMATION',
     ]
     return types.some((type) => canApplyIntervention(role, type))
   }, [role])

@@ -169,7 +169,7 @@ describe('canApplyIntervention', () => {
   )
 
   it.each([
-    'PROXY_CONFIRM', 'CHANGE_REPRESENTATIVE', 'RECONNECT_PARTICIPANT', 'SWITCH_DISPLAY_SLIDE', 'HIDE_INFORMATION',
+    'PROXY_CONFIRM', 'CHANGE_REPRESENTATIVE', 'RECONNECT_PARTICIPANT', 'SWITCH_DISPLAY_MODE', 'HIDE_INFORMATION',
   ] as const)('%s is allowed for PRIMARY and ASSISTANT but not VIEWER', (type) => {
     expect(canApplyIntervention('PRIMARY', type)).toBe(true)
     expect(canApplyIntervention('ASSISTANT', type)).toBe(true)
@@ -191,7 +191,7 @@ const REQUIRED_DETAIL: Record<LessonInterventionType, Record<string, unknown>> =
   PROXY_CONFIRM: { phaseId: 'phase-2', inputId: 'input-1', onBehalfOfParticipantId: 'p-1' },
   CHANGE_REPRESENTATIVE: { teamId: 'team-a', newRepresentativeParticipantId: 'p-2' },
   RECONNECT_PARTICIPANT: { participantId: 'p-1', newAuthUid: 'auth-new' },
-  SWITCH_DISPLAY_SLIDE: { slideId: 'slide-3' },
+  SWITCH_DISPLAY_MODE: { displayMode: 'EXPLANATION' },
   CORRECT_STATE: { targetPath: 'lessonRuns/run-1/teams/team-a' },
   RESTORE_PREVIOUS_PHASE: { targetPhaseId: 'phase-1' },
   EMERGENCY_STOP: {},
@@ -257,7 +257,7 @@ describe('applyTeacherIntervention', () => {
       firestore: fake as never, actorId: 'teacher-primary', now: () => 'fixed-now',
       loadRunContext: async () => ({ orgId: 'org-1', status: 'RUNNING' }),
       delegates,
-    }, { ...baseEnvelope, type: 'SWITCH_DISPLAY_SLIDE', detail: REQUIRED_DETAIL.SWITCH_DISPLAY_SLIDE, idempotencyKey: 'ev-1' })
+    }, { ...baseEnvelope, type: 'SWITCH_DISPLAY_MODE', detail: REQUIRED_DETAIL.SWITCH_DISPLAY_MODE, idempotencyKey: 'ev-1' })
 
     const eventKey = [...fake.docs.keys()].find((k) => k.includes('/events/'))
     const event = fake.docs.get(eventKey as string) as { type: string; actorType: string; actorId: string; payload: Record<string, unknown> }
@@ -265,12 +265,12 @@ describe('applyTeacherIntervention', () => {
     expect(event.actorType).toBe('TEACHER')
     expect(event.actorId).toBe('teacher-primary')
     expect(event.payload).toMatchObject({
-      interventionType: 'SWITCH_DISPLAY_SLIDE',
+      interventionType: 'SWITCH_DISPLAY_MODE',
       reason: baseEnvelope.reason,
       before: baseEnvelope.before,
       after: baseEnvelope.after,
       impactScope: baseEnvelope.impactScope,
-      detail: REQUIRED_DETAIL.SWITCH_DISPLAY_SLIDE,
+      detail: REQUIRED_DETAIL.SWITCH_DISPLAY_MODE,
     })
   })
 
@@ -380,12 +380,32 @@ describe('applyTeacherIntervention', () => {
       loadRunContext: async () => ({ orgId: 'org-1', status: 'RUNNING' as const }),
       delegates,
     }
-    const input = { ...baseEnvelope, type: 'SWITCH_DISPLAY_SLIDE' as const, detail: REQUIRED_DETAIL.SWITCH_DISPLAY_SLIDE, idempotencyKey: 'dedupe-1' }
+    const input = { ...baseEnvelope, type: 'SWITCH_DISPLAY_MODE' as const, detail: REQUIRED_DETAIL.SWITCH_DISPLAY_MODE, idempotencyKey: 'dedupe-1' }
     const first = await applyTeacherIntervention(deps, input)
     const retry = await applyTeacherIntervention(deps, input)
     expect(retry.deduplicated).toBe(true)
     expect(retry.eventId).toBe(first.eventId)
     const events = [...fake.docs.keys()].filter((k) => k.includes('/events/'))
     expect(events).toHaveLength(1)
+  })
+
+  describe('SWITCH_DISPLAY_MODE', () => {
+    it('lessonInterventionTypes に SWITCH_DISPLAY_MODE を含み SWITCH_DISPLAY_SLIDE を含まない', () => {
+      expect(lessonInterventionTypes as readonly string[]).toContain('SWITCH_DISPLAY_MODE')
+      expect(lessonInterventionTypes as readonly string[]).not.toContain('SWITCH_DISPLAY_SLIDE')
+    })
+
+    it('detail に displayMode が無ければ拒否する', async () => {
+      const fake = makeFakeFirestore()
+      setUpRun(fake.docs)
+
+      await expect(applyTeacherIntervention({
+        firestore: fake as never,
+        actorId: 'teacher-primary',
+        now: () => 'fixed-now',
+        loadRunContext: async () => ({ orgId: 'org-1', status: 'RUNNING' }),
+        delegates: makeDelegates(),
+      }, { ...baseEnvelope, type: 'SWITCH_DISPLAY_MODE' as never, detail: {} })).rejects.toThrow(/displayMode/)
+    })
   })
 })

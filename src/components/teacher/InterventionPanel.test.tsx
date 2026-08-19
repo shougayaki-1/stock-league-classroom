@@ -6,7 +6,7 @@ import { InterventionPanel } from './InterventionPanel'
 describe('InterventionPanel', () => {
   it('PRIMARY sees all 9 intervention types', () => {
     render(<InterventionPanel open role="PRIMARY" onClose={vi.fn()} onApply={vi.fn()} />)
-    for (const label of ['時間延長', '代理確定', '代表者変更', '参加者の再接続', '教室表示の切り替え', '状態の手動修正', '前フェーズへ復元', '緊急停止', '情報の非表示化']) {
+    for (const label of ['時間延長', '代理確定', '代表者変更', '参加者の再接続', '教室表示の画面を切り替える', '状態の手動修正', '前フェーズへ復元', '緊急停止', '情報の非表示化']) {
       expect(screen.getByRole('button', { name: new RegExp(label) })).toBeInTheDocument()
     }
   })

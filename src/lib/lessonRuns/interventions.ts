@@ -14,7 +14,7 @@ export type LessonInterventionType =
   | 'PROXY_CONFIRM'
   | 'CHANGE_REPRESENTATIVE'
   | 'RECONNECT_PARTICIPANT'
-  | 'SWITCH_DISPLAY_SLIDE'
+  | 'SWITCH_DISPLAY_MODE'
   | 'CORRECT_STATE'
   | 'RESTORE_PREVIOUS_PHASE'
   | 'EMERGENCY_STOP'
@@ -33,7 +33,7 @@ export const interventionPermissions: Record<Exclude<LessonInterventionType, 'EX
   PROXY_CONFIRM: ['PRIMARY', 'ASSISTANT'],
   CHANGE_REPRESENTATIVE: ['PRIMARY', 'ASSISTANT'],
   RECONNECT_PARTICIPANT: ['PRIMARY', 'ASSISTANT'],
-  SWITCH_DISPLAY_SLIDE: ['PRIMARY', 'ASSISTANT'],
+  SWITCH_DISPLAY_MODE: ['PRIMARY', 'ASSISTANT'],
   CORRECT_STATE: ['PRIMARY'],
   RESTORE_PREVIOUS_PHASE: ['PRIMARY'],
   EMERGENCY_STOP: ['PRIMARY'],
@@ -97,7 +97,7 @@ export interface ApplyTeacherInterventionResult {
  * Client wrapper for the applyTeacherInterventionCallable Callable —
  * covers all 9 §6.5 mid-lesson teacher interventions (EXTEND_TIME,
  * PROXY_CONFIRM, CHANGE_REPRESENTATIVE, RECONNECT_PARTICIPANT,
- * SWITCH_DISPLAY_SLIDE, CORRECT_STATE, RESTORE_PREVIOUS_PHASE,
+ * SWITCH_DISPLAY_MODE, CORRECT_STATE, RESTORE_PREVIOUS_PHASE,
  * EMERGENCY_STOP, HIDE_INFORMATION) through one shared envelope, matching
  * the server-side `applyTeacherIntervention`'s single-dispatcher shape
  * (functions/src/lessonRuns/interventions.ts). `actorId` is resolved
