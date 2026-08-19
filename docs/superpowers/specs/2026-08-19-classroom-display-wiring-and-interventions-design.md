@@ -215,7 +215,14 @@ type CorrectStateTarget = 'PARTICIPANT_DISPLAY_NAME' | 'TEAM_DISPLAY_NAME'
 
 ### 5. 監査ログの互換
 
-既存の `TEACHER_INTERVENTION_APPLIED` イベントには `interventionType: 'SWITCH_DISPLAY_SLIDE'` と `detail.slideId` が残り得る。イベントを読む側（分析画面・運営者画面）で旧文字列を新表示名へ写像する読み出し互換を1箇所に置く。過去イベントのマイグレーションは行わない（監査記録は不変であるべきため）。
+既存の `TEACHER_INTERVENTION_APPLIED` イベントには `interventionType: 'SWITCH_DISPLAY_SLIDE'` と `detail.slideId` が残り得る。
+
+コードベースを確認した結果、`interventionType` を読む箇所は次の2つのみで、いずれも旧文字列の影響を受けない。
+
+- `functions/src/lessonRuns/analytics/buildAnalytics.ts` — `PROXY_CONFIRM` / `RECONNECT_PARTICIPANT` のみを数える
+- `functions/src/lessonRuns/results/buildResults.ts` — `interventionType` を読まず `reason` のみ読む
+
+イベントログを表示するUIは存在しない。したがって**読み出し互換の写像は実装しない**（使われないコードを作らない）。過去イベントのマイグレーションも行わない（監査記録は不変であるべきため）。将来イベントログ閲覧UIを作る際に、その時点で必要な写像を実装する。
 
 ### 6. 検証
 
