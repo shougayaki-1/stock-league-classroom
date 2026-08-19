@@ -678,3 +678,39 @@ describe('transitionPhase', () => {
   })
 })
 
+const timedTemplateSnapshot = {
+  phases: [
+    { id: 'phase-intro', type: 'INTRO', progression: 'TIMED', durationSeconds: 300, nextPhaseIds: ['phase-market'], displayConfig: {} },
+    { id: 'phase-market', type: 'MARKET', progression: 'TIMED', durationSeconds: 600, nextPhaseIds: ['phase-discussion'], displayConfig: {} },
+    { id: 'phase-discussion', type: 'DISCUSSION', progression: 'TEACHER_CONTROLLED', nextPhaseIds: [], displayConfig: {} },
+  ],
+}
+
+describe('currentPhaseEndsAtMillis', () => {
+  it('durationSeconds を持つフェーズへ移ると終了時刻を書く', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { status: 'RUNNING', currentPhaseId: 'phase-intro', templateSnapshot: timedTemplateSnapshot })
+
+    await transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+      now: () => 'fixed-now', nowMillis: () => 1_700_000_000_000,
+    }, { lessonRunId: 'run-1', targetPhaseId: 'phase-market', reason: '次へ', idempotencyKey: 'tx-ends-1' })
+
+    const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+    expect(run.currentPhaseEndsAtMillis).toBe(1_700_000_000_000 + 600 * 1000)
+  })
+
+  it('durationSeconds を持たないフェーズへ移ると null を書く', async () => {
+    const fake = makeFakeFirestore()
+    setUpRun(fake.docs, { status: 'RUNNING', currentPhaseId: 'phase-intro', templateSnapshot: timedTemplateSnapshot })
+
+    await transitionPhase({
+      firestore: fake as never, actorId: 'teacher-1', writeCheckpoint: vi.fn(),
+      now: () => 'fixed-now', nowMillis: () => 1_700_000_000_000,
+    }, { lessonRunId: 'run-1', targetPhaseId: 'phase-discussion', reason: '次へ', idempotencyKey: 'tx-ends-2' })
+
+    const run = fake.docs.get('lessonRuns/run-1') as Record<string, unknown>
+    expect(run.currentPhaseEndsAtMillis).toBeNull()
+  })
+})
+

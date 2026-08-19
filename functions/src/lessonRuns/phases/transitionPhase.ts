@@ -110,6 +110,11 @@ export interface TransitionPhaseDeps {
   writeCheckpoint: WriteCheckpointFn
   publishResearchDeskProjection?: (lessonRunId: string) => Promise<void>
   now?: () => unknown
+  /**
+   * エポックミリ秒の時計。`now` は `serverOccurredAt` 用の ISO 文字列を返す
+   * 別物なので、フェーズ終了時刻の計算にはこちらを使う。
+   */
+  nowMillis?: () => number
 }
 
 /**
@@ -220,6 +225,7 @@ export const transitionPhase = async (
   }
 
   const nowValue = deps.now ? deps.now() : new Date().toISOString()
+  const nowMillisValue = deps.nowMillis ? deps.nowMillis() : Date.now()
   const idempotencyPath = `lessonRuns/${input.lessonRunId}/transitionPhaseIdempotency/${idempotencyDocumentId(input.lessonRunId, input.idempotencyKey)}`
   const requestDigest = computeRequestDigest({
     targetStatus: input.targetStatus ?? null,
@@ -308,6 +314,16 @@ export const transitionPhase = async (
     const newStatus = input.targetStatus ?? run.status
     const newPhaseId = input.targetPhaseId ?? run.currentPhaseId
 
+    // 新フェーズに制限時間があれば終了時刻を確定する。無ければ null。
+    // 読み側 (publicProjection.ts の remainingPhaseSeconds) は既に実装済みで、
+    // これまでこの値を書くコードが無かったため常にカウントダウンが出なかった。
+    const newPhase = run.templateSnapshot?.phases?.find((phase) => phase.id === newPhaseId)
+    const durationSeconds = newPhase?.durationSeconds
+    const currentPhaseEndsAtMillis =
+      typeof durationSeconds === 'number' && durationSeconds > 0
+        ? nowMillisValue + durationSeconds * 1000
+        : null
+
     const startedAt =
       newStatus === 'RUNNING' && run.startedAt == null
         ? nowValue
@@ -350,7 +366,7 @@ export const transitionPhase = async (
       tx.delete(quotaReservationPathToDelete)
     }
     for (const write of preparedWrites) tx.set(write.path, write.data)
-    tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId, startedAt, endedAt })
+    tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId, startedAt, endedAt, currentPhaseEndsAtMillis })
     const stored: StoredTransition = { requestDigest, status: newStatus, currentPhaseId: newPhaseId, sequence: lastSequence }
     tx.set(idempotencyPath, stored as unknown as Record<string, unknown>)
 
