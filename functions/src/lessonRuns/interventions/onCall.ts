@@ -145,6 +145,9 @@ const translateInterventionError = (error: unknown): unknown => {
     if (error.message === 'Phase has no timer') return new HttpsError('failed-precondition', 'このフェーズには制限時間がありません。')
     if (error.message.startsWith('additionalSeconds must be between')) return new HttpsError('invalid-argument', error.message)
     if (error.message === 'Unknown display mode') return new HttpsError('invalid-argument', '指定された画面が存在しません。')
+    if (error.message === 'Unsupported correction target') return new HttpsError('invalid-argument', 'この項目は修正できません。')
+    if (error.message.startsWith('displayName must be')) return new HttpsError('invalid-argument', '名前は1〜50文字で入力してください。')
+    if (error.message === 'targetId is required') return new HttpsError('invalid-argument', '修正の対象を選んでください。')
   }
   return error
 }

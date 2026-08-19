@@ -219,7 +219,7 @@ const REQUIRED_DETAIL_KEYS: Record<LessonInterventionType, readonly string[]> = 
   CHANGE_REPRESENTATIVE: ['teamId', 'newRepresentativeParticipantId'],
   RECONNECT_PARTICIPANT: ['participantId', 'newAuthUid'],
   SWITCH_DISPLAY_MODE: ['displayMode'],
-  CORRECT_STATE: ['targetPath'],
+  CORRECT_STATE: ['target', 'targetId', 'displayName'],
   RESTORE_PREVIOUS_PHASE: ['targetPhaseId'],
   EMERGENCY_STOP: [],
   HIDE_INFORMATION: ['informationId', 'hidden'],
@@ -234,9 +234,6 @@ const assertInterventionDetail = (type: LessonInterventionType, detail: Record<s
 
 /** Statuses from which a lesson can never move backward — restoring a previous phase would violate the global "REFLECTION は戻さない" constraint. */
 const TERMINAL_OR_POST_RUN_STATUSES: LessonRunStatus[] = ['REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED']
-
-/** Intervention types with no delegated existing operation: their only effect is a generic Firestore state write (`after`) alongside the audit event. Phase C/D are expected to give these concrete meaning; Phase B's job (this task) is only to record them auditable and idempotent. */
-const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE'])
 
 export interface ApplyTeacherInterventionInput {
   lessonRunId: string
@@ -278,6 +275,7 @@ export interface InterventionDelegates {
   }) => Promise<unknown>
   setDisplayModeOverride: (input: { lessonRunId: string; displayMode: string | null }) => Promise<unknown>
   setInformationHidden: (input: { lessonRunId: string; informationId: string; hidden: boolean }) => Promise<unknown>
+  correctState: (input: { lessonRunId: string; target: string; targetId: string; displayName: string }) => Promise<unknown>
   stopNewOperations: (lessonRunId) => Promise<void>
 }
 
@@ -420,12 +418,19 @@ export const applyTeacherIntervention = async (
         hidden: input.detail.hidden === true,
       })
       break
+    case 'CORRECT_STATE':
+      delegatedResult = await deps.delegates.correctState({
+        lessonRunId: input.lessonRunId,
+        target: input.detail.target as string,
+        targetId: input.detail.targetId as string,
+        displayName: input.detail.displayName as string,
+      })
+      break
     case 'EMERGENCY_STOP':
       await deps.delegates.stopNewOperations(input.lessonRunId)
       break
     default:
-      // CORRECT_STATE:
-      // no existing function to delegate to (see GENERIC_STATE_TYPES).
+      // 到達しない: 9種すべてが上の case で delegate を持つ。
       break
   }
 
@@ -462,10 +467,6 @@ export const applyTeacherIntervention = async (
       },
       idempotencyKey: `applied:${input.idempotencyKey}`,
     }, nowValue)
-
-    if (GENERIC_STATE_TYPES.has(input.type)) {
-      tx.set(`lessonRuns/${input.lessonRunId}`, { [input.type]: input.after })
-    }
 
     const stored: StoredIntervention = { requestDigest, eventId: event.eventId, sequence: event.sequence }
     tx.set(idempotencyPath, stored as unknown as Record<string, unknown>)
@@ -538,6 +539,12 @@ export const applyTeacherInterventionWithAdminSdk = (
     setInformationHidden: async (i) => {
       const { setInformationHiddenWithAdminSdk } = await import('./interventions/setInformationHidden')
       return setInformationHiddenWithAdminSdk(i)
+    },
+    correctState: async (i) => {
+      const { correctStateWithAdminSdk } = await import('./interventions/correctState')
+      return correctStateWithAdminSdk({
+        lessonRunId: i.lessonRunId, target: i.target as never, targetId: i.targetId, displayName: i.displayName,
+      })
     },
     stopNewOperations: (lessonRunId) => lifecycleAdapter.stopNewOperations(lessonRunId),
   }

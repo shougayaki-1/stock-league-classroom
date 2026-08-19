@@ -192,7 +192,7 @@ const REQUIRED_DETAIL: Record<LessonInterventionType, Record<string, unknown>> =
   CHANGE_REPRESENTATIVE: { teamId: 'team-a', newRepresentativeParticipantId: 'p-2' },
   RECONNECT_PARTICIPANT: { participantId: 'p-1', newAuthUid: 'auth-new' },
   SWITCH_DISPLAY_MODE: { displayMode: 'EXPLANATION' },
-  CORRECT_STATE: { targetPath: 'lessonRuns/run-1/teams/team-a' },
+  CORRECT_STATE: { target: 'TEAM_DISPLAY_NAME', targetId: 'team-a', displayName: 'Aチーム' },
   RESTORE_PREVIOUS_PHASE: { targetPhaseId: 'phase-1' },
   EMERGENCY_STOP: {},
   HIDE_INFORMATION: { informationId: 'info-1', hidden: true },
@@ -206,6 +206,7 @@ const makeDelegates = () => ({
   extendPhaseTimer: vi.fn().mockResolvedValue({ currentPhaseEndsAtMillis: 1_700_000_240_000 }),
   setDisplayModeOverride: vi.fn().mockResolvedValue({ displayModeOverride: 'EXPLANATION' }),
   setInformationHidden: vi.fn().mockResolvedValue({ hiddenInformationIds: ['info-1'] }),
+  correctState: vi.fn().mockResolvedValue({ target: 'TEAM_DISPLAY_NAME', targetId: 'team-a', displayName: 'Aチーム' }),
   stopNewOperations: vi.fn().mockResolvedValue(undefined),
 })
 
