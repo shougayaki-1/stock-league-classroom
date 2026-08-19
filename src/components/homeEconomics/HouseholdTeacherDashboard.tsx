@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Box, Button, Stack, Typography } from '@mui/material'
+import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import type {
   HouseholdTeacherDashboard as HouseholdTeacherDashboardType,
   HouseholdTeacherRow,
@@ -464,8 +465,9 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               {selectedIndividualHousehold.submittedForRoundIndex
                 ? `第${selectedIndividualHousehold.roundIndex + 1}ラウンドの決算を実行します。`
                 : (
-                  <Box component="span" sx={{ display: 'block', fontWeight: 600, color: 'warning.dark', bgcolor: 'warning.light', p: 1, borderRadius: 1, border: 1, borderColor: 'warning.main' }}>
-                    ⚠️ このチームは意思決定を未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。
+                  <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, color: 'warning.dark', bgcolor: 'warning.light', p: 1, borderRadius: 1, border: 1, borderColor: 'warning.main' }}>
+                    <WarningAmberIcon fontSize="small" />
+                    このチームは意思決定を未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。
                   </Box>
                 )}
             </Typography>

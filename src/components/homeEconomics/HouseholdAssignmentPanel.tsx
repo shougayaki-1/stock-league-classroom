@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Box, Button, IconButton, Stack, Typography } from '@mui/material'
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import type {
   HouseholdAssignmentView,
 } from '../../lib/homeEconomics/householdAssignment'
@@ -286,18 +288,18 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
                                 aria-label={`${team.teamDisplayName} ${entry.profileId} を上に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'up')}
                                 disabled={busy || index === 0}
-                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1, px: 0.75, fontSize: '0.75rem' }}
+                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1 }}
                               >
-                                ↑
+                                <ArrowUpwardIcon fontSize="inherit" />
                               </IconButton>
                               <IconButton
                                 size="small"
                                 aria-label={`${team.teamDisplayName} ${entry.profileId} を下に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'down')}
                                 disabled={busy || index === sortedEntries.length - 1}
-                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1, px: 0.75, fontSize: '0.75rem' }}
+                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1 }}
                               >
-                                ↓
+                                <ArrowDownwardIcon fontSize="inherit" />
                               </IconButton>
                             </Stack>
                           )}

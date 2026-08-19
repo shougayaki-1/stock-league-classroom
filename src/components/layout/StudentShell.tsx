@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from 'react-router'
 import { AppBar, Box, Toolbar, Typography } from '@mui/material'
+import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import { getStudentStepTitle } from './navConfig'
 
 /**
@@ -19,7 +20,7 @@ export function StudentShell() {
           <Typography sx={{ fontWeight: 800, color: 'primary.dark', flexShrink: 0 }}>
             Stock League Classroom
           </Typography>
-          <Typography color="text.secondary" sx={{ mx: 1 }} aria-hidden>›</Typography>
+          <ChevronRightIcon fontSize="small" sx={{ color: 'text.secondary' }} aria-hidden />
           <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 700 }}>{stepTitle}</Typography>
         </Toolbar>
       </AppBar>

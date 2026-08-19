@@ -18,6 +18,7 @@ import {
   useTheme,
 } from '@mui/material'
 import MenuIcon from '@mui/icons-material/Menu'
+import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import { TEACHER_NAV_SECTIONS, getPageTitle } from './navConfig'
 
 const DRAWER_WIDTH = 232
@@ -87,7 +88,7 @@ export function TeacherShell() {
           <Typography component={RouterLink} to="/teacher" sx={{ fontWeight: 800, color: 'primary.dark', textDecoration: 'none', flexShrink: 0 }}>
             Stock League Classroom
           </Typography>
-          <Typography color="text.secondary" sx={{ mx: 1 }} aria-hidden>›</Typography>
+          <ChevronRightIcon fontSize="small" sx={{ color: 'text.secondary' }} aria-hidden />
           <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 700 }}>{pageTitle}</Typography>
         </Toolbar>
       </AppBar>
