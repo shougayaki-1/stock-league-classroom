@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { Box, Button, IconButton, Stack, Typography } from '@mui/material'
 import type {
   HouseholdAssignmentView,
 } from '../../lib/homeEconomics/householdAssignment'
@@ -40,6 +41,35 @@ const buildLocalEntries = (assignment: HouseholdAssignmentView): Record<string, 
   }
   return map
 }
+
+const StatusChip = ({ label, tone }: { label: string; tone: 'neutral' | 'success' | 'error' }) => (
+  <Box
+    component="span"
+    sx={{
+      px: 1, py: 0.25, borderRadius: 4, fontSize: '0.75rem', fontWeight: 600,
+      bgcolor: tone === 'success' ? 'success.light' : tone === 'error' ? 'error.light' : 'grey.100',
+      color: tone === 'success' ? 'success.dark' : tone === 'error' ? 'error.dark' : 'text.secondary',
+    }}
+  >
+    {label}
+  </Box>
+)
+
+const NoticeBanner = ({ tone, children, testId }: { tone: 'warning' | 'neutral'; children: React.ReactNode; testId?: string }) => (
+  <Typography
+    variant="caption"
+    component="p"
+    data-testid={testId}
+    sx={{
+      fontWeight: 600, px: 1, py: 0.5, borderRadius: 1.5, border: 1,
+      bgcolor: tone === 'warning' ? 'warning.light' : 'grey.50',
+      borderColor: tone === 'warning' ? 'warning.main' : 'grey.300',
+      color: tone === 'warning' ? 'warning.dark' : 'text.secondary',
+    }}
+  >
+    {children}
+  </Typography>
+)
 
 export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> = ({
   assignment,
@@ -149,100 +179,83 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
 
   if (assignment.state === 'UNPREPARED') {
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-3">
-        <h3 className="text-lg font-bold text-gray-900">家庭の割り当て</h3>
-        <p className="text-sm text-gray-600">
+      <Stack spacing={1.5} sx={{ bgcolor: 'background.paper', borderRadius: '12px', boxShadow: 1, border: 1, borderColor: 'grey.200', p: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>家庭の割り当て</Typography>
+        <Typography variant="body2" color="text.secondary">
           このコース形式（{COURSE_FORMAT_LABEL[assignment.courseFormat]}）では、授業開始前にチームへの家庭プロフィール割り当てを準備する必要があります。
-        </p>
+        </Typography>
         {isPrimaryTeacher ? (
-          <button
-            type="button"
-            onClick={handlePrepare}
+          <Button
+            variant="contained"
+            onClick={() => { void handlePrepare() }}
             disabled={busy}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
+            sx={{ alignSelf: 'flex-start' }}
           >
             {busy ? '準備中...' : '割り当てを準備する'}
-          </button>
+          </Button>
         ) : (
-          <p className="text-xs text-gray-400">主担当の教師が割り当てを準備するまでお待ちください。</p>
+          <Typography variant="caption" color="text.disabled">主担当の教師が割り当てを準備するまでお待ちください。</Typography>
         )}
-      </div>
+      </Stack>
     )
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-lg font-bold text-gray-900">家庭の割り当て</h3>
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
-            {STATE_LABEL[assignment.state]}
-          </span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              assignment.validationStatus === 'READY'
-                ? 'bg-green-100 text-green-800'
-                : 'bg-red-100 text-red-700'
-            }`}
-          >
-            検証状況: {assignment.validationStatus === 'READY' ? '準備完了' : '要修正'}
-          </span>
-        </div>
+    <Stack spacing={2} sx={{ bgcolor: 'background.paper', borderRadius: '12px', boxShadow: 1, border: 1, borderColor: 'grey.200', p: 3 }}>
+      <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>家庭の割り当て</Typography>
+          <StatusChip label={STATE_LABEL[assignment.state]} tone="neutral" />
+          <StatusChip
+            label={`検証状況: ${assignment.validationStatus === 'READY' ? '準備完了' : '要修正'}`}
+            tone={assignment.validationStatus === 'READY' ? 'success' : 'error'}
+          />
+        </Stack>
 
         {canEdit && dirtyChanges.length > 0 && (
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={busy}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
-          >
+          <Button variant="contained" onClick={() => { void handleSave() }} disabled={busy}>
             {busy ? '保存中...' : '変更を保存'}
-          </button>
+          </Button>
         )}
-      </div>
+      </Stack>
 
       {assignment.state === 'STALE' && (
-        <p className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-          この割り当てはチーム編成の変更により古くなっている可能性があります。内容を確認してください。
-        </p>
+        <NoticeBanner tone="warning">この割り当てはチーム編成の変更により古くなっている可能性があります。内容を確認してください。</NoticeBanner>
       )}
 
       {assignment.state === 'FROZEN' && (
-        <p className="text-xs font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">
-          この割り当ては授業開始時にロックされ、変更できません。
-        </p>
+        <NoticeBanner tone="neutral">この割り当ては授業開始時にロックされ、変更できません。</NoticeBanner>
       )}
 
       {!isPrimaryTeacher && assignment.state !== 'FROZEN' && (
-        <p className="text-xs text-gray-400">閲覧のみ（編集は主担当の教師のみ可能です）。</p>
+        <Typography variant="caption" color="text.disabled">閲覧のみ（編集は主担当の教師のみ可能です）。</Typography>
       )}
 
       {assignment.warnings.length > 0 && (
-        <div className="space-y-1">
+        <Stack spacing={0.5}>
           {assignment.warnings.map((w, idx) => (
-            <div
+            <Typography
               key={`${w.code}-${idx}`}
-              className="text-xs px-2 py-1 rounded border bg-red-50 text-red-700 border-red-200"
+              variant="caption"
+              sx={{ px: 1, py: 0.5, borderRadius: 1, border: 1, bgcolor: 'error.light', color: 'error.dark', borderColor: 'error.main' }}
             >
               {w.message}
-            </div>
+            </Typography>
           ))}
-        </div>
+        </Stack>
       )}
 
       {unusedProfileIds.length > 0 && (
-        <div className="text-xs px-2 py-1 rounded border bg-amber-50 text-amber-800 border-amber-200">
-          未使用のプロフィール: {unusedProfileIds.join(', ')}
-        </div>
+        <NoticeBanner tone="warning">未使用のプロフィール: {unusedProfileIds.join(', ')}</NoticeBanner>
       )}
 
       {stageSplitCoverageWarnings.length > 0 && (
-        <div className="text-xs px-2 py-1 rounded border bg-amber-50 text-amber-800 border-amber-200" data-testid="stage-coverage-warning">
+        <NoticeBanner tone="warning" testId="stage-coverage-warning">
           ライフステージの網羅状況に不足があります: {stageSplitCoverageWarnings.map((w) => w.message).join(' ')}
-        </div>
+        </NoticeBanner>
       )}
 
-      <div className="space-y-4">
+      <Stack spacing={2}>
         {assignment.teams.map((team) => {
           const sortedEntries = [...team.entries].sort((a, b) => {
             const orderA = localEntries[a.householdId]?.displayOrder ?? a.displayOrder
@@ -250,65 +263,75 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
             return orderA - orderB
           })
           return (
-            <div key={team.teamId} className="border border-gray-200 rounded-lg p-3 space-y-2">
-              <div className="font-semibold text-gray-900 text-sm">{team.teamDisplayName}</div>
-              <ul className="space-y-1.5">
+            <Box key={team.teamId} sx={{ border: 1, borderColor: 'grey.200', borderRadius: 2, p: 1.5 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>{team.teamDisplayName}</Typography>
+              <Stack component="ul" spacing={0.75} sx={{ listStyle: 'none', m: 0, p: 0 }}>
                 {sortedEntries.map((entry, index) => {
                   const local = localEntries[entry.householdId] ?? { profileId: entry.profileId, displayOrder: entry.displayOrder }
                   return (
-                    <li key={entry.householdId} className="flex items-center gap-2 text-sm text-gray-700">
+                    <Stack
+                      key={entry.householdId}
+                      component="li"
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: 'center', fontSize: '0.875rem', color: 'text.secondary' }}
+                    >
                       {assignment.courseFormat === 'MULTI_PERSON_PER_TEAM' ? (
                         <>
-                          <span className="flex-1">{entry.profileId}</span>
+                          <Box component="span" sx={{ flex: 1 }}>{entry.profileId}</Box>
                           {canEdit && (
-                            <span className="flex items-center gap-1">
-                              <button
-                                type="button"
+                            <Stack direction="row" spacing={0.5}>
+                              <IconButton
+                                size="small"
                                 aria-label={`${team.teamDisplayName} ${entry.profileId} を上に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'up')}
                                 disabled={busy || index === 0}
-                                className="px-1.5 py-0.5 text-xs rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50"
+                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1, px: 0.75, fontSize: '0.75rem' }}
                               >
                                 ↑
-                              </button>
-                              <button
-                                type="button"
+                              </IconButton>
+                              <IconButton
+                                size="small"
                                 aria-label={`${team.teamDisplayName} ${entry.profileId} を下に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'down')}
                                 disabled={busy || index === sortedEntries.length - 1}
-                                className="px-1.5 py-0.5 text-xs rounded border border-gray-300 disabled:opacity-30 hover:bg-gray-50"
+                                sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1, px: 0.75, fontSize: '0.75rem' }}
                               >
                                 ↓
-                              </button>
-                            </span>
+                              </IconButton>
+                            </Stack>
                           )}
                         </>
                       ) : canEdit ? (
-                        <label className="flex items-center gap-2 flex-1">
-                          <span className="text-xs text-gray-500">プロフィール</span>
-                          <select
+                        <Stack component="label" direction="row" spacing={1} sx={{ alignItems: 'center', flex: 1 }}>
+                          <Typography variant="caption" color="text.disabled">プロフィール</Typography>
+                          <Box
+                            component="select"
                             aria-label={`${team.teamDisplayName} のプロフィール`}
                             value={local.profileId}
                             disabled={busy}
                             onChange={(e) => handleProfileChange(entry.householdId, e.target.value)}
-                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+                            sx={{
+                              flex: 1, borderRadius: 1, border: 1, borderColor: 'grey.300', px: 1, py: 0.5,
+                              fontSize: '0.875rem', fontFamily: 'inherit', bgcolor: 'background.paper',
+                            }}
                           >
                             {knownProfileIds.map((profileId) => (
                               <option key={profileId} value={profileId}>{profileId}</option>
                             ))}
-                          </select>
-                        </label>
+                          </Box>
+                        </Stack>
                       ) : (
-                        <span className="flex-1">{entry.profileId}</span>
+                        <Box component="span" sx={{ flex: 1 }}>{entry.profileId}</Box>
                       )}
-                    </li>
+                    </Stack>
                   )
                 })}
-              </ul>
-            </div>
+              </Stack>
+            </Box>
           )
         })}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   )
 }

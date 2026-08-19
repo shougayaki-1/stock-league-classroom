@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import { Box, Button, IconButton, Stack, TextField, Typography } from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
 import type { HouseholdCheckpointManifest } from '../../lib/homeEconomics/teacherDashboard'
 import type { CourseFormat } from '../../lib/homeEconomics/householdAssignment'
 
@@ -35,6 +37,12 @@ const isIncompatibleV3Checkpoint = (
   return checkpoint.assignmentRevision !== currentAssignmentRevision
 }
 
+const KIND_BADGE: Record<HouseholdCheckpointManifest['kind'], { label: string; bg: string; color: string }> = {
+  MANUAL: { label: '手動', bg: 'primary.light', color: 'primary.dark' },
+  PRE_SETTLEMENT: { label: '決算前自動', bg: 'warning.light', color: 'warning.dark' },
+  PRE_RESTORE: { label: '復元前退避', bg: '#f3e8fd', color: '#6a1b9a' },
+}
+
 export const HouseholdCheckpointModal: React.FC<HouseholdCheckpointModalProps> = ({
   isOpen,
   onClose,
@@ -66,154 +74,144 @@ export const HouseholdCheckpointModal: React.FC<HouseholdCheckpointModalProps> =
   }
 
   const kindBadge = (kind: HouseholdCheckpointManifest['kind']) => {
-    switch (kind) {
-      case 'MANUAL':
-        return <span className="px-2 py-0.5 text-xs font-semibold rounded bg-blue-100 text-blue-800">手動</span>
-      case 'PRE_SETTLEMENT':
-        return <span className="px-2 py-0.5 text-xs font-semibold rounded bg-amber-100 text-amber-800">決算前自動</span>
-      case 'PRE_RESTORE':
-        return <span className="px-2 py-0.5 text-xs font-semibold rounded bg-purple-100 text-purple-800">復元前退避</span>
-    }
+    const badge = KIND_BADGE[kind]
+    return (
+      <Box component="span" sx={{ px: 1, py: 0.25, fontSize: '0.75rem', fontWeight: 600, borderRadius: 1, bgcolor: badge.bg, color: badge.color }}>
+        {badge.label}
+      </Box>
+    )
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b pb-3">
-          <h3 className="text-xl font-bold text-gray-900">
+    <Box sx={{ position: 'fixed', inset: 0, zIndex: (t) => t.zIndex.modal, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.5)', p: 2 }}>
+      <Stack spacing={3} sx={{ width: '100%', maxWidth: 672, borderRadius: '12px', bgcolor: 'background.paper', p: 3, boxShadow: 24, maxHeight: '90vh', overflowY: 'auto' }}>
+        <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', borderBottom: 1, borderColor: 'divider', pb: 1.5 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
             チェックポイント管理・復元
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="text-gray-400 hover:text-gray-600 text-lg font-bold"
-          >
-            ✕
-          </button>
-        </div>
+          </Typography>
+          <IconButton onClick={onClose} disabled={isSubmitting} aria-label="閉じる" size="small">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Stack>
 
         {/* Create Manual Checkpoint */}
-        <form onSubmit={handleSaveManual} className="bg-gray-50 p-4 rounded-lg border space-y-3">
-          <h4 className="text-sm font-semibold text-gray-800">手動チェックポイントの作成</h4>
-          <div className="flex gap-2">
-            <input
-              type="text"
+        <Stack component="form" onSubmit={handleSaveManual} spacing={1.5} sx={{ bgcolor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2, p: 2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>手動チェックポイントの作成</Typography>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              size="small"
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               placeholder="例: 第2ラウンド開始前"
-              maxLength={80}
+              slotProps={{ htmlInput: { maxLength: 80 } }}
               disabled={isSubmitting}
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              sx={{ flex: 1 }}
             />
-            <button
+            <Button
               type="submit"
+              variant="contained"
               disabled={!newLabel.trim() || newLabel.trim().length > 80 || isSubmitting}
-              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
             >
               保存
-            </button>
-          </div>
-          <p className="text-xs text-gray-500">現在のすべての家庭の状態をそのまま記録・保存します。</p>
-        </form>
+            </Button>
+          </Stack>
+          <Typography variant="caption" color="text.secondary">現在のすべての家庭の状態をそのまま記録・保存します。</Typography>
+        </Stack>
 
         {/* Checkpoint list */}
-        <div className="space-y-3">
-          <h4 className="text-sm font-semibold text-gray-800">保存済みチェックポイント一覧</h4>
+        <Stack spacing={1.5}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>保存済みチェックポイント一覧</Typography>
           {checkpoints.length === 0 ? (
-            <p className="text-sm text-gray-500 py-4 text-center">保存されたチェックポイントはありません。</p>
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>保存されたチェックポイントはありません。</Typography>
           ) : (
-            <div className="divide-y border rounded-lg overflow-hidden">
+            <Stack sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden', '& > *:not(:last-child)': { borderBottom: 1, borderColor: 'divider' } }}>
               {checkpoints.map((cp) => {
                 const incompatible = isIncompatibleV3Checkpoint(cp, currentAssignmentRevision)
                 return (
-                  <div key={cp.checkpointId} className="p-3 flex items-center justify-between hover:bg-gray-50 gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                  <Stack
+                    key={cp.checkpointId}
+                    direction="row"
+                    spacing={2}
+                    sx={{ p: 1.5, alignItems: 'center', justifyContent: 'space-between', '&:hover': { bgcolor: 'grey.50' } }}
+                  >
+                    <Stack spacing={0.5}>
+                      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                         {kindBadge(cp.kind)}
-                        <span className="text-sm font-medium text-gray-900">{cp.label}</span>
-                      </div>
-                      <div className="text-xs text-gray-500 flex gap-3">
-                        <span>作成: {new Date(cp.createdAtServerMillis).toLocaleString('ja-JP')}</span>
-                        {cp.expectedRoundIndex !== null && <span>対象ラウンド: 第{cp.expectedRoundIndex + 1}R</span>}
-                        {cp.restoreGeneration > 0 && <span>第{cp.restoreGeneration}世代</span>}
-                      </div>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{cp.label}</Typography>
+                      </Stack>
+                      <Stack direction="row" spacing={1.5}>
+                        <Typography variant="caption" color="text.secondary">作成: {new Date(cp.createdAtServerMillis).toLocaleString('ja-JP')}</Typography>
+                        {cp.expectedRoundIndex !== null && <Typography variant="caption" color="text.secondary">対象ラウンド: 第{cp.expectedRoundIndex + 1}R</Typography>}
+                        {cp.restoreGeneration > 0 && <Typography variant="caption" color="text.secondary">第{cp.restoreGeneration}世代</Typography>}
+                      </Stack>
                       {incompatible && (
-                        <div className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 inline-block">
+                        <Box component="span" sx={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 600, color: 'error.dark', bgcolor: 'error.light', border: 1, borderColor: 'error.main', borderRadius: 1, px: 0.75, py: 0.25 }}>
                           割り当て内容が変更されているため復元できません
-                        </div>
+                        </Box>
                       )}
-                    </div>
+                    </Stack>
 
-                    <button
-                      type="button"
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      size="small"
                       onClick={() => {
                         setSelectedCheckpoint(cp)
                         setRestoreReason('')
                       }}
                       disabled={isSubmitting || incompatible}
                       title={incompatible ? 'このチェックポイントが記録された時点の家庭割り当てから、現在の割り当てが変更されているため復元できません。' : undefined}
-                      className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       復元...
-                    </button>
-                  </div>
+                    </Button>
+                  </Stack>
                 )
               })}
-            </div>
+            </Stack>
           )}
-        </div>
+        </Stack>
 
         {/* Restore Confirmation Sub-Modal / Drawer */}
         {selectedCheckpoint && (
-          <div className="p-4 bg-amber-50 border border-amber-300 rounded-lg space-y-3">
-            <h4 className="text-sm font-bold text-amber-900">チェックポイント復元の確認</h4>
-            <p className="text-xs text-amber-800">
+          <Stack spacing={1.5} sx={{ p: 2, bgcolor: 'warning.light', border: 1, borderColor: 'warning.main', borderRadius: 2 }}>
+            <Typography variant="body2" sx={{ fontWeight: 700, color: 'warning.dark' }}>チェックポイント復元の確認</Typography>
+            <Typography variant="caption" sx={{ color: 'warning.dark' }}>
               「{selectedCheckpoint.label}」の状態にすべての家庭を復元します。現在の状態は自動的に「復元前退避チェックポイント」として保存されます。
-            </p>
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-gray-700">復元の理由（必須）</label>
-              <input
-                type="text"
+            </Typography>
+            <Stack spacing={0.5}>
+              <Typography component="label" variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>復元の理由（必須）</Typography>
+              <TextField
+                size="small"
                 value={restoreReason}
                 onChange={(e) => setRestoreReason(e.target.value)}
                 placeholder="例: 誤った決算のやり直し"
                 disabled={isSubmitting}
-                className="w-full rounded-lg border border-amber-300 px-3 py-1.5 text-sm bg-white focus:outline-none"
+                sx={{ bgcolor: 'background.paper' }}
               />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setSelectedCheckpoint(null)}
-                disabled={isSubmitting}
-                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
-              >
+            </Stack>
+            <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end', pt: 1 }}>
+              <Button size="small" variant="text" color="inherit" onClick={() => setSelectedCheckpoint(null)} disabled={isSubmitting}>
                 キャンセル
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmRestore}
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="warning"
+                onClick={() => { void handleConfirmRestore() }}
                 disabled={!restoreReason.trim() || isSubmitting}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg shadow-sm"
               >
                 {isSubmitting ? '復元処理中...' : 'このチェックポイントに復元'}
-              </button>
-            </div>
-          </div>
+              </Button>
+            </Stack>
+          </Stack>
         )}
 
-        <div className="flex justify-end pt-2 border-t">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
-          >
+        <Stack direction="row" sx={{ justifyContent: 'flex-end', pt: 1, borderTop: 1, borderColor: 'divider' }}>
+          <Button variant="text" color="inherit" onClick={onClose} disabled={isSubmitting}>
             閉じる
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </Stack>
+      </Stack>
+    </Box>
   )
 }

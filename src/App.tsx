@@ -98,6 +98,8 @@ import { linkSchoolToParentOrg, listChildSchools, unlinkSchoolFromParentOrg, typ
 import { changeOrgMemberRole, listOrgMembers, suspendOrgMember, type OrgMember } from './lib/organizations/orgMembers'
 
 import { migrateSchoolFromEndedParent } from './lib/organizations/parentContractMigration'
+import { TeacherShell } from './components/layout/TeacherShell'
+import { StudentShell } from './components/layout/StudentShell'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -1510,29 +1512,33 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
   return <><TrailingSlashRedirect /><Routes>
   <Route path="/" element={<LandingPage onTeacherLogin={services ? () => { void signInTeacherWithGoogle(services.auth) } : undefined} />} />
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
-  <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/lessons/:runId/results" element={enabled && services ? <StudentResultsRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
-  <Route path="/teacher" element={enabled && services ? <TemplateRouteGuard services={services}><TeacherHomeRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/operator/certifications" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorCertificationsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/operator/ai-beta" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorAiBetaAccessRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/:orgId/usage-dashboard" element={enabled && services ? <TemplateRouteGuard services={services}><UsageDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/:orgId/template-approvals" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateApprovalsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-  <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  <Route element={<StudentShell />}>
+    <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/lessons/:runId/results" element={enabled && services ? <StudentResultsRoute services={services} /> : <Navigate replace to="/about" />} />
+  </Route>
+  <Route element={<TeacherShell />}>
+    <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/teacher" element={enabled && services ? <TemplateRouteGuard services={services}><TeacherHomeRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/templates" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateListRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/templates/new" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/operator/certifications" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorCertificationsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/operator/ai-beta" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorAiBetaAccessRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/new" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/new-parent" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgNewRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/:orgId/settings" element={enabled && services ? <TemplateRouteGuard services={services}><SchoolOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/:orgId/plan-limits" element={enabled && services ? <TemplateRouteGuard services={services}><PlanLimitsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/:orgId/usage-dashboard" element={enabled && services ? <TemplateRouteGuard services={services}><UsageDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/:orgId/template-approvals" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateApprovalsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+  </Route>
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />
 </Routes></>

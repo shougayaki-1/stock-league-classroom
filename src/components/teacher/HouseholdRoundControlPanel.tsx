@@ -7,6 +7,8 @@ import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 export interface HouseholdRoundControlPanelProps {
   lessonRunId: string
   householdId: string
+  /** Human-readable heading/aria-label (e.g. `${lifeStage}・${family}`) — falls back to the opaque `householdId` when the caller doesn't have one yet. */
+  profileLabel?: string
   functions: Functions
   /** Teacher-facing escape hatch forwarded verbatim to `processRoundCallable` — see that Callable's own doc comment (functions/src/homeEconomics/onCall.ts). */
   forceSettle?: boolean
@@ -30,8 +32,9 @@ type SettleStatus = 'IDLE' | 'PENDING' | 'SUCCESS' | 'ERROR'
  * scope — see task-critical-fix-report.md).
  */
 export function HouseholdRoundControlPanel({
-  lessonRunId, householdId, functions, forceSettle, onSettled,
+  lessonRunId, householdId, profileLabel, functions, forceSettle, onSettled,
 }: HouseholdRoundControlPanelProps) {
+  const displayLabel = profileLabel ?? householdId
   const [status, setStatus] = useState<SettleStatus>('IDLE')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -50,8 +53,8 @@ export function HouseholdRoundControlPanel({
   }, [functions, lessonRunId, householdId, forceSettle, onSettled])
 
   return (
-    <Stack spacing={1} sx={{ p: 2 }} component="section" aria-label={`家庭 ${householdId} のラウンド決算`}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{householdId}</Typography>
+    <Stack spacing={1} sx={{ p: 2 }} component="section" aria-label={`家庭 ${displayLabel} のラウンド決算`}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{displayLabel}</Typography>
       <Button
         variant="contained"
         onClick={handleSettle}

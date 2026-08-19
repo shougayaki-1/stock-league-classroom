@@ -184,7 +184,7 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
   // one-off mapping found nowhere else.
   const householdTabLabel = (id: string): string => {
     const entry = state?.households?.[id]
-    if (!entry) return id
+    if (!entry?.profile) return id
     return `${entry.profile.lifeStage}・${entry.profile.family}`
   }
 
@@ -238,6 +238,7 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
       )}
       <HouseholdSummaryCard
         householdId={household.householdId}
+        profileLabel={householdTabLabel(activeHouseholdId)}
         cashYen={household.cashYen}
         lifeStage={household.lifeStage}
         roundIndex={household.roundIndex}

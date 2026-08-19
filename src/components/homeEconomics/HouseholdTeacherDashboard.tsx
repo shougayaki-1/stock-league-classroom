@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Box, Button, Stack, Typography } from '@mui/material'
 import type {
   HouseholdTeacherDashboard as HouseholdTeacherDashboardType,
   HouseholdTeacherRow,
@@ -39,29 +40,27 @@ export interface HouseholdTeacherDashboardProps {
   onShowOnDisplay?: () => void
 }
 
-const severityClass = (severity: 'ACTION_REQUIRED' | 'WARNING' | 'INFO') => {
-  switch (severity) {
-    case 'ACTION_REQUIRED':
-      return 'bg-red-50 text-red-700 border-red-200'
-    case 'WARNING':
-      return 'bg-amber-50 text-amber-800 border-amber-200'
-    case 'INFO':
-      return 'bg-blue-50 text-blue-800 border-blue-200'
-  }
+const SEVERITY_TONE: Record<'ACTION_REQUIRED' | 'WARNING' | 'INFO', { bg: string; color: string; border: string }> = {
+  ACTION_REQUIRED: { bg: 'error.light', color: 'error.dark', border: 'error.main' },
+  WARNING: { bg: 'warning.light', color: 'warning.dark', border: 'warning.main' },
+  INFO: { bg: 'primary.light', color: 'primary.dark', border: 'primary.main' },
 }
 
 const HouseholdWarnings: React.FC<{ warnings: HouseholdTeacherRow['warnings'] }> = ({ warnings }) => {
   if (warnings.length === 0) {
-    return <span className="text-xs text-gray-400">なし</span>
+    return <Typography variant="caption" color="text.disabled">なし</Typography>
   }
   return (
-    <div className="space-y-1">
-      {warnings.map((w, idx) => (
-        <div key={idx} className={`text-xs px-2 py-0.5 rounded border ${severityClass(w.severity)}`}>
-          {w.message}
-        </div>
-      ))}
-    </div>
+    <Stack spacing={0.5}>
+      {warnings.map((w, idx) => {
+        const tone = SEVERITY_TONE[w.severity]
+        return (
+          <Typography key={idx} variant="caption" sx={{ px: 1, py: 0.25, borderRadius: 1, border: 1, bgcolor: tone.bg, color: tone.color, borderColor: tone.border }}>
+            {w.message}
+          </Typography>
+        )
+      })}
+    </Stack>
   )
 }
 
@@ -75,50 +74,55 @@ const HouseholdSummaryRow: React.FC<{
 }> = ({ row, isPrimaryTeacher, isBusy, isLeaseActive, showIndividualSettlement, onSelectIndividual }) => {
   const isNegative = row.cashYen < 0
   return (
-    <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center py-2 text-sm text-gray-600">
-      <div>
+    <Box
+      sx={{
+        display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(6, 1fr)' },
+        gap: 1.5, alignItems: 'center', py: 1, fontSize: '0.875rem', color: 'text.secondary',
+      }}
+    >
+      <Box>
         {/* Important I3 fix: `profileLabel` (lifeStage・family) instead of
             bare `lifeStage` — a MULTI team's several household rows are
             otherwise only distinguishable by the opaque runtime
             householdId, since MULTI_PERSON_PER_TEAM can repeat the same
             lifeStage across its full profile set. */}
-        <div className="font-medium text-gray-900">{row.profileLabel}</div>
-        <div className="text-xs text-gray-400">第{row.roundIndex + 1}R</div>
-      </div>
-      <div>
+        <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>{row.profileLabel}</Typography>
+        <Typography variant="caption" color="text.disabled">第{row.roundIndex + 1}R</Typography>
+      </Box>
+      <Box>
         {row.submittedForRoundIndex ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+          <Box component="span" sx={{ display: 'inline-flex', px: 1, py: 0.25, borderRadius: 1, fontSize: '0.75rem', fontWeight: 600, bgcolor: 'success.light', color: 'success.dark' }}>
             提出済
-          </span>
+          </Box>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+          <Box component="span" sx={{ display: 'inline-flex', px: 1, py: 0.25, borderRadius: 1, fontSize: '0.75rem', fontWeight: 600, bgcolor: 'grey.100', color: 'text.secondary' }}>
             未提出
-          </span>
+          </Box>
         )}
-      </div>
-      <div>
-        <span className={`font-medium ${isNegative ? 'text-red-600 font-bold' : 'text-gray-900'}`}>
+      </Box>
+      <Box>
+        <Typography component="span" sx={{ fontWeight: isNegative ? 700 : 600, color: isNegative ? 'error.main' : 'text.primary' }}>
           {row.cashYen.toLocaleString()} 円
-        </span>
-      </div>
-      <div className="text-gray-800">{row.totalAssetsYen.toLocaleString()} 円</div>
-      <div>
+        </Typography>
+      </Box>
+      <Typography sx={{ color: 'text.primary' }}>{row.totalAssetsYen.toLocaleString()} 円</Typography>
+      <Box>
         <HouseholdWarnings warnings={row.warnings} />
-      </div>
+      </Box>
       {isPrimaryTeacher && showIndividualSettlement && (
-        <div className="text-right">
-          <button
-            type="button"
+        <Box sx={{ textAlign: 'right' }}>
+          <Button
+            size="small"
+            variant="outlined"
             onClick={() => onSelectIndividual(row)}
             disabled={isBusy || isLeaseActive || !row.submittedForRoundIndex}
             title={!row.submittedForRoundIndex ? '意思決定が未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。' : undefined}
-            className="px-2.5 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition border border-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             個別決算
-          </button>
-        </div>
+          </Button>
+        </Box>
       )}
-    </div>
+    </Box>
   )
 }
 
@@ -133,29 +137,30 @@ const TeamCard: React.FC<{
   const isMulti = team.totalHouseholds > 1
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="font-semibold text-gray-900">{team.teamDisplayName}</div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-              team.allSubmitted ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
-            }`}
-          >
-            {team.submittedCount} / {team.totalHouseholds} 提出済み
-          </span>
-        </div>
-      </div>
+    <Box sx={{ bgcolor: 'background.paper', borderRadius: '12px', boxShadow: 1, border: 1, borderColor: 'grey.200', p: 2 }}>
+      <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography sx={{ fontWeight: 600 }}>{team.teamDisplayName}</Typography>
+        <Box
+          component="span"
+          sx={{
+            display: 'inline-flex', px: 1, py: 0.25, borderRadius: 1, fontSize: '0.75rem', fontWeight: 600,
+            bgcolor: team.allSubmitted ? 'success.light' : 'warning.light',
+            color: team.allSubmitted ? 'success.dark' : 'warning.dark',
+          }}
+        >
+          {team.submittedCount} / {team.totalHouseholds} 提出済み
+        </Box>
+      </Stack>
 
       {team.warnings.length > 0 && (
-        <div className="mt-2">
+        <Box sx={{ mt: 1 }}>
           <HouseholdWarnings warnings={team.warnings} />
-        </div>
+        </Box>
       )}
 
       {!isMulti ? (
         team.households[0] && (
-          <div className="mt-2 border-t border-gray-100 pt-2">
+          <Box sx={{ mt: 1, borderTop: 1, borderColor: 'grey.100', pt: 1 }}>
             <HouseholdSummaryRow
               row={team.households[0]}
               isPrimaryTeacher={isPrimaryTeacher}
@@ -164,10 +169,10 @@ const TeamCard: React.FC<{
               showIndividualSettlement={showIndividualSettlement}
               onSelectIndividual={onSelectIndividual}
             />
-          </div>
+          </Box>
         )
       ) : (
-        <div className="mt-2 border-t border-gray-100 divide-y divide-gray-100">
+        <Box sx={{ mt: 1, borderTop: 1, borderColor: 'grey.100', '& > *:not(:last-child)': { borderBottom: 1, borderColor: 'grey.100' } }}>
           {team.households.map((h) => (
             <HouseholdSummaryRow
               key={h.householdId}
@@ -179,9 +184,9 @@ const TeamCard: React.FC<{
               onSelectIndividual={onSelectIndividual}
             />
           ))}
-        </div>
+        </Box>
       )}
-    </div>
+    </Box>
   )
 }
 
@@ -277,52 +282,37 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
   }
 
   return (
-    <div className="space-y-6">
+    <Stack spacing={3}>
       {/* Header card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-bold text-gray-900">
+      <Box sx={{ bgcolor: 'background.paper', borderRadius: '12px', boxShadow: 1, border: 1, borderColor: 'grey.200', p: 3 }}>
+        <Stack direction="row" spacing={2} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>
                 家庭経済・ライフプラン管理ダッシュボード
-              </h2>
+              </Typography>
               {dashboard.restoreGeneration > 0 && (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">
+                <Box component="span" sx={{ px: 1.25, py: 0.25, borderRadius: 4, fontSize: '0.75rem', fontWeight: 600, bgcolor: '#f3e8fd', color: '#6a1b9a' }}>
                   復元 第{dashboard.restoreGeneration}世代
-                </span>
+                </Box>
               )}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
               全チームの意思決定状況、資産・保険・負債の現況および一括決算を管理します。
-            </p>
-          </div>
+            </Typography>
+          </Box>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={isBusy}
-              className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
-            >
+          <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <Button variant="text" color="inherit" onClick={() => { void onRefresh() }} disabled={isBusy}>
               更新
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCheckpointModalOpen(true)}
-              disabled={checkpointDisabled}
-              className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            </Button>
+            <Button variant="outlined" onClick={() => setIsCheckpointModalOpen(true)} disabled={checkpointDisabled}>
               チェックポイント・復元
-            </button>
+            </Button>
             {isPrimaryTeacher && (
-              <button
-                type="button"
-                onClick={() => setIsSettlementModalOpen(true)}
-                disabled={bulkSettlementDisabled}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition shadow-sm"
-              >
+              <Button variant="contained" onClick={() => setIsSettlementModalOpen(true)} disabled={bulkSettlementDisabled}>
                 一括決算
-              </button>
+              </Button>
             )}
             {/* Task 13: only once the class-wide comparison exists
                 (dashboard.finalComparisonAvailable, Task 10/12) AND this
@@ -330,58 +320,48 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
                 PRIMARY/ASSISTANT — matches showHouseholdComparisonOnDisplayCallable's
                 server-side gate). */}
             {dashboard.finalComparisonAvailable && canManageDisplay && onViewClassComparison && (
-              <button
-                type="button"
-                onClick={onViewClassComparison}
-                disabled={isBusy}
-                className="px-3.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <Button variant="outlined" onClick={onViewClassComparison} disabled={isBusy}>
                 クラス比較を見る
-              </button>
+              </Button>
             )}
             {dashboard.finalComparisonAvailable && canManageDisplay && onShowOnDisplay && (
-              <button
-                type="button"
-                onClick={onShowOnDisplay}
-                disabled={isBusy}
-                className="px-3.5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <Button variant="contained" onClick={onShowOnDisplay} disabled={isBusy}>
                 教室画面に表示
-              </button>
+              </Button>
             )}
-          </div>
-        </div>
+          </Stack>
+        </Stack>
 
         {/* Stats bar */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-gray-100 text-sm">
-          <div className="space-y-1">
-            <span className="text-xs text-gray-500">進行ラウンド</span>
-            <div className="font-bold text-gray-900">
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2, mt: 3, pt: 3, borderTop: 1, borderColor: 'grey.100' }}>
+          <Stack spacing={0.5}>
+            <Typography variant="caption" color="text.secondary">進行ラウンド</Typography>
+            <Typography sx={{ fontWeight: 700 }}>
               {dashboard.householdsAligned && dashboard.currentRoundIndex !== null ? (
                 `第${dashboard.currentRoundIndex + 1}ラウンド`
               ) : (
-                <span className="text-amber-600 font-semibold">ラウンド不一致</span>
+                <Box component="span" sx={{ color: 'warning.dark', fontWeight: 700 }}>ラウンド不一致</Box>
               )}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <span className="text-xs text-gray-500">意思決定の提出状況</span>
-            <div className="font-bold text-gray-900">
+            </Typography>
+          </Stack>
+          <Stack spacing={0.5}>
+            <Typography variant="caption" color="text.secondary">意思決定の提出状況</Typography>
+            <Typography sx={{ fontWeight: 700 }}>
               {submittedCount} / {totalCount} 提出済み
-            </div>
-          </div>
-          <div className="space-y-1">
-            <span className="text-xs text-gray-500">登録チーム数</span>
-            <div className="font-bold text-gray-900">{teams.length} チーム</div>
-          </div>
-          <div className="space-y-1">
-            <span className="text-xs text-gray-500">最終更新</span>
-            <div className="font-medium text-gray-600">
+            </Typography>
+          </Stack>
+          <Stack spacing={0.5}>
+            <Typography variant="caption" color="text.secondary">登録チーム数</Typography>
+            <Typography sx={{ fontWeight: 700 }}>{teams.length} チーム</Typography>
+          </Stack>
+          <Stack spacing={0.5}>
+            <Typography variant="caption" color="text.secondary">最終更新</Typography>
+            <Typography sx={{ fontWeight: 600, color: 'text.secondary' }}>
               {new Date(dashboard.updatedAtServerMillis).toLocaleTimeString('ja-JP')}
-            </div>
-          </div>
-        </div>
-      </div>
+            </Typography>
+          </Stack>
+        </Box>
+      </Box>
 
       {/* Assignment panel (advanced formats only) */}
       {!isCommon && dashboard.assignment && onPrepareAssignment && onUpdateAssignment && (
@@ -396,41 +376,46 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
 
       {/* Active bulk operation banner */}
       {dashboard.activeBulkOperation && (
-        <div
-          className={`p-4 rounded-xl border flex flex-wrap items-center justify-between gap-4 ${
-            dashboard.activeBulkOperation.status === 'FAILED'
-              ? 'bg-red-50 border-red-200 text-red-900'
-              : 'bg-indigo-50 border-indigo-200 text-indigo-900'
-          }`}
+        <Stack
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{
+            p: 2, borderRadius: '12px', border: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+            bgcolor: dashboard.activeBulkOperation.status === 'FAILED' ? 'error.light' : 'primary.light',
+            borderColor: dashboard.activeBulkOperation.status === 'FAILED' ? 'error.main' : 'primary.main',
+            color: dashboard.activeBulkOperation.status === 'FAILED' ? 'error.dark' : 'primary.dark',
+          }}
         >
-          <div className="space-y-1 text-sm">
-            <div className="font-bold">
+          <Stack spacing={0.5} sx={{ fontSize: '0.875rem' }}>
+            <Typography sx={{ fontWeight: 700, color: 'inherit' }}>
               {dashboard.activeBulkOperation.status === 'FAILED'
                 ? `前回の第${dashboard.activeBulkOperation.expectedRoundIndex + 1}ラウンド一括決算でエラーが発生しました`
                 : `第${dashboard.activeBulkOperation.expectedRoundIndex + 1}ラウンドの一括決算を実行中（試行回数: ${dashboard.activeBulkOperation.attempt}）`}
-            </div>
-            <div className="text-xs opacity-90">
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.9, color: 'inherit' }}>
               {dashboard.activeBulkOperation.status === 'FAILED'
                 ? '一部またはすべての家庭の決算に失敗しました。再試行を実行できます。'
                 : '処理が完了するまでしばらくお待ちください。'}
-            </div>
-          </div>
+            </Typography>
+          </Stack>
 
           {isPrimaryTeacher && dashboard.activeBulkOperation.retryable && (
-            <button
-              type="button"
-              onClick={handleRetry}
+            <Button
+              size="small"
+              variant="contained"
+              color="error"
+              onClick={() => { void handleRetry() }}
               disabled={isBusy}
-              className="px-4 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg shadow-sm"
             >
               {isBusy ? '再試行中...' : '一括決算を再試行'}
-            </button>
+            </Button>
           )}
-        </div>
+        </Stack>
       )}
 
       {/* Team cards */}
-      <div className="space-y-3">
+      <Stack spacing={1.5}>
         {teams.map((team) => (
           <TeamCard
             key={team.teamId}
@@ -442,7 +427,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
             onSelectIndividual={setSelectedIndividualHousehold}
           />
         ))}
-      </div>
+      </Stack>
 
       {/* Modals */}
       <HouseholdSettlementConfirmationModal
@@ -470,41 +455,35 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
           server-side rejection of per-household settlement for advanced
           formats). */}
       {showIndividualSettlement && selectedIndividualHousehold && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-gray-900">
+        <Box sx={{ position: 'fixed', inset: 0, zIndex: (t) => t.zIndex.modal, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.5)', p: 2 }}>
+          <Stack spacing={2} sx={{ width: '100%', maxWidth: 448, borderRadius: '12px', bgcolor: 'background.paper', p: 3, boxShadow: 24 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
               {selectedIndividualHousehold.teamDisplayName} の個別決算
-            </h3>
-            <p className="text-sm text-gray-600">
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
               {selectedIndividualHousehold.submittedForRoundIndex
                 ? `第${selectedIndividualHousehold.roundIndex + 1}ラウンドの決算を実行します。`
                 : (
-                  <span className="block font-semibold text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
+                  <Box component="span" sx={{ display: 'block', fontWeight: 600, color: 'warning.dark', bgcolor: 'warning.light', p: 1, borderRadius: 1, border: 1, borderColor: 'warning.main' }}>
                     ⚠️ このチームは意思決定を未提出のため個別決算できません。未提出のまま決算するには一括決算の強制実行を使用してください。
-                  </span>
+                  </Box>
                 )}
-            </p>
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setSelectedIndividualHousehold(null)}
-                disabled={isBusy}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
-              >
+            </Typography>
+            <Stack direction="row" spacing={1.5} sx={{ justifyContent: 'flex-end', pt: 1 }}>
+              <Button variant="text" color="inherit" onClick={() => setSelectedIndividualHousehold(null)} disabled={isBusy}>
                 キャンセル
-              </button>
-              <button
-                type="button"
-                onClick={() => handleIndividualProcess(selectedIndividualHousehold)}
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => { void handleIndividualProcess(selectedIndividualHousehold) }}
                 disabled={isBusy || !selectedIndividualHousehold.submittedForRoundIndex}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg shadow-sm"
               >
                 {isBusy ? '処理中...' : '個別決算を実行'}
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
       )}
-    </div>
+    </Stack>
   )
 }

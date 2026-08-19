@@ -38,6 +38,8 @@ export interface HouseholdShortfallOption {
 
 export interface HouseholdSummaryCardProps {
   householdId: string
+  /** Human-readable heading (e.g. `${lifeStage}・${family}`) — falls back to the opaque `householdId` when the caller doesn't have one yet. */
+  profileLabel?: string
   cashYen: number
   lifeStage: string
   roundIndex: number
@@ -86,6 +88,7 @@ const yenFormatter = new Intl.NumberFormat('ja-JP')
  */
 export function HouseholdSummaryCard({
   householdId,
+  profileLabel,
   cashYen,
   lifeStage,
   roundIndex,
@@ -125,7 +128,7 @@ export function HouseholdSummaryCard({
           variant="outlined"
           sx={{ alignSelf: 'flex-start', fontWeight: 700 }}
         />
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>{householdId}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>{profileLabel ?? householdId}</Typography>
         <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
           <Typography variant="body2">現在の貯蓄: {yenFormatter.format(cashYen)}円</Typography>
           <Typography variant="body2">ライフステージ: {lifeStage}</Typography>
