@@ -88,7 +88,9 @@ export const deriveDisplayMode = (status: string): LessonRunDisplayMode => {
 // projector-side countdown can be added here without changing call sites.
 export const toLessonRunDisplayState = (source: LessonRunProjectionSource, _nowMillis: number): LessonRunDisplayState => ({
   orgId: source.orgId,
-  mode: deriveDisplayMode(source.status),
+  // 教師の明示指定 (SWITCH_DISPLAY_MODE 介入) を status 由来の自動導出より
+  // 優先する。HOUSEHOLD_COMPARISON が status 由来でないのと同じ扱い。
+  mode: source.displayModeOverride ?? deriveDisplayMode(source.status),
   title: source.title,
   goal: source.goal,
   teams: source.teams.map((team) => ({

@@ -12,6 +12,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   currentPhaseEndsAtMillis: 10_000,
   updatedAtMillis: 5_000,
   teacherGuidance: 'スマホをしまってください',
+  displayModeOverride: null,
   teams: [
     {
       id: 'team-a',
@@ -119,5 +120,22 @@ describe('toLessonRunDisplayState — never writes HOUSEHOLD_COMPARISON fields',
     expect(Object.keys(display).sort()).toEqual(
       ['goal', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
     )
+  })
+})
+
+describe('displayModeOverride', () => {
+  it('override があれば status 由来のモードより優先する', () => {
+    const source = { ...privateRunFixture, status: 'RUNNING', displayModeOverride: 'EXPLANATION' as const }
+    expect(toLessonRunDisplayState(source, 6_000).mode).toBe('EXPLANATION')
+  })
+
+  it('override が null なら status から導出する', () => {
+    const source = { ...privateRunFixture, status: 'RUNNING', displayModeOverride: null }
+    expect(toLessonRunDisplayState(source, 6_000).mode).toBe('LIVE')
+  })
+
+  it('override は出力に露出しない', () => {
+    const source = { ...privateRunFixture, displayModeOverride: 'END' as const }
+    expect(toLessonRunDisplayState(source, 6_000)).not.toHaveProperty('displayModeOverride')
   })
 })

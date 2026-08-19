@@ -12,6 +12,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   currentPhaseEndsAtMillis: 10_000,
   updatedAtMillis: 5_000,
   teacherGuidance: 'スマホをしまってください',
+  displayModeOverride: null,
   teams: [
     {
       id: 'team-a',

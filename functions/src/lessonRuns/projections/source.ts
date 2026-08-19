@@ -1,3 +1,5 @@
+import type { LessonRunDisplayMode } from './displayProjection'
+
 /**
  * The full/internal shape of a lessonRun's live state as it exists
  * server-side (a composite of the `lessonRuns/{lessonRunId}` Firestore doc,
@@ -40,6 +42,13 @@ export interface LessonRunProjectionSource {
   updatedAtMillis: number
   /** Teacher-authored guidance meant for the whole class (projector display). */
   teacherGuidance: string | null
+  /**
+   * 教師が `SWITCH_DISPLAY_MODE` 介入で明示的に選んだ教室表示のモード。
+   * `null` のとき `deriveDisplayMode(status)` の自動導出に従う。表示モード
+   * そのものであり禁止フィールドには当たらない（価格・係数・シードを何も
+   * 含まない）。
+   */
+  displayModeOverride: LessonRunDisplayMode | null
   teams: LessonRunProjectionTeamSource[]
   /** Recent lesson-event-log entries eligible for broadcast — see notifications.ts's `classifyNotification`. */
   recentNotifications: LessonRunProjectionNotificationSource[]

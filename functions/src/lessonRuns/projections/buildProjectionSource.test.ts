@@ -72,4 +72,17 @@ describe('buildProjectionSource', () => {
     )
     expect(source).toBeNull()
   })
+
+  it('lessonRun の displayModeOverride を source に載せる', async () => {
+    const source = await buildProjectionSource(
+      { ...deps, getRun: async () => ({ ...run, displayModeOverride: 'EXPLANATION' }) },
+      'run1',
+    )
+    expect(source?.displayModeOverride).toBe('EXPLANATION')
+  })
+
+  it('displayModeOverride が無ければ null にする', async () => {
+    const source = await buildProjectionSource(deps, 'run1')
+    expect(source?.displayModeOverride).toBeNull()
+  })
 })
