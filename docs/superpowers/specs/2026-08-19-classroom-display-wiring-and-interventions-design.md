@@ -105,8 +105,9 @@
 **配線先:** `publishLessonProjectionWithAdminSdk` を次の各所から呼ぶ。
 
 - `functions/src/lessonRuns/phases/transitionPhase.ts` — 既存の `deps.publishResearchDeskProjection` と同じフック位置（トランザクション完了後）に `deps.publishLessonProjection` を追加する。両者は同じ「トランザクション後の副作用」順序に従う。
-- `functions/src/lessonRuns/recoveryLifecycle.ts` — `interruptLesson` / `resumeLesson` / `completeLesson` の各完了後。いずれも `status` を変えるため教室表示のモードが変わる。
 - `functions/src/lessonRuns/joinLessonRun.ts` の参加成立時、および `functions/src/lessonRuns/teams/assignTeam.ts` の `assignParticipantToTeam` — いずれも `teams` の構成を変え、`teams` は教室表示に出るため。
+
+`functions/src/lessonRuns/recoveryLifecycle.ts` の `interruptLesson` / `resumeLesson` / `completeLesson` には**個別の配線を行わない**。3つとも `deps.transitionPhase`（本番では `transitionPhaseWithAdminSdk`）に委譲して status を変えているため、`transitionPhase` 側のフックで自動的にカバーされる。
 
 いずれも既存の delegate 注入パターン（テストで差し替え可能なオプショナル依存）に合わせる。
 
@@ -179,7 +180,7 @@ mode: source.displayModeOverride ?? deriveDisplayMode(source.status)
 
 `economicIndicators` は対象外とする（介入名が「情報の非表示化」であり、ニュース項目を指すため）。
 
-**UI:** 手入力を廃止し、公開済みニュースの一覧をチェックボックスで示す。非表示中の項目は一覧上で区別し、同じ操作で戻せるようにする。ニュース一覧は教師画面が `lessonRunPublic` の `researchDesk.informationItems` を購読して得る。
+**UI:** 手入力を廃止し、公開済みニュースの一覧を示す。非表示中の項目は一覧上で区別し、同じ操作で戻せるようにする。ニュース一覧は教師画面が `lessonRunPublic` の `researchDesk.informationItems` を購読して得る。`InformationPublicView` に見出し専用のフィールドは無い（`id` / `category` / `source` / `publishedAtMillis` / `natureType` / `confidenceLevel` / `targetCompanyIds` / `body`）ため、一覧の表示文字列には `body` を使う。
 
 #### 3-4. `CORRECT_STATE`
 
