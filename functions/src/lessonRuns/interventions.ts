@@ -236,7 +236,7 @@ const assertInterventionDetail = (type: LessonInterventionType, detail: Record<s
 const TERMINAL_OR_POST_RUN_STATUSES: LessonRunStatus[] = ['REFLECTION', 'COMPLETED', 'ABORTED', 'ARCHIVED']
 
 /** Intervention types with no delegated existing operation: their only effect is a generic Firestore state write (`after`) alongside the audit event. Phase C/D are expected to give these concrete meaning; Phase B's job (this task) is only to record them auditable and idempotent. */
-const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['EXTEND_TIME', 'SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'HIDE_INFORMATION'])
+const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['SWITCH_DISPLAY_MODE', 'CORRECT_STATE', 'HIDE_INFORMATION'])
 
 export interface ApplyTeacherInterventionInput {
   lessonRunId: string
@@ -272,6 +272,9 @@ export interface InterventionDelegates {
   }) => Promise<unknown>
   transitionPhase: (input: {
     lessonRunId: string; targetPhaseId: string; targetStatus?: undefined; reason: string; idempotencyKey: string
+  }) => Promise<unknown>
+  extendPhaseTimer: (input: {
+    lessonRunId: string; phaseId: string; additionalSeconds: number; idempotencyKey: string
   }) => Promise<unknown>
   stopNewOperations: (lessonRunId: string) => Promise<void>
 }
@@ -394,11 +397,19 @@ export const applyTeacherIntervention = async (
         idempotencyKey: `intervention:${input.idempotencyKey}`,
       })
       break
+    case 'EXTEND_TIME':
+      delegatedResult = await deps.delegates.extendPhaseTimer({
+        lessonRunId: input.lessonRunId,
+        phaseId: input.detail.phaseId as string,
+        additionalSeconds: Number(input.detail.additionalSeconds),
+        idempotencyKey: `intervention:${input.idempotencyKey}`,
+      })
+      break
     case 'EMERGENCY_STOP':
       await deps.delegates.stopNewOperations(input.lessonRunId)
       break
     default:
-      // EXTEND_TIME, SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION:
+      // SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION:
       // no existing function to delegate to (see GENERIC_STATE_TYPES).
       break
   }
@@ -498,6 +509,12 @@ export const applyTeacherInterventionWithAdminSdk = (
       })
     },
     transitionPhase: (i) => transitionPhaseWithAdminSdk({ ...i, actorId, actorType: 'TEACHER' }),
+    extendPhaseTimer: async (i) => {
+      const { extendPhaseTimerWithAdminSdk } = await import('./interventions/extendPhaseTimer')
+      return extendPhaseTimerWithAdminSdk({
+        lessonRunId: i.lessonRunId, phaseId: i.phaseId, additionalSeconds: i.additionalSeconds,
+      })
+    },
     stopNewOperations: (lessonRunId) => lifecycleAdapter.stopNewOperations(lessonRunId),
   }
 
