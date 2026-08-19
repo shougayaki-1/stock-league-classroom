@@ -91,7 +91,7 @@ describe('ClassroomDisplayPage — sign-in and subscription flow', () => {
 })
 
 describe('ClassroomDisplayPage — mode-based rendering', () => {
-  it('renders StartSlide (title/goal) for mode START', async () => {
+  it('renders StartScreen (title/goal) for mode START', async () => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
     act(() => onUpdateCallback?.(baseState))
@@ -99,7 +99,7 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     expect(screen.getByText(baseState.goal!)).toBeInTheDocument()
   })
 
-  it('renders LiveSlide (team aggregates) for mode LIVE', async () => {
+  it('renders LiveScreen (team aggregates) for mode LIVE', async () => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
     act(() => onUpdateCallback?.({ ...baseState, mode: 'LIVE', teacherGuidance: '前を見てください' }))
@@ -107,7 +107,7 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     expect(screen.getByText('前を見てください')).toBeInTheDocument()
   })
 
-  it('renders EndSlide (results) for mode END', async () => {
+  it('renders EndScreen (results) for mode END', async () => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
     act(() => onUpdateCallback?.({ ...baseState, mode: 'END' }))
@@ -115,7 +115,7 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     expect(screen.getByText('1位')).toBeInTheDocument()
   })
 
-  it('renders ExplanationSlide for mode EXPLANATION and remembers the previous LIVE mode across the switch, resuming LIVE correctly afterward', async () => {
+  it('renders ExplanationScreen for mode EXPLANATION and remembers the previous LIVE mode across the switch, resuming LIVE correctly afterward', async () => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
 
@@ -148,7 +148,7 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     expect(screen.getByText('チームA')).toBeInTheDocument()
   })
 
-  it('falls back to ExplanationSlide for mode HOUSEHOLD_COMPARISON when householdClassComparison is defensively absent', async () => {
+  it('falls back to ExplanationScreen for mode HOUSEHOLD_COMPARISON when householdClassComparison is defensively absent', async () => {
     renderPage()
     await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
     act(() => onUpdateCallback?.({ ...baseState, mode: 'HOUSEHOLD_COMPARISON', teacherGuidance: '比較データ待ち' }))
@@ -164,7 +164,7 @@ describe('ClassroomDisplayPage — forbidden-information regression', () => {
   // correct answers, internal coefficients, the random seed, teacher-only
   // settings, or per-student evaluations), this page must never render them
   // — it explicitly destructures only the allow-listed LessonRunDisplayState
-  // fields before handing data to any Slide component.
+  // fields before handing data to any Screen component.
   const forbidden = {
     realName: '山田太郎',
     unsubmittedParticipants: ['佐藤', '鈴木'],

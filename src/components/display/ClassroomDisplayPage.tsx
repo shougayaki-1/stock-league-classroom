@@ -3,10 +3,10 @@ import { Alert, CircularProgress, Stack } from '@mui/material'
 import type { Auth, UserCredential } from 'firebase/auth'
 import type { Functions } from 'firebase/functions'
 import type { Database } from 'firebase/database'
-import { StartSlide } from './StartSlide'
-import { LiveSlide } from './LiveSlide'
-import { EndSlide } from './EndSlide'
-import { ExplanationSlide } from './ExplanationSlide'
+import { StartScreen } from './StartScreen'
+import { LiveScreen } from './LiveScreen'
+import { EndScreen } from './EndScreen'
+import { ExplanationScreen } from './ExplanationScreen'
 import { signInForClassroomDisplay, type ExchangeDisplaySessionTokenInput } from '../../lib/lessonRuns/displaySession'
 import { subscribeDisplayRun } from '../../lib/lessonRuns/liveRepository'
 import type { LessonRunDisplayState } from '../../lib/lessonRuns/liveTypes'
@@ -25,7 +25,7 @@ export interface ClassroomDisplayPageProps {
    * セッション/state を props で一切受け取らない設計、ブリーフStep3)。
    */
   token: string
-  /** 参加用URL/参加コード。教師のセッション状態ではなく、公開情報(生徒に配布される前提)として渡されることを想定。省略時はStartSlideがQRを描画しない。 */
+  /** 参加用URL/参加コード。教師のセッション状態ではなく、公開情報(生徒に配布される前提)として渡されることを想定。省略時はStartScreenがQRを描画しない。 */
   joinUrl?: string
   joinCode?: string
   /** テスト用に差し替え可能。既定は本物のtoken交換+サインイン。 */
@@ -44,7 +44,7 @@ const CONNECTION_ERROR_MESSAGE = 'この教室表示を表示できません。U
  * {lessonRunId}`(RTDB)だけを購読、という経路のみでデータを取得する。
  *
  * `LessonRunDisplayState`から取り出すのは mode/title/goal/teams/
- * teacherGuidance のみで、各Slideコンポーネントへは明示的な分割代入で
+ * teacherGuidance のみで、各画面コンポーネントへは明示的な分割代入で
  * 渡す(スプレッドしない) — サーバー側 `toLessonRunDisplayState`
  * (displayProjection.ts)と同じallow-list方式をUI層でも徹底し、万が一
  * RTDBノードに想定外のフィールドが混入していても画面に出さない
@@ -57,7 +57,7 @@ export function ClassroomDisplayPage({
 }: ClassroomDisplayPageProps) {
   const [status, setStatus] = useState<ConnectionStatus>('CONNECTING')
   const [state, setState] = useState<LessonRunDisplayState | null>(null)
-  // 直前のLIVE/ENDモードを保持する(ExplanationSlideへ渡す) — サーバーの
+  // 直前のLIVE/ENDモードを保持する(ExplanationScreenへ渡す) — サーバーの
   // deriveDisplayMode(displayProjection.ts)はstatusからmodeへの純粋関数な
   // ため、EXPLANATION自体にはどちらから遷移したかの情報が残らない。
   const lastNonExplanationModeRef = useRef<'LIVE' | 'END' | null>(null)
@@ -116,23 +116,23 @@ export function ClassroomDisplayPage({
 
   switch (mode) {
     case 'START':
-      return <StartSlide title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
+      return <StartScreen title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
     case 'LIVE':
-      return <LiveSlide title={title} teams={teams} teacherGuidance={teacherGuidance} />
+      return <LiveScreen title={title} teams={teams} teacherGuidance={teacherGuidance} />
     case 'END':
-      return <EndSlide title={title} teams={teams} teacherGuidance={teacherGuidance} />
+      return <EndScreen title={title} teams={teams} teacherGuidance={teacherGuidance} />
     case 'EXPLANATION':
-      return <ExplanationSlide title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
+      return <ExplanationScreen title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
     case 'HOUSEHOLD_COMPARISON':
       // Teacher-triggered only (showHouseholdComparisonOnDisplayCallable
       // always writes mode and householdClassComparison together in the
       // same .update() — see that Callable's own JSDoc), but defensively
-      // fall back to ExplanationSlide (REFLECTION's own status-derived
+      // fall back to ExplanationScreen (REFLECTION's own status-derived
       // mode) rather than crash if the field is ever somehow absent.
       return householdClassComparison
         ? <HouseholdClassComparisonView comparison={householdClassComparison} />
-        : <ExplanationSlide title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
+        : <ExplanationScreen title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
     default:
-      return <StartSlide title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
+      return <StartScreen title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
   }
 }

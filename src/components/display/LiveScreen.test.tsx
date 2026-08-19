@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { LiveSlide } from './LiveSlide'
+import { LiveScreen } from './LiveScreen'
 
-describe('LiveSlide', () => {
+describe('LiveScreen', () => {
   it('shows the phase name, remaining time, public info, anonymous per-team aggregates, and teacher guidance', () => {
     render(
-      <LiveSlide
+      <LiveScreen
         title="株価変動を体験しよう"
         phaseName="フェーズ2: 決算発表"
         remainingSeconds={95}
@@ -30,7 +30,7 @@ describe('LiveSlide', () => {
   })
 
   it('renders gracefully when phaseName/remainingSeconds/publicInfo are absent (not part of the current display projection)', () => {
-    render(<LiveSlide title="タイトル" teams={[]} teacherGuidance={null} />)
+    render(<LiveScreen title="タイトル" teams={[]} teacherGuidance={null} />)
     expect(screen.getByText('タイトル')).toBeInTheDocument()
     expect(screen.queryByText(/残り/)).not.toBeInTheDocument()
   })

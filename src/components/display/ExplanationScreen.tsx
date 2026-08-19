@@ -6,7 +6,7 @@ const RESUME_HINT: Record<'LIVE' | 'END', string> = {
   END: '結果画面に戻ります',
 }
 
-export interface ExplanationSlideProps {
+export interface ExplanationScreenProps {
   title: string
   teams: LessonRunDisplayTeamSummary[]
   teacherGuidance: string | null
@@ -23,8 +23,8 @@ export interface ExplanationSlideProps {
   previousMode: 'LIVE' | 'END' | null
 }
 
-/** 説明画面(EXPLANATION mode)。教師の補足説明・チームの匿名集計のみを表示し、直前mode(LIVE/END)への復帰見込みをテキストで示す。 */
-export function ExplanationSlide({ title, teams, teacherGuidance, previousMode }: ExplanationSlideProps) {
+/** 解説画面(EXPLANATION mode)。教師の補足説明・チームの匿名集計のみを表示し、直前mode(LIVE/END)への復帰見込みをテキストで示す。 */
+export function ExplanationScreen({ title, teams, teacherGuidance, previousMode }: ExplanationScreenProps) {
   return (
     <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h4" component="h1">{title}</Typography>

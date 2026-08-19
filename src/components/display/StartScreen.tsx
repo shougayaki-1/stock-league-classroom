@@ -32,7 +32,7 @@ const OPERATION_STEPS = [
   '残り時間が表示されている間は変更できます',
 ]
 
-export interface StartSlideProps {
+export interface StartScreenProps {
   title: string
   goal: string | null
   /** 参加用URL。教師のセッション状態からではなく、表示URL自身のクエリパラメータ等、公開情報として渡されることを想定(参加コード自体は生徒に配布される前提の非秘匿情報)。省略時はQRコードを描画しない。 */
@@ -42,12 +42,12 @@ export interface StartSlideProps {
 }
 
 /** 開始画面(START mode)。タイトル・目標・流れ・ルール・操作方法・QR/参加コードのみを表示する。 */
-export function StartSlide({ title, goal, joinUrl, joinCode }: StartSlideProps) {
+export function StartScreen({ title, goal, joinUrl, joinCode }: StartScreenProps) {
   return (
     <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h3" component="h1">{title}</Typography>
       {goal && (
-        <Typography variant="h5" component="p" data-testid="start-slide-goal">{goal}</Typography>
+        <Typography variant="h5" component="p" data-testid="start-screen-goal">{goal}</Typography>
       )}
 
       <Divider />

@@ -1,7 +1,7 @@
 import { Divider, List, ListItem, ListItemText, Stack, Typography } from '@mui/material'
 import type { LessonRunDisplayTeamSummary } from '../../lib/lessonRuns/liveTypes'
 
-export interface EndSlideProps {
+export interface EndScreenProps {
   title: string
   /** 結果・観点別ランキング。現行projectionは1つの `publicAggregateLabel`(既に匿名化・公開済みの単一文字列)しか持たないため、観点別ランキングはこのラベル文字列内に折り込まれる想定(例: "1位 / 資産120万円")。複数観点を別々の列で持つには displayProjection.ts 側の拡張が必要(このタスクのスコープ外)。 */
   teams: LessonRunDisplayTeamSummary[]
@@ -18,7 +18,7 @@ export interface EndSlideProps {
 }
 
 /** 終了画面(END mode)。結果・観点別ランキング・出来事・因果・振り返り問いのみを表示する。本名・個人回答・内部係数は一切扱わない。 */
-export function EndSlide({ title, teams, events, causalExplanation, reflectionQuestions, teacherGuidance }: EndSlideProps) {
+export function EndScreen({ title, teams, events, causalExplanation, reflectionQuestions, teacherGuidance }: EndScreenProps) {
   return (
     <Stack spacing={3} sx={{ width: '100%', maxWidth: 960, p: 4, mx: 'auto' }}>
       <Typography variant="h3" component="h1">{title}</Typography>

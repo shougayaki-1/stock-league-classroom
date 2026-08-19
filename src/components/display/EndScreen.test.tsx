@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { EndSlide } from './EndSlide'
+import { EndScreen } from './EndScreen'
 
-describe('EndSlide', () => {
+describe('EndScreen', () => {
   it('shows results/ranking (from team aggregates), events, causal explanation, and reflection questions', () => {
     render(
-      <EndSlide
+      <EndScreen
         title="株価変動を体験しよう"
         teams={[
           { teamId: 't1', displayName: 'チームA', publicAggregateLabel: '1位 / 資産120万円' },
@@ -31,7 +31,7 @@ describe('EndSlide', () => {
   })
 
   it('renders gracefully when events/causalExplanation/reflectionQuestions are absent', () => {
-    render(<EndSlide title="タイトル" teams={[]} teacherGuidance={null} />)
+    render(<EndScreen title="タイトル" teams={[]} teacherGuidance={null} />)
     expect(screen.getByText('タイトル')).toBeInTheDocument()
   })
 })

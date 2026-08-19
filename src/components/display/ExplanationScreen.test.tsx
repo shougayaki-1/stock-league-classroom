@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { ExplanationSlide } from './ExplanationSlide'
+import { ExplanationScreen } from './ExplanationScreen'
 
-describe('ExplanationSlide', () => {
+describe('ExplanationScreen', () => {
   it('shows the teacher guidance and team context, and indicates that the LIVE screen will resume', () => {
     render(
-      <ExplanationSlide
+      <ExplanationScreen
         title="株価変動を体験しよう"
         teams={[{ teamId: 't1', displayName: 'チームA', publicAggregateLabel: '1位' }]}
         teacherGuidance="ここで少し補足します"
@@ -21,7 +21,7 @@ describe('ExplanationSlide', () => {
 
   it('indicates that the END screen will resume when previousMode is END', () => {
     render(
-      <ExplanationSlide
+      <ExplanationScreen
         title="株価変動を体験しよう"
         teams={[]}
         teacherGuidance={null}
@@ -32,7 +32,7 @@ describe('ExplanationSlide', () => {
   })
 
   it('renders without a resume hint when no previous mode is known yet (first-ever state is EXPLANATION)', () => {
-    render(<ExplanationSlide title="タイトル" teams={[]} teacherGuidance={null} previousMode={null} />)
+    render(<ExplanationScreen title="タイトル" teams={[]} teacherGuidance={null} previousMode={null} />)
     expect(screen.queryByText(/画面に戻ります/)).not.toBeInTheDocument()
   })
 })
