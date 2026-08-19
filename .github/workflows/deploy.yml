@@ -31,6 +31,7 @@ jobs:
       - run: npm run build
         env:
           VITE_FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.VITE_FIREBASE_APP_CHECK_SITE_KEY }}
+          VITE_FEATURE_LESSON_PLATFORM_V2: ${{ vars.VITE_FEATURE_LESSON_PLATFORM_V2 }}
 
   deploy:
     needs: verify
@@ -61,6 +62,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
           VITE_COMMIT_SHA: ${{ github.sha }}
           VITE_FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.VITE_FIREBASE_APP_CHECK_SITE_KEY }}
+          VITE_FEATURE_LESSON_PLATFORM_V2: ${{ vars.VITE_FEATURE_LESSON_PLATFORM_V2 }}
 
       - name: Confirm the published version
         run: |
