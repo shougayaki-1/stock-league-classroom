@@ -175,8 +175,9 @@ export const createLessonRun = async (deps: CreateLessonRunDeps): Promise<Create
         createdAt: nowValue,
       })
     }
-    const contentSubject = (version.content as { subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' }).subject
-    const defaultPhaseGraph = buildDefaultPhases(contentSubject)
+    const snapshotContent = version.content as { subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'; coreActivityMinutes?: number }
+    const contentSubject = snapshotContent.subject
+    const defaultPhaseGraph = buildDefaultPhases(contentSubject, snapshotContent.coreActivityMinutes)
     tx.set(`lessonRuns/${lessonRunId}`, {
       orgId: deps.orgId, templateId: deps.templateId, templateVersionId: template.currentPublishedVersionId,
       templateSnapshot: {

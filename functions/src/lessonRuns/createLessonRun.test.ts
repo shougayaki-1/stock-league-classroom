@@ -530,3 +530,28 @@ describe('createLessonRun quota enforcement', () => {
     expect(fake.docs.get('lessonRuns/run-stable')).toMatchObject({ randomSeed: 'seed-stable' })
   })
 })
+
+describe('coreActivityMinutes', () => {
+  it('教材の coreActivityMinutes を中核フェーズの制限時間にする', async () => {
+    const fake = makeFakeFirestore()
+    fake.docs.set('lessonTemplates/tpl-1', { orgId: 'personal_teacher-a', currentPublishedVersionId: 'v1' })
+    fake.docs.set('lessonTemplates/tpl-1/versions/v1', {
+      templateId: 'tpl-1', orgId: 'personal_teacher-a',
+      content: { schemaVersion: 1, title: 't', description: '', subject: 'SOCIAL_STUDIES', coreActivityMinutes: 20 },
+    })
+
+    const result = await createLessonRun({
+      firestore: fake as never,
+      generateRandomSeed: () => 'fixed-test-seed',
+      generateLessonRunId: () => 'run-core-minutes',
+      lessonRunIdempotencyKey: 'idem-core-minutes',
+      orgId: 'personal_teacher-a', templateId: 'tpl-1', primaryTeacherUid: 'teacher-a',
+    })
+
+    const run = fake.docs.get(`lessonRuns/${result.lessonRunId}`) as {
+      templateSnapshot: { phases: Array<{ id: string; durationSeconds?: number }> }
+    }
+    const market = run.templateSnapshot.phases.find((phase) => phase.id === 'market')
+    expect(market?.durationSeconds).toBe(20 * 60)
+  })
+})

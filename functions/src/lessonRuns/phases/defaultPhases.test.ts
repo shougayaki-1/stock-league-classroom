@@ -36,3 +36,38 @@ describe('buildDefaultPhases', () => {
     expect(phases.find((phase) => phase.id === 'result')?.nextPhaseIds).toEqual(['reflection'])
   })
 })
+
+describe('coreActivityMinutes', () => {
+  it('社会科では取引フェーズだけが durationSeconds を持つ', () => {
+    const { phases } = buildDefaultPhases('SOCIAL_STUDIES', 20)
+    const withDuration = phases.filter((phase) => typeof phase.durationSeconds === 'number')
+
+    expect(withDuration).toHaveLength(1)
+    expect(withDuration[0].id).toBe('market')
+    expect(withDuration[0].durationSeconds).toBe(20 * 60)
+  })
+
+  it('家庭科では意思決定フェーズだけが durationSeconds を持つ', () => {
+    const { phases } = buildDefaultPhases('HOME_ECONOMICS', 35)
+    const withDuration = phases.filter((phase) => typeof phase.durationSeconds === 'number')
+
+    expect(withDuration).toHaveLength(1)
+    expect(withDuration[0].id).toBe('decision')
+    expect(withDuration[0].durationSeconds).toBe(35 * 60)
+  })
+
+  it('省略時はどのフェーズも durationSeconds を持たない', () => {
+    const { phases } = buildDefaultPhases('SOCIAL_STUDIES')
+    expect(phases.every((phase) => phase.durationSeconds === undefined)).toBe(true)
+  })
+
+  it('progression は TEACHER_CONTROLLED のまま変えない', () => {
+    const { phases } = buildDefaultPhases('SOCIAL_STUDIES', 20)
+    expect(phases.every((phase) => phase.progression === 'TEACHER_CONTROLLED')).toBe(true)
+  })
+
+  it('0以下の分数は無視する', () => {
+    const { phases } = buildDefaultPhases('SOCIAL_STUDIES', 0)
+    expect(phases.every((phase) => phase.durationSeconds === undefined)).toBe(true)
+  })
+})
