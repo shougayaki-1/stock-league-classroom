@@ -24,3 +24,23 @@ describe('buildDraftFromAnswers', () => {
     expect(advanced.homeEconomics!.lifeEvents.length).toBeGreaterThan(easy.homeEconomics!.lifeEvents.length)
   })
 })
+
+describe('coreActivityMinutes', () => {
+  it('社会科は alwaysOnMarketMinutes をそのまま使う', () => {
+    expect(buildDraftFromAnswers(market, 'STANDARD').coreActivityMinutes).toBe(20)
+  })
+
+  it('家庭科は授業時間から他フェーズ分を引く', () => {
+    expect(buildDraftFromAnswers(life, 'STANDARD').coreActivityMinutes).toBe(50 - 15)
+  })
+
+  it('短い授業時間でも下限を下回らない', () => {
+    const short: WizardAnswers = { ...life, lessonDurationMinutes: 10 }
+    expect(buildDraftFromAnswers(short, 'STANDARD').coreActivityMinutes).toBe(5)
+  })
+
+  it('社会科の市場分数が0でも下限を下回らない', () => {
+    const short: WizardAnswers = { ...market, alwaysOnMarketMinutes: 0 }
+    expect(buildDraftFromAnswers(short, 'STANDARD').coreActivityMinutes).toBe(5)
+  })
+})

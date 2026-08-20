@@ -23,6 +23,15 @@ export interface LessonContent {
   title: string
   description: string
   subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
+  /**
+   * 中核フェーズ（社会科は取引、家庭科は意思決定）に充てる分数。
+   * `buildDefaultPhases` がこの値を中核フェーズの `durationSeconds` にする。
+   *
+   * 任意フィールドである。この値が導入される前に作られた教材は持たず、その
+   * 場合は従来どおり全フェーズが制限時間なしで動く。既存ドキュメントの読み
+   * 取りが壊れる変更ではないため `schemaVersion` は上げない。
+   */
+  coreActivityMinutes?: number
   /** Only present when subject === 'SOCIAL_STUDIES'. Optional so existing
    * HOME_ECONOMICS drafts and Phase A's minimal placeholder keep compiling. */
   socialStudiesMarket?: SocialStudiesMarketContent
