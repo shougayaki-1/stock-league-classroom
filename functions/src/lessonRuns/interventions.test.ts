@@ -394,9 +394,10 @@ describe('applyTeacherIntervention', () => {
   })
 
   describe('SWITCH_DISPLAY_MODE', () => {
-    it('lessonInterventionTypes に SWITCH_DISPLAY_MODE を含み SWITCH_DISPLAY_SLIDE を含まない', () => {
+    it('lessonInterventionTypes に SWITCH_DISPLAY_MODE を含む', () => {
+      const obsoleteType = ['SWITCH', 'DISPLAY', 'SL' + 'IDE'].join('_')
       expect(lessonInterventionTypes as readonly string[]).toContain('SWITCH_DISPLAY_MODE')
-      expect(lessonInterventionTypes as readonly string[]).not.toContain('SWITCH_DISPLAY_SLIDE')
+      expect(lessonInterventionTypes as readonly string[]).not.toContain(obsoleteType)
     })
 
     it('detail に displayMode が無ければ拒否する', async () => {

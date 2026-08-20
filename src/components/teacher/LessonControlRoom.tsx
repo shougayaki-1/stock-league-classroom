@@ -255,9 +255,7 @@ export function LessonControlRoom({
       )}
 
       <LessonStatusHeader
-        status={status}
         phaseLabel={phaseLabel}
-        interrupted={interrupted}
         participationSummary={participationSummary}
         openIssues={openIssues}
         displayPreview={displayPreview}

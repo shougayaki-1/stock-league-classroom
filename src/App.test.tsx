@@ -566,8 +566,8 @@ describe('Guided Lesson Builder routes', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('routes /teacher/tuning through TemplateRouteGuard for an authorized teacher', async () => {
-    window.history.pushState({}, '', '/teacher/tuning')
+  it('routes /operator/tuning through TemplateRouteGuard for an authorized teacher', async () => {
+    window.history.pushState({}, '', '/operator/tuning')
     getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ status: 'active' }) })
     callableMock.mockResolvedValue({ data: { socialStudies: { priceSensitivityPresets: {}, defaultNoiseMagnitudePercent: .35, defaultSuddenChangeWarningThresholdPercent: 7, shortTermWindowBatches: 10, flatBandPercent: .5, stallDetectionThresholdMillis: 60000 }, homeEconomics: { taxModelV1RatePercent: 20, emergencyFundTargetMonths: 6, pensionReplacementRatePercentProvisionalDefault: 50 } } })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)

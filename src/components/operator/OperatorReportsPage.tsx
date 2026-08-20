@@ -7,6 +7,7 @@ export interface OperatorReportsPageProps {
   accessDenied: boolean
   onUnpublish: (report: PendingTemplateReport) => void
   onDismiss: (report: PendingTemplateReport) => void
+  onNavigateHome?: () => void
   onNavigateToCertifications?: () => void
   onNavigateToAiBeta?: () => void
 }
@@ -17,6 +18,7 @@ export function OperatorReportsPage({
   accessDenied,
   onUnpublish,
   onDismiss,
+  onNavigateHome,
   onNavigateToCertifications,
   onNavigateToAiBeta,
 }: OperatorReportsPageProps) {
@@ -25,6 +27,11 @@ export function OperatorReportsPage({
     <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
       <Typography variant="h5">通報の審査</Typography>
       <Stack direction="row" spacing={1}>
+        {onNavigateHome && (
+          <Button variant="text" onClick={onNavigateHome}>
+            運営者ページへ
+          </Button>
+        )}
         {onNavigateToCertifications && (
           <Button variant="outlined" onClick={onNavigateToCertifications}>
             教材認定へ

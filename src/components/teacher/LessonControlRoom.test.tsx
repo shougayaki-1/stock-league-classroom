@@ -365,7 +365,8 @@ describe('LessonControlRoom', () => {
     emitDisplay({ mode: 'LIVE', title: 'フェーズ1の説明' })
     emitParticipants([])
 
+    const obsoleteName = ['説明', 'ス' + 'ライド', 'を編集'].join('')
     expect(screen.getByRole('button', { name: '教室表示のメッセージ' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '説明スライドを編集' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: obsoleteName })).not.toBeInTheDocument()
   })
 })

@@ -1,0 +1,51 @@
+flowchart TB
+    subgraph CLIENT["フロントエンド（React 19 + Vite + MUI, react-router）"]
+        LANDING["公開ページ\nLanding / About / Guide / Terms"]
+        STUDENT["生徒画面\nLessonJoinPage"]
+        TEACHER["教師画面\nLessonControlRoom / テンプレート編集\n組織・請求設定 / チューニング"]
+        DISPLAY["教室ディスプレイ\nClassroomDisplayPage"]
+        OPERATOR["運営者画面\nレポート / テンプレート認定"]
+    end
+
+    subgraph GUARD["クライアント側ガード（UX用、認可の実体はサーバ側ルール）"]
+        TG["useTeacherLessonAccess\nuseTemplateAccess"]
+        SG["useStudentLessonAccess"]
+    end
+
+    subgraph FIREBASE["Firebase バックエンド"]
+        AUTH["Firebase Auth\n匿名/Google/メール認証"]
+        FS[("Firestore\nlessonRuns / lessonTemplates\norganizations / invitations")]
+        RTDB[("Realtime Database\nlessonRunMembership\nライブ授業状態")]
+        STORAGE[("Cloud Storage\n教材・アップロード")]
+        FUNCS["Cloud Functions (callable)\nlessonRuns / lessonTemplates\norganizations / billing\nhomeEconomics / market / privacy\nplatformConfig"]
+        RULES["Firestore/RTDB/Storage\nセキュリティルール\n（実際の認可境界）"]
+    end
+
+    subgraph EXTERNAL["外部サービス"]
+        STRIPE["Stripe\n請求・サブスクリプション"]
+        LLM["LLM プロバイダ\n授業案生成 (AI)"]
+        SENTRY["Sentry\nエラーレポーティング"]
+    end
+
+    STUDENT --> SG --> RTDB
+    TEACHER --> TG --> FS
+    TEACHER -->|認証| AUTH
+    STUDENT -->|匿名認証| AUTH
+    DISPLAY --> RTDB
+    OPERATOR --> FUNCS
+
+    CLIENT -->|onSnapshot/getDoc| FS
+    CLIENT -->|onValue| RTDB
+    CLIENT -->|httpsCallable| FUNCS
+    CLIENT -->|upload/download| STORAGE
+    CLIENT -->|初期化| SENTRY
+
+    FUNCS --> FS
+    FUNCS --> RTDB
+    FUNCS --> STORAGE
+    FUNCS -->|Checkout/Portal| STRIPE
+    FUNCS -->|授業案・指導案生成| LLM
+
+    FS -.->|read/write 制御| RULES
+    RTDB -.->|read/write 制御| RULES
+    STORAGE -.->|read/write 制御| RULES

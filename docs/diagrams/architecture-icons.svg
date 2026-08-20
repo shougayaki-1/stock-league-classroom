@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="920" viewBox="0 0 1400 920" font-family="'Hiragino Sans', 'Noto Sans JP', 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a73e8"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="920" fill="#f8f9fa"/>
+
+  <!-- Title card -->
+  <rect x="24" y="20" width="420" height="86" rx="6" fill="#e8f0fe" stroke="#aecbfa" stroke-width="1.5"/>
+  <text x="234" y="44" text-anchor="middle" font-size="14" font-weight="700" fill="#1a237e">Stock League Classroom</text>
+  <text x="234" y="63" text-anchor="middle" font-size="12" font-weight="700" fill="#1a237e">Architecture Diagram</text>
+  <text x="234" y="80" text-anchor="middle" font-size="11" fill="#3c4043">Version 1.0</text>
+  <text x="234" y="95" text-anchor="middle" font-size="11" fill="#3c4043">As of 2026/08/15</text>
+
+  <!-- ============ CLIENT ============ -->
+  <g transform="translate(60,300)">
+    <!-- monitor -->
+    <rect x="0" y="0" width="72" height="50" rx="4" fill="#ffffff" stroke="#5f6368" stroke-width="2.5"/>
+    <rect x="6" y="6" width="60" height="38" fill="#4285f4"/>
+    <circle cx="36" cy="25" r="10" fill="#ffffff" opacity="0.9"/>
+    <path d="M30 30 q6 -10 12 0" stroke="#4285f4" stroke-width="2.5" fill="none"/>
+    <rect x="26" y="50" width="20" height="8" fill="#5f6368"/>
+    <rect x="14" y="58" width="44" height="5" rx="2" fill="#5f6368"/>
+    <text x="36" y="88" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Client</text>
+    <text x="36" y="104" text-anchor="middle" font-size="11" fill="#5f6368">教師 / 生徒</text>
+  </g>
+
+  <g transform="translate(70,440)">
+    <rect x="0" y="0" width="40" height="66" rx="6" fill="#ffffff" stroke="#5f6368" stroke-width="2.5"/>
+    <rect x="5" y="8" width="30" height="42" fill="#4285f4"/>
+    <circle cx="20" cy="58" r="3" fill="#5f6368"/>
+    <text x="20" y="90" text-anchor="middle" font-size="12" font-weight="700" fill="#202124">Mobile</text>
+    <text x="20" y="105" text-anchor="middle" font-size="11" fill="#5f6368">生徒端末</text>
+  </g>
+
+  <!-- ============ MAIN CONTAINER: Firebase / GCP ============ -->
+  <rect x="270" y="150" width="800" height="660" rx="16" fill="#ffffff" stroke="#dadce0" stroke-width="2"/>
+  <rect x="270" y="150" width="800" height="6" rx="3" fill="#4285f4"/>
+  <g transform="translate(292,178)">
+    <!-- google 4-color dots -->
+    <circle cx="6" cy="-4" r="6" fill="#4285f4"/>
+    <circle cx="20" cy="-4" r="6" fill="#ea4335"/>
+    <circle cx="34" cy="-4" r="6" fill="#fbbc05"/>
+    <circle cx="48" cy="-4" r="6" fill="#34a853"/>
+    <text x="62" y="1" font-size="15" font-weight="700" fill="#202124">Firebase / Google Cloud Platform</text>
+  </g>
+
+  <!-- Row1: Auth / Firestore / RTDB -->
+  <g transform="translate(310,215)">
+    <rect x="0" y="0" width="220" height="110" rx="10" fill="#f8f9fa" stroke="#e0e0e0"/>
+    <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnY9Imh0dHBzOi8vdmVjdGEuaW8vbmFubyIgd2lkdGg9IjE2LjQyMDAwMDA3NjI5Mzk0NSIgaGVpZ2h0PSIyMC4wNDk5OTkyMzcwNjA1NDciIGZpbGwtcnVsZT0iZXZlbm9kZCIgdmlld0JveD0iMCAwIDE2LjQyMDAwMDA3NjI5Mzk0NSAyMC4wNDk5OTkyMzcwNjA1NDciPiYjeGE7CTxzdHlsZSB0eXBlPSJ0ZXh0L2NzcyI+JiN4YTsJLnN0MHtmaWxsOiM0Mjg1ZjQ7fSYjeGE7CS5zdDF7ZmlsbDojNjY5ZGY2O30mI3hhOwk8L3N0eWxlPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik04LjIxIDBMMCAzLjQydjUuNjNjMCA1LjA2IDMuNSA5LjggOC4yMSAxMSA0LjcxLTEuMTUgOC4yMS01Ljg5IDguMjEtMTAuOTVWMy40MnptMCAzLjc5YTIuNjMgMi42MyAwIDAgMSAxLjAwNSA1LjA2QTIuNjMgMi42MyAwIDAgMSA2LjM1IDQuNTZhMi42MyAyLjYzIDAgMCAxIDEuODYtLjc3em00LjExIDExLjE1YTguNjQgOC42NCAwIDAgMS00LjExIDIuOTMgOC42NCA4LjY0IDAgMCAxLTQuMTEtMi45M3YtMi4yNWMwLTEuNjcgMi43NC0yLjUyIDQuMTEtMi41MnM0LjExLjg1IDQuMTEgMi41MnoiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QwIiBkPSJNOC4yMSAwdjMuNzlhMi42MyAyLjYzIDAgMSAxIDAgNS4yNnYxLjEyYzEuMzcgMCA0LjExLjg1IDQuMTEgMi41MnYyLjI1YTguNjQgOC42NCAwIDAgMS00LjExIDIuOTNWMjBjNC43MS0xLjE1IDguMjEtNS44OSA4LjIxLTEwLjk1VjMuNDJ6Ii8+JiN4YTs8L3N2Zz4=" x="86" y="14" width="34" height="41"/>
+    <text x="110" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Firebase</text>
+    <text x="110" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Authentication</text>
+    <text x="110" y="102" text-anchor="middle" font-size="10.5" fill="#5f6368">匿名 / Google / メール認証</text>
+  </g>
+
+  <g transform="translate(548,215)">
+    <rect x="0" y="0" width="220" height="110" rx="10" fill="#f8f9fa" stroke="#e0e0e0"/>
+    <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnY9Imh0dHBzOi8vdmVjdGEuaW8vbmFubyIgd2lkdGg9IjMyMy45MDU2MTAzOTg2NzUxNSIgaGVpZ2h0PSIzNzYuNDIyMjk0OTYzNjg0MDciIHZpZXdCb3g9Ii0wLjA5NzAwMDAwMjg2MTAyMjk1IDAuMjg3OTk5OTg3NjAyMjMzOSA4NS42OTk5OTY5NDgyNDIxOSA5OS41OTUwMDEyMjA3MDMxMiI+JiN4YTs8c3R5bGUgdHlwZT0idGV4dC9jc3MiPiYjeGE7CS5zdDB7ZmlsbDojYWVjYmZhO30mI3hhOwkuc3Qxe2ZpbGw6IzY2OWRmNjt9JiN4YTsJLnN0MntmaWxsOiM0Mjg1ZjQ7fSYjeGE7PC9zdHlsZT4mI3hhOwk8cGF0aCBjbGFzcz0ic3QwIiBkPSJNLS4wOTcgNzUuODE1VjU1Ljg3NGw0Mi44NS0yMC4xODN2MTkuMDd6bTAtMzUuNDAzVjIwLjQ3MUw0Mi43NTMuMjg4djE5LjA3eiIvPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik04NS42MDMgNzUuODE1VjU1Ljg3NGwtNDIuODUtMjAuMTgzdjE5LjA3em0wLTM1LjQwM1YyMC40NzFMNDIuNzUzLjI4OHYxOS4wN3oiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QyIiBkPSJNNDIuNzUzIDgwLjMxNGwxNi4yMTctNy41MjUgMjEuMDg0IDkuNzE3LTM3LjMwMSAxNy4zNzd6Ii8+JiN4YTs8L3N2Zz4=" x="84" y="12" width="40" height="44"/>
+    <text x="110" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Cloud Firestore</text>
+    <text x="110" y="86" text-anchor="middle" font-size="10.5" fill="#5f6368">lessonRuns / lessonTemplates</text>
+    <text x="110" y="102" text-anchor="middle" font-size="10.5" fill="#5f6368">organizations / invitations</text>
+  </g>
+
+  <g transform="translate(786,215)">
+    <rect x="0" y="0" width="220" height="110" rx="10" fill="#f8f9fa" stroke="#e0e0e0"/>
+    <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnY9Imh0dHBzOi8vdmVjdGEuaW8vbmFubyIgd2lkdGg9IjMyMy45MDU2MTAzOTg2NzUxNSIgaGVpZ2h0PSIzNzYuNDIyMjk0OTYzNjg0MDciIHZpZXdCb3g9Ii0wLjA5NzAwMDAwMjg2MTAyMjk1IDAuMjg3OTk5OTg3NjAyMjMzOSA4NS42OTk5OTY5NDgyNDIxOSA5OS41OTUwMDEyMjA3MDMxMiI+JiN4YTs8c3R5bGUgdHlwZT0idGV4dC9jc3MiPiYjeGE7CS5zdDB7ZmlsbDojZmFkMmNmO30mI3hhOwkuc3Qxe2ZpbGw6I2Y2YWVhOTt9JiN4YTsJLnN0MntmaWxsOiNlYTQzMzU7fSYjeGE7PC9zdHlsZT4mI3hhOwk8cGF0aCBjbGFzcz0ic3QwIiBkPSJNLS4wOTcgNzUuODE1VjU1Ljg3NGw0Mi44NS0yMC4xODN2MTkuMDd6bTAtMzUuNDAzVjIwLjQ3MUw0Mi43NTMuMjg4djE5LjA3eiIvPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik04NS42MDMgNzUuODE1VjU1Ljg3NGwtNDIuODUtMjAuMTgzdjE5LjA3em0wLTM1LjQwM1YyMC40NzFMNDIuNzUzLjI4OHYxOS4wN3oiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QyIiBkPSJNNDIuNzUzIDgwLjMxNGwxNi4yMTctNy41MjUgMjEuMDg0IDkuNzE3LTM3LjMwMSAxNy4zNzd6Ii8+JiN4YTs8L3N2Zz4=" x="84" y="12" width="40" height="44"/>
+    <text x="110" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Realtime Database</text>
+    <text x="110" y="86" text-anchor="middle" font-size="10.5" fill="#5f6368">lessonRunMembership</text>
+    <text x="110" y="102" text-anchor="middle" font-size="10.5" fill="#5f6368">ライブ授業状態</text>
+  </g>
+
+  <!-- Row2: Cloud Storage / Cloud Functions -->
+  <g transform="translate(310,355)">
+    <rect x="0" y="0" width="220" height="110" rx="10" fill="#f8f9fa" stroke="#e0e0e0"/>
+    <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnY9Imh0dHBzOi8vdmVjdGEuaW8vbmFubyIgd2lkdGg9IjIwIiBoZWlnaHQ9IjE2IiB2aWV3Qm94PSIwIDAgMjAgMTYiPiYjeGE7CTxzdHlsZSB0eXBlPSJ0ZXh0L2NzcyI+JiN4YTsJLnN0MHtmaWxsOiM0Mjg1ZjQ7fSYjeGE7CS5zdDF7ZmlsbDojNjY5ZGY2O30mI3hhOwkuc3Qye2ZpbGw6I2FlY2JmYTt9JiN4YTsJLnN0M3tmaWxsOiNmZmY7fSYjeGE7CTwvc3R5bGU+JiN4YTsJPHBhdGggY2xhc3M9InN0MiIgZD0iTTAgMGgyMHY3SDB6Ii8+JiN4YTsJPHBhdGggY2xhc3M9InN0MSIgZD0iTTE4IDBoMnY3aC0yeiIvPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDAiIGQ9Ik0xOCA3bDItN2gtMnoiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMCAwaDJ2N0gweiIvPiYjeGE7CTxnIGNsYXNzPSJzdDMiPiYjeGE7CQk8cGF0aCBkPSJNNCAzaDZ2MUg0eiIvPiYjeGE7CQk8cmVjdCB4PSIxMyIgeT0iMiIgd2lkdGg9IjMiIGhlaWdodD0iMyIgcng9IjEuNSIvPiYjeGE7CTwvZz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QyIiBkPSJNMCA5aDIwdjdIMHoiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTggOWgydjdoLTJ6Ii8+JiN4YTsJPHBhdGggY2xhc3M9InN0MCIgZD0iTTE4IDE2bDItN2gtMnoiLz4mI3hhOwk8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMCA5aDJ2N0gweiIvPiYjeGE7CTxnIGNsYXNzPSJzdDMiPiYjeGE7CQk8cGF0aCBkPSJNNCAxMmg2djFINHoiLz4mI3hhOwkJPHJlY3QgeD0iMTMiIHk9IjExIiB3aWR0aD0iMyIgaGVpZ2h0PSIzIiByeD0iMS41Ii8+JiN4YTsJPC9nPiYjeGE7PC9zdmc+" x="90" y="16" width="40" height="32"/>
+    <text x="110" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">Cloud Storage</text>
+    <text x="110" y="86" text-anchor="middle" font-size="10.5" fill="#5f6368">教材・アップロード</text>
+    <text x="110" y="102" text-anchor="middle" font-size="10.5" fill="#5f6368">画像等の保存</text>
+  </g>
+
+  <g transform="translate(548,355)">
+    <rect x="0" y="0" width="458" height="110" rx="10" fill="#f8f9fa" stroke="#e0e0e0"/>
+    <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnY9Imh0dHBzOi8vdmVjdGEuaW8vbmFubyIgd2lkdGg9IjIwIiBoZWlnaHQ9IjE5Ljk4OTk5OTc3MTExODE2NCIgdmlld0JveD0iMCAwIDIwIDE5Ljk4OTk5OTc3MTExODE2NCI+JiN4YTsJPHN0eWxlIHR5cGU9InRleHQvY3NzIj4mI3hhOwkuc3Qwe2ZpbGw6IzQyODVmNDt9JiN4YTsJLnN0MXtmaWxsOiM2NjlkZjY7fSYjeGE7CS5zdDJ7ZmlsbDojYWVjYmZhO30mI3hhOwk8L3N0eWxlPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zIDMuOTlMMCA2LjQydjcuMTNsMyAyLjQ0eiIvPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDAiIGQ9Ik0zIDMuOTlsLTMgNCAzLTJ6bS0zIDhsMyA0di0yeiIvPiYjeGE7CTxwYXRoIGNsYXNzPSJzdDIiIGQ9Ik0wIDE1Ljk5bDQgNCAyLTItNi02em0uMDEtOEw1Ljk5IDJsLTItMkwwIDMuOTl6Ii8+JiN4YTsJPHBhdGggY2xhc3M9InN0MSIgZD0iTTE3IDE2bDMtMi40MlY2LjQ0TDE3IDR6Ii8+JiN4YTsJPHBhdGggY2xhc3M9InN0MCIgZD0iTTE3IDE2bDMtNC0zIDJ6bTMtOGwtMy00djJ6Ii8+JiN4YTsJPGcgY2xhc3M9InN0MiI+JiN4YTsJCTxwYXRoIGQ9Ik0yMCA0bC00LTQtMiAyIDYgNnptLS4wMSA4bC01Ljk4IDUuOTkgMiAyTDIwIDE2eiIvPiYjeGE7CQk8Y2lyY2xlIGN4PSI2IiBjeT0iOS45OSIgcj0iMSIvPiYjeGE7CQk8Y2lyY2xlIGN4PSIxMCIgY3k9IjkuOTkiIHI9IjEiLz4mI3hhOwkJPGNpcmNsZSBjeD0iMTMuOTkiIGN5PSI5Ljk5IiByPSIxIi8+JiN4YTsJPC9nPiYjeGE7PC9zdmc+" x="20" y="14" width="30" height="30"/>
+    <text x="62" y="34" font-size="14" font-weight="700" fill="#202124">Cloud Functions (callable)</text>
+    <text x="20" y="58" font-size="10.5" fill="#5f6368">lessonRuns</text>
+    <text x="128" y="58" font-size="10.5" fill="#5f6368">lessonTemplates</text>
+    <text x="256" y="58" font-size="10.5" fill="#5f6368">organizations</text>
+    <text x="368" y="58" font-size="10.5" fill="#5f6368">billing</text>
+    <text x="20" y="76" font-size="10.5" fill="#5f6368">ai (授業案生成)</text>
+    <text x="150" y="76" font-size="10.5" fill="#5f6368">homeEconomics</text>
+    <text x="280" y="76" font-size="10.5" fill="#5f6368">market</text>
+    <text x="368" y="76" font-size="10.5" fill="#5f6368">privacy</text>
+    <text x="20" y="94" font-size="10.5" fill="#5f6368">platformConfig</text>
+  </g>
+
+  <!-- Security rules note -->
+  <g transform="translate(310,494)">
+    <rect x="0" y="0" width="696" height="46" rx="8" fill="#fef7e0" stroke="#fbbc05"/>
+    <text x="348" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="#7a5b00">Firestore / RTDB / Storage セキュリティルール</text>
+    <text x="348" y="36" text-anchor="middle" font-size="10.5" fill="#7a5b00">クライアント側ガードはUX用。実際の認可境界はこのルール（teacher()&amp;&amp;activeMember(orgId) 等）</text>
+  </g>
+
+  <!-- Hosting note -->
+  <g transform="translate(310,564)">
+    <rect x="0" y="0" width="696" height="60" rx="8" fill="#e6f4ea" stroke="#34a853"/>
+    <text x="24" y="24" font-size="13" font-weight="700" fill="#1e7e34">SPA配信</text>
+    <text x="24" y="42" font-size="10.5" fill="#3c4043">React 19 + Vite + MUI + react-router（Landing / 教師 / 生徒 / 教室ディスプレイ / 運営者）</text>
+  </g>
+
+  <!-- ============ EXTERNAL SERVICES ============ -->
+  <text x="1200" y="188" text-anchor="middle" font-size="13" font-weight="700" fill="#202124">外部サービス</text>
+
+  <!-- Stripe -->
+  <g transform="translate(1110,215)">
+    <rect x="0" y="0" width="180" height="90" rx="10" fill="#ffffff" stroke="#635bff" stroke-width="1.5"/>
+    <rect x="16" y="16" width="46" height="32" rx="6" fill="#635bff"/>
+    <rect x="16" y="24" width="46" height="6" fill="#ffffff"/>
+    <text x="72" y="34" font-size="13" font-weight="700" fill="#202124">Stripe</text>
+    <text x="72" y="50" font-size="10.5" fill="#5f6368">請求・サブスク</text>
+    <text x="16" y="72" font-size="10.5" fill="#5f6368">Checkout / Customer Portal</text>
+  </g>
+
+  <!-- LLM Provider -->
+  <g transform="translate(1110,320)">
+    <rect x="0" y="0" width="180" height="90" rx="10" fill="#ffffff" stroke="#10a37f" stroke-width="1.5"/>
+    <circle cx="34" cy="32" r="18" fill="#10a37f"/>
+    <path d="M26 32 l6 6 l12 -14" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="72" y="34" font-size="13" font-weight="700" fill="#202124">LLM Provider</text>
+    <text x="72" y="50" font-size="10.5" fill="#5f6368">授業案生成 AI</text>
+    <text x="16" y="72" font-size="10.5" fill="#5f6368">PII フィルタ / 使用量クォータ</text>
+  </g>
+
+  <!-- Sentry -->
+  <g transform="translate(1110,425)">
+    <rect x="0" y="0" width="180" height="90" rx="10" fill="#ffffff" stroke="#362d59" stroke-width="1.5"/>
+    <circle cx="34" cy="32" r="18" fill="#362d59"/>
+    <path d="M24 40 Q34 14 44 40" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <circle cx="34" cy="40" r="2.6" fill="#ffffff"/>
+    <text x="72" y="34" font-size="13" font-weight="700" fill="#202124">Sentry</text>
+    <text x="72" y="50" font-size="10.5" fill="#5f6368">エラー監視</text>
+    <text x="16" y="72" font-size="10.5" fill="#5f6368">起動時に初期化・例外を収集</text>
+  </g>
+
+  <!-- ============ ARROWS ============ -->
+  <!-- client to auth -->
+  <path d="M132 320 C 200 290, 240 270, 310 260" stroke="#5f6368" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <!-- client to firestore -->
+  <path d="M132 335 C 300 340, 400 330, 548 270" stroke="#5f6368" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="140" y="258" font-size="10" fill="#5f6368">getDoc / onSnapshot</text>
+  <!-- client to rtdb -->
+  <path d="M132 345 C 400 420, 600 400, 786 270" stroke="#5f6368" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="140" y="382" font-size="10" fill="#5f6368">onValue</text>
+  <text x="140" y="395" font-size="10" fill="#5f6368">(own uid only)</text>
+  <!-- client to storage -->
+  <path d="M132 400 C 200 430, 260 440, 310 410" stroke="#5f6368" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <!-- client to functions -->
+  <path d="M132 430 C 300 470, 420 460, 548 420" stroke="#5f6368" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="140" y="452" font-size="10" fill="#5f6368">httpsCallable</text>
+
+  <!-- functions to stripe/llm -->
+  <path d="M1006 400 C 1050 350, 1070 320, 1110 260" stroke="#635bff" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="1010" y="330" font-size="10" fill="#635bff">Checkout/Portal</text>
+  <path d="M1006 410 C 1050 400, 1070 390, 1110 375" stroke="#10a37f" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="1010" y="400" font-size="10" fill="#10a37f">授業案生成</text>
+
+  <!-- app to sentry -->
+  <path d="M950 150 C 1000 140, 1050 200, 1110 460" stroke="#362d59" stroke-width="1.4" fill="none" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="960" y="145" font-size="10" fill="#362d59">初期化 / エラーレポート</text>
+
+</svg>

@@ -76,7 +76,7 @@ export const setTeacherGuidanceCallable = onCall({ region: 'asia-northeast1' }, 
   const db = getFirestore(); const run = await db.doc(`lessonRuns/${data.lessonRunId}`).get()
   if (!run.exists) throw new HttpsError('not-found', 'レッスンランが見つかりません。')
   const role = (run.get('teacherRoles') as Record<string, string> | undefined)?.[request.auth.uid]
-  if (role !== 'PRIMARY' && role !== 'ASSISTANT') throw new HttpsError('permission-denied', 'PRIMARYまたはASSISTANTの教師のみ説明スライドを編集できます。')
+  if (role !== 'PRIMARY' && role !== 'ASSISTANT') throw new HttpsError('permission-denied', 'PRIMARYまたはASSISTANTの教師のみ教室表示のメッセージを編集できます。')
   await requireActiveOrgMember(db, run.get('orgId') as string, request.auth.uid)
   return setTeacherGuidanceWithAdminSdk({ lessonRunId: data.lessonRunId, teacherGuidance: data.teacherGuidance })
 })

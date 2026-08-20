@@ -3,10 +3,6 @@ import { matchPath } from 'react-router'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import StorefrontOutlinedIcon from '@mui/icons-material/StorefrontOutlined'
-import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined'
-import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined'
-import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined'
-import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined'
 
 export interface NavItem {
   label: string
@@ -34,15 +30,6 @@ export const TEACHER_NAV_SECTIONS: NavSection[] = [
       { label: 'マーケットプレイス', path: '/teacher/marketplace', icon: StorefrontOutlinedIcon },
     ],
   },
-  {
-    label: '運営者向け',
-    items: [
-      { label: 'パラメータ調整', path: '/teacher/tuning', icon: TuneOutlinedIcon },
-      { label: '通報レポート', path: '/operator/reports', icon: FlagOutlinedIcon },
-      { label: '教材認定', path: '/operator/certifications', icon: VerifiedOutlinedIcon },
-      { label: 'AIベータ管理', path: '/operator/ai-beta', icon: ScienceOutlinedIcon },
-    ],
-  },
 ]
 
 /** Every route rendered inside TeacherShell/StudentShell, mapped to a Japanese page title for the header. */
@@ -62,7 +49,8 @@ const PAGE_TITLES: Array<{ path: string; title: string }> = [
   { path: '/teacher/organizations/:orgId/usage-dashboard', title: '利用状況ダッシュボード' },
   { path: '/teacher/organizations/:orgId/template-approvals', title: '教材承認' },
   { path: '/teacher/organizations/:orgId/parent-settings', title: '上位組織設定' },
-  { path: '/teacher/tuning', title: 'パラメータ調整' },
+  { path: '/operator', title: '運営者ページ' },
+  { path: '/operator/tuning', title: 'パラメータ調整' },
   { path: '/operator/reports', title: '通報レポート' },
   { path: '/operator/certifications', title: '教材認定' },
   { path: '/operator/ai-beta', title: 'AIベータ管理' },

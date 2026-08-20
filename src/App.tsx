@@ -43,6 +43,7 @@ import { StartLessonDialog } from './components/teacher/templates/StartLessonDia
 import { createLessonRun } from './lib/lessonRuns/createLessonRun'
 import { describeError } from './lib/monitoring/describeError'
 import { CommunityTemplatesPage } from './components/teacher/templates/CommunityTemplatesPage'
+import { OperatorHomePage } from './components/operator/OperatorHomePage'
 import { OperatorReportsPage } from './components/operator/OperatorReportsPage'
 import { OperatorTemplateCertificationsPage } from './components/operator/OperatorTemplateCertificationsPage'
 import { OperatorAiBetaAccessPage } from './components/operator/OperatorAiBetaAccessPage'
@@ -480,6 +481,16 @@ function CommunityTemplateDetailRoute({ services }: { services: FirebaseServices
   />
 }
 
+function OperatorHomeRoute() {
+  const navigate = useNavigate()
+  return <OperatorHomePage
+    onNavigateToTuning={() => navigate('/operator/tuning')}
+    onNavigateToReports={() => navigate('/operator/reports')}
+    onNavigateToCertifications={() => navigate('/operator/certifications')}
+    onNavigateToAiBeta={() => navigate('/operator/ai-beta')}
+  />
+}
+
 function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
   const [reports, setReports] = useState<PendingTemplateReport[]>([])
@@ -497,6 +508,7 @@ function OperatorReportsRoute({ services }: { services: FirebaseServices }) {
     reports={reports} loading={loading} accessDenied={accessDenied}
     onUnpublish={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'UNPUBLISH' }).then(load) }}
     onDismiss={(report) => { void resolveTemplateReport(services.functions, { reportId: report.id, action: 'DISMISS' }).then(load) }}
+    onNavigateHome={() => navigate('/operator')}
     onNavigateToCertifications={() => navigate('/operator/certifications')}
     onNavigateToAiBeta={() => navigate('/operator/ai-beta')}
   />
@@ -544,6 +556,7 @@ function OperatorCertificationsRoute({ services }: { services: FirebaseServices 
       loading={loading}
       accessDenied={accessDenied}
       onSetCertification={handleSetCertification}
+      onNavigateHome={() => navigate('/operator')}
       onNavigateToReports={() => navigate('/operator/reports')}
       onNavigateToAiBeta={() => navigate('/operator/ai-beta')}
     />
@@ -621,6 +634,7 @@ function OperatorAiBetaAccessRoute({ services }: { services: FirebaseServices })
       error={error}
       onGrant={handleGrant}
       onRevoke={handleRevoke}
+      onNavigateHome={() => navigate('/operator')}
       onNavigateToReports={() => navigate('/operator/reports')}
       onNavigateToCertifications={() => navigate('/operator/certifications')}
     />
@@ -1303,6 +1317,7 @@ function PlanLimitsRoute({ services }: { services: FirebaseServices }) {
 }
 
 function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
+  const navigate = useNavigate()
   const [data, setData] = useState<TuningConstantsResponse>()
   const [error, setError] = useState<string>()
   useEffect(() => {
@@ -1312,7 +1327,7 @@ function TuningDashboardRoute({ services }: { services: FirebaseServices }) {
       .catch(() => { if (!cancelled) setError('failed') })
     return () => { cancelled = true }
   }, [services])
-  return <TuningDashboardPage data={data} error={error} />
+  return <TuningDashboardPage data={data} error={error} onNavigateHome={() => navigate('/operator')} />
 }
 
 /**
@@ -1527,6 +1542,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
     <Route path="/teacher/templates/:templateId/edit" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateEditRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/teacher/marketplace" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityMarketplaceRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/teacher/marketplace/:templateId" element={enabled && services ? <TemplateRouteGuard services={services}><CommunityTemplateDetailRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/operator" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorHomeRoute /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/operator/reports" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorReportsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/operator/certifications" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorCertificationsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/operator/ai-beta" element={enabled && services ? <TemplateRouteGuard services={services}><OperatorAiBetaAccessRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
@@ -1537,7 +1553,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
     <Route path="/teacher/organizations/:orgId/usage-dashboard" element={enabled && services ? <TemplateRouteGuard services={services}><UsageDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/teacher/organizations/:orgId/template-approvals" element={enabled && services ? <TemplateRouteGuard services={services}><TemplateApprovalsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
     <Route path="/teacher/organizations/:orgId/parent-settings" element={enabled && services ? <TemplateRouteGuard services={services}><ParentOrgSettingsRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
-    <Route path="/teacher/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
+    <Route path="/operator/tuning" element={enabled && services ? <TemplateRouteGuard services={services}><TuningDashboardRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />
   </Route>
   <Route path="/display/:runId" element={enabled && services ? <DisplayRoute services={services} /> : <Navigate replace to="/about" />} />
   <Route path="*" element={<NotFoundPage />} />

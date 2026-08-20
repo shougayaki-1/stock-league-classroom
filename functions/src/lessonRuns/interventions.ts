@@ -276,7 +276,7 @@ export interface InterventionDelegates {
   setDisplayModeOverride: (input: { lessonRunId: string; displayMode: string | null }) => Promise<unknown>
   setInformationHidden: (input: { lessonRunId: string; informationId: string; hidden: boolean }) => Promise<unknown>
   correctState: (input: { lessonRunId: string; target: string; targetId: string; displayName: string }) => Promise<unknown>
-  stopNewOperations: (lessonRunId) => Promise<void>
+  stopNewOperations: (lessonRunId: string) => Promise<void>
 }
 
 export interface ApplyTeacherInterventionDeps {

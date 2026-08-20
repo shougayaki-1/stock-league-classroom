@@ -96,7 +96,7 @@
 - Consumes: なし（最初のタスク）
 - Produces: `StartScreen` / `LiveScreen` / `EndScreen` / `ExplanationScreen` コンポーネント、および `StartScreenProps` / `LiveScreenProps` / `EndScreenProps` / `ExplanationScreenProps` 型。props のフィールドは改名前と同一。
 
-- [ ] **Step 1: ファイルを git mv で改名する**
+- [x] **Step 1: ファイルを git mv で改名する**
 
 ```bash
 cd src/components/display
@@ -110,7 +110,7 @@ git mv ExplanationSlide.tsx ExplanationScreen.tsx
 git mv ExplanationSlide.test.tsx ExplanationScreen.test.tsx
 ```
 
-- [ ] **Step 2: 各ファイル内の識別子を置換する**
+- [x] **Step 2: 各ファイル内の識別子を置換する**
 
 `src/components/display/` 配下の8ファイルすべてに対して、次の置換を行う。
 
@@ -133,7 +133,7 @@ sed -i '' \
   src/components/display/ClassroomDisplayPage.test.tsx
 ```
 
-- [ ] **Step 3: `ExplanationScreen.tsx` のJSDocから「スライド」語を除く**
+- [x] **Step 3: `ExplanationScreen.tsx` のJSDocから「スライド」語を除く**
 
 `ExplanationScreen.tsx` の末尾近くにあるコンポーネントのJSDocを次に置き換える。
 
@@ -141,7 +141,7 @@ sed -i '' \
 /** 解説画面(EXPLANATION mode)。教師の補足説明・チームの匿名集計のみを表示し、直前mode(LIVE/END)への復帰見込みをテキストで示す。 */
 ```
 
-- [ ] **Step 4: `ClassroomDisplayPage.tsx` のJSDoc内の「Slideコンポーネント」を直す**
+- [x] **Step 4: `ClassroomDisplayPage.tsx` のJSDoc内の「Slideコンポーネント」を直す**
 
 `ClassroomDisplayPage.tsx` のコンポーネントJSDoc内の一文を次に置き換える。
 
@@ -155,17 +155,17 @@ sed -i '' \
  * teacherGuidance のみで、各画面コンポーネントへは明示的な分割代入で
 ```
 
-- [ ] **Step 5: テストを実行して緑を確認する**
+- [x] **Step 5: テストを実行して緑を確認する**
 
 Run: `npm test -- src/components/display`
 Expected: PASS（改名のみのため既存アサーションはすべて通る）
 
-- [ ] **Step 6: 「スライド」語が display 配下から消えたことを確認する**
+- [x] **Step 6: 「スライド」語が display 配下から消えたことを確認する**
 
 Run: `grep -rin "slide\|スライド" src/components/display/`
 Expected: 出力なし（該当なしで終了コード1）
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add -A src/components/display
@@ -197,7 +197,7 @@ EOF
 - Consumes: なし
 - Produces: `ClassroomMessageDialog` コンポーネントと `ClassroomMessageDialogProps` 型。props は改名前の `TeacherGuidanceDialogProps` と同一（`open` / `onClose` / `lessonRunId` / `initialGuidance` / `functions` / `aiEnabled`）。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `src/components/teacher/LessonControlRoom.test.tsx` の末尾（最後の `})` の直前）に追加する。
 
@@ -215,12 +215,12 @@ EOF
 
 `emitPublic` / `emitDisplay` / `emitParticipants` と `functions` / `firestore` / `database` は同ファイル内の既存ヘルパー。
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test -- src/components/teacher/LessonControlRoom.test.tsx`
 Expected: FAIL — `Unable to find an accessible element with the role "button" and name "教室表示のメッセージ"`
 
-- [ ] **Step 3: ダイアログを改名する**
+- [x] **Step 3: ダイアログを改名する**
 
 ```bash
 cd /Users/shoug/Documents/GitHub/stock-league-classroom
@@ -231,7 +231,7 @@ sed -i '' \
   src/components/teacher/ClassroomMessageDialog.tsx
 ```
 
-- [ ] **Step 4: ダイアログ内の文言を更新する**
+- [x] **Step 4: ダイアログ内の文言を更新する**
 
 `src/components/teacher/ClassroomMessageDialog.tsx` の JSX 内で、次の2箇所を置き換える。
 
@@ -253,7 +253,7 @@ sed -i '' \
 <TextField label="教室表示に出すメッセージ" value={guidance}
 ```
 
-- [ ] **Step 5: `LessonControlRoom.tsx` の import とラベルを更新する**
+- [x] **Step 5: `LessonControlRoom.tsx` の import とラベルを更新する**
 
 import 文を置き換える。
 
@@ -300,7 +300,7 @@ const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
 {canEditGuidance && <ClassroomMessageDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
 ```
 
-- [ ] **Step 6: 旧ラベルに依存する既存テストを直す**
+- [x] **Step 6: 旧ラベルに依存する既存テストを直す**
 
 `LessonControlRoom.test.tsx` に `DISPLAY_MODE_LABEL` の旧文言をアサートしている箇所がある。
 
@@ -317,12 +317,12 @@ Run: `grep -n "クラス比較画面\|進行中の画面\|開始待機画面\|�
     expect(screen.getByText(/クラス比較の画面/)).toBeInTheDocument()
 ```
 
-- [ ] **Step 7: テストを実行して緑を確認する**
+- [x] **Step 7: テストを実行して緑を確認する**
 
 Run: `npm test -- src/components/teacher/LessonControlRoom.test.tsx`
 Expected: PASS
 
-- [ ] **Step 8: コミット**
+- [x] **Step 8: コミット**
 
 ```bash
 git add -A src/components/teacher
@@ -356,7 +356,7 @@ EOF
 - Consumes: なし
 - Produces: `LessonInterventionType` の値 `'SWITCH_DISPLAY_MODE'`（`'SWITCH_DISPLAY_SLIDE'` は消滅）。`REQUIRED_DETAIL_KEYS.SWITCH_DISPLAY_MODE = ['displayMode']`。サーバ側 `functions/src/lessonRuns/interventions.ts` とクライアント側 `src/lib/lessonRuns/interventions.ts` の両方で同一。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/interventions.test.ts` の末尾（最後の `})` の直前）に追加する。
 
@@ -384,12 +384,12 @@ describe('SWITCH_DISPLAY_MODE', () => {
 
 `makeFakeFirestore` / `setUpRun` / `baseEnvelope` / `makeDelegates` はすべて同ファイル内の既存ヘルパー。
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions.test.ts`
 Expected: FAIL — TypeScript が `'SWITCH_DISPLAY_MODE'` を `LessonInterventionType` に代入できないと報告する、または `toContain` が失敗する
 
-- [ ] **Step 3: サーバ側を改名する**
+- [x] **Step 3: サーバ側を改名する**
 
 ```bash
 cd /Users/shoug/Documents/GitHub/stock-league-classroom
@@ -408,7 +408,7 @@ sed -i '' \
 
 `REQUIRED_DETAIL` は `lessonInterventionTypes` 全件を回す table-driven テスト（同ファイルの `it.each(lessonInterventionTypes)`）が使うため、キー名と型名が一致していないと全件が落ちる。
 
-- [ ] **Step 4: クライアント側を改名する**
+- [x] **Step 4: クライアント側を改名する**
 
 ```bash
 cd /Users/shoug/Documents/GitHub/stock-league-classroom
@@ -437,17 +437,17 @@ sed -i '' \
   },
 ```
 
-- [ ] **Step 5: テストを実行して緑を確認する**
+- [x] **Step 5: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions.test.ts && npm test -- src/components/teacher src/lib/lessonRuns`
 Expected: PASS
 
-- [ ] **Step 6: 「slide」語が介入まわりから消えたことを確認する**
+- [x] **Step 6: 「slide」語が介入まわりから消えたことを確認する**
 
 Run: `grep -rin "slide" functions/src/lessonRuns src/lib/lessonRuns src/components/teacher`
 Expected: 出力なし（該当なしで終了コード1）
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns src/lib/lessonRuns src/components/teacher
@@ -494,7 +494,7 @@ EOF
   ) => Promise<LessonRunProjectionSource | null>
   ```
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/projections/buildProjectionSource.test.ts` を新規作成する。
 
@@ -576,12 +576,12 @@ describe('buildProjectionSource', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections/buildProjectionSource.test.ts`
 Expected: FAIL — `Failed to resolve import "./buildProjectionSource"`
 
-- [ ] **Step 3: 実装する**
+- [x] **Step 3: 実装する**
 
 `functions/src/lessonRuns/projections/buildProjectionSource.ts` を新規作成する。
 
@@ -680,12 +680,12 @@ export const buildProjectionSourceWithAdminSdk = (
 }
 ```
 
-- [ ] **Step 4: テストを実行して緑を確認する**
+- [x] **Step 4: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections/buildProjectionSource.test.ts`
 Expected: PASS（5件）
 
-- [ ] **Step 5: `setTeacherGuidance` を `buildProjectionSource` に寄せる**
+- [x] **Step 5: `setTeacherGuidance` を `buildProjectionSource` に寄せる**
 
 `functions/src/lessonRuns/projections/setTeacherGuidance.ts` の全体を次に置き換える。
 
@@ -747,7 +747,7 @@ export const setTeacherGuidanceWithAdminSdk = (input: SetTeacherGuidanceInput): 
 export { deriveDisplayMode }
 ```
 
-- [ ] **Step 6: `setTeacherGuidance.test.ts` を新しい deps 形に合わせる**
+- [x] **Step 6: `setTeacherGuidance.test.ts` を新しい deps 形に合わせる**
 
 既存テストの deps 構築を次の形に置き換える。アサーション（`teacherGuidance` の正規化、`setDisplayState` に渡る state の中身）は変えない。
 
@@ -777,12 +777,12 @@ const buildDeps = (overrides: Partial<Record<string, unknown>> = {}) => {
 }
 ```
 
-- [ ] **Step 7: テストを実行して緑を確認する**
+- [x] **Step 7: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections`
 Expected: PASS
 
-- [ ] **Step 8: コミット**
+- [x] **Step 8: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns/projections
@@ -815,7 +815,7 @@ EOF
 - Consumes: Task 4 の `buildProjectionSource`
 - Produces: `LessonRunProjectionSource.displayModeOverride: LessonRunDisplayMode | null`。`toLessonRunDisplayState` の `mode` は `source.displayModeOverride ?? deriveDisplayMode(source.status)`。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/projections/displayProjection.test.ts` の末尾（最後の `})` の直前）に追加する。`privateRunFixture` は同ファイル冒頭の既存 `LessonRunProjectionSource` フィクスチャ。
 
@@ -861,12 +861,12 @@ it('displayModeOverride が無ければ null にする', async () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections`
 Expected: FAIL — `displayModeOverride` が `LessonRunProjectionSource` に存在しない旨の型エラー、および `expect(received).toBe('EXPLANATION')` が `'LIVE'` で失敗
 
-- [ ] **Step 3: `source.ts` に `displayModeOverride` を足す**
+- [x] **Step 3: `source.ts` に `displayModeOverride` を足す**
 
 `functions/src/lessonRuns/projections/source.ts` の `LessonRunProjectionSource` 内、`teacherGuidance` の直後に追加する。
 
@@ -886,7 +886,7 @@ Expected: FAIL — `displayModeOverride` が `LessonRunProjectionSource` に存�
 import type { LessonRunDisplayMode } from './displayProjection'
 ```
 
-- [ ] **Step 4: `displayProjection.ts` の `mode` を override 優先にする**
+- [x] **Step 4: `displayProjection.ts` の `mode` を override 優先にする**
 
 `toLessonRunDisplayState` の `mode` 行を置き換える。
 
@@ -901,7 +901,7 @@ import type { LessonRunDisplayMode } from './displayProjection'
   mode: source.displayModeOverride ?? deriveDisplayMode(source.status),
 ```
 
-- [ ] **Step 5: `buildProjectionSource.ts` に `displayModeOverride` を足す**
+- [x] **Step 5: `buildProjectionSource.ts` に `displayModeOverride` を足す**
 
 返り値オブジェクトの `teacherGuidance` の直後に追加する。
 
@@ -915,12 +915,12 @@ import type { LessonRunDisplayMode } from './displayProjection'
 import type { LessonRunDisplayMode } from './displayProjection'
 ```
 
-- [ ] **Step 6: テストを実行して緑を確認する**
+- [x] **Step 6: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections`
 Expected: PASS
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns/projections
@@ -950,7 +950,7 @@ EOF
 - Consumes: なし
 - Produces: `TransitionPhaseDeps.nowMillis?: () => number`（未指定時は `Date.now`）。`lessonRuns/{id}.currentPhaseEndsAtMillis: number | null` が遷移のたびに書かれる。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/phases/transitionPhase.test.ts` の末尾（最後の `})` の直前）に追加する。`makeFakeFirestore` / `setUpRun` は同ファイル内の既存ヘルパー。run の id は `run-1`。
 
@@ -992,12 +992,12 @@ describe('currentPhaseEndsAtMillis', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/phases/transitionPhase.test.ts`
 Expected: FAIL — `expected undefined to be 1700000600000`
 
-- [ ] **Step 3: `TransitionPhaseDeps` に `nowMillis` を足す**
+- [x] **Step 3: `TransitionPhaseDeps` に `nowMillis` を足す**
 
 `functions/src/lessonRuns/phases/transitionPhase.ts` の `TransitionPhaseDeps` 内、`now?: () => unknown` の直後に追加する。
 
@@ -1009,7 +1009,7 @@ Expected: FAIL — `expected undefined to be 1700000600000`
   nowMillis?: () => number
 ```
 
-- [ ] **Step 4: 終了時刻を計算して書き込む**
+- [x] **Step 4: 終了時刻を計算して書き込む**
 
 `transitionPhase` 本体、`const nowValue = deps.now ? ... ` の直後に追加する。
 
@@ -1042,12 +1042,12 @@ Expected: FAIL — `expected undefined to be 1700000600000`
     tx.set(runPath, { ...run, status: newStatus, currentPhaseId: newPhaseId, startedAt, endedAt, currentPhaseEndsAtMillis })
 ```
 
-- [ ] **Step 5: テストを実行して緑を確認する**
+- [x] **Step 5: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/phases/transitionPhase.test.ts`
 Expected: PASS
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns/phases
@@ -1083,7 +1083,7 @@ EOF
   // TransitionPhaseDeps.publishLessonProjection?: (lessonRunId: string) => Promise<void>
   ```
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/phases/transitionPhase.test.ts` の末尾（最後の `})` の直前）に追加する。
 
@@ -1114,12 +1114,12 @@ describe('publishLessonProjection', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/phases/transitionPhase.test.ts`
 Expected: FAIL — `expected [] to deeply equal [ 'run1' ]`
 
-- [ ] **Step 3: `publicProjection.ts` に run 単位の発行関数を足す**
+- [x] **Step 3: `publicProjection.ts` に run 単位の発行関数を足す**
 
 `functions/src/lessonRuns/projections/publicProjection.ts` の末尾に追加する。
 
@@ -1141,7 +1141,7 @@ export const publishLessonProjectionForRunWithAdminSdk = async (lessonRunId: str
 }
 ```
 
-- [ ] **Step 4: `transitionPhase` にフックを足す**
+- [x] **Step 4: `transitionPhase` にフックを足す**
 
 `TransitionPhaseDeps` の `publishResearchDeskProjection?: (lessonRunId: string) => Promise<void>` の直後に追加する。
 
@@ -1162,7 +1162,7 @@ export const publishLessonProjectionForRunWithAdminSdk = async (lessonRunId: str
   }
 ```
 
-- [ ] **Step 5: 本番配線を足す**
+- [x] **Step 5: 本番配線を足す**
 
 `transitionPhaseWithAdminSdk` 内の dynamic import 行の直後に追加する。
 
@@ -1176,12 +1176,12 @@ export const publishLessonProjectionForRunWithAdminSdk = async (lessonRunId: str
     publishLessonProjection: publishLessonProjectionForRunWithAdminSdk,
 ```
 
-- [ ] **Step 6: テストを実行して緑を確認する**
+- [x] **Step 6: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns`
 Expected: PASS
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns
@@ -1213,14 +1213,14 @@ EOF
 - Consumes: Task 7 の `publishLessonProjectionForRunWithAdminSdk`
 - Produces: `JoinLessonRunDeps.publishLessonProjection?: (lessonRunId: string) => Promise<void>`、`AssignParticipantToTeamDeps.publishLessonProjection?: (lessonRunId: string) => Promise<void>`。どちらも未設定なら何もしない。
 
-- [ ] **Step 1: 実装ファイルの現行 deps 形を確認する**
+- [x] **Step 1: 実装ファイルの現行 deps 形を確認する**
 
 Run: `sed -n '1,80p' functions/src/lessonRuns/joinLessonRun.ts`
 Run: `sed -n '1,60p' functions/src/lessonRuns/teams/assignTeam.ts`
 
 `Deps` インターフェースの定義位置と、トランザクション完了後の副作用（RTDBミラー同期など）を呼んでいる箇所を特定する。新しいフックはその副作用群の**最後**に置く。
 
-- [ ] **Step 2: 失敗するテストを書く**
+- [x] **Step 2: 失敗するテストを書く**
 
 `functions/src/lessonRuns/joinLessonRun.test.ts` の `describe('joinLessonRun', ...)` 内の末尾に追加する。`makeFakeFirestore` / `setUpLessonRun` / `makeDeps` / `baseInput` は同ファイル内の既存ヘルパー。
 
@@ -1256,12 +1256,12 @@ Run: `sed -n '1,60p' functions/src/lessonRuns/teams/assignTeam.ts`
   })
 ```
 
-- [ ] **Step 3: テストを実行して失敗を確認する**
+- [x] **Step 3: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/joinLessonRun.test.ts src/lessonRuns/teams/assignTeam.test.ts`
 Expected: FAIL — 両方で `expected [] to deeply equal [ 'run-1' ]`
 
-- [ ] **Step 4: `joinLessonRun` にフックを足す**
+- [x] **Step 4: `joinLessonRun` にフックを足す**
 
 `JoinLessonRunDeps` に追加する。
 
@@ -1287,7 +1287,7 @@ Expected: FAIL — 両方で `expected [] to deeply equal [ 'run-1' ]`
     },
 ```
 
-- [ ] **Step 5: `assignParticipantToTeam` にフックを足す**
+- [x] **Step 5: `assignParticipantToTeam` にフックを足す**
 
 `AssignParticipantToTeamDeps` に追加する。
 
@@ -1313,12 +1313,12 @@ Expected: FAIL — 両方で `expected [] to deeply equal [ 'run-1' ]`
     },
 ```
 
-- [ ] **Step 6: テストを実行して緑を確認する**
+- [x] **Step 6: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns`
 Expected: PASS
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns
@@ -1652,7 +1652,7 @@ EOF
   ```
   `InterventionDelegates` に `setDisplayModeOverride: (input: { lessonRunId: string; displayMode: string | null }) => Promise<unknown>` が加わる。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/interventions/setDisplayModeOverride.test.ts` を新規作成する。
 
@@ -1707,12 +1707,12 @@ describe('setDisplayModeOverride', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions/setDisplayModeOverride.test.ts`
 Expected: FAIL — `Failed to resolve import "./setDisplayModeOverride"`
 
-- [ ] **Step 3: 実装する**
+- [x] **Step 3: 実装する**
 
 `functions/src/lessonRuns/interventions/setDisplayModeOverride.ts` を新規作成する。
 
@@ -1774,12 +1774,12 @@ export const setDisplayModeOverrideWithAdminSdk = (
 }
 ```
 
-- [ ] **Step 4: テストを実行して緑を確認する**
+- [x] **Step 4: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions/setDisplayModeOverride.test.ts`
 Expected: PASS（4件）
 
-- [ ] **Step 5: `interventions.ts` に delegate を繋ぐ**
+- [x] **Step 5: `interventions.ts` に delegate を繋ぐ**
 
 `InterventionDelegates` に追加する。
 
@@ -1816,7 +1816,7 @@ const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE', 'H
     },
 ```
 
-- [ ] **Step 6: `onCall.ts` にエラー写像を足す**
+- [x] **Step 6: `onCall.ts` にエラー写像を足す**
 
 `translateInterventionError` 内に追加する。
 
@@ -1824,18 +1824,18 @@ const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE', 'H
     if (error.message === 'Unknown display mode') return new HttpsError('invalid-argument', '指定された画面が存在しません。')
 ```
 
-- [ ] **Step 7: `interventions.test.ts` の `makeDelegates` に `setDisplayModeOverride` を足す**
+- [x] **Step 7: `interventions.test.ts` の `makeDelegates` に `setDisplayModeOverride` を足す**
 
 ```ts
   setDisplayModeOverride: vi.fn().mockResolvedValue({ displayModeOverride: 'EXPLANATION' }),
 ```
 
-- [ ] **Step 8: テストを実行して緑を確認する**
+- [x] **Step 8: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns`
 Expected: PASS
 
-- [ ] **Step 9: コミット**
+- [x] **Step 9: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns
@@ -1877,7 +1877,7 @@ EOF
   `BuildResearchDeskPublicViewInput` に `hiddenInformationIds?: string[]` が加わる。
   `REQUIRED_DETAIL_KEYS.HIDE_INFORMATION` が `['informationId', 'hidden']` になる。
 
-- [ ] **Step 1: 失敗するテストを書く（projection 側）**
+- [x] **Step 1: 失敗するテストを書く（projection 側）**
 
 `functions/src/market/researchDeskProjection.test.ts` の末尾（最後の `})` の直前）に追加する。`fixtureMarketContent` は同ファイル冒頭の既存 `SocialStudiesMarketContent` フィクスチャで、公開済み（`publishedAtMillis: 1_000`）のニュース `info-past` を含む。
 
@@ -1905,12 +1905,12 @@ describe('hiddenInformationIds', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/market/researchDeskProjection.test.ts`
 Expected: FAIL — `hiddenInformationIds` が `BuildResearchDeskPublicViewInput` に存在しない旨の型エラー
 
-- [ ] **Step 3: projection にフィルタを足す**
+- [x] **Step 3: projection にフィルタを足す**
 
 `functions/src/market/researchDeskProjection.ts` の `BuildResearchDeskPublicViewInput` に追加する。
 
@@ -1954,7 +1954,7 @@ Expected: FAIL — `hiddenInformationIds` が `BuildResearchDeskPublicViewInput`
 
 `publishResearchDeskProjectionWithAdminSdk` の `getLessonRun` のキャスト型にも `hiddenInformationIds?: string[]` を追加する。
 
-- [ ] **Step 4: テストを実行して緑を確認する**
+- [x] **Step 4: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/market/researchDeskProjection.test.ts`
 Expected: PASS
@@ -2111,7 +2111,7 @@ export const setInformationHiddenWithAdminSdk = (
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions/setInformationHidden.test.ts`
 Expected: PASS（5件）
 
-- [ ] **Step 9: `interventions.ts` に delegate を繋ぐ**
+- [x] **Step 9: `interventions.ts` に delegate を繋ぐ**
 
 `REQUIRED_DETAIL_KEYS` を更新する。
 
@@ -2157,7 +2157,7 @@ const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE'])
     },
 ```
 
-- [ ] **Step 10: `interventions.test.ts` の `makeDelegates` と `REQUIRED_DETAIL` を更新する**
+- [x] **Step 10: `interventions.test.ts` の `makeDelegates` と `REQUIRED_DETAIL` を更新する**
 
 `makeDelegates` に追加する。
 
@@ -2176,12 +2176,12 @@ const GENERIC_STATE_TYPES = new Set<LessonInterventionType>(['CORRECT_STATE'])
   HIDE_INFORMATION: { informationId: 'info-1', hidden: true },
 ```
 
-- [ ] **Step 11: テストを実行して緑を確認する**
+- [x] **Step 11: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns src/market`
 Expected: PASS
 
-- [ ] **Step 12: コミット**
+- [x] **Step 12: コミット**
 
 ```bash
 git add -A functions/src
@@ -2227,7 +2227,7 @@ EOF
   ```
   `REQUIRED_DETAIL_KEYS.CORRECT_STATE` が `['target', 'targetId', 'displayName']` になる（`targetPath` は消滅）。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `functions/src/lessonRuns/interventions/correctState.test.ts` を新規作成する。
 
@@ -2320,12 +2320,12 @@ describe('correctState', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions/correctState.test.ts`
 Expected: FAIL — `Failed to resolve import "./correctState"`
 
-- [ ] **Step 3: 実装する**
+- [x] **Step 3: 実装する**
 
 `functions/src/lessonRuns/interventions/correctState.ts` を新規作成する。
 
@@ -2416,12 +2416,12 @@ export const correctStateWithAdminSdk = (
 }
 ```
 
-- [ ] **Step 4: テストを実行して緑を確認する**
+- [x] **Step 4: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/interventions/correctState.test.ts`
 Expected: PASS（8件）
 
-- [ ] **Step 5: `interventions.ts` に delegate を繋ぐ**
+- [x] **Step 5: `interventions.ts` に delegate を繋ぐ**
 
 `REQUIRED_DETAIL_KEYS` を更新する。
 
@@ -2491,7 +2491,7 @@ Expected: PASS（8件）
     },
 ```
 
-- [ ] **Step 6: `onCall.ts` にエラー写像を足す**
+- [x] **Step 6: `onCall.ts` にエラー写像を足す**
 
 `translateInterventionError` 内に追加する。
 
@@ -2501,7 +2501,7 @@ Expected: PASS（8件）
     if (error.message === 'targetId is required') return new HttpsError('invalid-argument', '修正の対象を選んでください。')
 ```
 
-- [ ] **Step 7: `interventions.test.ts` の `REQUIRED_DETAIL` と `makeDelegates` を更新する**
+- [x] **Step 7: `interventions.test.ts` の `REQUIRED_DETAIL` と `makeDelegates` を更新する**
 
 `REQUIRED_DETAIL` の `CORRECT_STATE` を置き換える。
 
@@ -2526,12 +2526,12 @@ Run: `grep -n "teacherInterventionState" functions/src/lessonRuns/interventions.
 
 該当行を含む `it(...)` ブロックごと削除する（9種すべてが delegate を持つようになり、この書き込み自体が無くなるため）。
 
-- [ ] **Step 8: テストを実行して緑を確認する**
+- [x] **Step 8: テストを実行して緑を確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns`
 Expected: PASS
 
-- [ ] **Step 9: コミット**
+- [x] **Step 9: コミット**
 
 ```bash
 git add -A functions/src/lessonRuns
@@ -2601,7 +2601,7 @@ ID手入力を廃止し、画面が既に購読しているデータから選ば
     teams: Array<{ teamId: string; displayName: string }>
   ```
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `src/components/teacher/interventionForms/interventionForms.test.tsx` を新規作成する。
 
@@ -2719,12 +2719,12 @@ describe('CorrectStateForm', () => {
 })
 ```
 
-- [ ] **Step 2: テストを実行して失敗を確認する**
+- [x] **Step 2: テストを実行して失敗を確認する**
 
 Run: `npm test -- src/components/teacher/interventionForms`
 Expected: FAIL — `Failed to resolve import "./ExtendTimeForm"`
 
-- [ ] **Step 3: `ExtendTimeForm` を実装する**
+- [x] **Step 3: `ExtendTimeForm` を実装する**
 
 `src/components/teacher/interventionForms/ExtendTimeForm.tsx` を新規作成する。
 
@@ -2773,7 +2773,7 @@ export function ExtendTimeForm({ currentPhaseId, hasTimer, onSubmit }: ExtendTim
 }
 ```
 
-- [ ] **Step 4: `DisplayModeForm` を実装する**
+- [x] **Step 4: `DisplayModeForm` を実装する**
 
 `src/components/teacher/interventionForms/DisplayModeForm.tsx` を新規作成する。
 
@@ -2831,7 +2831,7 @@ export function DisplayModeForm({ currentOverride, onSubmit }: DisplayModeFormPr
 }
 ```
 
-- [ ] **Step 5: `HideInformationForm` を実装する**
+- [x] **Step 5: `HideInformationForm` を実装する**
 
 `src/components/teacher/interventionForms/HideInformationForm.tsx` を新規作成する。
 
@@ -2883,7 +2883,7 @@ export function HideInformationForm({ informationItems, hiddenInformationIds, on
 }
 ```
 
-- [ ] **Step 6: `CorrectStateForm` を実装する**
+- [x] **Step 6: `CorrectStateForm` を実装する**
 
 `src/components/teacher/interventionForms/CorrectStateForm.tsx` を新規作成する。
 
@@ -2967,12 +2967,12 @@ export function CorrectStateForm({ participants, teams, onSubmit }: CorrectState
 }
 ```
 
-- [ ] **Step 7: テストを実行して緑を確認する**
+- [x] **Step 7: テストを実行して緑を確認する**
 
 Run: `npm test -- src/components/teacher/interventionForms`
 Expected: PASS（11件）
 
-- [ ] **Step 8: `InterventionPanel` に専用フォームを差し込む**
+- [x] **Step 8: `InterventionPanel` に専用フォームを差し込む**
 
 `src/components/teacher/InterventionPanel.tsx` の import に追加する。
 
@@ -3085,7 +3085,7 @@ import { CorrectStateForm } from './interventionForms/CorrectStateForm'
             )}
 ```
 
-- [ ] **Step 9: `LessonControlRoom` から新 props を渡す**
+- [x] **Step 9: `LessonControlRoom` から新 props を渡す**
 
 `LessonControlRoom.tsx` の `InterventionPanel` 描画を置き換える。
 
@@ -3128,7 +3128,7 @@ import { CorrectStateForm } from './interventionForms/CorrectStateForm'
 
 `InformationPublicView` に見出し専用のフィールドは無い（`id` / `category` / `source` / `publishedAtMillis` / `natureType` / `confidenceLevel` / `targetCompanyIds` / `body`）。一覧の表示文字列には `body` を使う。
 
-- [ ] **Step 10: `InterventionPanel.test.tsx` を新 props に合わせる**
+- [x] **Step 10: `InterventionPanel.test.tsx` を新 props に合わせる**
 
 既存の `render(<InterventionPanel ... />)` 呼び出しすべてに新規 props を追加する。
 
@@ -3142,12 +3142,12 @@ import { CorrectStateForm } from './interventionForms/CorrectStateForm'
   teams={[]}
 ```
 
-- [ ] **Step 11: テストを実行して緑を確認する**
+- [x] **Step 11: テストを実行して緑を確認する**
 
 Run: `npm test -- src/components/teacher`
 Expected: PASS
 
-- [ ] **Step 12: コミット**
+- [x] **Step 12: コミット**
 
 ```bash
 git add -A src/components/teacher
@@ -3174,31 +3174,31 @@ EOF
 - Consumes: Task 1-13 のすべて
 - Produces: なし
 
-- [ ] **Step 1: 「スライド」語が消えたことを確認する**
+- [x] **Step 1: 「スライド」語が消えたことを確認する**
 
 Run: `grep -rin "slide\|スライド" src functions/src --include="*.ts" --include="*.tsx"`
 Expected: 出力なし（該当なしで終了コード1）
 
 出力がある場合、その箇所を用語表に従って直してから次へ進む。
 
-- [ ] **Step 2: 禁止フィールドが projection に漏れていないことを確認する**
+- [x] **Step 2: 禁止フィールドが projection に漏れていないことを確認する**
 
 Run: `npm test --workspace=functions -- src/lessonRuns/projections src/market`
 Expected: PASS。特に既存の禁止情報 regression テストが緑であること。
 
-- [ ] **Step 3: 全検証を実行する**
+- [x] **Step 3: 全検証を実行する**
 
 Run: `npm run verify`
 Expected: lint・typecheck・テスト・Rules テスト・ビルドがすべて成功
 
 失敗した場合は該当箇所を直し、この Step を再実行する。
 
-- [ ] **Step 4: 仕様書のスコープ外項目が手つかずであることを確認する**
+- [x] **Step 4: 仕様書のスコープ外項目が手つかずであることを確認する**
 
 Run: `grep -n "PROXY_CONFIRM\|CHANGE_REPRESENTATIVE\|RECONNECT_PARTICIPANT\|RESTORE_PREVIOUS_PHASE" src/components/teacher/InterventionPanel.tsx`
 Expected: この4種が `INTERVENTION_CATALOG` に汎用 `fields` を持ったまま残っていること（プロジェクトCで扱うため、本プロジェクトでは変更しない）。
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add -A

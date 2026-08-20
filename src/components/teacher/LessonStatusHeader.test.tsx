@@ -11,7 +11,7 @@ describe('LessonStatusHeader', () => {
         nextAction={{ label: '次のフェーズへ進む', onActivate: vi.fn() }}
         participationSummary="参加 18人 / 未参加 2人 / 切断 1人"
         openIssues={['チームBが1名のみ参加しています']}
-        displayPreview="教室表示: フェーズ2の説明スライド"
+        displayPreview="教室表示: フェーズ2の解説画面"
       />,
     )
 
@@ -28,7 +28,7 @@ describe('LessonStatusHeader', () => {
     expect(screen.getByText('チームBが1名のみ参加しています')).toBeInTheDocument()
 
     expect(screen.getByRole('heading', { name: '教室表示で現在見えている内容' })).toBeInTheDocument()
-    expect(screen.getByText('教室表示: フェーズ2の説明スライド')).toBeInTheDocument()
+    expect(screen.getByText('教室表示: フェーズ2の解説画面')).toBeInTheDocument()
   })
 
   it('renders exactly one primary CTA button — never multiple competing main actions', () => {

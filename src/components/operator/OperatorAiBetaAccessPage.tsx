@@ -28,6 +28,7 @@ export interface OperatorAiBetaAccessPageProps {
   error?: string
   onGrant: (email: string, reason: string) => Promise<void>
   onRevoke: (teacherUid: string, reason: string) => Promise<void>
+  onNavigateHome?: () => void
   onNavigateToReports: () => void
   onNavigateToCertifications: () => void
 }
@@ -40,6 +41,7 @@ export function OperatorAiBetaAccessPage({
   error,
   onGrant,
   onRevoke,
+  onNavigateHome,
   onNavigateToReports,
   onNavigateToCertifications,
 }: OperatorAiBetaAccessPageProps) {
@@ -98,6 +100,11 @@ export function OperatorAiBetaAccessPage({
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="h5">AI Lesson Studio 限定ベータアクセス管理</Typography>
         <Stack direction="row" spacing={1}>
+          {onNavigateHome && (
+            <Button variant="text" onClick={onNavigateHome}>
+              運営者ページへ
+            </Button>
+          )}
           <Button variant="outlined" onClick={onNavigateToReports}>
             通報の審査へ
           </Button>

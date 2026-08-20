@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3741.9825 722" width="3741.9825" height="722" style="--bg:#1a1b26;--fg:#a9b1d6;--line:#3d59a1;--accent:#7aa2f7;--muted:#565f89;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 30%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="4.8" refX="8" refY="2.4" orient="auto">
+    <polygon points="0 0, 8 2.4, 0 4.8" fill="var(--_arrow)" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="4.8" refX="0" refY="2.4" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.4, 8 4.8" fill="var(--_arrow)" />
+  </marker>
+</defs>
+<rect x="40" y="40" width="3617.2325" height="112" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="40" y="40" width="3617.2325" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="52" y="54" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">&quot;フロントエンド（React 19 + Vite + MUI, react-router）&quot;</text>
+<rect x="214.2724999999998" y="213" width="627.1375000000003" height="112" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="214.2724999999998" y="213" width="627.1375000000003" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="226.2724999999998" y="227" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">&quot;クライアント側ガード（UX用、認可の実体はサーバ側ルール）&quot;</text>
+<rect x="861.4100000000003" y="213" width="2167.8224999999998" height="469" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="861.4100000000003" y="213" width="2167.8224999999998" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="873.4100000000003" y="227" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">&quot;Firebase バックエンド&quot;</text>
+<rect x="3049.2325" y="386" width="652.75" height="123" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+<rect x="3049.2325" y="386" width="652.75" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+<text x="3061.2325" y="400" dy="0.35em" font-size="12" font-weight="600" fill="var(--_text-sec)">&quot;外部サービス&quot;</text>
+<polyline points="940.75,132 940.75,152 717.6100000000001,152 717.6100000000001,269" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="717.6100000000001,305 717.6100000000001,345 1552.6075,345 1552.6075,465.5 1592.1450000000002,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="613.0500000000002,132 613.0500000000002,152 405.99749999999995,152 405.99749999999995,269" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="405.99749999999995,305 405.99749999999995,345 1015.5350000000003,345 1015.5350000000003,465.5 1035.645,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="613.0500000000002,132 613.0500000000002,152 959.6250000000005,152 959.6250000000005,287 993.0750000000004,287" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="940.75,132 940.75,152 1208.2650000000003,152 1208.2650000000003,287 1253.8750000000005,287" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1267.3899999999999,132 1267.3899999999999,152 1602.88,152 1602.88,465.5 1592.1450000000002,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1955.3825000000002,132 1955.3825000000002,152 2515.7575,152 2515.7575,269" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1955.3825000000002,132 1955.3825000000002,152 1328.4950000000003,152 1328.4950000000003,465.5 1568.145,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1955.3825000000002,132 1955.3825000000002,152 1857.3125,152 1857.3125,465.5 1974.4950000000001,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1955.3825000000002,132 1955.3825000000002,465.5 2089.6100000000006,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1955.3825000000002,132 1955.3825000000002,152 3592.4825,152 3592.4825,447.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="2515.7575,305 2515.7575,325 1532.6075,325 1532.6075,465.5 1568.145,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="2515.7575,305 2515.7575,325 1935.3825000000002,325 1935.3825000000002,465.5 1974.4950000000001,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="2515.7575,305 2515.7575,465.5 2307.51,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="2515.7575,305 2515.7575,325 2732.755,325 2732.755,465.5 3071.2325,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="2515.7575,305 2515.7575,325 2829.3950000000004,325 2829.3950000000004,465.5 3284.5325000000003,465.5" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="1301.895,489 1301.895,644 1596.86,644" fill="none" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<polyline points="1783.3200000000002,489 1783.3200000000002,644 1957.76,644" fill="none" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<polyline points="2198.5600000000004,489 2198.5600000000004,644 1957.76,644" fill="none" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<rect x="945.9050000000004" y="187" width="27.44" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="959.6250000000005" y="200.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">認証</text>
+<rect x="1188.8250000000003" y="187" width="38.88" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1208.2650000000003" y="200.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">匿名認証</text>
+<rect x="2470.5775000000003" y="187" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="2515.7575" y="200.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">httpsCallable</text>
+<rect x="1271.8750000000005" y="273.5" width="113.24000000000001" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1328.4950000000003" y="287" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">onSnapshot/getDoc</text>
+<rect x="1829.2925" y="273.5" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1857.3125" y="287" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">onValue</text>
+<rect x="1904.4825" y="273.5" width="101.8" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1955.3825000000002" y="287" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">upload/download</text>
+<rect x="3575.9025" y="273.5" width="33.16" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="3592.4825" y="287" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">初期化</text>
+<rect x="2681.855" y="360" width="101.8" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="2732.755" y="373.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">Checkout/Portal</text>
+<rect x="2795.6550000000007" y="360" width="67.48" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="2829.3950000000004" y="373.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">授業案・指導案生成</text>
+<rect x="1256.715" y="544" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1301.895" y="557.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">read/write 制御</text>
+<rect x="1738.14" y="544" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="1783.3200000000002" y="557.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">read/write 制御</text>
+<rect x="2153.3800000000006" y="544" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="2198.5600000000004" y="557.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">read/write 制御</text>
+<rect x="62" y="96" width="318" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="846.1" y="96" width="189.3" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="404.00000000000017" y="96" width="418.1" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="1136.9899999999998" y="96" width="260.8" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="1853.5825000000002" y="96" width="203.60000000000002" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="236.27249999999992" y="269" width="339.45000000000005" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="615.8100000000002" y="269" width="203.60000000000002" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="993.0750000000004" y="269" width="260.8" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="1035.645" y="449" width="532.5" height="33" fill="var(--_node-fill)" stroke="none" />
+<line x1="1035.645" y1="449" x2="1035.645" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<line x1="1568.145" y1="449" x2="1568.145" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="1301.895" cy="482" rx="266.25" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="1301.895" cy="449" rx="266.25" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="1592.1450000000002" y="449" width="382.35" height="33" fill="var(--_node-fill)" stroke="none" />
+<line x1="1592.1450000000002" y1="449" x2="1592.1450000000002" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<line x1="1974.4950000000003" y1="449" x2="1974.4950000000003" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="1783.3200000000002" cy="482" rx="191.175" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="1783.3200000000002" cy="449" rx="191.175" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="2089.6100000000006" y="449" width="217.9" height="33" fill="var(--_node-fill)" stroke="none" />
+<line x1="2089.6100000000006" y1="449" x2="2089.6100000000006" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<line x1="2307.5100000000007" y1="449" x2="2307.5100000000007" y2="482" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="2198.5600000000004" cy="482" rx="108.95" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<ellipse cx="2198.5600000000004" cy="449" rx="108.95" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="2024.2825000000003" y="269" width="982.95" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="1596.86" y="626" width="360.90000000000003" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="3071.2325" y="447.5" width="189.3" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="3284.5325000000003" y="447.5" width="196.45000000000002" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="3504.9825" y="447.5" width="175" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<text x="221" y="114" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;公開ページ\nLanding / About / Guide / Terms&quot;</text>
+<text x="940.75" y="114" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;生徒画面\nLessonJoinPage&quot;</text>
+<text x="613.0500000000002" y="114" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;教師画面\nLessonControlRoom / テンプレート編集\n組織・請求設定 / チューニング&quot;</text>
+<text x="1267.3899999999999" y="114" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;教室ディスプレイ\nClassroomDisplayPage&quot;</text>
+<text x="1955.3825000000002" y="114" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;運営者画面\nレポート / テンプレート認定&quot;</text>
+<text x="405.99749999999995" y="287" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;useTeacherLessonAccess\nuseTemplateAccess&quot;</text>
+<text x="717.6100000000001" y="287" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;useStudentLessonAccess&quot;</text>
+<text x="1123.4750000000004" y="287" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Firebase Auth\n匿名/Google/メール認証&quot;</text>
+<text x="1301.895" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Firestore\nlessonRuns / lessonTemplates\norganizations / invitations&quot;</text>
+<text x="1783.3200000000002" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Realtime Database\nlessonRunMembership\nライブ授業状態&quot;</text>
+<text x="2198.5600000000004" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Cloud Storage\n教材・アップロード&quot;</text>
+<text x="2515.7575" y="287" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Cloud Functions (callable)\nlessonRuns / lessonTemplates\norganizations / billing\nhomeEconomics / market / privacy\nplatformConfig&quot;</text>
+<text x="1777.31" y="644" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Firestore/RTDB/Storage\nセキュリティルール\n（実際の認可境界）&quot;</text>
+<text x="3165.8825" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Stripe\n請求・サブスクリプション&quot;</text>
+<text x="3382.7575" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;LLM プロバイダ\n授業案生成 (AI)&quot;</text>
+<text x="3592.4825" y="465.5" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">&quot;Sentry\nエラーレポーティング&quot;</text>
+</svg>

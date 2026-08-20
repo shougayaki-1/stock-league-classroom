@@ -1276,7 +1276,7 @@ interface ShowHouseholdComparisonOnDisplayRequest {
  * manually-toggled, low-consequence display mode: REFLECTION is a
  * long-lived, mostly-static phase (the lesson has already stopped
  * progressing through phases), so the realistic reset triggers are a
- * teacher explicitly editing 説明スライド (an action they immediately see
+ * teacher explicitly editing 教室表示のメッセージ (an action they immediately see
  * the result of and can redo) or a genuine phase transition (which SHOULD
  * legitimately leave HOUSEHOLD_COMPARISON, since the class has moved on).
  */

@@ -23,6 +23,7 @@ export interface OperatorTemplateCertificationsPageProps {
     level: 'COMMUNITY' | 'VERIFIED' | 'OFFICIAL',
     reason: string,
   ) => Promise<void>
+  onNavigateHome?: () => void
   onNavigateToReports?: () => void
   onNavigateToAiBeta?: () => void
 }
@@ -44,6 +45,7 @@ export function OperatorTemplateCertificationsPage({
   loading,
   accessDenied,
   onSetCertification,
+  onNavigateHome,
   onNavigateToReports,
   onNavigateToAiBeta,
 }: OperatorTemplateCertificationsPageProps) {
@@ -90,6 +92,11 @@ export function OperatorTemplateCertificationsPage({
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="h5">公開教材の認定管理</Typography>
         <Stack direction="row" spacing={1}>
+          {onNavigateHome && (
+            <Button variant="text" onClick={onNavigateHome}>
+              運営者ページへ
+            </Button>
+          )}
           {onNavigateToReports && (
             <Button variant="outlined" onClick={onNavigateToReports}>
               通報の審査へ

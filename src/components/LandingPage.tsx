@@ -161,7 +161,7 @@ export const LandingPage = ({ onTeacherLogin }: LandingPageProps = {}) => <main 
             <h3>結果だけを見て終わらない</h3>
             <p>先生が教室画面を使って、「何が影響したのか」を整理します。</p>
           </div>
-          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">説明スライド</span><p>先生が要因を解説</p></div>
+          <div className="journey-step-visual" aria-hidden="true"><span className="journey-visual-tag">解説画面</span><p>先生が要因を解説</p></div>
         </li>
         <li className="journey-step">
           <div className="journey-step-num-col"><span className="journey-step-dot">08</span></div>
