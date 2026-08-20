@@ -315,21 +315,22 @@ interface StoredIntervention {
  * function's own transaction, so it always runs to completion BEFORE this
  * function opens its own transaction for the audit event):
  *
- *  1. (CHANGE_REPRESENTATIVE / PROXY_CONFIRM / RECONNECT_PARTICIPANT /
- *     RESTORE_PREVIOUS_PHASE / EMERGENCY_STOP only) Call the relevant
- *     existing Task 4/5/7/8 function via `deps.delegates` — this is the
- *     actual domain mutation, and it is itself idempotent (each delegate's
- *     own idempotencyKey is derived from this call's `idempotencyKey`), so a
+ *  1. Call this type's delegate via `deps.delegates` — this is the actual
+ *     domain mutation, and it is itself idempotent (each delegate's own
+ *     idempotencyKey is derived from this call's `idempotencyKey`), so a
  *     retry of the whole intervention safely re-invokes it and gets back the
  *     same (deduplicated) result rather than double-applying anything.
+ *     All 9 types have a delegate: 5 reuse existing Task 4/5/7/8 functions
+ *     (CHANGE_REPRESENTATIVE / PROXY_CONFIRM / RECONNECT_PARTICIPANT /
+ *     RESTORE_PREVIOUS_PHASE / EMERGENCY_STOP), and the other 4 have their
+ *     own modules under `interventions/` (EXTEND_TIME / SWITCH_DISPLAY_MODE /
+ *     CORRECT_STATE / HIDE_INFORMATION). Those 4 previously had no delegate
+ *     at all and recorded only a generic state write, which meant applying
+ *     them changed nothing a teacher could observe.
  *  2. Open this function's own transaction: idempotency check, then
  *     `appendLessonEventInTransaction` (TEACHER_INTERVENTION_APPLIED,
- *     carrying `before`/`after`/`impactScope`/`detail`/`delegatedResult`),
- *     then — for the 4 types with no delegate (EXTEND_TIME,
- *     SWITCH_DISPLAY_MODE, CORRECT_STATE, HIDE_INFORMATION) — a generic
- *     Firestore state write recording `after` at
- *     `lessonRuns/{id}/teacherInterventionState/{type}`. READ PHASE
- *     (idempotency doc) completes before any write;
+ *     carrying `before`/`after`/`impactScope`/`detail`/`delegatedResult`).
+ *     READ PHASE (idempotency doc) completes before any write;
  *     `appendLessonEventInTransaction` (itself get-then-set) runs before
  *     this function's own remaining `tx.set` calls, matching every other
  *     transaction in this codebase.
