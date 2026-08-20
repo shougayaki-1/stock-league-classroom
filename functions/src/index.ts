@@ -55,6 +55,7 @@ export {
 } from './lessonTemplates/onCall'
 export { lessonTemplateMoveScheduled } from './lessonTemplates/moveLessonTemplateScheduled'
 export { createLessonRunCallable, restoreCheckpointCallable } from './lessonRuns/onCall'
+export { issueJoinCodeCallable, invalidateJoinCodeCallable } from './lessonRuns/joinCodes/onCall'
 export { generateLessonResultCallable, getMyLessonResultCallable } from './lessonRuns/results/onCall'
 export { getLessonAnalyticsCallable } from './lessonRuns/analytics/onCall'
 export {

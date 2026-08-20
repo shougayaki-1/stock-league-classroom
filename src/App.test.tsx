@@ -13,13 +13,23 @@ import App from './App'
 // route guards (and the Task 11/12/13 screens they wire up) call the real
 // client wrappers, so only the underlying Firebase SDK calls are faked here.
 type AuthUser = { uid: string; emailVerified?: boolean; providerData?: Array<{ providerId: string }> }
+let authStateListeners: Array<(user: AuthUser | null) => void> = []
 let authStateCallback: ((user: AuthUser | null) => void) | undefined
 const onAuthStateChangedMock = vi.fn((_auth: unknown, callback: (user: AuthUser | null) => void) => {
+  authStateListeners.push(callback)
   authStateCallback = (user) => {
     ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = user
-    callback(user)
+    for (const listener of [...authStateListeners]) {
+      listener(user)
+    }
   }
-  return () => {}
+  const current = (fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser
+  if (current) {
+    callback(current)
+  }
+  return () => {
+    authStateListeners = authStateListeners.filter((l) => l !== callback)
+  }
 })
 const signInAnonymouslyMock = vi.fn().mockResolvedValue({ user: { uid: 'student-uid' } })
 const signInWithCustomTokenMock = vi.fn().mockResolvedValue({ user: { uid: 'display-uid' } })
@@ -139,6 +149,7 @@ function emitPublicState(value: unknown) {
 }
 
 beforeEach(() => {
+  authStateListeners = []
   authStateCallback = undefined
   ;(fakeServices.auth as unknown as { currentUser: AuthUser | null }).currentUser = null
   membershipListener = undefined
@@ -242,6 +253,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     '/lessons/run-1/waiting',
     '/lessons/run-1/play',
     '/lessons/run-1/results',
+    '/teacher/lessons/run-1/prepare',
     '/teacher/lessons/run-1/control',
     '/teacher/lessons/run-1/analytics',
     '/display/run-1',
@@ -265,16 +277,49 @@ describe('Phase B lesson platform routes (Task 17)', () => {
 
   it('denies a signed-in teacher who has no role on this lessonRun and redirects to /about', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
-    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', teacherRoles: {} }) })
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', status: 'RUNNING', teacherRoles: {} }) })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: /サービス概要/ })).toBeInTheDocument())
     window.history.pushState({}, '', '/')
   })
 
+  it('grants a teacher access to /teacher/lessons/run-1/prepare and renders lesson preparation page', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/prepare')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ orgId: 'org-1', status: 'DRAFT', teacherRoles: { 'teacher-uid': 'PRIMARY' } }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    expect(await screen.findByRole('heading', { level: 1, name: '授業の準備' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '授業の準備をする' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('redirects from /teacher/lessons/run-1/control to /prepare when status is DRAFT', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ orgId: 'org-1', status: 'DRAFT', teacherRoles: { 'teacher-uid': 'PRIMARY' } }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    expect(await screen.findByRole('heading', { level: 1, name: '授業の準備' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('prefills join code from ?code= query param on /join', async () => {
+    window.history.pushState({}, '', '/join?code=ABC234')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    expect(await screen.findByRole('heading', { level: 1, name: '授業に参加する' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '参加コード' })).toHaveValue('ABC234')
+    window.history.pushState({}, '', '/')
+  })
+
   it('grants a teacher whose uid is in teacherRoles and renders the control room', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
-    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', teacherRoles: { 'teacher-uid': 'PRIMARY' } }) })
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-uid': 'PRIMARY' } }) })
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)
     authStateCallback?.({ uid: 'teacher-uid' })
     expect(await screen.findByRole('heading', { name: '次にすること' })).toBeInTheDocument()
@@ -283,7 +328,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
 
   it('calls transitionPhaseCallable twice (RUNNING then intro) when starting a lesson from the control room', async () => {
     window.history.pushState({}, '', '/teacher/lessons/run-1/control')
-    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', teacherRoles: { 'teacher-uid': 'PRIMARY' } }) })
+    getDocMock.mockResolvedValue({ exists: () => true, data: () => ({ orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-uid': 'PRIMARY' } }) })
     const transitionCalls: unknown[] = []
     httpsCallableMock.mockImplementation((_functions: unknown, name: string) => {
       if (name === 'transitionPhaseCallable') {
@@ -308,6 +353,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
       exists: () => true,
       data: () => ({
         orgId: 'org-1',
+        status: 'RUNNING',
         teacherRoles: { 'teacher-uid': 'PRIMARY' },
         subject: 'HOME_ECONOMICS',
         templateSnapshot: { homeEconomics: { courseFormat: 'COMMON_CONDITIONS' } },
@@ -325,6 +371,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
       exists: () => true,
       data: () => ({
         orgId: 'org-1',
+        status: 'RUNNING',
         teacherRoles: { 'teacher-uid': 'PRIMARY' },
         subject: 'HOME_ECONOMICS',
         templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT' } },

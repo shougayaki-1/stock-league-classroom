@@ -60,6 +60,7 @@ export const buildProjectionSource = async (
     currentPhaseEndsAtMillis: (run.currentPhaseEndsAtMillis as number | null | undefined) ?? null,
     updatedAtMillis: deps.now ? deps.now() : Date.now(),
     teacherGuidance: (run.teacherGuidance as string | null | undefined) ?? null,
+    joinCode: (run.joinCode as string | null | undefined) ?? null,
     displayModeOverride: (run.displayModeOverride as LessonRunDisplayMode | null | undefined) ?? null,
     teams: teams.map((team) => ({
       id: team.id as string,

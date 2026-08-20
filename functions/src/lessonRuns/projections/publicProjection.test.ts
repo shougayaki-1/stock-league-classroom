@@ -7,6 +7,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   status: 'RUNNING',
   title: '株式投資シミュレーション',
   goal: '需要と供給の関係を理解する',
+  joinCode: null,
   currentPhaseId: 'phase-2',
   currentPhasePublicTask: '来週の株価を予想してください',
   currentPhaseEndsAtMillis: 10_000,

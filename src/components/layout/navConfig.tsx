@@ -40,6 +40,7 @@ const PAGE_TITLES: Array<{ path: string; title: string }> = [
   { path: '/teacher/templates/:templateId/edit', title: '教材を編集' },
   { path: '/teacher/marketplace', title: 'マーケットプレイス' },
   { path: '/teacher/marketplace/:templateId', title: '教材の詳細' },
+  { path: '/teacher/lessons/:runId/prepare', title: '授業の準備' },
   { path: '/teacher/lessons/:runId/control', title: '授業コントロール' },
   { path: '/teacher/lessons/:runId/analytics', title: '授業の分析' },
   { path: '/teacher/organizations/new', title: '学校組織を作成' },

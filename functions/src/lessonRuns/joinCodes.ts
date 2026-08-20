@@ -94,7 +94,7 @@ export const issueJoinCode = async (deps: IssueJoinCodeDeps): Promise<IssueJoinC
   return deps.firestore.runTransaction(async (tx) => {
     const runSnap = await tx.get(`lessonRuns/${deps.lessonRunId}`)
     if (!runSnap.exists) throw new Error('LessonRun not found')
-    const run = runSnap.data() as { status: string }
+    const run = runSnap.data() as Record<string, unknown> & { status: string }
     if (!JOINABLE_STATUSES.has(run.status)) {
       throw new Error('LessonRun is not accepting join codes in its current status')
     }
@@ -108,6 +108,10 @@ export const issueJoinCode = async (deps: IssueJoinCodeDeps): Promise<IssueJoinC
           lessonRunId: deps.lessonRunId,
           status: 'ACTIVE',
           issuedAt: nowValue,
+        })
+        tx.set(`lessonRuns/${deps.lessonRunId}`, {
+          ...run,
+          joinCode: code,
         })
         return { code }
       }

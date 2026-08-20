@@ -55,6 +55,9 @@ describe('issueJoinCode', () => {
     expect(fake.docs.get('lessonJoinCodes/ABCDEF')).toMatchObject({
       code: 'ABCDEF', lessonRunId: 'run-1', status: 'ACTIVE',
     })
+    expect(fake.docs.get('lessonRuns/run-1')).toMatchObject({
+      status: 'READY', joinCode: 'ABCDEF',
+    })
   })
 
   it('allows issuance for a WAITING lesson run', async () => {
@@ -64,6 +67,9 @@ describe('issueJoinCode', () => {
       firestore: fake as never, lessonRunId: 'run-1', generateCode: () => 'ABCDEF',
     })
     expect(result.code).toBe('ABCDEF')
+    expect(fake.docs.get('lessonRuns/run-1')).toMatchObject({
+      status: 'WAITING', joinCode: 'ABCDEF',
+    })
   })
 
   it('rejects issuance when the lesson run is not READY/WAITING', async () => {

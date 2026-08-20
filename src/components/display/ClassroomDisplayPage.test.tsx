@@ -36,6 +36,7 @@ const baseState: LessonRunDisplayState = {
   mode: 'START',
   title: '株価変動を体験しよう',
   goal: '需給とニュースの関係を理解する',
+  joinCode: null,
   teams: [{ teamId: 't1', displayName: 'チームA', publicAggregateLabel: '1位' }],
   teacherGuidance: null,
   updatedAtMillis: 1000,
@@ -88,6 +89,38 @@ describe('ClassroomDisplayPage — sign-in and subscription flow', () => {
     act(() => onErrorCallback?.(new Error('permission-denied')))
     await waitFor(() => expect(screen.getByText(/表示できません|エラー/)).toBeInTheDocument())
   })
+
+  it('skips token exchange if current session already has a matching displayRunId claim', async () => {
+    const getIdTokenResultMock = vi.fn().mockResolvedValue({
+      claims: { displayRunId: 'run-1' },
+    })
+    const authWithUser = {
+      currentUser: {
+        getIdTokenResult: getIdTokenResultMock,
+      },
+    } as unknown as Auth
+
+    renderPage({ auth: authWithUser })
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledWith(database, 'run-1', expect.any(Function), expect.any(Function)))
+    expect(signInMock).not.toHaveBeenCalled()
+  })
+
+  it('exchanges token if current session has a different displayRunId claim', async () => {
+    const getIdTokenResultMock = vi.fn().mockResolvedValue({
+      claims: { displayRunId: 'other-run' },
+    })
+    const authWithUser = {
+      currentUser: {
+        getIdTokenResult: getIdTokenResultMock,
+      },
+    } as unknown as Auth
+
+    renderPage({ auth: authWithUser })
+
+    await waitFor(() => expect(signInMock).toHaveBeenCalledWith(authWithUser, functions, { lessonRunId: 'run-1', token: 'plain-token' }))
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledWith(database, 'run-1', expect.any(Function), expect.any(Function)))
+  })
 })
 
 describe('ClassroomDisplayPage — mode-based rendering', () => {
@@ -97,6 +130,14 @@ describe('ClassroomDisplayPage — mode-based rendering', () => {
     act(() => onUpdateCallback?.(baseState))
     expect(await screen.findByRole('heading', { name: baseState.title })).toBeInTheDocument()
     expect(screen.getByText(baseState.goal!)).toBeInTheDocument()
+  })
+
+  it('renders StartScreen with join code and QR when state has joinCode', async () => {
+    renderPage()
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
+    act(() => onUpdateCallback?.({ ...baseState, joinCode: 'ABCDEF' }))
+    expect(await screen.findByText('ABCDEF')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '参加用QRコード' })).toBeInTheDocument()
   })
 
   it('renders LiveScreen (team aggregates) for mode LIVE', async () => {

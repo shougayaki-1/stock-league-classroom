@@ -66,34 +66,50 @@ export function ClassroomDisplayPage({
     let cancelled = false
     let unsubscribe: (() => void) | undefined
 
-    signIn(auth, functions, { lessonRunId, token })
-      .then(() => {
-        if (cancelled) return
-        unsubscribe = subscribe(
-          database,
-          lessonRunId,
-          (nextState) => {
+    const startSubscription = () => {
+      unsubscribe = subscribe(
+        database,
+        lessonRunId,
+        (nextState) => {
+          if (cancelled) return
+          setState(nextState)
+          setStatus('CONNECTED')
+        },
+        () => {
+          if (cancelled) return
+          setStatus('ERROR')
+        },
+      )
+    }
+
+    const init = async () => {
+      if (auth.currentUser) {
+        try {
+          const tokenResult = await auth.currentUser.getIdTokenResult()
+          if (tokenResult.claims.displayRunId === lessonRunId) {
             if (cancelled) return
-            setState(nextState)
-            setStatus('CONNECTED')
-          },
-          () => {
-            if (cancelled) return
-            setStatus('ERROR')
-          },
-        )
-      })
-      .catch(() => {
-        if (cancelled) return
-        setStatus('ERROR')
-      })
+            startSubscription()
+            return
+          }
+        } catch {
+          // Ignore error and fall through to signIn
+        }
+      }
+      await signIn(auth, functions, { lessonRunId, token })
+      if (cancelled) return
+      startSubscription()
+    }
+
+    init().catch(() => {
+      if (cancelled) return
+      setStatus('ERROR')
+    })
 
     return () => {
       cancelled = true
       unsubscribe?.()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lessonRunId, token])
+  }, [auth, functions, database, lessonRunId, token, signIn, subscribe])
 
   if (status === 'ERROR') {
     return (
@@ -114,9 +130,14 @@ export function ClassroomDisplayPage({
   const { mode, title, goal, teams, teacherGuidance, householdClassComparison } = state
   if (mode === 'LIVE' || mode === 'END') lastNonExplanationModeRef.current = mode
 
+  const effectiveJoinCode = state.joinCode ?? joinCode ?? undefined
+  const effectiveJoinUrl = effectiveJoinCode
+    ? (joinUrl ?? (typeof window !== 'undefined' ? `${window.location.origin}/join?code=${effectiveJoinCode}` : undefined))
+    : undefined
+
   switch (mode) {
     case 'START':
-      return <StartScreen title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
+      return <StartScreen title={title} goal={goal} joinUrl={effectiveJoinUrl} joinCode={effectiveJoinCode} />
     case 'LIVE':
       return <LiveScreen title={title} teams={teams} teacherGuidance={teacherGuidance} />
     case 'END':
@@ -133,6 +154,6 @@ export function ClassroomDisplayPage({
         ? <HouseholdClassComparisonView comparison={householdClassComparison} />
         : <ExplanationScreen title={title} teams={teams} teacherGuidance={teacherGuidance} previousMode={lastNonExplanationModeRef.current} />
     default:
-      return <StartScreen title={title} goal={goal} joinUrl={joinUrl} joinCode={joinCode} />
+      return <StartScreen title={title} goal={goal} joinUrl={effectiveJoinUrl} joinCode={effectiveJoinCode} />
   }
 }

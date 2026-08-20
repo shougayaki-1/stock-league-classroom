@@ -18,6 +18,7 @@ import { LessonWaitingPage } from './components/student/LessonWaitingPage'
 import { LessonResultsPage } from './components/student/LessonResultsPage'
 import { LessonAnalyticsPage } from './components/teacher/LessonAnalyticsPage'
 import { LessonControlRoom } from './components/teacher/LessonControlRoom'
+import { LessonPreparationPage } from './components/teacher/LessonPreparationPage'
 import { TeacherHomePage } from './components/teacher/TeacherHomePage'
 import { ClassroomDisplayPage } from './components/display/ClassroomDisplayPage'
 import { HouseholdTeamScreen } from './components/homeEconomics/HouseholdTeamScreen'
@@ -141,6 +142,8 @@ interface TeacherAccess {
   role?: LessonRunRole
   subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
   homeEconomicsCourseFormat?: string
+  lessonStatus?: string
+  joinCode?: string | null
 }
 interface StudentAccess { status: AccessStatus; teamId?: string; participantId?: string }
 
@@ -172,6 +175,8 @@ function useTeacherLessonAccess(runId: string, services: FirebaseServices): Teac
             return
           }
           const data = snapshot.data() as {
+            status?: string
+            joinCode?: string | null
             teacherRoles?: Record<string, LessonRunRole>
             subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
             templateSnapshot?: { homeEconomics?: { courseFormat?: string } }
@@ -179,9 +184,11 @@ function useTeacherLessonAccess(runId: string, services: FirebaseServices): Teac
           const role = data.teacherRoles?.[user.uid]
           const subject = data.subject
           const homeEconomicsCourseFormat = data.templateSnapshot?.homeEconomics?.courseFormat
+          const lessonStatus = data.status
+          const joinCode = data.joinCode ?? null
           setAccess(
             role
-              ? { status: 'GRANTED', role, subject, homeEconomicsCourseFormat }
+              ? { status: 'GRANTED', role, subject, homeEconomicsCourseFormat, lessonStatus, joinCode }
               : { status: 'DENIED' },
           )
         })
@@ -244,12 +251,36 @@ const GuardLoading = () => (
 const defaultPhaseSequence = (subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined): string[] =>
   subject === 'HOME_ECONOMICS' ? ['intro', 'decision', 'result', 'reflection'] : ['intro', 'market', 'result', 'reflection']
 
+function TeacherPreparationRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const access = useTeacherLessonAccess(runId ?? '', services)
+  if (access.status === 'LOADING') return <GuardLoading />
+  if (access.status === 'DENIED') return <Navigate replace to="/about" />
+  return (
+    <LessonPreparationPage
+      lessonRunId={runId ?? ''}
+      functions={services.functions}
+      firestore={services.firestore}
+      database={services.database}
+      initialStatus={access.lessonStatus}
+      initialJoinCode={access.joinCode}
+    />
+  )
+}
+
 function TeacherControlRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useTeacherLessonAccess(runId ?? '', services)
   const [generatingResults, setGeneratingResults] = useState(false)
   if (access.status === 'LOADING') return <GuardLoading />
   if (access.status === 'DENIED') return <Navigate replace to="/about" />
+  if (
+    access.lessonStatus === 'DRAFT' ||
+    access.lessonStatus === 'READY' ||
+    access.lessonStatus === 'WAITING'
+  ) {
+    return <Navigate replace to={`/teacher/lessons/${runId}/prepare`} />
+  }
   return <LessonControlRoom
     lessonRunId={runId ?? ''}
     role={access.role ?? 'VIEWER'}
@@ -725,7 +756,7 @@ function TemplateEditRoute({ services }: { services: FirebaseServices }) {
         lessonRunIdempotencyKey: crypto.randomUUID(),
         expectedParticipants,
       })
-      navigate(`/teacher/lessons/${lessonRunId}/control`)
+      navigate(`/teacher/lessons/${lessonRunId}/prepare`)
     } catch (error) {
       setStartLessonError(describeError(error, '授業の開始に失敗しました。もう一度お試しください。'))
     } finally {
@@ -1478,6 +1509,7 @@ function StudentPlayRoute({ services }: { services: FirebaseServices }) {
 
 function JoinRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -1491,6 +1523,7 @@ function JoinRoute({ services }: { services: FirebaseServices }) {
   if (!ready) return <GuardLoading />
   return <LessonJoinPage
     functions={services.functions}
+    initialJoinCode={searchParams.get('code') ?? undefined}
     onJoined={(result, displayName) => navigate(`/lessons/${result.lessonRunId}/waiting`, { state: { displayName } })}
   />
 }
@@ -1534,6 +1567,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
     <Route path="/lessons/:runId/results" element={enabled && services ? <StudentResultsRoute services={services} /> : <Navigate replace to="/about" />} />
   </Route>
   <Route element={<TeacherShell />}>
+    <Route path="/teacher/lessons/:runId/prepare" element={enabled && services ? <TeacherPreparationRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/teacher/lessons/:runId/control" element={enabled && services ? <TeacherControlRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/teacher/lessons/:runId/analytics" element={enabled && services ? <TeacherAnalyticsRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/teacher" element={enabled && services ? <TemplateRouteGuard services={services}><TeacherHomeRoute services={services} /></TemplateRouteGuard> : <Navigate replace to="/about" />} />

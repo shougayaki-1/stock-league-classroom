@@ -85,4 +85,17 @@ describe('buildProjectionSource', () => {
     const source = await buildProjectionSource(deps, 'run1')
     expect(source?.displayModeOverride).toBeNull()
   })
+
+  it('lessonRun の joinCode を source に載せる', async () => {
+    const source = await buildProjectionSource(
+      { ...deps, getRun: async () => ({ ...run, joinCode: 'ABC234' }) },
+      'run1',
+    )
+    expect(source?.joinCode).toBe('ABC234')
+  })
+
+  it('joinCode が無ければ null にする', async () => {
+    const source = await buildProjectionSource(deps, 'run1')
+    expect(source?.joinCode).toBeNull()
+  })
 })

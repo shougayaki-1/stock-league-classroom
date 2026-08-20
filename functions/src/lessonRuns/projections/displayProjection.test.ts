@@ -12,6 +12,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   currentPhaseEndsAtMillis: 10_000,
   updatedAtMillis: 5_000,
   teacherGuidance: 'スマホをしまってください',
+  joinCode: 'ABC234',
   displayModeOverride: null,
   teams: [
     {
@@ -53,7 +54,7 @@ describe('toLessonRunDisplayState — forbidden information (Step 1, security-cr
   it('carries no authorization information other than orgId', () => {
     const display = toLessonRunDisplayState(privateRunFixture, 6_000)
     expect(Object.keys(display).sort()).toEqual(
-      ['goal', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
+      ['goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
     )
   })
 })
@@ -68,19 +69,22 @@ describe('toLessonRunDisplayState — allow-listed public fields', () => {
       goal: '需要と供給の関係を理解する',
       teams: [{ teamId: 'team-a', displayName: 'Aチーム', publicAggregateLabel: '1位' }],
       teacherGuidance: 'スマホをしまってください',
+      joinCode: 'ABC234',
       updatedAtMillis: 5_000,
     })
   })
 
-  it('defaults goal/teacherGuidance/publicAggregateLabel to null when absent', () => {
+  it('defaults goal/teacherGuidance/publicAggregateLabel/joinCode to null when absent', () => {
     const display = toLessonRunDisplayState({
       ...privateRunFixture,
       goal: null,
       teacherGuidance: null,
+      joinCode: null,
       teams: [{ id: 'team-b', displayName: 'Bチーム', publicAggregateLabel: null }],
     }, 6_000)
     expect(display.goal).toBeNull()
     expect(display.teacherGuidance).toBeNull()
+    expect(display.joinCode).toBeNull()
     expect(display.teams).toEqual([{ teamId: 'team-b', displayName: 'Bチーム', publicAggregateLabel: null }])
   })
 })
@@ -118,7 +122,7 @@ describe('toLessonRunDisplayState — never writes HOUSEHOLD_COMPARISON fields',
     const display = toLessonRunDisplayState(privateRunFixture, 6_000)
     expect('householdClassComparison' in display).toBe(false)
     expect(Object.keys(display).sort()).toEqual(
-      ['goal', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
+      ['goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
     )
   })
 })

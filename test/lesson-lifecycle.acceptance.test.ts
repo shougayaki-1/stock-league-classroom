@@ -344,7 +344,7 @@ describe('Task 18: lesson lifecycle acceptance', () => {
       const source: LessonRunProjectionSource = {
         orgId: 'org-1', status: 'RUNNING', title: '公開タイトル', goal: '公開ゴール',
         currentPhaseId: 'market', currentPhasePublicTask: '公開タスク', currentPhaseEndsAtMillis: 123,
-        updatedAtMillis: 456, teacherGuidance: '教師ガイダンス', displayModeOverride: null,
+        updatedAtMillis: 456, teacherGuidance: '教師ガイダンス', displayModeOverride: null, joinCode: 'ABC234',
         teams: [{
           id: 'team-a', displayName: 'A班', publicAggregateLabel: '1位',
           // FORBIDDEN on the display projection (see source.ts's JSDoc):

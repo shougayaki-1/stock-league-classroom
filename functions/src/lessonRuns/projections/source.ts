@@ -42,6 +42,8 @@ export interface LessonRunProjectionSource {
   updatedAtMillis: number
   /** Teacher-authored guidance meant for the whole class (projector display). */
   teacherGuidance: string | null
+  /** 参加コード (6文字)。StartScreen の QR/コード描画用。 */
+  joinCode: string | null
   /**
    * 教師が `SWITCH_DISPLAY_MODE` 介入で明示的に選んだ教室表示のモード。
    * `null` のとき `deriveDisplayMode(status)` の自動導出に従う。表示モード

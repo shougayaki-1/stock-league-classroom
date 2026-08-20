@@ -215,6 +215,7 @@ export interface LessonRunDisplayState {
   teams: LessonRunDisplayTeamSummary[]
   /** Teacher-authored guidance text meant for the whole class to see on the projector (e.g. "スマホを置いて前を見てください"). Never internal teacher-only notes. */
   teacherGuidance: string | null
+  joinCode: string | null
   updatedAtMillis: number
   /**
    * Present only while `mode === 'HOUSEHOLD_COMPARISON'`. Written exclusively

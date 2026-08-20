@@ -14,6 +14,7 @@ import { ParticipantMonitor } from './ParticipantMonitor'
 import { InterventionPanel, type InterventionApplyInput } from './InterventionPanel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { ClassroomMessageDialog } from './ClassroomMessageDialog'
+import { ClassroomDisplayUrlDialog } from './ClassroomDisplayUrlDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 
 const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
@@ -142,6 +143,7 @@ export function LessonControlRoom({
   const [participants, setParticipants] = useState<LessonParticipantView[]>([])
   const [interventionOpen, setInterventionOpen] = useState(false)
   const [guidanceDialogOpen, setGuidanceDialogOpen] = useState(false)
+  const [displayUrlDialogOpen, setDisplayUrlDialogOpen] = useState(false)
   const [displayModeOverride, setDisplayModeOverride] = useState<string | null>(null)
   const [hiddenInformationIds, setHiddenInformationIds] = useState<string[]>([])
 
@@ -270,7 +272,16 @@ export function LessonControlRoom({
               介入操作を開く
             </Button>
           )}
-          {canEditGuidance && <Button variant="outlined" onClick={() => setGuidanceDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>教室表示のメッセージ</Button>}
+          {canEditGuidance && (
+            <>
+              <Button variant="outlined" onClick={() => setGuidanceDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>
+                教室表示のメッセージ
+              </Button>
+              <Button variant="outlined" onClick={() => setDisplayUrlDialogOpen(true)} sx={{ minHeight: MIN_TOUCH_TARGET }}>
+                教室表示URLを再発行
+              </Button>
+            </>
+          )}
           {!interrupted && canHandleConnection && (
             <Button variant="outlined" onClick={handleInterrupt} sx={{ minHeight: MIN_TOUCH_TARGET }}>
               授業を安全停止
@@ -320,7 +331,12 @@ export function LessonControlRoom({
         teams={publicState?.teams ?? []}
         onApply={handleApplyIntervention}
       />
-      {canEditGuidance && <ClassroomMessageDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />}
+      {canEditGuidance && (
+        <>
+          <ClassroomMessageDialog open={guidanceDialogOpen} onClose={() => setGuidanceDialogOpen(false)} lessonRunId={lessonRunId} initialGuidance={displayState?.teacherGuidance ?? null} functions={functions} aiEnabled={aiEnabled} />
+          <ClassroomDisplayUrlDialog open={displayUrlDialogOpen} onClose={() => setDisplayUrlDialogOpen(false)} lessonRunId={lessonRunId} functions={functions} />
+        </>
+      )}
     </Stack>
   )
 }

@@ -369,4 +369,19 @@ describe('LessonControlRoom', () => {
     expect(screen.getByRole('button', { name: '教室表示のメッセージ' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: obsoleteName })).not.toBeInTheDocument()
   })
+
+  it('renders 教室表示URLを再発行 button and opens dialog for PRIMARY teacher', async () => {
+    const user = userEvent.setup()
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    const button = screen.getByRole('button', { name: '教室表示URLを再発行' })
+    expect(button).toBeInTheDocument()
+    await user.click(button)
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('教室表示のURL再発行')).toBeInTheDocument()
+  })
 })

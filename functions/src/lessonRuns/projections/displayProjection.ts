@@ -27,6 +27,7 @@ export interface LessonRunDisplayState {
   goal: string | null
   teams: LessonRunDisplayTeamSummary[]
   teacherGuidance: string | null
+  joinCode: string | null
   updatedAtMillis: number
   /** See `LessonRunDisplayMode`'s own JSDoc above — present only while `mode === 'HOUSEHOLD_COMPARISON'`. */
   householdClassComparison?: HouseholdClassComparisonPublicView
@@ -99,5 +100,6 @@ export const toLessonRunDisplayState = (source: LessonRunProjectionSource, _nowM
     publicAggregateLabel: team.publicAggregateLabel,
   })),
   teacherGuidance: source.teacherGuidance,
+  joinCode: source.joinCode,
   updatedAtMillis: source.updatedAtMillis,
 })
