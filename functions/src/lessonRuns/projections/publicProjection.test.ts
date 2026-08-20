@@ -65,7 +65,7 @@ describe('toLessonRunPublicState — allow-listed public fields', () => {
       currentPhaseLabel: '取引',
       updatedAtMillis: 5_000,
       orgId: 'org-1',
-      remainingPhaseSeconds: 4,
+      currentPhaseEndsAtMillis: 10_000,
       publicTask: '来週の株価を予想してください',
       notifications: [
         { id: 'evt-1', type: 'PHASE_CHANGED', severity: 'IMPORTANT', occurredAtMillis: 4_000 },
@@ -83,14 +83,16 @@ describe('toLessonRunPublicState — allow-listed public fields', () => {
     expect(serialized).not.toContain('1位')
   })
 
-  it('clamps remainingPhaseSeconds to 0 instead of going negative once the phase end has passed', () => {
-    const publicState = toLessonRunPublicState(privateRunFixture, 999_999)
-    expect(publicState.remainingPhaseSeconds).toBe(0)
+  it('currentPhaseEndsAtMillis をそのまま公開する', () => {
+    const source = { ...privateRunFixture, currentPhaseEndsAtMillis: 10_000 }
+    const state = toLessonRunPublicState(source, 6_000)
+    expect(state.currentPhaseEndsAtMillis).toBe(10_000)
+    expect(state).not.toHaveProperty('remainingPhaseSeconds')
   })
 
-  it('reports remainingPhaseSeconds as null when no phase timer is active', () => {
-    const publicState = toLessonRunPublicState({ ...privateRunFixture, currentPhaseEndsAtMillis: null }, 6_000)
-    expect(publicState.remainingPhaseSeconds).toBeNull()
+  it('制限時間の無いフェーズでは null', () => {
+    const source = { ...privateRunFixture, currentPhaseEndsAtMillis: null }
+    expect(toLessonRunPublicState(source, 6_000).currentPhaseEndsAtMillis).toBeNull()
   })
 
   it('reports publicTask as null when the current phase has none', () => {

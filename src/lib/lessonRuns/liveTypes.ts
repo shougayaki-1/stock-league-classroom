@@ -89,8 +89,12 @@ export interface LessonRunPublicState {
   updatedAtMillis: number
   /** Required by database.rules.json's teacher-read branch (`data.child('orgId')`); not sensitive on its own — every lessonRunPublic/lessonRunPrivate/lessonRunTeamState node already carries it. */
   orgId: string
-  /** Seconds remaining in the current phase, or null when no phase/timer is active. Never derived from a value that would let a participant back-compute a future price schedule — only a plain countdown. */
-  remainingPhaseSeconds: number | null
+  /**
+   * 現在フェーズの終了時刻（エポックミリ秒）。制限時間の無いフェーズでは null。
+   * サーバが書いた値であり、クライアントはこの時刻までのカウントダウンを描く
+   * だけで、自分でタイマーを進めてはならない（`nextBatchAtMillis` と同じ規約）。
+   */
+  currentPhaseEndsAtMillis: number | null
   /** The current phase's teacher-authored, already-public prompt/task text. Never the private phase-transition/pricing plan. */
   publicTask: string | null
   /** Broadcast-safe notifications only — see LessonRunPublicNotification's JSDoc. */
@@ -215,6 +219,12 @@ export interface LessonRunDisplayState {
   title: string
   /** 現在フェーズの日本語名。内部IDを画面に出さないための表示用。ラベル未設定のフェーズでは null。 */
   currentPhaseLabel: string | null
+  /**
+   * 現在フェーズの終了時刻（エポックミリ秒）。制限時間の無いフェーズでは null。
+   * サーバが書いた値であり、クライアントはこの時刻までのカウントダウンを描く
+   * だけで、自分でタイマーを進めてはならない（`nextBatchAtMillis` と同じ規約）。
+   */
+  currentPhaseEndsAtMillis: number | null
   goal: string | null
   teams: LessonRunDisplayTeamSummary[]
   /** Teacher-authored guidance text meant for the whole class to see on the projector (e.g. "スマホを置いて前を見てください"). Never internal teacher-only notes. */

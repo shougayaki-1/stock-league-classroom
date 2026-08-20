@@ -64,7 +64,7 @@ beforeEach(async () => {
     await database.ref('lessonRunMembership/run-1/student-b').set({ access: 'ACTIVE', teamId: 'team-b' })
     await database.ref('lessonRunPublic/run-1').set({
       status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'org-1',
-      remainingPhaseSeconds: 60, publicTask: null, notifications: [],
+      currentPhaseLabel: '取引', currentPhaseEndsAtMillis: 60_000, publicTask: null, notifications: [],
     })
     await database.ref('lessonRunTeamState/run-1/team-a').set({ orgId: 'org-1', proposals: [] })
     await database.ref('lessonRunDisplay/run-1').set({

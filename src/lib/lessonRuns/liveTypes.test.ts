@@ -20,7 +20,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
   it('LessonRunPublicState carries per-stock price/breakdown but never a coefficient or seed', () => {
     const state: LessonRunPublicState = {
       status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
-      orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      orgId: 'personal_teacher-a', currentPhaseLabel: null, currentPhaseEndsAtMillis: null, publicTask: null, notifications: [],
       title: '株式投資シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: 1003000,
       stocks: {
@@ -89,7 +89,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
   it('LessonRunPublicState.householdClassComparison is optional and absent by default (market lesson)', () => {
     const state: LessonRunPublicState = {
       status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1,
-      orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      orgId: 'personal_teacher-a', currentPhaseLabel: null, currentPhaseEndsAtMillis: null, publicTask: null, notifications: [],
       title: '株式投資シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: null, stocks: {},
     }
@@ -117,7 +117,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
     }
     const state: LessonRunPublicState = {
       status: 'REFLECTION', currentPhaseId: 'phase-1', updatedAtMillis: 1,
-      orgId: 'personal_teacher-a', remainingPhaseSeconds: null, publicTask: null, notifications: [],
+      orgId: 'personal_teacher-a', currentPhaseLabel: null, currentPhaseEndsAtMillis: null, publicTask: null, notifications: [],
       title: '家庭科シミュレーション', teams: [],
       marketPaused: false, nextBatchAtMillis: null, stocks: {},
       householdClassComparison: comparison,

@@ -34,7 +34,7 @@ export interface LessonRunPublicState {
   currentPhaseLabel: string | null
   updatedAtMillis: number
   orgId: string
-  remainingPhaseSeconds: number | null
+  currentPhaseEndsAtMillis: number | null
   publicTask: string | null
   notifications: LessonRunPublicNotification[]
   title: string
@@ -53,13 +53,13 @@ export interface LessonRunPublicState {
  * `individualResponses`, `unsubmittedParticipantIds`, event `actorId`, or
  * event `payload`).
  */
-export const toLessonRunPublicState = (source: LessonRunProjectionSource, nowMillis: number): LessonRunPublicState => ({
+export const toLessonRunPublicState = (source: LessonRunProjectionSource, _nowMillis: number): LessonRunPublicState => ({
   status: source.status,
   currentPhaseId: source.currentPhaseId,
   currentPhaseLabel: source.currentPhaseLabel,
   updatedAtMillis: source.updatedAtMillis,
   orgId: source.orgId,
-  remainingPhaseSeconds: remainingSeconds(source.currentPhaseEndsAtMillis, nowMillis),
+  currentPhaseEndsAtMillis: source.currentPhaseEndsAtMillis,
   publicTask: source.currentPhasePublicTask,
   notifications: source.recentNotifications.map((event) => ({
     id: event.id,
@@ -70,12 +70,6 @@ export const toLessonRunPublicState = (source: LessonRunProjectionSource, nowMil
   title: source.title,
   teams: source.teams.map((team) => ({ teamId: team.id, displayName: team.displayName })),
 })
-
-/** Plain countdown, clamped so a phase whose end has already passed reports 0 rather than a negative number. */
-const remainingSeconds = (endsAtMillis: number | null, nowMillis: number): number | null => {
-  if (endsAtMillis === null) return null
-  return Math.max(0, Math.round((endsAtMillis - nowMillis) / 1000))
-}
 
 export interface PublishLessonProjectionDeps {
   setPublicState: (lessonRunId: string, state: LessonRunPublicState) => Promise<void>
@@ -93,8 +87,10 @@ export interface PublishLessonProjectionInput {
  * `lessonRunDisplay/{lessonRunId}` — see database.rules.json; never nested
  * under a shared ancestor, matching lessonRunPublic/lessonRunPrivate's
  * existing split). Both projections are computed from the SAME `nowMillis`
- * read, so `remainingPhaseSeconds` and anything display-side that later
- * needs a clock stay consistent with each other for a single publish call.
+ * read, so anything either projection later derives from a clock stays
+ * consistent with the other for a single publish call. (Neither projection
+ * reads it today — フェーズの残り時間は終了時刻としてそのまま渡し、
+ * クライアントが描き直す。)
  *
  * Callers (a future phase-transition/tick Callable — not built by this
  * task) are responsible for assembling `LessonRunProjectionSource` from

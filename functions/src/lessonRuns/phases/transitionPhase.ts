@@ -321,8 +321,9 @@ export const transitionPhase = async (
     const newPhaseId = input.targetPhaseId ?? run.currentPhaseId
 
     // 新フェーズに制限時間があれば終了時刻を確定する。無ければ null。
-    // 読み側 (publicProjection.ts の remainingPhaseSeconds) は既に実装済みで、
-    // これまでこの値を書くコードが無かったため常にカウントダウンが出なかった。
+    // 読み側 (publicProjection.ts / displayProjection.ts の
+    // currentPhaseEndsAtMillis) は既に実装済みで、これまでこの値を書くコードが
+    // 無かったため常にカウントダウンが出なかった。
     const newPhase = run.templateSnapshot?.phases?.find((phase) => phase.id === newPhaseId)
     const durationSeconds = newPhase?.durationSeconds
     const currentPhaseEndsAtMillis =

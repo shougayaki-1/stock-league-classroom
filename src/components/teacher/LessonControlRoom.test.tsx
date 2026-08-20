@@ -48,7 +48,7 @@ const database = {} as Database
 
 function emitPublic(state: Partial<{ status: string; currentPhaseId: string | null; notifications: unknown[] }>) {
   act(() => {
-    capturedPublicListener?.({ val: () => ({ status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'org-1', remainingPhaseSeconds: 60, publicTask: null, notifications: [], ...state }) })
+    capturedPublicListener?.({ val: () => ({ status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'org-1', currentPhaseLabel: null, currentPhaseEndsAtMillis: null, publicTask: null, notifications: [], ...state }) })
   })
 }
 

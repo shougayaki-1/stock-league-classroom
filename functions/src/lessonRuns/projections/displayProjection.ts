@@ -25,6 +25,8 @@ export interface LessonRunDisplayState {
   mode: LessonRunDisplayMode
   title: string
   currentPhaseLabel: string | null
+  /** 現在フェーズの終了時刻（エポックミリ秒）。制限時間の無いフェーズでは null。 */
+  currentPhaseEndsAtMillis: number | null
   goal: string | null
   teams: LessonRunDisplayTeamSummary[]
   teacherGuidance: string | null
@@ -82,12 +84,12 @@ export const deriveDisplayMode = (status: string): LessonRunDisplayMode => {
  * the opposite of a deny-list (`delete result.randomSeed`), which would
  * silently leak any newly-added secret field nobody remembered to strip.
  */
-// The second parameter (`nowMillis`) is accepted but currently unused by the
-// display projection itself (no countdown is shown on the projector screen
-// today, unlike LessonRunPublicState.remainingPhaseSeconds). It is kept in
-// the signature so `publishLessonProjection` (publicProjection.ts) can call
-// both projection functions with one shared clock read, and so a future
-// projector-side countdown can be added here without changing call sites.
+// The second parameter (`nowMillis`) is accepted but unused: the projector's
+// countdown is drawn client-side from `currentPhaseEndsAtMillis`, not from a
+// remaining count computed here (a publish only happens on a transition, so
+// any server-computed countdown would stay frozen for the whole phase). It is
+// kept in the signature so `publishLessonProjection` (publicProjection.ts)
+// can call both projection functions with one shared clock read.
 export const toLessonRunDisplayState = (source: LessonRunProjectionSource, _nowMillis: number): LessonRunDisplayState => ({
   orgId: source.orgId,
   // 教師の明示指定 (SWITCH_DISPLAY_MODE 介入) を status 由来の自動導出より
@@ -95,6 +97,7 @@ export const toLessonRunDisplayState = (source: LessonRunProjectionSource, _nowM
   mode: source.displayModeOverride ?? deriveDisplayMode(source.status),
   title: source.title,
   currentPhaseLabel: source.currentPhaseLabel,
+  currentPhaseEndsAtMillis: source.currentPhaseEndsAtMillis,
   goal: source.goal,
   teams: source.teams.map((team) => ({
     teamId: team.id,

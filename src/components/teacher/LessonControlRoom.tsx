@@ -323,7 +323,7 @@ export function LessonControlRoom({
         onClose={() => setInterventionOpen(false)}
         role={role}
         currentPhaseId={publicState?.currentPhaseId ?? null}
-        phaseHasTimer={publicState?.remainingPhaseSeconds != null}
+        phaseHasTimer={publicState?.currentPhaseEndsAtMillis != null}
         displayModeOverride={displayModeOverride}
         informationItems={(publicState?.researchDesk?.informationItems ?? []).map((item) => ({ id: item.id, body: item.body }))}
         hiddenInformationIds={hiddenInformationIds}

@@ -55,7 +55,7 @@ describe('toLessonRunDisplayState — forbidden information (Step 1, security-cr
   it('carries no authorization information other than orgId', () => {
     const display = toLessonRunDisplayState(privateRunFixture, 6_000)
     expect(Object.keys(display).sort()).toEqual(
-      ['currentPhaseLabel', 'goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
+      ['currentPhaseEndsAtMillis', 'currentPhaseLabel', 'goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
     )
   })
 })
@@ -68,6 +68,7 @@ describe('toLessonRunDisplayState — allow-listed public fields', () => {
       mode: 'LIVE',
       title: '株式投資シミュレーション',
       currentPhaseLabel: '取引',
+      currentPhaseEndsAtMillis: 10_000,
       goal: '需要と供給の関係を理解する',
       teams: [{ teamId: 'team-a', displayName: 'Aチーム', publicAggregateLabel: '1位' }],
       teacherGuidance: 'スマホをしまってください',
@@ -124,7 +125,7 @@ describe('toLessonRunDisplayState — never writes HOUSEHOLD_COMPARISON fields',
     const display = toLessonRunDisplayState(privateRunFixture, 6_000)
     expect('householdClassComparison' in display).toBe(false)
     expect(Object.keys(display).sort()).toEqual(
-      ['currentPhaseLabel', 'goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
+      ['currentPhaseEndsAtMillis', 'currentPhaseLabel', 'goal', 'joinCode', 'mode', 'orgId', 'teacherGuidance', 'teams', 'title', 'updatedAtMillis'].sort(),
     )
   })
 })
@@ -149,4 +150,9 @@ describe('displayModeOverride', () => {
 it('currentPhaseLabel を教室表示に含める', () => {
   const source = { ...privateRunFixture, currentPhaseLabel: '取引' }
   expect(toLessonRunDisplayState(source, 6_000).currentPhaseLabel).toBe('取引')
+})
+
+it('currentPhaseEndsAtMillis を教室表示に含める', () => {
+  const source = { ...privateRunFixture, currentPhaseEndsAtMillis: 10_000 }
+  expect(toLessonRunDisplayState(source, 6_000).currentPhaseEndsAtMillis).toBe(10_000)
 })
