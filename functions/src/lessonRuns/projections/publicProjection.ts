@@ -31,6 +31,7 @@ export interface LessonRunPublicTeamSummary {
 export interface LessonRunPublicState {
   status: string
   currentPhaseId: string | null
+  currentPhaseLabel: string | null
   updatedAtMillis: number
   orgId: string
   remainingPhaseSeconds: number | null
@@ -55,6 +56,7 @@ export interface LessonRunPublicState {
 export const toLessonRunPublicState = (source: LessonRunProjectionSource, nowMillis: number): LessonRunPublicState => ({
   status: source.status,
   currentPhaseId: source.currentPhaseId,
+  currentPhaseLabel: source.currentPhaseLabel,
   updatedAtMillis: source.updatedAtMillis,
   orgId: source.orgId,
   remainingPhaseSeconds: remainingSeconds(source.currentPhaseEndsAtMillis, nowMillis),

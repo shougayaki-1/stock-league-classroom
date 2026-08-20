@@ -62,6 +62,7 @@ describe('toLessonRunPublicState — allow-listed public fields', () => {
     expect(publicState).toEqual({
       status: 'RUNNING',
       currentPhaseId: 'phase-2',
+      currentPhaseLabel: '取引',
       updatedAtMillis: 5_000,
       orgId: 'org-1',
       remainingPhaseSeconds: 4,
@@ -165,4 +166,9 @@ describe('publishLessonProjectionWithAdminSdk — lessonRunPublic uses update(),
     const displayCall = calls.find((call) => call.path === 'lessonRunDisplay/run-1')
     expect(displayCall?.method).toBe('set')
   })
+})
+
+it('currentPhaseLabel を公開状態に含める', () => {
+  const source = { ...privateRunFixture, currentPhaseLabel: '取引' }
+  expect(toLessonRunPublicState(source, 6_000).currentPhaseLabel).toBe('取引')
 })

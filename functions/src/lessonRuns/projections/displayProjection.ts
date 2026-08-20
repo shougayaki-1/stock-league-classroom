@@ -24,6 +24,7 @@ export interface LessonRunDisplayState {
   orgId: string
   mode: LessonRunDisplayMode
   title: string
+  currentPhaseLabel: string | null
   goal: string | null
   teams: LessonRunDisplayTeamSummary[]
   teacherGuidance: string | null
@@ -93,6 +94,7 @@ export const toLessonRunDisplayState = (source: LessonRunProjectionSource, _nowM
   // 優先する。HOUSEHOLD_COMPARISON が status 由来でないのと同じ扱い。
   mode: source.displayModeOverride ?? deriveDisplayMode(source.status),
   title: source.title,
+  currentPhaseLabel: source.currentPhaseLabel,
   goal: source.goal,
   teams: source.teams.map((team) => ({
     teamId: team.id,

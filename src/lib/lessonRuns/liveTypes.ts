@@ -84,6 +84,8 @@ export type {
 export interface LessonRunPublicState {
   status: string
   currentPhaseId: string | null
+  /** 現在フェーズの日本語名。内部IDを画面に出さないための表示用。ラベル未設定のフェーズでは null。 */
+  currentPhaseLabel: string | null
   updatedAtMillis: number
   /** Required by database.rules.json's teacher-read branch (`data.child('orgId')`); not sensitive on its own — every lessonRunPublic/lessonRunPrivate/lessonRunTeamState node already carries it. */
   orgId: string
@@ -211,6 +213,8 @@ export interface LessonRunDisplayState {
   orgId: string
   mode: LessonRunDisplayMode
   title: string
+  /** 現在フェーズの日本語名。内部IDを画面に出さないための表示用。ラベル未設定のフェーズでは null。 */
+  currentPhaseLabel: string | null
   goal: string | null
   teams: LessonRunDisplayTeamSummary[]
   /** Teacher-authored guidance text meant for the whole class to see on the projector (e.g. "スマホを置いて前を見てください"). Never internal teacher-only notes. */
