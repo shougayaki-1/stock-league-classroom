@@ -46,7 +46,7 @@ const functions = {} as Functions
 const firestore = {} as Firestore
 const database = {} as Database
 
-function emitPublic(state: Partial<{ status: string; currentPhaseId: string | null; notifications: unknown[] }>) {
+function emitPublic(state: Partial<{ status: string; currentPhaseId: string | null; currentPhaseLabel: string | null; currentPhaseEndsAtMillis: number | null; notifications: unknown[] }>) {
   act(() => {
     capturedPublicListener?.({ val: () => ({ status: 'RUNNING', currentPhaseId: 'phase-1', updatedAtMillis: 1, orgId: 'org-1', currentPhaseLabel: null, currentPhaseEndsAtMillis: null, publicTask: null, notifications: [], ...state }) })
   })
@@ -383,5 +383,36 @@ describe('LessonControlRoom', () => {
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText('教室表示のURL再発行')).toBeInTheDocument()
+  })
+
+  it('フェーズの日本語名を表示する', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'market', currentPhaseLabel: '取引' })
+    emitDisplay({ mode: 'LIVE', title: 'テスト授業' })
+    emitParticipants([])
+
+    expect(screen.getByText('取引')).toBeInTheDocument()
+    expect(screen.queryByText('market')).not.toBeInTheDocument()
+  })
+
+  it('ラベルが無ければフェーズIDにフォールバックする', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'market', currentPhaseLabel: null })
+    emitDisplay({ mode: 'LIVE', title: 'テスト授業' })
+    emitParticipants([])
+
+    expect(screen.getByText('market')).toBeInTheDocument()
+  })
+
+  it('制限時間のあるフェーズでは残り時間を表示する', () => {
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({
+      status: 'RUNNING', currentPhaseId: 'market', currentPhaseLabel: '取引',
+      currentPhaseEndsAtMillis: Date.now() + 120_000,
+    })
+    emitDisplay({ mode: 'LIVE', title: 'テスト授業' })
+    emitParticipants([])
+
+    expect(screen.getByText(/^残り /)).toBeInTheDocument()
   })
 })

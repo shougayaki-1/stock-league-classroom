@@ -2,6 +2,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { Box, Button, List, ListItem, Stack, Typography } from '@mui/material'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
+import { PhaseCountdown } from '../ui/PhaseCountdown'
 
 export interface LessonStatusHeaderAction {
   label: string
@@ -25,6 +26,8 @@ export interface LessonStatusHeaderAction {
 export interface LessonStatusHeaderProps {
   /** 現在のフェーズ */
   phaseLabel: string
+  /** 現在フェーズの終了時刻（エポックミリ秒）。制限時間の無いフェーズでは null/未指定。 */
+  phaseEndsAtMillis?: number | null
   /**
    * 次にすること — the single most-recommended next action, or null when
    * this teacher's role has no authority to act from this screen at all
@@ -49,6 +52,7 @@ export interface LessonStatusHeaderProps {
  */
 export function LessonStatusHeader({
   phaseLabel,
+  phaseEndsAtMillis,
   nextAction,
   noActionReason,
   participationSummary,
@@ -95,7 +99,10 @@ export function LessonStatusHeader({
         <Typography id="lesson-status-header-phase" component="h2" variant="subtitle1" sx={{ fontWeight: 700 }}>
           現在のフェーズ
         </Typography>
-        <Typography variant="body1">{phaseLabel}</Typography>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <Typography variant="body1">{phaseLabel}</Typography>
+          <PhaseCountdown endsAtMillis={phaseEndsAtMillis} />
+        </Stack>
       </Box>
 
       <Box component="section" aria-labelledby="lesson-status-header-participation">

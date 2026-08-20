@@ -154,7 +154,11 @@ export function LessonControlRoom({
   const status = publicState?.status ?? 'DRAFT'
   const interrupted = status === 'INTERRUPTED'
 
-  const phaseLabel = publicState?.currentPhaseId ?? (status === 'DRAFT' || status === 'READY' ? '未開始' : status)
+  // 内部IDそのものは教師に読めないので、まず projection のラベルを使う。
+  // ラベルを持たない古い run のために ID へフォールバックする。
+  const phaseLabel = publicState?.currentPhaseLabel
+    ?? publicState?.currentPhaseId
+    ?? (status === 'DRAFT' || status === 'READY' ? '未開始' : status)
 
   const disconnectedCount = participants.filter((p) => DISCONNECTED_STATUSES.has(p.status)).length
   const activeCount = participants.length - disconnectedCount
@@ -258,6 +262,7 @@ export function LessonControlRoom({
 
       <LessonStatusHeader
         phaseLabel={phaseLabel}
+        phaseEndsAtMillis={publicState?.currentPhaseEndsAtMillis ?? null}
         participationSummary={participationSummary}
         openIssues={openIssues}
         displayPreview={displayPreview}
