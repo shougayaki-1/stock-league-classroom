@@ -127,7 +127,7 @@ export function ClassroomDisplayPage({
     )
   }
 
-  const { mode, title, goal, teams, teacherGuidance, householdClassComparison } = state
+  const { mode, title, goal, teams, teacherGuidance, householdClassComparison, currentPhaseLabel, currentPhaseEndsAtMillis } = state
   if (mode === 'LIVE' || mode === 'END') lastNonExplanationModeRef.current = mode
 
   const effectiveJoinCode = state.joinCode ?? joinCode ?? undefined
@@ -139,7 +139,13 @@ export function ClassroomDisplayPage({
     case 'START':
       return <StartScreen title={title} goal={goal} joinUrl={effectiveJoinUrl} joinCode={effectiveJoinCode} />
     case 'LIVE':
-      return <LiveScreen title={title} teams={teams} teacherGuidance={teacherGuidance} />
+      return <LiveScreen
+        title={title}
+        phaseName={currentPhaseLabel ?? undefined}
+        endsAtMillis={currentPhaseEndsAtMillis}
+        teams={teams}
+        teacherGuidance={teacherGuidance}
+      />
     case 'END':
       return <EndScreen title={title} teams={teams} teacherGuidance={teacherGuidance} />
     case 'EXPLANATION':

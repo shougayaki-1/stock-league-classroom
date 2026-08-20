@@ -8,7 +8,7 @@ describe('LiveScreen', () => {
       <LiveScreen
         title="株価変動を体験しよう"
         phaseName="フェーズ2: 決算発表"
-        remainingSeconds={95}
+        endsAtMillis={Date.now() + 95_000}
         publicInfo={['A社が増収増益を発表', '市場全体は横ばい']}
         teams={[
           { teamId: 't1', displayName: 'チームA', publicAggregateLabel: '1位' },
@@ -19,7 +19,7 @@ describe('LiveScreen', () => {
     )
 
     expect(screen.getByText('フェーズ2: 決算発表')).toBeInTheDocument()
-    expect(screen.getByText(/95/)).toBeInTheDocument()
+    expect(screen.getByText(/^残り /)).toBeInTheDocument()
     expect(screen.getByText('A社が増収増益を発表')).toBeInTheDocument()
     expect(screen.getByText('市場全体は横ばい')).toBeInTheDocument()
     expect(screen.getByText('チームA')).toBeInTheDocument()
@@ -29,7 +29,7 @@ describe('LiveScreen', () => {
     expect(screen.getByText('スマホを置いて前を見てください')).toBeInTheDocument()
   })
 
-  it('renders gracefully when phaseName/remainingSeconds/publicInfo are absent (not part of the current display projection)', () => {
+  it('renders gracefully when phaseName/endsAtMillis/publicInfo are absent', () => {
     render(<LiveScreen title="タイトル" teams={[]} teacherGuidance={null} />)
     expect(screen.getByText('タイトル')).toBeInTheDocument()
     expect(screen.queryByText(/残り/)).not.toBeInTheDocument()

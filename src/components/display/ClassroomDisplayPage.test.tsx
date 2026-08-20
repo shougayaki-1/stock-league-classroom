@@ -35,6 +35,8 @@ const baseState: LessonRunDisplayState = {
   orgId: 'org-1',
   mode: 'START',
   title: '株価変動を体験しよう',
+  currentPhaseLabel: null,
+  currentPhaseEndsAtMillis: null,
   goal: '需給とニュースの関係を理解する',
   joinCode: null,
   teams: [{ teamId: 't1', displayName: 'チームA', publicAggregateLabel: '1位' }],
@@ -235,5 +237,21 @@ describe('ClassroomDisplayPage — forbidden-information regression', () => {
     expect(dom).not.toContain('seed-abc123')
     expect(dom).not.toContain('hard')
     expect(dom).not.toContain('S評価')
+  })
+})
+
+describe('ClassroomDisplayPage — フェーズ名と残り時間', () => {
+  it('LIVE 表示でフェーズ名と残り時間を出す', async () => {
+    renderPage()
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled())
+    act(() => onUpdateCallback?.({
+      ...baseState,
+      mode: 'LIVE',
+      currentPhaseLabel: '取引',
+      currentPhaseEndsAtMillis: Date.now() + 120_000,
+    }))
+
+    expect(await screen.findByText('取引')).toBeInTheDocument()
+    expect(screen.getByText(/^残り /)).toBeInTheDocument()
   })
 })
