@@ -102,6 +102,7 @@ import { changeOrgMemberRole, listOrgMembers, suspendOrgMember, type OrgMember }
 import { migrateSchoolFromEndedParent } from './lib/organizations/parentContractMigration'
 import { TeacherShell } from './components/layout/TeacherShell'
 import { StudentShell } from './components/layout/StudentShell'
+import { findPhaseLabel, type PhaseWithDisplayConfig } from './lib/lessonRuns/phaseLabel'
 
 const docPages: Record<string, () => React.JSX.Element> = {
   '/about': AboutPage,
@@ -139,6 +140,8 @@ const TrailingSlashRedirect = () => {
 type AccessStatus = 'LOADING' | 'DENIED' | 'GRANTED'
 interface TeacherAccess {
   status: AccessStatus
+  /** run 自身のフェーズ graph（`templateSnapshot.phases`）。次フェーズの解決に使う。 */
+  phases?: PhaseWithDisplayConfig[]
   role?: LessonRunRole
   subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
   homeEconomicsCourseFormat?: string
@@ -179,7 +182,7 @@ function useTeacherLessonAccess(runId: string, services: FirebaseServices): Teac
             joinCode?: string | null
             teacherRoles?: Record<string, LessonRunRole>
             subject?: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS'
-            templateSnapshot?: { homeEconomics?: { courseFormat?: string } }
+            templateSnapshot?: { phases?: PhaseWithDisplayConfig[]; homeEconomics?: { courseFormat?: string } }
           }
           const role = data.teacherRoles?.[user.uid]
           const subject = data.subject
@@ -188,7 +191,7 @@ function useTeacherLessonAccess(runId: string, services: FirebaseServices): Teac
           const joinCode = data.joinCode ?? null
           setAccess(
             role
-              ? { status: 'GRANTED', role, subject, homeEconomicsCourseFormat, lessonStatus, joinCode }
+              ? { status: 'GRANTED', role, subject, homeEconomicsCourseFormat, lessonStatus, joinCode, phases: data.templateSnapshot?.phases }
               : { status: 'DENIED' },
           )
         })
@@ -241,16 +244,6 @@ const GuardLoading = () => (
 )
 
 
-/**
- * Mirrors functions/src/lessonRuns/phases/defaultPhases.ts's fixed 4-phase
- * sequence — this hardcoded duplication is a deliberate, documented
- * placeholder (see that file's own JSDoc) until a real per-template phase
- * graph exists; Control Room has no other way to know "what phase comes
- * next" without fetching and walking templateSnapshot.phases itself.
- */
-const defaultPhaseSequence = (subject: 'SOCIAL_STUDIES' | 'HOME_ECONOMICS' | undefined): string[] =>
-  subject === 'HOME_ECONOMICS' ? ['intro', 'decision', 'result', 'reflection'] : ['intro', 'market', 'result', 'reflection']
-
 function TeacherPreparationRoute({ services }: { services: FirebaseServices }) {
   const { runId } = useParams<{ runId: string }>()
   const access = useTeacherLessonAccess(runId ?? '', services)
@@ -280,6 +273,12 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
     access.lessonStatus === 'WAITING'
   ) {
     return <Navigate replace to={`/teacher/lessons/${runId}/prepare`} />
+  }
+  const phases = access.phases ?? []
+  const resolveNextPhaseId = (currentPhaseId: string | null): string | null => {
+    if (!currentPhaseId) return null
+    const current = phases.find((phase) => phase.id === currentPhaseId)
+    return current?.nextPhaseIds?.[0] ?? null
   }
   return <LessonControlRoom
     lessonRunId={runId ?? ''}
@@ -314,17 +313,26 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
     }}
     onAdvancePhase={async (currentPhaseId) => {
       if (!runId) return
-      const sequence = defaultPhaseSequence(access.subject)
-      const currentIndex = currentPhaseId ? sequence.indexOf(currentPhaseId) : -1
-      const nextPhaseId = sequence[currentIndex + 1] ?? sequence[sequence.length - 1]
+      const nextPhaseId = resolveNextPhaseId(currentPhaseId)
+      if (!nextPhaseId) return
       await transitionPhase(services.functions, {
         lessonRunId: runId, targetPhaseId: nextPhaseId, reason: '教師操作: 次のフェーズへ進む', idempotencyKey: crypto.randomUUID(),
       })
-      if (nextPhaseId === 'reflection') {
+      // 振り返りフェーズに入ったら授業の status も REFLECTION へ移す。
+      // フェーズIDの文字列ではなく graph の type で判定するので、教材が独自の
+      // フェーズ構成を持つようになっても正しく動く。
+      const nextPhase = phases.find((phase) => phase.id === nextPhaseId)
+      if (nextPhase?.type === 'REFLECTION') {
         await transitionPhase(services.functions, {
           lessonRunId: runId, targetStatus: 'REFLECTION', reason: '教師操作: 次のフェーズへ進む', idempotencyKey: crypto.randomUUID(),
         })
       }
+    }}
+    advancePhaseLabel={(currentPhaseId) => {
+      const nextPhaseId = resolveNextPhaseId(currentPhaseId)
+      if (!nextPhaseId) return null
+      const nextLabel = findPhaseLabel(phases, nextPhaseId)
+      return nextLabel ? `次へ：${nextLabel}` : '次のフェーズへ進む'
     }}
   />
 }

@@ -1207,4 +1207,59 @@ describe('Stripe checkout route', () => {
     expect(await screen.findByText('teacher@school.jp')).toBeInTheDocument()
     window.history.pushState({}, '', '/')
   })
+
+  const defaultPhases = [
+    { id: 'intro', type: 'INTRO', nextPhaseIds: ['market'], displayConfig: { label: '導入' } },
+    { id: 'market', type: 'MARKET', nextPhaseIds: ['result'], displayConfig: { label: '取引' } },
+    { id: 'result', type: 'RESULT', nextPhaseIds: ['reflection'], displayConfig: { label: '結果' } },
+    { id: 'reflection', type: 'REFLECTION', nextPhaseIds: [], displayConfig: { label: '振り返り' } },
+  ]
+
+  const emitControlRoomPublicState = (currentPhaseId: string) => {
+    act(() => {
+      publicStateListener?.({
+        val: () => ({
+          status: 'RUNNING', currentPhaseId, currentPhaseLabel: null, currentPhaseEndsAtMillis: null,
+          updatedAtMillis: 1, orgId: 'org-1', publicTask: null, notifications: [], title: 'テスト授業', teams: [],
+        }),
+      })
+    })
+  }
+
+  it('次のフェーズの名前を CTA に出す', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-uid': 'PRIMARY' },
+        templateSnapshot: { phases: defaultPhases },
+      }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    await screen.findByRole('heading', { name: '次にすること' })
+    emitControlRoomPublicState('market')
+
+    expect(await screen.findByRole('button', { name: '次へ：結果' })).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  it('最終フェーズでは次フェーズの CTA を出さない', async () => {
+    window.history.pushState({}, '', '/teacher/lessons/run-1/control')
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        orgId: 'org-1', status: 'RUNNING', teacherRoles: { 'teacher-uid': 'PRIMARY' },
+        templateSnapshot: { phases: defaultPhases },
+      }),
+    })
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    authStateCallback?.({ uid: 'teacher-uid' })
+    await screen.findByRole('heading', { name: '次にすること' })
+    emitControlRoomPublicState('reflection')
+
+    expect(screen.queryByRole('button', { name: /^次へ：/ })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
 })
+

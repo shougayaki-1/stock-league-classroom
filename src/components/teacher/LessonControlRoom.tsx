@@ -88,7 +88,12 @@ export interface LessonControlRoomProps {
    */
   onAdvancePhase?: (currentPhaseId: string | null) => void
   startLessonLabel?: string
-  advancePhaseLabel?: string
+  /**
+   * 次フェーズの CTA ラベル。現在フェーズを購読しているのはこの画面だけな
+   * ので、行き先の解決は呼び出し側の関数に現在フェーズIDを渡して行う。
+   * `null` を返した場合は次フェーズへの CTA を出さない（最終フェーズ）。
+   */
+  advancePhaseLabel?: (currentPhaseId: string | null) => string | null
   aiEnabled?: boolean
   /**
    * Invoked when the teacher clicks 結果を生成する (status REFLECTION,
@@ -133,7 +138,7 @@ export function LessonControlRoom({
   onStartLesson,
   onAdvancePhase,
   startLessonLabel = '授業を開始',
-  advancePhaseLabel = '次のフェーズへ進む',
+  advancePhaseLabel = () => '次のフェーズへ進む',
   aiEnabled = false,
   onGenerateResults,
   generatingResults = false,
@@ -184,7 +189,11 @@ export function LessonControlRoom({
     }
     if (status === 'RUNNING' && onAdvancePhase) {
       if (!canControlLesson(role, 'TRANSITION_PHASE')) return null
-      return { label: advancePhaseLabel, onActivate: () => onAdvancePhase(publicState?.currentPhaseId ?? null) }
+      const currentPhaseId = publicState?.currentPhaseId ?? null
+      const label = advancePhaseLabel(currentPhaseId)
+      // 最終フェーズでは進む先が無いので CTA 自体を出さない。
+      if (!label) return null
+      return { label, onActivate: () => onAdvancePhase(currentPhaseId) }
     }
     return null
   }, [interrupted, status, onStartLesson, onAdvancePhase, role, startLessonLabel, advancePhaseLabel, publicState?.currentPhaseId])
