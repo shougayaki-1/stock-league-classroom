@@ -99,3 +99,46 @@ describe('buildProjectionSource', () => {
     expect(source?.joinCode).toBeNull()
   })
 })
+
+describe('currentPhaseLabel', () => {
+  it('現在フェーズの displayConfig.label を解決する', async () => {
+    const source = await buildProjectionSource({
+      ...deps,
+      getRun: async () => ({
+        ...run,
+        currentPhaseId: 'phase-market',
+        templateSnapshot: {
+          ...run.templateSnapshot,
+          phases: [
+            { id: 'phase-intro', displayConfig: { label: '導入' } },
+            { id: 'phase-market', displayConfig: { label: '取引' } },
+          ],
+        },
+      }),
+    }, 'run1')
+
+    expect(source?.currentPhaseLabel).toBe('取引')
+  })
+
+  it('displayConfig が無ければ null', async () => {
+    const source = await buildProjectionSource({
+      ...deps,
+      getRun: async () => ({
+        ...run,
+        currentPhaseId: 'phase-market',
+        templateSnapshot: { ...run.templateSnapshot, phases: [{ id: 'phase-market' }] },
+      }),
+    }, 'run1')
+
+    expect(source?.currentPhaseLabel).toBeNull()
+  })
+
+  it('フェーズ未開始なら null', async () => {
+    const source = await buildProjectionSource({
+      ...deps,
+      getRun: async () => ({ ...run, currentPhaseId: null }),
+    }, 'run1')
+
+    expect(source?.currentPhaseLabel).toBeNull()
+  })
+})

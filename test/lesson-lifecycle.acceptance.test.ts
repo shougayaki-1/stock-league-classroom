@@ -343,7 +343,7 @@ describe('Task 18: lesson lifecycle acceptance', () => {
     it('toLessonRunDisplayState never surfaces any forbidden field even when the source object carries them', () => {
       const source: LessonRunProjectionSource = {
         orgId: 'org-1', status: 'RUNNING', title: '公開タイトル', goal: '公開ゴール',
-        currentPhaseId: 'market', currentPhasePublicTask: '公開タスク', currentPhaseEndsAtMillis: 123,
+        currentPhaseId: 'market', currentPhasePublicTask: '公開タスク', currentPhaseLabel: '取引', currentPhaseEndsAtMillis: 123,
         updatedAtMillis: 456, teacherGuidance: '教師ガイダンス', displayModeOverride: null, joinCode: 'ABC234',
         teams: [{
           id: 'team-a', displayName: 'A班', publicAggregateLabel: '1位',

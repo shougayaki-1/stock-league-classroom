@@ -9,6 +9,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   goal: '需要と供給の関係を理解する',
   currentPhaseId: 'phase-2',
   currentPhasePublicTask: '来週の株価を予想してください',
+  currentPhaseLabel: '取引',
   currentPhaseEndsAtMillis: 10_000,
   updatedAtMillis: 5_000,
   teacherGuidance: 'スマホをしまってください',

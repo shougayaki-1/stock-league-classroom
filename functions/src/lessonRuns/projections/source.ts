@@ -37,7 +37,21 @@ export interface LessonRunProjectionSource {
   currentPhaseId: string | null
   /** The current phase's teacher-authored, already-public prompt/task text (safe for LessonRunPublicState.publicTask). */
   currentPhasePublicTask: string | null
-  /** Epoch millis the current phase's timer ends, or null when no timer is running. Used only to derive a countdown (`remainingPhaseSeconds`) — never exposed itself. */
+  /**
+   * 現在フェーズの教師・生徒向け日本語名（`displayConfig.label`）。
+   * 内部IDそのものを画面に出さないために projection へ載せる。フェーズ名は
+   * 価格・係数・シードを何も含まず、教室に投影してよい情報である。
+   * ラベルが設定されていないフェーズでは `null`。
+   */
+  currentPhaseLabel: string | null
+  /**
+   * 現在フェーズの終了時刻（エポックミリ秒）。制限時間の無いフェーズでは null。
+   * public/display の両 projection にそのまま載る。フェーズの終了時刻は未来の
+   * 価格・係数・乱数シードを何も明かさないため §26-1 の禁止対象には当たらず、
+   * 同じ理由で `nextBatchAtMillis` が既に公開されている。残り秒数を
+   * サーバ側で計算して渡すと publish 時点で固定されて古くなるため、時刻を
+   * 渡してクライアントが描き直す（`nextBatchAtMillis` と同じ規約）。
+   */
   currentPhaseEndsAtMillis: number | null
   updatedAtMillis: number
   /** Teacher-authored guidance meant for the whole class (projector display). */

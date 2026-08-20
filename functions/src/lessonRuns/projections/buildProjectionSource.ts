@@ -1,6 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import type { LessonRunProjectionSource } from './source'
 import type { LessonRunDisplayMode } from './displayProjection'
+import { findPhaseLabel, type PhaseWithDisplayConfig } from '../phases/phaseLabel'
 
 /**
  * `LessonRunProjectionSource` を組み立てる唯一の場所。
@@ -24,8 +25,7 @@ export interface BuildProjectionSourceDeps {
   now?: () => number
 }
 
-interface PhaseSnapshot {
-  id: string
+interface PhaseSnapshot extends PhaseWithDisplayConfig {
   publicTask?: string | null
 }
 
@@ -57,6 +57,7 @@ export const buildProjectionSource = async (
     goal: templateSnapshot.description ?? null,
     currentPhaseId,
     currentPhasePublicTask: currentPhase?.publicTask ?? null,
+    currentPhaseLabel: findPhaseLabel(templateSnapshot.phases, currentPhaseId),
     currentPhaseEndsAtMillis: (run.currentPhaseEndsAtMillis as number | null | undefined) ?? null,
     updatedAtMillis: deps.now ? deps.now() : Date.now(),
     teacherGuidance: (run.teacherGuidance as string | null | undefined) ?? null,

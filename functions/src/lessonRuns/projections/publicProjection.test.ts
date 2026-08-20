@@ -10,6 +10,7 @@ const privateRunFixture: LessonRunProjectionSource = {
   joinCode: null,
   currentPhaseId: 'phase-2',
   currentPhasePublicTask: '来週の株価を予想してください',
+  currentPhaseLabel: '取引',
   currentPhaseEndsAtMillis: 10_000,
   updatedAtMillis: 5_000,
   teacherGuidance: 'スマホをしまってください',
