@@ -47,12 +47,35 @@ describe('CompanyResearchPage', () => {
     expect(screen.getByText('A leading tech firm')).toBeInTheDocument()
     expect(screen.getByText('Cloud Hosting')).toBeInTheDocument()
     expect(screen.getByText('国内 70% / 海外 30%')).toBeInTheDocument()
-    expect(screen.getByText('STRONG')).toBeInTheDocument()
+    expect(screen.getByText('大型株')).toBeInTheDocument()
+    expect(screen.getByText('成長型')).toBeInTheDocument()
+    expect(screen.getByText('強い')).toBeInTheDocument()
+    expect(screen.queryByText('LARGE')).not.toBeInTheDocument()
+    expect(screen.queryByText('GROWTH')).not.toBeInTheDocument()
+    expect(screen.queryByText('STRONG')).not.toBeInTheDocument()
 
     // Switch to Beta Motors
     await user.click(screen.getByRole('button', { name: /Beta Motors/i }))
     expect(screen.getByText('EV manufacturer')).toBeInTheDocument()
     expect(screen.getByText('Electric Vehicles')).toBeInTheDocument()
     expect(screen.getByText('Battery supply shortage')).toBeInTheDocument()
+  })
+
+  it('never echoes unknown company metadata tokens', () => {
+    const raw = 'UNKNOWN_INTERNAL_TOKEN'
+    const company: CompanyPublicView = {
+      ...companies[0],
+      id: 'comp-unknown',
+      sizeClass: raw as never,
+      growthProfile: raw as never,
+      financialStrength: raw as never,
+    }
+
+    render(<CompanyResearchPage companies={[company]} />)
+
+    expect(screen.getByText('企業規模を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('成長特性を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('財務状態を確認できません')).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
   })
 })

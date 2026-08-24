@@ -13,15 +13,14 @@ import {
   Typography,
 } from '@mui/material'
 import type { CompanyPublicView } from '@stock-league/market-public-content'
+import {
+  formatCompanyFinancialStrength,
+  formatCompanyGrowthProfile,
+  formatCompanySize,
+} from '../../lib/presentation/marketLabels'
 
 export interface CompanyResearchPageProps {
   companies: CompanyPublicView[]
-}
-
-const SIZE_LABELS: Record<string, string> = {
-  SMALL: '小型株',
-  MEDIUM: '中型株',
-  LARGE: '大型株',
 }
 
 export function CompanyResearchPage({ companies }: CompanyResearchPageProps) {
@@ -82,15 +81,25 @@ export function CompanyResearchPage({ companies }: CompanyResearchPageProps) {
                 </Box>
                 <Stack direction="row" spacing={1}>
                   <Chip
-                    label={SIZE_LABELS[selectedCompany.sizeClass] ?? selectedCompany.sizeClass}
+                    label={formatCompanySize(selectedCompany.sizeClass)}
                     size="small"
                     variant="outlined"
                   />
                   {selectedCompany.growthProfile && (
-                    <Chip label={selectedCompany.growthProfile} size="small" color="primary" variant="outlined" />
+                    <Chip
+                      label={formatCompanyGrowthProfile(selectedCompany.growthProfile)}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
                   )}
                   {selectedCompany.financialStrength && (
-                    <Chip label={selectedCompany.financialStrength} size="small" color="secondary" variant="outlined" />
+                    <Chip
+                      label={formatCompanyFinancialStrength(selectedCompany.financialStrength)}
+                      size="small"
+                      color="secondary"
+                      variant="outlined"
+                    />
                   )}
                 </Stack>
               </Stack>
