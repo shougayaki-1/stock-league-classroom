@@ -9,6 +9,8 @@ import {
   Typography,
 } from '@mui/material'
 import type { TeamResearchNoteView } from '../../lib/lessonRuns/liveTypes'
+import { mapSaveTeamResearchNoteError } from '../../lib/lessonRuns/teamNotes'
+import { describeUserFacingError } from '../../lib/presentation/userFacingError'
 
 export interface TeamNotesPageProps {
   note?: TeamResearchNoteView | null
@@ -42,25 +44,30 @@ export function TeamNotesPage({ note, onSaveNote, disabled = false }: TeamNotesP
       await onSaveNote(localText, expectedRev)
       setSuccessMsg('ノートを保存しました。')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : '保存に失敗しました。'
-      if (message.includes('他のメンバー') || message.includes('Revision mismatch')) {
-        setErrorMsg('他のメンバーがノートを更新したか、バージョンが一致しません。入力内容を確認して再度保存してください。')
+      if (mapSaveTeamResearchNoteError(err) === 'REVISION_CONFLICT') {
+        setErrorMsg(
+          '他のメンバーが先に更新しました。最新の内容を確認してもう一度保存してください。',
+        )
       } else {
-        setErrorMsg(message)
+        setErrorMsg(
+          describeUserFacingError(
+            err,
+            'ノートを保存できませんでした。もう一度お試しください。',
+          ),
+        )
       }
     } finally {
       setSaving(false)
     }
   }
 
-  const expectedRevision = note?.revision ?? 0
   const isDirty = localText !== (note?.text ?? '')
 
   return (
     <Stack spacing={2} sx={{ width: '100%', maxWidth: 720, mx: 'auto' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="subtitle2" color="text.secondary">
-          チーム共有ノート (リビジョン: {expectedRevision})
+          チーム共有ノート
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {localText.length} / 5000文字
@@ -110,7 +117,7 @@ export function TeamNotesPage({ note, onSaveNote, disabled = false }: TeamNotesP
             }}
             disabled={saving}
           >
-            最新のサーバー内容に戻す
+            最新の内容に戻す
           </Button>
         )}
         <Button
