@@ -25,6 +25,11 @@ import {
 } from '@mui/material'
 import type { CompanyPublicView } from '@stock-league/market-public-content'
 import type { LessonRunTeamState, StockPublicState } from '../../lib/lessonRuns/liveTypes'
+import {
+  formatOrderSide,
+  formatOrderStatus,
+} from '../../lib/presentation/marketLabels'
+import { describeUserFacingError } from '../../lib/presentation/userFacingError'
 
 export interface OrderScreenProps {
   companies: CompanyPublicView[]
@@ -33,14 +38,6 @@ export interface OrderScreenProps {
   marketPaused?: boolean
   onSubmitOrder: (input: { stockId: string; side: 'BUY' | 'SELL'; quantity: number }) => Promise<void>
   disabled?: boolean
-}
-
-const ORDER_STATUS_LABELS: Record<string, string> = {
-  PENDING: '受付済み（次バッチ待ち）',
-  PROCESSING: '処理中',
-  FILLED: '約定済み',
-  REJECTED: '不成立・却下',
-  CANCELLED: '取消済み',
 }
 
 export function OrderScreen({
@@ -102,9 +99,17 @@ export function OrderScreen({
         side,
         quantity,
       })
-      setSuccessMsg(`${selectedCompany?.name ?? activeStockId} の${side === 'BUY' ? '買い' : '売り'}注文（${quantity}株）を送信しました。`)
+      const companyLabel = selectedCompany?.name ?? '選択した銘柄'
+      setSuccessMsg(
+        `${companyLabel} の${formatOrderSide(side)}注文（${quantity}株）を送信しました。`,
+      )
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : '注文の送信に失敗しました。')
+      setErrorMsg(
+        describeUserFacingError(
+          err,
+          '注文を送信できませんでした。もう一度お試しください。',
+        ),
+      )
     } finally {
       setSubmitting(false)
     }
@@ -215,10 +220,10 @@ export function OrderScreen({
                   fullWidth
                 >
                   <ToggleButton value="BUY" color="primary">
-                    買い (BUY)
+                    {formatOrderSide('BUY')}
                   </ToggleButton>
                   <ToggleButton value="SELL" color="secondary">
-                    売り (SELL)
+                    {formatOrderSide('SELL')}
                   </ToggleButton>
                 </ToggleButtonGroup>
               </Box>
@@ -273,7 +278,7 @@ export function OrderScreen({
                 startIcon={submitting ? <CircularProgress size={20} color="inherit" /> : undefined}
                 sx={{ py: 1.5 }}
               >
-                {submitting ? '注文送信中...' : `${side === 'BUY' ? '買い' : '売り'}注文を出す`}
+                {submitting ? '注文送信中...' : `${formatOrderSide(side)}注文を出す`}
               </Button>
             </Stack>
           </Box>
@@ -308,20 +313,29 @@ export function OrderScreen({
                     const c = companyMap.get(order.stockId)
                     return (
                       <TableRow key={order.orderId}>
-                        <TableCell>{c ? `${c.name} (${c.symbol})` : order.stockId}</TableCell>
+                        <TableCell>
+                          {c ? `${c.name} (${c.symbol})` : '銘柄名を確認できません'}
+                        </TableCell>
                         <TableCell>
                           <Chip
-                            label={order.side === 'BUY' ? '買' : '売'}
+                            label={formatOrderSide(order.side)}
                             size="small"
-                            color={order.side === 'BUY' ? 'primary' : 'secondary'}
+                            color={
+                              order.side === 'BUY'
+                                ? 'primary'
+                                : order.side === 'SELL'
+                                  ? 'secondary'
+                                  : 'default'
+                            }
                           />
                         </TableCell>
                         <TableCell align="right">{order.quantity}株</TableCell>
                         <TableCell align="right">{order.referencePrice.toLocaleString()}円</TableCell>
                         <TableCell>
                           <Typography variant="body2">
-                            {ORDER_STATUS_LABELS[order.status] ?? order.status}
-                            {order.executionPrice !== undefined && ` (約定価格: ${order.executionPrice.toLocaleString()}円)`}
+                            {formatOrderStatus(order.status)}
+                            {order.executionPrice !== undefined &&
+                              ` (約定価格: ${order.executionPrice.toLocaleString()}円)`}
                           </Typography>
                         </TableCell>
                       </TableRow>

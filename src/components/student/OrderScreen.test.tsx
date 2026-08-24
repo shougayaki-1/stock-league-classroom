@@ -80,6 +80,63 @@ describe('OrderScreen', () => {
     expect(screen.getByText(/保有現金: 50,000 円/)).toBeInTheDocument()
     expect(screen.getByText(/利用可能現金: 40,000 円/)).toBeInTheDocument()
     expect(screen.getByText(/Alpha Tech: 10株/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '買い' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '売り' })).toBeInTheDocument()
+    expect(screen.queryByText(/\(BUY\)|\(SELL\)/)).not.toBeInTheDocument()
+  })
+
+  it('fails closed for unknown order metadata and unresolved stock ids', () => {
+    const raw = 'UNKNOWN_INTERNAL_TOKEN'
+    const opaqueStockId = 'opaque-stock-id'
+    const malformedTeamState: LessonRunTeamState = {
+      ...teamState,
+      myOrders: [
+        {
+          ...teamState.myOrders[0],
+          orderId: 'o-unknown',
+          stockId: opaqueStockId,
+          side: raw as never,
+          status: raw as never,
+        },
+      ],
+    }
+
+    render(
+      <OrderScreen
+        companies={companies}
+        stocks={stocks}
+        teamState={malformedTeamState}
+        onSubmitOrder={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('銘柄名を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('売買区分を確認できません')).toBeInTheDocument()
+    expect(screen.getByText(/注文状態を確認できません/)).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
+    expect(screen.queryByText(opaqueStockId)).not.toBeInTheDocument()
+  })
+
+  it('never renders a raw backend error from order submission', async () => {
+    const user = userEvent.setup()
+    const raw = 'INTERNAL_BACKEND_DETAIL'
+    const onSubmitOrder = vi.fn().mockRejectedValue(new Error(raw))
+
+    render(
+      <OrderScreen
+        companies={companies}
+        stocks={stocks}
+        teamState={teamState}
+        onSubmitOrder={onSubmitOrder}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '買い注文を出す' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '注文を送信できませんでした。もう一度お試しください。',
+    )
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
   })
 
   it('submits a valid BUY order', async () => {
