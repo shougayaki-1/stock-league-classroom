@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { describeError } from './describeError'
 
 describe('describeError', () => {
-  it('explains a permission failure in classroom terms', () => {
-    expect(describeError({ code: 'permission-denied' }, '失敗しました。')).toContain('権限がありません')
-    expect(describeError({ code: 'PERMISSION_DENIED' }, '失敗しました。')).toContain('権限がありません')
+  it('explains a permission failure without teacher/market-specific assumptions', () => {
+    expect(describeError({ code: 'permission-denied' }, '失敗しました。')).toContain('権限')
+    expect(describeError({ code: 'PERMISSION_DENIED' }, '失敗しました。')).not.toContain('市場')
   })
   it('explains a connectivity failure', () => {
     expect(describeError({ code: 'unavailable' }, '失敗しました。')).toContain('通信')
@@ -15,6 +15,13 @@ describe('describeError', () => {
   it('falls back to the caller message for anything else', () => {
     expect(describeError(new Error('boom'), '失敗しました。')).toBe('失敗しました。')
     expect(describeError(undefined, '失敗しました。')).toBe('失敗しました。')
+  })
+  it('never exposes the raw message for an unclassified error', () => {
+    const raw = 'backend collection lessonRuns/private-path failed'
+    const result = describeError(new Error(raw), '操作に失敗しました。')
+
+    expect(result).toBe('操作に失敗しました。')
+    expect(result).not.toContain(raw)
   })
 })
 
