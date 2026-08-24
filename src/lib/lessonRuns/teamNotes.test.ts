@@ -28,4 +28,22 @@ describe('saveTeamResearchNote', () => {
     expect(callable).toHaveBeenCalledWith(input)
     expect(result).toEqual({ revision: 2, deduplicated: false })
   })
+
+  it('maps functions/aborted to the semantic revision-conflict code', async () => {
+    const { mapSaveTeamResearchNoteError } = await import('./teamNotes')
+
+    expect(mapSaveTeamResearchNoteError({ code: 'functions/aborted' })).toBe(
+      'REVISION_CONFLICT',
+    )
+  })
+
+  it('never classifies by backend message text', async () => {
+    const { mapSaveTeamResearchNoteError } = await import('./teamNotes')
+
+    expect(mapSaveTeamResearchNoteError(new Error('Revision mismatch'))).toBe('UNKNOWN')
+    expect(mapSaveTeamResearchNoteError({
+      code: 'functions/internal',
+      message: 'Revision mismatch',
+    })).toBe('UNKNOWN')
+  })
 })

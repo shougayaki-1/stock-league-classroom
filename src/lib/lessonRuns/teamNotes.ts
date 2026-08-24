@@ -24,3 +24,18 @@ export const saveTeamResearchNote = async (
   const result = await callable(input)
   return result.data
 }
+
+export type SaveTeamResearchNoteErrorCode =
+  | 'REVISION_CONFLICT'
+  | 'UNKNOWN'
+
+interface FunctionsLikeError {
+  code?: unknown
+}
+
+export const mapSaveTeamResearchNoteError = (
+  error: unknown,
+): SaveTeamResearchNoteErrorCode => {
+  const code = (error as FunctionsLikeError | null | undefined)?.code
+  return code === 'functions/aborted' ? 'REVISION_CONFLICT' : 'UNKNOWN'
+}

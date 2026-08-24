@@ -1,5 +1,14 @@
 import { idempotencyDocumentId, requestDigest as computeRequestDigest } from '../../lib/idempotency'
 
+export class TeamNoteRevisionConflictError extends Error {
+  readonly code = 'REVISION_CONFLICT' as const
+
+  constructor() {
+    super('Team note revision conflict')
+    this.name = 'TeamNoteRevisionConflictError'
+  }
+}
+
 export interface SaveTeamResearchNoteInput {
   lessonRunId: string
   teamId: string
@@ -79,7 +88,7 @@ export const saveTeamNote = async (
     }
 
     if (currentRevision !== input.expectedRevision) {
-      throw new Error('Revision mismatch')
+      throw new TeamNoteRevisionConflictError()
     }
 
     const newRevision = currentRevision + 1

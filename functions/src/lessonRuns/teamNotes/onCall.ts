@@ -3,6 +3,7 @@ import { getDatabase } from 'firebase-admin/database'
 import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https'
 import {
   saveTeamNote,
+  TeamNoteRevisionConflictError,
   type SaveTeamResearchNoteInput,
   type SaveTeamResearchNoteResult,
   type TeamResearchNoteView,
@@ -41,10 +42,13 @@ const requireTeamMembershipWithAdminSdk = async (
 
 const translateSaveTeamNoteError = (error: unknown): unknown => {
   if (error instanceof HttpsError) return error
+  if (error instanceof TeamNoteRevisionConflictError) {
+    return new HttpsError(
+      'aborted',
+      '他のメンバーが先に更新しました。最新の内容を確認してください。',
+    )
+  }
   if (error instanceof Error) {
-    if (error.message === 'Revision mismatch') {
-      return new HttpsError('failed-precondition', '他のメンバーがノートを更新しました。最新のノートを確認してください。')
-    }
     if (error.message === 'Idempotency key payload mismatch') {
       return new HttpsError('failed-precondition', error.message)
     }

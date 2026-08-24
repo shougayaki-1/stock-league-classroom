@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { saveTeamNote, type SaveTeamNoteDeps } from './saveTeamNote'
+import {
+  saveTeamNote,
+  TeamNoteRevisionConflictError,
+  type SaveTeamNoteDeps,
+} from './saveTeamNote'
 
 const makeFakeFirestore = () => {
   const docs = new Map<string, Record<string, unknown>>()
@@ -106,7 +110,14 @@ describe('saveTeamNote', () => {
       text: 'Conflicting update',
       expectedRevision: 1, // Mismatch: server has 2
       idempotencyKey: 'key-3',
-    })).rejects.toThrow('Revision mismatch')
+    })).rejects.toMatchObject({
+      name: 'TeamNoteRevisionConflictError',
+      code: 'REVISION_CONFLICT',
+    })
+
+    await expect(
+      Promise.reject(new TeamNoteRevisionConflictError()),
+    ).rejects.toBeInstanceOf(TeamNoteRevisionConflictError)
 
     expect(updateRealtimeNote).not.toHaveBeenCalled()
   })

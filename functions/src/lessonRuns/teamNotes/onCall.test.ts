@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { HttpsError } from 'firebase-functions/v2/https'
 import { handleSaveTeamResearchNote } from './onCall'
+import { TeamNoteRevisionConflictError } from './saveTeamNote'
 
 describe('handleSaveTeamResearchNote', () => {
   const defaultRequest = {
@@ -75,5 +76,25 @@ describe('handleSaveTeamResearchNote', () => {
 
     expect(result).toEqual({ revision: 1, deduplicated: false })
     expect(saveTeamNoteFn).toHaveBeenCalledWith(defaultRequest)
+  })
+
+  it('translates a revision conflict to the stable aborted callable code', async () => {
+    const saveTeamNoteFn = vi.fn().mockRejectedValue(new TeamNoteRevisionConflictError())
+
+    try {
+      await handleSaveTeamResearchNote({
+        auth: { uid: 'u1' } as never,
+        data: defaultRequest,
+      }, {
+        resolveActorParticipantId: vi.fn().mockResolvedValue('p1'),
+        requireTeamMembership: vi.fn().mockResolvedValue(undefined),
+        saveTeamNoteFn,
+      })
+      throw new Error('expected conflict')
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpsError)
+      expect((error as HttpsError).code).toBe('aborted')
+      expect((error as HttpsError).message).not.toContain('Revision mismatch')
+    }
   })
 })
