@@ -7,30 +7,15 @@ import {
   Typography,
 } from '@mui/material'
 import type { CompanyPublicView, InformationPublicView } from '@stock-league/market-public-content'
+import {
+  formatInformationCategory,
+  formatInformationConfidence,
+  formatInformationNature,
+} from '../../lib/presentation/marketLabels'
 
 export interface NewsListPageProps {
   informationItems: InformationPublicView[]
   companies?: CompanyPublicView[]
-}
-
-const CATEGORY_LABELS: Record<string, string> = {
-  OFFICIAL_NEWS: '公式発表',
-  MARKET_DATA: '市況データ',
-  EARNINGS: '決算情報',
-  ANALYSIS: 'アナリスト分析',
-  UNVERIFIED: '未確認情報',
-}
-
-const NATURE_LABELS: Record<string, string> = {
-  FACT: '事実',
-  FORECAST: '予測',
-  OPINION: '意見',
-}
-
-const CONFIDENCE_LABELS: Record<string, string> = {
-  HIGH: '確度: 高',
-  MEDIUM: '確度: 中',
-  UNKNOWN: '確度: 不明',
 }
 
 export function NewsListPage({ informationItems, companies = [] }: NewsListPageProps) {
@@ -67,18 +52,18 @@ export function NewsListPage({ informationItems, companies = [] }: NewsListPageP
                       {item.source}
                     </Typography>
                     <Chip
-                      label={CATEGORY_LABELS[item.category] ?? item.category}
+                      label={formatInformationCategory(item.category)}
                       size="small"
                       color="primary"
                       variant="outlined"
                     />
                     <Chip
-                      label={NATURE_LABELS[item.natureType] ?? item.natureType}
+                      label={formatInformationNature(item.natureType)}
                       size="small"
                       variant="outlined"
                     />
                     <Chip
-                      label={CONFIDENCE_LABELS[item.confidenceLevel] ?? item.confidenceLevel}
+                      label={formatInformationConfidence(item.confidenceLevel)}
                       size="small"
                       color={item.confidenceLevel === 'HIGH' ? 'success' : 'default'}
                     />

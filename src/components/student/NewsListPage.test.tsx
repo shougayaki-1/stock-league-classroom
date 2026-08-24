@@ -45,5 +45,32 @@ describe('NewsListPage', () => {
     expect(screen.getByText('対象: Alpha Tech (1001)')).toBeInTheDocument()
     expect(screen.getByText('アナリストレポート')).toBeInTheDocument()
     expect(screen.getByText('下期の業界成長率は好調を維持する見通し。')).toBeInTheDocument()
+    expect(screen.getByText('公式発表')).toBeInTheDocument()
+    expect(screen.getByText('事実')).toBeInTheDocument()
+    expect(screen.getByText('確度: 高')).toBeInTheDocument()
+    expect(screen.queryByText('OFFICIAL_NEWS')).not.toBeInTheDocument()
+    expect(screen.queryByText('FACT')).not.toBeInTheDocument()
+    expect(screen.queryByText('HIGH')).not.toBeInTheDocument()
+  })
+
+  it('fails closed for unknown metadata and unresolved target-company ids', () => {
+    const raw = 'UNKNOWN_INTERNAL_TOKEN'
+    const opaqueCompanyId = 'opaque-company-id'
+    const item: InformationPublicView = {
+      ...news[0],
+      id: 'news-unknown',
+      category: raw as never,
+      natureType: raw as never,
+      confidenceLevel: raw as never,
+      targetCompanyIds: [opaqueCompanyId],
+    }
+
+    render(<NewsListPage informationItems={[item]} companies={[]} />)
+
+    expect(screen.getByText('ニュース種別を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('情報の性質を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('確度を確認できません')).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
+    expect(screen.queryByText(opaqueCompanyId)).not.toBeInTheDocument()
   })
 })
