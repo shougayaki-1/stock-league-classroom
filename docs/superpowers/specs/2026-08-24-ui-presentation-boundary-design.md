@@ -7,8 +7,8 @@
 
 - `docs/superpowers/specs/2026-08-05-integrated-platform-spec.md`
 - `docs/superpowers/specs/2026-08-19-classroom-display-wiring-and-interventions-design.md`
-- `docs/superpowers/specs/2026-08-20-lesson-status-readable-design.md`
-- `docs/superpowers/plans/2026-08-04-teacher-student-ux-navigation.md`
+- `docs/superpowers/specs/2026-08-20-lesson-status-readability-design.md`
+- `docs/superpowers/specs/2026-08-04-teacher-student-ux-navigation-design.md`
 
 ## 1. 背景
 
