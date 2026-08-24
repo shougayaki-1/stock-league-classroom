@@ -8,17 +8,10 @@ import {
   Typography,
 } from '@mui/material'
 import type { EconomicIndicatorPublicView } from '@stock-league/market-public-content'
+import { formatEconomicIndicatorKind } from '../../lib/presentation/marketLabels'
 
 export interface StatisticsMaterialsPageProps {
   economicIndicators: EconomicIndicatorPublicView[]
-}
-
-const KIND_LABELS: Record<string, string> = {
-  ECONOMY: '景気動向',
-  PRICE: '物価動向',
-  INTEREST_RATE: '金利',
-  FX: '為替相場',
-  POLICY: '経済政策',
 }
 
 export function StatisticsMaterialsPage({ economicIndicators }: StatisticsMaterialsPageProps) {
@@ -53,7 +46,7 @@ export function StatisticsMaterialsPage({ economicIndicators }: StatisticsMateri
                   <Stack spacing={1}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <Chip
-                        label={KIND_LABELS[item.kind] ?? item.kind}
+                        label={formatEconomicIndicatorKind(item.kind)}
                         size="small"
                         color="primary"
                         variant="outlined"

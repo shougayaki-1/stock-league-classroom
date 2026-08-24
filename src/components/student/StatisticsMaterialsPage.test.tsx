@@ -35,5 +35,24 @@ describe('StatisticsMaterialsPage', () => {
 
     expect(screen.getByText('政策金利引き上げ発表')).toBeInTheDocument()
     expect(screen.getByText('金利')).toBeInTheDocument()
+    expect(screen.getByText('為替')).toBeInTheDocument()
+    expect(screen.queryByText('FX')).not.toBeInTheDocument()
+    expect(screen.queryByText('INTEREST_RATE')).not.toBeInTheDocument()
+  })
+
+  it('never echoes an unknown economic-indicator kind', () => {
+    const raw = 'UNKNOWN_INTERNAL_TOKEN'
+    const item: EconomicIndicatorPublicView = {
+      ...indicators[0],
+      id: 'ind-unknown',
+      kind: raw as never,
+      label: '教材作者が付けた指標名',
+    }
+
+    render(<StatisticsMaterialsPage economicIndicators={[item]} />)
+
+    expect(screen.getByText('統計種別を確認できません')).toBeInTheDocument()
+    expect(screen.getByText('教材作者が付けた指標名')).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
   })
 })
