@@ -20,6 +20,7 @@ import { NewsListPage } from './NewsListPage'
 import { StatisticsMaterialsPage } from './StatisticsMaterialsPage'
 import { TeamNotesPage } from './TeamNotesPage'
 import { OrderScreen } from './OrderScreen'
+import { formatResearchDeskPanel } from '../../lib/presentation/marketLabels'
 
 export interface ResearchDeskPageProps {
   publicView?: ResearchDeskPublicView | null
@@ -30,14 +31,6 @@ export interface ResearchDeskPageProps {
   onSubmitOrder?: (input: { stockId: string; side: 'BUY' | 'SELL'; quantity: number }) => Promise<void>
   activePanel?: ResearchDeskPanelId
   onSelectPanel?: (panel: ResearchDeskPanelId) => void
-}
-
-const PANEL_LABELS: Record<ResearchDeskPanelId, string> = {
-  COMPANIES: '企業情報',
-  NEWS: 'ニュース',
-  STATISTICS: '統計資料',
-  TEAM_NOTES: 'チームノート',
-  ORDERS: '注文',
 }
 
 export function ResearchDeskPage({
@@ -61,6 +54,13 @@ export function ResearchDeskPage({
     preferred && availablePanels.includes(preferred)
       ? preferred
       : availablePanels[0] ?? null
+
+  const isKnownActivePanel =
+    activePanel === 'COMPANIES' ||
+    activePanel === 'NEWS' ||
+    activePanel === 'STATISTICS' ||
+    activePanel === 'TEAM_NOTES' ||
+    activePanel === 'ORDERS'
 
   const handlePanelChange = (_: React.SyntheticEvent, newValue: ResearchDeskPanelId) => {
     if (onSelectPanel) {
@@ -94,7 +94,7 @@ export function ResearchDeskPage({
             <Tab
               key={panelId}
               value={panelId}
-              label={PANEL_LABELS[panelId] ?? panelId}
+              label={formatResearchDeskPanel(panelId)}
               id={`research-desk-tab-${panelId}`}
               aria-controls={`research-desk-panel-${panelId}`}
             />
@@ -135,6 +135,10 @@ export function ResearchDeskPage({
             onSubmitOrder={onSubmitOrder ?? (async () => {})}
             disabled={!onSubmitOrder || !teamState}
           />
+        )}
+
+        {activePanel && !isKnownActivePanel && (
+          <Alert severity="info">この機能は現在利用できません。</Alert>
         )}
       </Box>
     </Stack>

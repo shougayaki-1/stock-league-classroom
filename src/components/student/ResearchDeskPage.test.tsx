@@ -91,4 +91,23 @@ describe('ResearchDeskPage', () => {
     expect(screen.getByRole('tab', { name: 'チームノート' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '注文' })).toBeInTheDocument()
   })
+
+  it('does not echo an unknown panel id', () => {
+    const raw = 'UNKNOWN_INTERNAL_TOKEN'
+    const publicView: ResearchDeskPublicView = {
+      phaseId: 'p-runtime',
+      phaseType: 'MARKET',
+      availablePanels: [raw as never],
+      companies: [],
+      informationItems: [],
+      economicIndicators: [],
+      updatedAtMillis: 1000,
+    }
+
+    render(<ResearchDeskPage publicView={publicView} />)
+
+    expect(screen.getByRole('tab', { name: '機能名を確認できません' })).toBeInTheDocument()
+    expect(screen.getByText('この機能は現在利用できません。')).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
+  })
 })
