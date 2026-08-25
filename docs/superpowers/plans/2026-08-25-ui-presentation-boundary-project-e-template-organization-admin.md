@@ -1,10 +1,10 @@
 # Project E — Template / Organization Admin Presentation Boundary Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Every task follows RED → confirm failure → minimal GREEN → focused PASS → commit.
 
 **Goal:** Remove opaque organization/member/runtime identifiers, raw backend enums, and raw backend errors from normal teacher/school-admin template and organization-management UI while preserving internal IDs in routing, authorization, API payloads, audit storage, and React keys.
 
-**Architecture:** Extend the existing client-side `organizationLabels.ts` presentation layer for roles/statuses/plan/move/audit copy. Add one server-backed organization-choice projection for cases where the client currently has only opaque org IDs, and selectively enrich member/audit/student-search DTOs where human-readable identity is not otherwise available. Keep security authorization server-side and keep IDs in domain/API contracts; only presentation and input affordances change.
+**Architecture:** Extend the existing client-side `organizationLabels.ts` presentation layer for roles/statuses/plan/move/audit copy. Add one server-backed organization-choice projection for cases where the client currently has only opaque org IDs, and selectively enrich member/audit/student-search DTOs where human-readable identity is otherwise unavailable. Keep security authorization server-side. Do not generate Japanese presentation copy on the server merely to compensate for missing client formatting.
 
 **Tech Stack:** React 19, TypeScript, MUI, Vite, Vitest, Testing Library, Firebase Functions v2, Firestore/Admin SDK, Firebase Admin Auth.
 
@@ -12,7 +12,13 @@
 
 ## Implementation Base
 
-This plan was written while `codex/classroom` was still at the Project D review base (`c39cf8ac56dca17b0226e5d8e90dcd125ea6220f`). Project D is approved but not yet merged at plan-writing time and also changes `src/App.tsx` / `src/App.test.tsx`.
+This plan was written while `codex/classroom` was still at the Project D review base:
+
+```text
+c39cf8ac56dca17b0226e5d8e90dcd125ea6220f
+```
+
+Project D is approved but was not yet merged when this plan was authored, and Project D also changes `src/App.tsx` / `src/App.test.tsx`.
 
 **Do not implement Project E from this planning branch or from the old SHA.** Before implementation:
 
@@ -20,71 +26,84 @@ This plan was written while `codex/classroom` was still at the Project D review 
 git fetch origin
 git switch codex/classroom
 git pull --ff-only origin codex/classroom
+git rev-parse origin/codex/classroom
 ```
 
-Verify Project D has been integrated, then create the Project E feature branch from the latest `origin/codex/classroom`. Do not reset the branch back to `c39cf8ac...`.
+Verify Project D has been integrated, then create the Project E feature branch from the latest `origin/codex/classroom`. Never reset `codex/classroom` back to `c39cf8ac...`.
 
 ## Global Constraints
 
-- Student/teacher/school-admin normal UI must not render opaque `orgId`, UID/Auth UID, backend enum/status token, raw operation phase, or raw `Error.message`.
+- Normal teacher/school-admin UI must not render opaque `orgId`, UID/Auth UID, backend enum/status token, raw operation phase, or raw `Error.message`.
 - Internal IDs remain valid for route params, Firestore paths, authorization, React keys, callback arguments, Callable payloads, and audit storage when they are not rendered.
 - Never use `LABELS[value] ?? value`, `label ?? internalId`, or `error instanceof Error ? error.message : fallback` in user-facing render/control paths.
-- Unknown wire values fail closed to fixed Japanese copy and never echo the input string.
-- Reuse `src/lib/presentation/organizationLabels.ts` and `src/lib/monitoring/describeError.ts`; do not create page-local duplicate label maps unless the value is truly page-specific author copy.
-- Client code must not perform per-ID name lookups. Where semantic data is missing, enrich an existing response or use the organization-choice API below.
-- Persistent audit logs must retain raw actor UID/action/internal metadata for investigation; Project E only changes the school-admin read projection/presentation.
+- Unknown wire values fail closed to fixed Japanese copy and never echo the raw input.
+- Reuse `src/lib/presentation/organizationLabels.ts`, `src/lib/presentation/lessonLabels.ts`, and `src/lib/monitoring/describeError.ts` rather than creating page-local duplicate mappings.
+- Client code must not perform per-row/per-ID name lookups. Where semantic data is missing, enrich an existing response or use the organization-choice API below.
+- Persistent audit logs retain raw actor UID/action/internal metadata for investigation; Project E changes only the school-admin read projection/presentation.
 - Operator pages and operator technical-info separation remain Project F.
-- Project D behavior must not be regressed when resolving `App.tsx` / `App.test.tsx` conflicts.
-- Every task follows RED -> confirm failure -> minimal GREEN -> focused PASS -> commit.
+- Project D behavior must not regress while resolving `App.tsx` / `App.test.tsx` changes.
+- Personal organizations currently do **not** persist a `name`. Server DTOs must represent that fact honestly (`name: string | null`); the client may present a semantic fallback such as `個人用` based on organization type. Do not manufacture Japanese display copy in the server DTO.
 
 ---
 
-### Task 1: Expand organization presentation vocabulary
+## Task 1 — Expand organization presentation vocabulary
 
-**Files:**
+**Files**
 - Modify: `src/lib/presentation/organizationLabels.ts`
 - Modify: `src/lib/presentation/organizationLabels.test.ts`
 
-**Interfaces:**
-- Consumes: existing `safeLabel`, member/invitation/billing/archive label maps.
-- Produces:
+Add safe formatters for values currently printed raw in Project E:
 
 ```ts
-export const formatOrganizationVerificationStatus: (value: string | null | undefined) => string
-export const formatPlanId: (value: string | null | undefined) => string
-export const formatTemplateMoveStatus: (value: string | null | undefined) => string
-export const formatTemplateMovePhase: (value: string | null | undefined) => string
-export const formatAuditAction: (value: string | null | undefined) => string
-export const formatAuditResult: (value: string | null | undefined) => string
+formatOrganizationVerificationStatus(value)
+formatPlanId(value)
+formatTemplateMoveStatus(value)
+formatTemplateMovePhase(value)
+formatAuditAction(value)
+formatAuditResult(value)
+formatOrganizationChoiceName(choice)
 ```
 
-`formatTemplateMoveStatus` should map `PENDING/RUNNING/FAILED/COMPLETED`; `formatTemplateMovePhase` should map the existing five phases from `functions/src/lessonTemplates/moveLessonTemplate.ts`. Verification should at minimum map the currently persisted `PENDING` and any already-supported verified/rejected states found in the current branch; all unrecognized strings use a fixed fallback. Plan IDs should map known product plans used by the repository (for example `FREE`, `SCHOOL`, `PARENT_ORG`) and fail closed otherwise.
+`formatOrganizationChoiceName` rules:
+- non-empty persisted `name` → that authored/stored name;
+- `type === 'personal'` with no name → `個人用`;
+- other missing/blank names → `組織名を確認できません`;
+- never return `orgId`.
 
-Audit action mapping is presentation-only. Map known school-admin-visible actions already emitted by the repository, including at minimum `EXPORT_ORG_STUDENT_DATA` and `REQUEST_MOVE_LESSON_TEMPLATE`; unknown action strings render `操作内容を確認できません`.
+Known move statuses: `PENDING`, `RUNNING`, `FAILED`, `COMPLETED`.
 
-- [ ] **Step 1: Write failing formatter tests**
+Known move phases are the five existing server phases:
+- `STAGING_MATERIALS`
+- `MIGRATING_VERSIONS`
+- `COMMITTING_OWNERSHIP`
+- `FINALIZING_MATERIALS`
+- `FINALIZING_FIRESTORE`
 
-Add tests that inject `UNKNOWN_INTERNAL_STATUS`, `INTERNAL_MOVE_PHASE`, `secret-plan-id`, and `RAW_AUDIT_ACTION` and assert none are returned verbatim.
+Verification mapping must cover persisted statuses present in the latest branch (at minimum current `PENDING`, plus any verified/rejected states already supported elsewhere). Known product plan IDs used by the repository (for example `FREE`, `SCHOOL`, `PARENT_ORG`) get human labels; unknown values fail closed.
 
-- [ ] **Step 2: Run RED**
+Audit action mapping is presentation-only. Cover known school-admin-visible actions already emitted in the repository, including at minimum `EXPORT_ORG_STUDENT_DATA` and `REQUEST_MOVE_LESSON_TEMPLATE`. Unknown action → `操作内容を確認できません`.
+
+### RED
+
+Inject:
+
+```text
+UNKNOWN_INTERNAL_STATUS
+INTERNAL_MOVE_PHASE
+secret-plan-id
+RAW_AUDIT_ACTION
+org-secret-id
+```
+
+Assert no formatter returns those values verbatim.
+
+### Verify
 
 ```bash
 npm test -- src/lib/presentation/organizationLabels.test.ts
 ```
 
-Expected: FAIL because the new formatters do not exist.
-
-- [ ] **Step 3: Implement exhaustive/safe mappings**
-
-Use `satisfies Record<Union, string>` where the client has a closed union and `safeLabel` for wire `string` values. Never return the input value as fallback.
-
-- [ ] **Step 4: Run focused PASS**
-
-```bash
-npm test -- src/lib/presentation/organizationLabels.test.ts
-```
-
-- [ ] **Step 5: Commit**
+### Commit
 
 ```bash
 git add src/lib/presentation/organizationLabels.ts src/lib/presentation/organizationLabels.test.ts
@@ -93,9 +112,9 @@ git commit -m "feat: expand organization presentation labels"
 
 ---
 
-### Task 2: Add one human-readable organization-choice projection
+## Task 2 — Add one human-readable organization-choice projection
 
-**Files:**
+**Files**
 - Create: `functions/src/organizations/organizationChoices.ts`
 - Create: `functions/src/organizations/organizationChoices.test.ts`
 - Modify: `functions/src/organizations/onCall.ts`
@@ -104,12 +123,12 @@ git commit -m "feat: expand organization presentation labels"
 - Create: `src/lib/organizations/organizationChoices.ts`
 - Create: `src/lib/organizations/organizationChoices.test.ts`
 
-**Interfaces:**
+**Contract**
 
 ```ts
 export type OrganizationChoice = {
   orgId: string
-  name: string
+  name: string | null
   type: 'personal' | 'school' | 'parentOrg'
   role: 'owner' | 'admin' | 'teacher'
   verificationStatus?: string
@@ -121,44 +140,58 @@ export const listMyOrganizationChoices = (
 ): Promise<OrganizationChoice[]>
 ```
 
-Server callable name:
+Callable:
 
-```ts
+```text
 listMyOrganizationChoicesCallable
 ```
 
-Security contract:
+Security:
 - authenticated verified teacher only;
-- return only organizations where `organizations/{orgId}/members/{callerUid}` exists with `status === 'active'`;
-- never accept a UID from client input;
+- caller UID comes only from `request.auth.uid`;
+- only organizations where the caller's member doc exists and is `status === 'active'` are returned;
 - return only the fields above.
 
-Production read pattern must be **one organizations query plus one batched membership lookup**, not one client/server request per organization. Use Admin SDK `getAll(...memberRefs)` (or an equivalent single batched read) after obtaining organization documents, then filter in memory. Do not expose organizations for which the caller lacks active membership.
+### Read strategy
 
-This projection is used by two UIs:
-- template move: filter to `role === 'owner'`, because the existing move Callable already requires owner on source and target;
-- parent-org school linking: filter to `type === 'school'`, `role` owner/admin, and no existing `parentOrgId`.
+The current schema has no canonical UID → organizations index. Do **not** invent a partially maintained inverse index in this project.
 
-- [ ] **Step 1: RED pure projection tests**
+Use a bounded server-side organization read plus batched/chunked `getAll` membership-document reads; filter by caller UID/status in memory and then project organization semantics. This is intentionally a server-side compatibility bridge for the current schema and avoids client N+1 requests. Keep the membership lookup batched/chunked rather than issuing one awaited read per organization.
 
-Use fixtures containing owned/admin/teacher/suspended/unrelated organizations. Assert only active memberships are returned and names/types/roles are preserved while unrelated orgs are omitted.
+If the implementation environment exposes a correct existing indexed membership query in the latest branch, prefer it, but do not alter authorization semantics or add a new index that cannot be kept in sync by every membership mutation path.
 
-- [ ] **Step 2: RED callable/client-wrapper tests**
+### Uses
 
-Assert no UID argument is accepted/sent by the client wrapper and unauthenticated/non-teacher callers are rejected.
+Template move:
+- `role === 'owner'`;
+- exclude current source org.
 
-- [ ] **Step 3: Implement server helper + callable + export + client wrapper**
+Parent-org school linking:
+- `type === 'school'`;
+- role owner/admin;
+- no current `parentOrgId`;
+- exclude already-linked children.
 
-Keep authorization in the Callable boundary and projection logic independently testable.
+### RED
 
-- [ ] **Step 4: Focused verification**
+Fixtures must include:
+- active owner/admin/teacher memberships;
+- suspended membership;
+- unrelated org;
+- personal org with `name: null`.
+
+Assert only active memberships are returned; raw IDs remain DTO identity but are not synthesized into names.
+
+Client wrapper must send no UID argument.
+
+### Verify
 
 ```bash
 npm test -- src/lib/organizations/organizationChoices.test.ts
 npm --prefix functions test -- src/organizations/organizationChoices.test.ts src/organizations/onCall.test.ts
 ```
 
-- [ ] **Step 5: Commit**
+### Commit
 
 ```bash
 git add functions/src/organizations/organizationChoices.ts \
@@ -171,66 +204,87 @@ git commit -m "feat: add organization choice projection"
 
 ---
 
-### Task 3: Replace template-move org ID entry and raw progress/error presentation
+## Task 3 — Humanize the template-move workflow
 
-**Files:**
+**Files**
 - Modify: `src/components/teacher/templates/TemplateEditorPage.tsx`
 - Modify: `src/components/teacher/templates/TemplateEditorPage.test.tsx`
 - Modify: `src/lib/lessonTemplates/moveLessonTemplate.ts`
 - Modify: `functions/src/lessonTemplates/onCall.ts`
 - Modify: `functions/src/lessonTemplates/onCall.test.ts`
 
-**Interfaces:**
-
-Add to `TemplateEditorPageProps`:
+Add:
 
 ```ts
 organizationChoices: OrganizationChoice[]
 ```
 
-Only choices with `role === 'owner'` and `orgId !== current orgId` are valid move targets.
+to `TemplateEditorPageProps`.
 
-Keep `targetOrgId` as internal state/value but render the target `name` in a select/list. Do not render `orgId` as option text, placeholder, helper text, or confirmation copy.
+Only choices where `role === 'owner'` and `orgId !== current orgId` may be move targets. Keep `targetOrgId` as internal state/value but show `formatOrganizationChoiceName(choice)` in the select/list. Never show org ID as option text, placeholder, helper text, or fallback.
 
-Change the move confirmation UI from “re-enter target organization ID” to the fixed human phrase:
+If no usable target exists, show fixed copy such as:
+
+```text
+移動できる組織がありません。
+```
+
+Do not fall back to an org-ID text field.
+
+### Confirmation contract
+
+Replace “re-enter target organization ID” with a human confirmation phrase:
 
 ```text
 移動する
 ```
 
-Keep the existing `confirmationText` field for compatibility within the client/server call shape, but change the Callable validation from `confirmationText === targetOrgId` to `confirmationText === '移動する'`. Authorization remains unchanged: the existing server still requires owner membership on both source and target organizations.
+Keep the existing `confirmationText` request field for compatibility, but change server validation from:
 
-Presentation requirements:
-- replace `所有者 (owner)` with Japanese-only copy;
-- `COMMUNITY 公開` -> `コミュニティ公開`;
-- map move `status` and `phase` through Task 1 formatters;
-- never render `moveOpStatus.lastError`; when status is failed, show a fixed action-oriented message such as `移動処理で問題が発生しました。状態を確認してもう一度お試しください。`;
-- `upload`, preview, and move failures must use `describeError`, never raw `Error.message`.
+```ts
+confirmationText === targetOrgId
+```
 
-- [ ] **Step 1: Rewrite existing move test to RED**
+to:
 
-Replace the test that types `移転先組織ID` and the org ID confirmation with an organization-name selection. Include sentinel target ID `org-secret-target` and assert it never appears in rendered text while preview/move callbacks still receive it.
+```ts
+confirmationText === '移動する'
+```
 
-- [ ] **Step 2: Add raw status/error leak tests**
+Existing server authorization still requires owner membership on both source and target. Do not weaken it.
 
-Inject unknown move status/phase via cast and `lastError: 'backend-secret-message'`; assert raw strings are absent.
+### Presentation fixes
 
-- [ ] **Step 3: Add server RED for fixed confirmation phrase**
+- `所有者 (owner)` → Japanese-only copy.
+- `COMMUNITY 公開` → `コミュニティ公開`.
+- move `status` and `phase` through Task 1 formatters.
+- never render `moveOpStatus.lastError`; failed status gets fixed action-oriented copy.
+- upload/preview/move failures use `describeError`; never raw `Error.message`.
 
-Old `confirmationText: targetOrgId` must fail; `confirmationText: '移動する'` must pass input validation/authorization.
+### RED
 
-- [ ] **Step 4: Implement minimal UI/server change**
+Use target choice:
 
-Do not weaken owner checks or move-operation idempotency.
+```ts
+{ orgId: 'org-secret-target', name: '青葉高校', type: 'school', role: 'owner' }
+```
 
-- [ ] **Step 5: Focused verification**
+Assert:
+- teacher selects `青葉高校`;
+- `org-secret-target` is absent from visible text;
+- preview/move payloads still contain `targetOrgId: 'org-secret-target'`;
+- old org-ID confirmation fails server validation;
+- `confirmationText: '移動する'` passes validation/authorization;
+- unknown move status/phase and `lastError: 'backend-secret-message'` never render.
+
+### Verify
 
 ```bash
 npm test -- src/components/teacher/templates/TemplateEditorPage.test.tsx
 npm --prefix functions test -- src/lessonTemplates/onCall.test.ts
 ```
 
-- [ ] **Step 6: Commit**
+### Commit
 
 ```bash
 git add src/components/teacher/templates/TemplateEditorPage.tsx \
@@ -242,9 +296,9 @@ git commit -m "fix: humanize template move workflow"
 
 ---
 
-### Task 4: Enrich member identity and remove UID/role/status presentation from school settings
+## Task 4 — Enrich member identity and remove UID/role/status presentation
 
-**Files:**
+**Files**
 - Modify: `functions/src/organizations/orgMembers.ts`
 - Modify: `functions/src/organizations/orgMembers.test.ts`
 - Modify: `src/lib/organizations/orgMembers.ts`
@@ -252,9 +306,7 @@ git commit -m "fix: humanize template move workflow"
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
 
-**Interfaces:**
-
-Extend member view additively:
+Extend member read view additively:
 
 ```ts
 export interface OrgMember {
@@ -267,38 +319,44 @@ export interface OrgMember {
 }
 ```
 
-`listOrgMembersWithAdminSdk` already does one Admin Auth `getUsers` batch. Extend that same batch resolution to return `displayName`; do not add one Auth request per member.
+`listOrgMembersWithAdminSdk` already resolves users with one Admin Auth `getUsers` batch. Extend that same batch resolution to return display name; no per-member Auth requests.
 
-School UI identity priority:
+UI identity priority:
 
 ```ts
-displayName?.trim() || email?.trim() || 'メンバー名を確認できません'
+displayName?.trim()
+  || email?.trim()
+  || 'メンバー名を確認できません'
 ```
 
 Never fall back to UID.
 
-Use Task 1 / existing Project A formatters for member role, member status, invitation role/status. Role selects keep the internal values `owner/admin/teacher`, but option text and field labels use Japanese labels and the human member name/email. The accessible label must not contain UID.
+Use shared formatters for member role/status and invitation role/status. Role selects keep internal values `owner/admin/teacher`; option text and accessible labels are human Japanese and based on member display identity, never UID.
 
-- [ ] **Step 1: RED member projection test**
+### RED
 
-Assert the server/client result carries displayName from the existing batch Auth lookup.
+Render:
 
-- [ ] **Step 2: RED school settings sentinel test**
+```ts
+{
+  uid: 'uid-secret-value',
+  email: null,
+  displayName: null,
+  role: 'UNKNOWN_ROLE' as never,
+  status: 'UNKNOWN_MEMBER_STATUS' as never,
+}
+```
 
-Render a member `{ uid: 'uid-secret-value', email: null, displayName: null }` and unknown-cast role/status. Assert the UID/raw enum strings are absent and generic safe labels are present.
+Assert raw UID/enum strings are absent while fixed fallback labels appear. Separately prove UID still reaches `onSuspendMember` / `onChangeRole` payloads when a valid fixture is operated on.
 
-- [ ] **Step 3: Implement identity and formatter use**
-
-Use UID only for `key`, permission comparisons, `onSuspendMember`, and `onChangeRole` payloads.
-
-- [ ] **Step 4: Focused verification**
+### Verify
 
 ```bash
 npm test -- src/lib/organizations/orgMembers.test.ts src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx
 npm --prefix functions test -- src/organizations/orgMembers.test.ts
 ```
 
-- [ ] **Step 5: Commit**
+### Commit
 
 ```bash
 git add functions/src/organizations/orgMembers.ts functions/src/organizations/orgMembers.test.ts \
@@ -310,9 +368,9 @@ git commit -m "fix: present school members by human identity"
 
 ---
 
-### Task 5: Use real organization names and human confirmation in school/parent routes
+## Task 5 — Use real organization names and human deletion confirmation
 
-**Files:**
+**Files**
 - Modify: `src/App.tsx`
 - Modify: `src/App.test.tsx`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`
@@ -320,39 +378,42 @@ git commit -m "fix: present school members by human identity"
 - Modify: `src/components/teacher/organizations/ParentOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx`
 
-**Behavior:**
+`SchoolOrgSettingsRoute` already reads `organizations/{orgId}`. Capture `name` in that same read instead of passing `orgName={orgId}`. If the document lacks a usable name, pass fixed `組織名を確認できません` rather than the route ID.
 
-`SchoolOrgSettingsRoute` already reads `organizations/{orgId}`. Capture its `name` in the same read instead of passing `orgName={orgId}`. If it has `parentOrgId`, fetch that one parent organization document and pass its `name`; on failure/missing name use `組織名を確認できません`, never the parent ID.
+If a school has `parentOrgId`, one direct parent-org document read is acceptable because it is one relationship lookup, not a row-by-row N+1. Pass the parent's persisted name; missing/error → fixed generic copy, never `parentOrgId`.
 
-`ParentOrgSettingsRoute` should read the current parent organization document once and pass its `name`; do not pass `orgName={orgId}`.
+`ParentOrgSettingsRoute` reads its current organization document once and passes its persisted name; missing → fixed generic copy.
 
-Change `ConfirmDeleteOrgForm` to require the visible organization name rather than org ID:
+### Delete confirmation
+
+Change `ConfirmDeleteOrgForm` from org-ID confirmation to visible organization-name confirmation:
 
 ```text
-確認のため組織名「〇〇」を入力してください
+確認のため組織名「青葉高校」を入力してください
 ```
 
-The callback still performs `purgeSchoolOrg({ orgId })`; only the user confirmation value changes.
+Typing the org ID must not enable deletion. Typing the displayed organization name enables the callback. The actual purge callback still uses internal `orgId`.
 
-- [ ] **Step 1: RED route tests**
+### RED
 
-Use `school-secret-id` / `parent-secret-id` route params with organization docs named `青葉高校` / `東日本教育法人`. Assert headings and parent text use names and raw IDs are absent from rendered text.
+Route fixtures:
 
-- [ ] **Step 2: RED deletion confirmation test**
+```text
+school-secret-id -> 青葉高校
+parent-secret-id -> 東日本教育法人
+```
 
-Typing the org ID must not enable deletion; typing the visible org name must enable it. Callback identity remains internal.
+Assert raw route IDs are absent from headings/normal text.
 
-- [ ] **Step 3: Implement route metadata + confirmation**
-
-No new Callable is needed for the current org name; reuse the existing Firestore reads.
-
-- [ ] **Step 4: Focused verification**
+### Verify
 
 ```bash
-npm test -- src/App.test.tsx src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx
+npm test -- src/App.test.tsx \
+  src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx \
+  src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx
 ```
 
-- [ ] **Step 5: Commit**
+### Commit
 
 ```bash
 git add src/App.tsx src/App.test.tsx \
@@ -365,21 +426,21 @@ git commit -m "fix: present organization names instead of ids"
 
 ---
 
-### Task 6: Replace parent-org “school organization ID” entry with entity selection
+## Task 6 — Replace parent-org school ID entry with entity selection
 
-**Files:**
+**Files**
 - Modify: `src/App.tsx`
 - Modify: `src/App.test.tsx`
 - Modify: `src/components/teacher/organizations/ParentOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx`
 
-**Interfaces:**
-
-Add to `ParentOrgSettingsPageProps`:
+Add:
 
 ```ts
 organizationChoices: OrganizationChoice[]
 ```
+
+to `ParentOrgSettingsPageProps`.
 
 Candidate schools:
 
@@ -391,51 +452,55 @@ organizationChoices.filter((choice) =>
 )
 ```
 
-Exclude schools already represented in `childSchools` and the current parent org.
+Also exclude schools already present in `childSchools`.
 
-Render school `name` as option text and keep `orgId` only as the option value/callback argument. Replace explanatory `owner/admin` tokens with Japanese copy. Existing `onLinkSchool(schoolOrgId)` contract stays unchanged.
+Render `formatOrganizationChoiceName(choice)` only; keep `orgId` as option value/callback identity. Replace explanatory `owner/admin` tokens with Japanese copy.
 
-Existing child-school `verificationStatus` must pass through `formatOrganizationVerificationStatus`; unknown values use fixed fallback.
+Existing child-school `verificationStatus` must pass through `formatOrganizationVerificationStatus`; unknown values fail closed.
 
-`ParentOrgSettingsRoute` should call `listMyOrganizationChoices` once and pass the result. Do not fetch a school name after selection.
+`ParentOrgSettingsRoute` calls `listMyOrganizationChoices` once and passes the result. Do not fetch a school name after selection.
 
-- [ ] **Step 1: RED selector test**
+### RED
 
-Fixture candidates should include:
+Fixtures:
 - `school-secret-owned` / `青葉高校` / owner / unlinked;
 - `school-secret-admin` / `若葉中学校` / admin / unlinked;
-- teacher-only and already-linked schools.
+- teacher-only school;
+- already-linked school.
 
-Assert only the owner/admin unlinked school names are selectable, raw IDs are absent, and choosing `青葉高校` calls `onLinkSchool('school-secret-owned')`.
+Assert only eligible names are selectable, raw IDs are absent, and selecting `青葉高校` calls:
 
-- [ ] **Step 2: RED unknown verification test**
+```ts
+onLinkSchool('school-secret-owned')
+```
 
-`verificationStatus: 'INTERNAL_VERIFY_STATE'` must not render verbatim.
+Inject `verificationStatus: 'INTERNAL_VERIFY_STATE'`; raw value must not render.
 
-- [ ] **Step 3: Implement entity selection and App wiring**
-
-Reuse Task 2 data; do not add a second school-choice API.
-
-- [ ] **Step 4: Focused verification and commit**
+### Verify
 
 ```bash
 npm test -- src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx src/App.test.tsx
-git add src/App.tsx src/App.test.tsx src/components/teacher/organizations/ParentOrgSettingsPage.tsx src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx
+```
+
+### Commit
+
+```bash
+git add src/App.tsx src/App.test.tsx \
+  src/components/teacher/organizations/ParentOrgSettingsPage.tsx \
+  src/components/teacher/organizations/ParentOrgSettingsPage.test.tsx
 git commit -m "fix: select schools by name in parent settings"
 ```
 
 ---
 
-### Task 7: Make school-admin student search presentation-ready
+## Task 7 — Make school-admin student search presentation-ready
 
-**Files:**
+**Files**
 - Modify: `functions/src/privacy/searchOrgStudentData.ts`
 - Modify: `functions/src/privacy/searchOrgStudentData.test.ts`
 - Modify: `src/lib/privacy/orgStudentDataSearch.ts`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
-
-**Interfaces:**
 
 Extend each search match additively:
 
@@ -443,30 +508,41 @@ Extend each search match additively:
 lessonTitle?: string
 ```
 
-`searchOrgStudentData` already has each eligible lesson-run record before participant lookup. Copy a human lesson title from that run record into matches there; do not issue an extra lesson-run read per match.
+`searchOrgStudentData` already has each eligible lesson-run record before participant lookup. Copy a human lesson title from that run into each match. Do not add a second lesson-run lookup per participant/match.
 
 Presentation:
-- primary: participant display name or `生徒名を確認できません`;
+- primary: display name or `生徒名を確認できません`;
 - secondary: lesson title or `授業名を確認できません`, external identifier if present, and `formatParticipantStatus(status)`;
-- never render `lessonRunId`, `participantId`, `authUid`, `teamId`, raw identityMode, or raw status.
+- never render `lessonRunId`, `participantId`, `authUid`, `teamId`, raw `identityMode`, or raw status.
 
-IDs may remain in the DTO and React keys.
+IDs remain in DTO/internal keys.
 
-- [ ] **Step 1: RED server DTO test**
+### RED
 
-Assert a run fixture titled `株式学習A` yields matches with `lessonTitle: '株式学習A'` without an additional run lookup dependency.
+Server fixture run title `株式学習A` must yield `lessonTitle: '株式学習A'` without extra run-lookup dependency.
 
-- [ ] **Step 2: RED UI sentinel test**
+UI fixture injects:
 
-Inject `lesson-secret-id`, `participant-secret-id`, `uid-secret-value`, `team-secret-id`, `UNKNOWN_PARTICIPANT_STATUS`. Assert none render; title/name/fixed status copy do.
+```text
+lesson-secret-id
+participant-secret-id
+uid-secret-value
+team-secret-id
+UNKNOWN_PARTICIPANT_STATUS
+```
 
-- [ ] **Step 3: Implement additive enrichment + presentation**
+None may render verbatim.
 
-- [ ] **Step 4: Focused verification and commit**
+### Verify
 
 ```bash
 npm test -- src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx
 npm --prefix functions test -- src/privacy/searchOrgStudentData.test.ts
+```
+
+### Commit
+
+```bash
 git add functions/src/privacy/searchOrgStudentData.ts functions/src/privacy/searchOrgStudentData.test.ts \
   src/lib/privacy/orgStudentDataSearch.ts \
   src/components/teacher/organizations/SchoolOrgSettingsPage.tsx \
@@ -476,18 +552,16 @@ git commit -m "fix: humanize school student-data search results"
 
 ---
 
-### Task 8: Enrich school-admin audit log actor identity and action presentation
+## Task 8 — Enrich audit-log actor identity and action presentation
 
-**Files:**
+**Files**
 - Modify: `functions/src/privacy/onCall.ts`
 - Modify: `functions/src/privacy/onCall.test.ts`
 - Modify: `src/lib/privacy/orgAuditLog.ts`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
 
-**Interfaces:**
-
-Extend read projection only:
+Extend the **read projection only**:
 
 ```ts
 export interface OrgAuditLogEntry {
@@ -502,33 +576,34 @@ export interface OrgAuditLogEntry {
 }
 ```
 
-Do **not** change persisted audit docs.
+Do not alter persisted audit documents.
 
-`listOrgAuditLogCallable` should collect unique actor UIDs from the already-read entries and resolve them with one Admin Auth `getUsers` batch. Missing users yield null identity fields. No per-entry Auth lookup.
+`listOrgAuditLogCallable` collects unique actor UIDs from already-read entries and resolves them with one Admin Auth `getUsers` batch. Multiple entries by the same actor must not cause duplicate Auth lookups. Missing/deleted users yield null identity fields.
 
-UI actor priority:
+UI identity priority:
 
 ```ts
-actorDisplayName?.trim() || actorEmail?.trim() || '実行者を確認できません'
+actorDisplayName?.trim()
+  || actorEmail?.trim()
+  || '実行者を確認できません'
 ```
 
-Map action/result through Task 1 formatters. Never show `actorUid` as the main or fallback identity.
+Map action/result through Task 1 formatters. Never display `actorUid` as normal identity/fallback.
 
-- [ ] **Step 1: RED callable test for batch actor enrichment**
+### RED
 
-Use two entries by the same UID plus one unknown UID and verify one batch resolution produces additive displayName/email fields without removing raw actorUid from the DTO.
+Use two entries from one UID plus one unknown UID. Verify one batched identity resolution and additive actor fields. UI injects `uid-secret-value`, `RAW_AUDIT_ACTION`, and unknown result cast; raw values do not render.
 
-- [ ] **Step 2: RED UI sentinel test**
-
-Inject `uid-secret-value`, `RAW_AUDIT_ACTION`, and unknown result cast. Assert no raw values render.
-
-- [ ] **Step 3: Implement enrichment and safe display**
-
-- [ ] **Step 4: Focused verification and commit**
+### Verify
 
 ```bash
 npm test -- src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx
 npm --prefix functions test -- src/privacy/onCall.test.ts
+```
+
+### Commit
+
+```bash
 git add functions/src/privacy/onCall.ts functions/src/privacy/onCall.test.ts \
   src/lib/privacy/orgAuditLog.ts \
   src/components/teacher/organizations/SchoolOrgSettingsPage.tsx \
@@ -538,9 +613,9 @@ git commit -m "fix: present audit logs with human actor identity"
 
 ---
 
-### Task 9: Apply shared presentation formatters to archive, billing, and plan-limit UI
+## Task 9 — Apply shared presentation formatters to archive, billing, and plan limits
 
-**Files:**
+**Files**
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.tsx`
 - Modify: `src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx`
 - Modify: `src/components/teacher/organizations/BillingSection.tsx`
@@ -548,37 +623,45 @@ git commit -m "fix: present audit logs with human actor identity"
 - Modify: `src/components/teacher/organizations/PlanLimitsPage.tsx`
 - Modify: `src/components/teacher/organizations/PlanLimitsPage.test.tsx`
 
-**Behavior:**
-
 School archive:
-- remove the page-local archive status map;
+- remove duplicate page-local archive status map;
 - use `formatAnnualArchiveJobStatus(job.status)`;
-- delete `?? job.status` fallback.
+- remove `?? job.status` fail-open fallback.
 
 Billing:
-- remove duplicate local payment-method labels;
+- remove duplicate local payment method labels;
 - use `formatBillingPaymentMethod`;
-- render invoice status through `formatInvoiceStatus`, never `invoice.status` directly;
-- invoice subscription status may remain in internal conditional logic but must not be printed raw.
+- invoice rows use `formatInvoiceStatus(invoice.status)`, never raw status;
+- invoice-subscription status may remain internal conditional logic but is never printed raw.
 
 Plan limits:
-- do not render `pendingPlanChange.planId` directly;
-- use `formatPlanId`;
-- downgrade `state` remains internal control flow only;
-- existing user-facing billing/migration errors are fixed copy and may remain.
+- scheduled downgrade uses `formatPlanId(pendingPlanChange.planId)`;
+- downgrade `state` remains internal control flow only.
 
-- [ ] **Step 1: RED unknown-value tests**
+### RED
 
-Inject `INTERNAL_ARCHIVE_STATUS`, `INTERNAL_INVOICE_STATUS`, and `secret-plan-id` by cast. Assert none render.
+Inject via cast:
 
-- [ ] **Step 2: Implement shared formatter use**
+```text
+INTERNAL_ARCHIVE_STATUS
+INTERNAL_INVOICE_STATUS
+secret-plan-id
+```
 
-- [ ] **Step 3: Focused verification and commit**
+None may render.
+
+### Verify
 
 ```bash
-npm test -- src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx \
+npm test -- \
+  src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx \
   src/components/teacher/organizations/BillingSection.test.tsx \
   src/components/teacher/organizations/PlanLimitsPage.test.tsx
+```
+
+### Commit
+
+```bash
 git add src/components/teacher/organizations/SchoolOrgSettingsPage.tsx \
   src/components/teacher/organizations/SchoolOrgSettingsPage.test.tsx \
   src/components/teacher/organizations/BillingSection.tsx \
@@ -590,33 +673,29 @@ git commit -m "fix: humanize organization billing and archive states"
 
 ---
 
-### Task 10: Wire organization choices into template editing and run App-level regression
+## Task 10 — Wire organization choices into App routes and protect Project D integration
 
-**Files:**
+**Files**
 - Modify: `src/App.tsx`
 - Modify: `src/App.test.tsx`
 
-**Behavior:**
+`TemplateEditRoute` loads `listMyOrganizationChoices(services.functions)` once and passes choices to `TemplateEditorPage`. On failure, pass an empty list / explicit error state and show fixed UI copy such as `移動できる組織を確認できません`; never restore an org-ID text box.
 
-`TemplateEditRoute` loads `listMyOrganizationChoices(services.functions)` once and passes choices into `TemplateEditorPage`. On failure, pass `[]`; the editor shows a fixed message such as `移動できる組織を確認できません` rather than falling back to an org-ID text box.
+`ParentOrgSettingsRoute` uses the same wrapper for school linking. Route-local loading/error state is sufficient; do not create an app-wide organization store.
 
-`ParentOrgSettingsRoute` uses the same wrapper as Task 6. If both routes need loading/error state, keep that route-local; do not introduce an app-wide organization store in this project.
-
-App-level regressions must verify:
+App-level regressions verify:
 - template editor receives human org choices and does not surface `org-secret-target`;
-- parent school-link flow uses school name and callback ID internally;
-- school/parent settings heading is organization name, not route ID;
-- Project D teacher control/recovery routes still render after the `App.tsx` merge conflict resolution.
+- parent school link uses school name and preserves callback ID internally;
+- school/parent settings headings use organization names, not route IDs;
+- Project D teacher control and recovery routes still render after integrating latest `App.tsx` changes.
 
-- [ ] **Step 1: RED App tests**
-- [ ] **Step 2: Implement minimal wiring**
-- [ ] **Step 3: Run App test suite**
+### Verify
 
 ```bash
 npm test -- src/App.test.tsx
 ```
 
-- [ ] **Step 4: Commit**
+### Commit
 
 ```bash
 git add src/App.tsx src/App.test.tsx
@@ -625,12 +704,9 @@ git commit -m "test: wire organization presentation choices"
 
 ---
 
-### Task 11: Project E regression audit and full verification
+## Task 11 — Project E regression audit and full verification
 
-**Files:**
-- Modify only tests/files required by a failure directly caused by Project E.
-
-- [ ] **Step 1: Run focused Project E suites**
+Run focused suites first:
 
 ```bash
 npm test -- \
@@ -653,7 +729,7 @@ npm --prefix functions test -- \
   src/lessonTemplates/onCall.test.ts
 ```
 
-- [ ] **Step 2: Presentation scan**
+Presentation scan:
 
 ```bash
 rg -n "error instanceof Error \? error\.message|\?\?\s*(orgId|.*Uid|.*Id|.*status|.*phase)|組織ID|owner\)|ownerまたはadmin|actorUid|invoice\.status|verificationStatus|lastError" \
@@ -663,9 +739,9 @@ rg -n "error instanceof Error \? error\.message|\?\?\s*(orgId|.*Uid|.*Id|.*statu
   src/App.tsx
 ```
 
-Interpret matches. IDs/statuses in callbacks, route building, tests, DTO types, or internal comparisons are allowed. A match is a failure only if raw internal data reaches normal teacher/school-admin text or an opaque-ID input.
+Interpret matches. IDs/statuses in callbacks, routes, DTO types, tests, authorization, or internal comparisons are allowed. A failure is a raw internal value reaching normal teacher/school-admin text or an opaque-ID input.
 
-- [ ] **Step 3: Sentinel invariant**
+### Sentinel invariant
 
 Across Project E tests inject at least:
 
@@ -680,9 +756,9 @@ RAW_AUDIT_ACTION
 secret-plan-id
 ```
 
-Assert none appear verbatim in rendered teacher/school-admin text. Where identity is required for a command, assert the same org/member IDs still reach callbacks/Callable payloads.
+Assert none appears verbatim in rendered teacher/school-admin text. Where identity is needed for commands, separately assert the same IDs still reach callback/Callable payloads.
 
-- [ ] **Step 4: Full verification**
+### Full verification
 
 ```bash
 npm run lint
@@ -693,9 +769,9 @@ npm --prefix functions run verify
 git diff --check
 ```
 
-If practical, also run root `npm run verify`. If an emulator-dependent check is blocked only by the known Java/proxy environment issue, report the limitation exactly and do not claim PASS.
+If practical, also run root `npm run verify`. If emulator-dependent verification is blocked by the known Java/proxy environment issue, report that limitation exactly; do not claim PASS and do not change production code merely to accommodate the environment.
 
-- [ ] **Step 5: Final diff audit**
+Final diff audit:
 
 ```bash
 git status --short
@@ -712,15 +788,15 @@ No Project F operator changes and no unrelated refactors.
 
 Project E is complete only when all of the following are true:
 
-1. Template move target is selected by organization name; no organization-ID text entry exists.
+1. Template move target is selected by human organization label; no organization-ID text entry exists.
 2. Template move progress never renders raw status/phase/`lastError`, and upload/preview/move errors never render raw backend messages.
-3. School and parent settings use organization names rather than route IDs as headings/labels.
-4. School deletion confirmation uses human organization name, not org ID.
+3. School and parent settings use organization names or fixed semantic fallbacks rather than route IDs.
+4. School deletion confirmation uses visible organization name, not org ID.
 5. Member rows and role controls use displayName/email/generic fallback; UID is never a normal display fallback.
 6. Member/invitation/verification/archive/billing/plan statuses are presentation-formatted and unknown values fail closed.
-7. Parent-org school linking selects a managed school by name and keeps schoolOrgId only as internal callback identity.
+7. Parent-org school linking selects a managed school by name and keeps `schoolOrgId` only as internal callback identity.
 8. School-admin student search does not render lessonRunId/participantId/authUid/teamId/raw status; it uses lesson title and safe participant status.
-9. Audit log primary display uses human actor identity and Japanese action/result copy; raw actor UID/action remain only in the underlying DTO/audit storage.
+9. Audit-log primary display uses human actor identity and Japanese action/result copy; raw actor UID/action remain only in underlying DTO/audit storage.
 10. No client N+1 ID-to-name lookups are introduced; organization choices and actor/member identity are server/batch resolved.
 11. Project D `App.tsx` behavior remains intact after integration.
 12. Full non-environment-blocked verification passes and sentinel raw-value regressions are covered.
@@ -729,6 +805,7 @@ Project E is complete only when all of the following are true:
 
 - Operator pages / technical-info presentation: Project F.
 - Repository-wide cleanup outside template/organization/admin UI: Project F.
-- Redesign of billing products/pricing or Stripe contract semantics.
-- Rewriting Firestore organization schema or removing internal IDs from APIs/audit logs.
+- Billing product/pricing or Stripe contract redesign.
+- Rewriting the organization schema or removing internal IDs from APIs/audit logs.
+- Building a new long-lived UID → organization membership index/backfill migration; Project E uses the current schema with server-side batched reads.
 - Household/market/lesson-runtime Presentation Boundary work already owned by Projects B/C/D.
