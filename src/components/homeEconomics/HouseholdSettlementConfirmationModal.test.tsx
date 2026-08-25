@@ -107,8 +107,8 @@ describe('HouseholdSettlementConfirmationModal', () => {
         allSubmitted: false,
         warnings: [],
         households: [
-          makeRow('team-multi-h1', 'team-multi', 'チーム X', '独身', true),
-          makeRow('team-multi-h2', 'team-multi', 'チーム X', '子育て', false),
+          { ...makeRow('team-multi-h1', 'team-multi', 'チーム X', 'INDEPENDENT', true), profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' } },
+          { ...makeRow('team-multi-h2', 'team-multi', 'チーム X', 'CHILD_REARING', false), profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' } },
         ],
       },
     ]
@@ -125,7 +125,11 @@ describe('HouseholdSettlementConfirmationModal', () => {
     )
 
     expect(screen.getByText('未提出の家庭があります（1 / 2 世帯提出済み、対象 1 チーム）')).toBeInTheDocument()
-    expect(screen.getByText('チーム X — 子育て')).toBeInTheDocument()
-    expect(screen.queryByText('チーム X — 独身')).not.toBeInTheDocument()
+    expect(screen.getByText('チーム X — 子育て期・配偶者・子1人')).toBeInTheDocument()
+    expect(screen.queryByText(/独身/)).not.toBeInTheDocument()
+
+    // Raw backend enum values and runtime identity must never be visible.
+    expect(document.body.textContent).not.toContain('CHILD_REARING')
+    expect(document.body.textContent).not.toContain('team-multi-h2')
   })
 })

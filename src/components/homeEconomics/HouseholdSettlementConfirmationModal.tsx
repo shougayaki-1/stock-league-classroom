@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Box, Button, Checkbox, FormControlLabel, Stack, Typography } from '@mui/material'
 import type { HouseholdTeacherTeamRow } from '../../lib/homeEconomics/teacherDashboard'
+import { formatHouseholdProfileLabel } from '../../lib/presentation/householdLabels'
 
 export interface HouseholdSettlementConfirmationModalProps {
   isOpen: boolean
@@ -46,7 +47,7 @@ export const HouseholdSettlementConfirmationModal: React.FC<HouseholdSettlementC
       missingHouseholds.push({
         householdId: household.householdId,
         label: isMultiHousehold
-          ? `${team.teamDisplayName} — ${household.lifeStage}`
+          ? `${team.teamDisplayName} — ${formatHouseholdProfileLabel(household.profileSummary?.lifeStage, household.profileSummary?.family)}`
           : team.teamDisplayName,
       })
     }
