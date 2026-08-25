@@ -327,6 +327,15 @@ export interface HouseholdStateTeamView {
   visibleConcepts: string[]
   eventDisclosures: { eventId: string; label: string | null; effectDescription: string | null; revealed: boolean }[]
   shortfallOptions: { type: string; description: string; resolvesYen: number }[]
+  /**
+   * Presentation-boundary semantic data (Project C) — the client formats
+   * Japanese copy from these fields via `src/lib/presentation/householdLabels.ts`.
+   * Never a server-composed display string.
+   */
+  profileSummary: {
+    lifeStage: string
+    family: string
+  }
 }
 
 export interface TeamResearchNoteView {

@@ -1,6 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { getDatabase } from 'firebase-admin/database'
-import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import type { HomeEconomicsContent, HouseholdProfile } from '@stock-league/household-authoring-content'
 import { idempotencyDocumentId, requestDigest } from '../lib/idempotency'
 import type { HouseholdFirestoreDeps, HouseholdState } from '../lessonRuns/households/repository'
 import { toHouseholdStateTeamView, type HouseholdStateTeamView } from './realtimeProjection'
@@ -181,7 +181,19 @@ export const buildHouseholdCheckpointSnapshotV3 = (
 ): HouseholdCheckpointSnapshotV3 => {
   const teamViews: Record<string, HouseholdCheckpointTeamViewV3> = {}
   for (const household of input.householdStates) {
-    const view = toHouseholdStateTeamView(household, input.visibleConcepts, [], [])
+    // No authored HouseholdProfile is available inside this transaction
+    // (see this writer's own doc comment — no template-content read here,
+    // by design, to avoid an extra Firestore read). Presentation-boundary
+    // `profileSummary` therefore best-effort falls back to the runtime
+    // state's own `lifeStage` with an empty `family` — restore/checkpoint
+    // consumers are expected to re-resolve the full profile from the
+    // template snapshot the same way `readTeamViewWithAdminSdk` above does.
+    const placeholderProfile = {
+      householdId: household.profileId,
+      lifeStage: household.lifeStage,
+      family: '',
+    } as HouseholdProfile
+    const view = toHouseholdStateTeamView(placeholderProfile, household, input.visibleConcepts, [], [])
     const existing = teamViews[household.teamId] ?? { households: {}, householdOrder: [] }
     existing.households[household.householdId] = view
     if (!existing.householdOrder.includes(household.householdId)) {
@@ -486,7 +498,9 @@ export const readTeamViewWithAdminSdk = async (
 
   if (household.roundIndex === 0) {
     const visibleConcepts = resolveVisibleConcepts(content.goalPackage)
-    return toHouseholdStateTeamView(household, visibleConcepts, [], [])
+    const profile = content.households.find((candidate) => candidate.householdId === household.profileId)
+    if (!profile) throw new Error(`Missing profile for household ${household.householdId}`)
+    return toHouseholdStateTeamView(profile, household, visibleConcepts, [], [])
   }
 
   throw new Error(`Missing team projection for team ${teamId} at round ${household.roundIndex}`)
