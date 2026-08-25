@@ -193,6 +193,43 @@ describe('LessonPreparationPage', () => {
     expect(screen.getByRole('link', { name: /教室表示を開く/ })).toBeInTheDocument()
   })
 
+  it('内部statusトークンをコピーに露出せず、参加者statusを人間向けラベルで表示する', async () => {
+    renderPage({ initialStatus: 'DRAFT' })
+    expect(screen.queryByText(/WAITING/)).not.toBeInTheDocument()
+
+    renderPage({ initialStatus: 'WAITING', initialJoinCode: 'CODE12' })
+    act(() => {
+      participantsUpdateCallback?.([
+        {
+          id: 'p-1',
+          lessonRunId: 'run-1',
+          orgId: 'org-1',
+          authUid: 'uid-1',
+          identityMode: 'SCHOOL_ACCOUNT',
+          displayName: '生徒A',
+          teamId: 't-1',
+          status: 'TEMPORARILY_DISCONNECTED',
+          sessionVersion: 1,
+        },
+        {
+          id: 'p-2',
+          lessonRunId: 'run-1',
+          orgId: 'org-1',
+          authUid: 'uid-2',
+          identityMode: 'SCHOOL_ACCOUNT',
+          displayName: '生徒B',
+          teamId: 't-2',
+          status: 'UNKNOWN_PARTICIPANT_STATUS' as unknown as LessonParticipantView['status'],
+          sessionVersion: 1,
+        },
+      ])
+    })
+
+    expect(screen.getByText('一時切断')).toBeInTheDocument()
+    expect(screen.getByText('参加状態を確認できません')).toBeInTheDocument()
+    expect(screen.queryByText('UNKNOWN_PARTICIPANT_STATUS')).not.toBeInTheDocument()
+  })
+
   it('handles starting the lesson and navigates to control room', async () => {
     const user = userEvent.setup()
     renderPage({ initialStatus: 'WAITING', initialJoinCode: 'CODE12' })

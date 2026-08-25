@@ -31,6 +31,7 @@ import { issueJoinCode, invalidateJoinCode } from '../../lib/lessonRuns/joinCode
 import { issueDisplaySessionToken } from '../../lib/lessonRuns/displaySession'
 import { describeError } from '../../lib/monitoring/describeError'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
+import { formatParticipantStatus } from '../../lib/presentation/lessonLabels'
 
 export interface LessonPreparationPageProps {
   lessonRunId: string
@@ -210,7 +211,7 @@ export function LessonPreparationPage({
               授業を開始する準備を整えましょう
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-              参加コードと教室投影用URLを発行し、生徒の入室待機状態（WAITING）に進めます。
+              参加コードと教室投影用URLを発行し、生徒の入室待機状態に進めます。
             </Typography>
             <Button
               variant="contained"
@@ -343,7 +344,7 @@ export function LessonPreparationPage({
                     <ListItem key={participant.id} divider sx={{ py: 0.75 }}>
                       <ListItemText
                         primary={participant.displayName}
-                        secondary={participant.status === 'ACTIVE' ? '参加中' : participant.status}
+                        secondary={formatParticipantStatus(participant.status)}
                       />
                     </ListItem>
                   ))}
