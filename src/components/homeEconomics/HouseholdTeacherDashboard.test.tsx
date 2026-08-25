@@ -130,6 +130,30 @@ describe('HouseholdTeacherDashboard (Common — single-household-per-team)', () 
     expect(document.body.textContent).not.toContain('世代')
   })
 
+  it('renders the server-facing RESTORED_GENERATION household warning with fixed recovery copy, never the raw generation number', () => {
+    const restoredHousehold = makeHousehold({
+      warnings: [
+        { severity: 'INFO', code: 'RESTORED_GENERATION', message: 'チェックポイントから復元済みです' },
+      ],
+    })
+    const dashboard = makeDashboard({
+      restoreGeneration: 4,
+      teams: [singleHouseholdTeam(restoredHousehold)],
+    })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+      />,
+    )
+
+    expect(screen.getAllByText(/復元済み/).length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toContain('第4世代')
+    expect(document.body.textContent).not.toContain('世代')
+  })
+
   it('opens bulk settlement modal when clicking 一括決算', () => {
     const dashboard = makeDashboard()
     render(

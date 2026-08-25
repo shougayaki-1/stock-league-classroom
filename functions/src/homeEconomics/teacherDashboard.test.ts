@@ -243,6 +243,25 @@ describe('buildHouseholdTeacherRow', () => {
     expect(message).toBe('一括決算で処理できない家庭があります。再実行してください。')
     expect(message).not.toContain('backend-secret-message')
   })
+
+  it('reports RESTORED_GENERATION with fixed Japanese copy, never forwarding the raw generation number', () => {
+    const row = buildHouseholdTeacherRow({
+      teamId: 'team-1',
+      teamDisplayName: 'チーム1',
+      state,
+      content,
+      decision: null,
+      lastSettlementEventPayload: null,
+      bulkItemStatus: null,
+      restoreGeneration: 4,
+    })
+    const warningCodes = row.warnings.map((w) => w.code)
+    expect(warningCodes).toContain('RESTORED_GENERATION')
+    const message = row.warnings.find((w) => w.code === 'RESTORED_GENERATION')?.message
+    expect(message).toBe('チェックポイントから復元済みです')
+    expect(message).not.toContain('4')
+    expect(message).not.toContain('世代')
+  })
 })
 
 describe('computeRoundMisalignmentWarning', () => {

@@ -229,7 +229,7 @@ export const buildHouseholdTeacherRow = (
     warnings.push({
       severity: 'INFO',
       code: 'RESTORED_GENERATION',
-      message: `チェックポイント復元が行われました（第${input.restoreGeneration}世代）`,
+      message: 'チェックポイントから復元済みです',
     })
   }
 
