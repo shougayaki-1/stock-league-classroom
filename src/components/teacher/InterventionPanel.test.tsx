@@ -118,6 +118,49 @@ describe('InterventionPanel', () => {
     })
   })
 
+  it('never renders a raw-ID text input for any intervention type, for any role', async () => {
+    const idLabelPattern = /ID$|認証UID|入力ID|フェーズID|参加者ID|チームID/
+    const teams: LessonTeamView[] = [{
+      id: 'team-1', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1', 'p-2'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE',
+    }]
+    const responses: LessonResponseView[] = [{
+      id: 'response-1', participantId: 'p-1', phaseId: 'phase-market', inputId: 'input-1', status: 'APPROVED',
+    }]
+    const participants = [{ id: 'p-1', displayName: 'たなか' }, { id: 'p-2', displayName: 'すずき' }]
+
+    for (const role of ['PRIMARY', 'ASSISTANT', 'VIEWER'] as const) {
+      const user = userEvent.setup()
+      const { unmount } = render(
+        <InterventionPanel {...defaultProps} role={role} teams={teams} responses={responses} participants={participants} />,
+      )
+
+      const availableButtons = screen.queryAllByRole('button')
+      // Click through every visible top-level intervention entry point and assert no ID-labeled input appears.
+      const entryLabels = availableButtons
+        .map((btn) => btn.textContent ?? '')
+        .filter((text) => text.length > 0)
+
+      for (const label of entryLabels) {
+        const button = screen.queryByRole('button', { name: label })
+        if (!button) continue
+        await user.click(button)
+        for (const input of screen.queryAllByRole('textbox')) {
+          const accessibleLabel = input.getAttribute('aria-label')
+            ?? document.querySelector(`label[for="${input.id}"]`)?.textContent
+            ?? ''
+          expect(accessibleLabel).not.toMatch(idLabelPattern)
+        }
+        // Return to the top-level list for the next entry, if a back button exists.
+        const backButton = screen.queryByRole('button', { name: '戻る' })
+        if (backButton) await user.click(backButton)
+      }
+
+      unmount()
+    }
+  })
+
   it('uses bespoke form for EXTEND_TIME and submits it', async () => {
     const user = userEvent.setup()
     const onApply = vi.fn()
