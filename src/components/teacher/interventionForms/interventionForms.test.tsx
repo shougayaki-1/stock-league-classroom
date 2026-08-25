@@ -5,6 +5,7 @@ import { ExtendTimeForm } from './ExtendTimeForm'
 import { DisplayModeForm } from './DisplayModeForm'
 import { HideInformationForm } from './HideInformationForm'
 import { CorrectStateForm } from './CorrectStateForm'
+import { ProxyConfirmForm } from './ProxyConfirmForm'
 
 describe('ExtendTimeForm', () => {
   it('+3分でフェーズIDと秒数を組み立てる', async () => {
@@ -127,5 +128,100 @@ describe('CorrectStateForm', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       target: 'PARTICIPANT_DISPLAY_NAME', targetId: 'participant-secret-id', displayName: 'たろう',
     })
+  })
+})
+
+describe('ProxyConfirmForm', () => {
+  const phases = [{ id: 'phase-sentinel-999', displayConfig: { label: '市場フェーズ' } }]
+  const participants = [
+    { id: 'participant-sentinel-abc', displayName: 'やまだ' },
+    { id: 'participant-rep-1', displayName: 'たなか（代表）' },
+    { id: 'participant-member-2', displayName: 'すずき' },
+  ]
+  const teams = [
+    {
+      id: 'team-sentinel-xyz',
+      displayName: 'Aチーム',
+      memberParticipantIds: ['participant-rep-1', 'participant-member-2'],
+      representativeParticipantId: 'participant-rep-1',
+      confirmationMode: 'REPRESENTATIVE' as const,
+    },
+    {
+      id: 'team-quorum',
+      displayName: 'Bチーム',
+      memberParticipantIds: ['participant-rep-1', 'participant-member-2'],
+      representativeParticipantId: 'participant-rep-1',
+      confirmationMode: 'QUORUM' as const,
+    },
+  ]
+
+  it('sentinelなIDをDOMに一切出さないが、送信ペイロードには含める（個人の回答）', async () => {
+    const onSubmit = vi.fn()
+    const responses = [{
+      id: 'response-sentinel-111',
+      participantId: 'participant-sentinel-abc',
+      phaseId: 'phase-sentinel-999',
+      inputId: 'input-sentinel-222',
+      status: 'APPROVED' as const,
+    }]
+    render(<ProxyConfirmForm responses={responses} participants={participants} teams={teams} phases={phases} onSubmit={onSubmit} />)
+
+    expect(screen.getByText('市場フェーズ・やまだ')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '市場フェーズ・やまだ' }))
+    await userEvent.click(screen.getByRole('button', { name: 'この内容で確定する' }))
+
+    const body = document.body.textContent ?? ''
+    for (const sentinel of ['response-sentinel-111', 'participant-sentinel-abc', 'phase-sentinel-999', 'input-sentinel-222']) {
+      expect(body).not.toContain(sentinel)
+    }
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      { phaseId: 'phase-sentinel-999', inputId: 'input-sentinel-222', onBehalfOfParticipantId: 'participant-sentinel-abc' },
+      { level: 'PARTICIPANT', participantId: 'participant-sentinel-abc' },
+    )
+  })
+
+  it('承認済み以外の回答は選択肢に出さない', () => {
+    const responses = [
+      { id: 'r1', participantId: 'participant-sentinel-abc', phaseId: 'phase-sentinel-999', inputId: 'i1', status: 'PROPOSED' as const },
+      { id: 'r2', participantId: 'participant-sentinel-abc', phaseId: 'phase-sentinel-999', inputId: 'i2', status: 'DRAFT' as const },
+    ]
+    render(<ProxyConfirmForm responses={responses} participants={participants} teams={teams} phases={phases} onSubmit={vi.fn()} />)
+    expect(screen.getByText('確定できる承認済みの回答がありません。')).toBeInTheDocument()
+  })
+
+  it('REPRESENTATIVEモードのチーム回答は代表者を自動選択し追加の選択を求めない', async () => {
+    const onSubmit = vi.fn()
+    const responses = [{
+      id: 'response-team-1', teamId: 'team-sentinel-xyz', phaseId: 'phase-sentinel-999', inputId: 'input-team-1', status: 'APPROVED' as const,
+    }]
+    render(<ProxyConfirmForm responses={responses} participants={participants} teams={teams} phases={phases} onSubmit={onSubmit} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '市場フェーズ・Aチーム' }))
+    expect(screen.getByText('たなか（代表） に代わってこの回答を確定します。よろしいですか？')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'この内容で確定する' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      { phaseId: 'phase-sentinel-999', inputId: 'input-team-1', onBehalfOfParticipantId: 'participant-rep-1' },
+      { level: 'TEAM', teamId: 'team-sentinel-xyz' },
+    )
+  })
+
+  it('QUORUMモードのチーム回答は教師がメンバーを表示名で選ぶ', async () => {
+    const onSubmit = vi.fn()
+    const responses = [{
+      id: 'response-team-2', teamId: 'team-quorum', phaseId: 'phase-sentinel-999', inputId: 'input-team-2', status: 'APPROVED' as const,
+    }]
+    render(<ProxyConfirmForm responses={responses} participants={participants} teams={teams} phases={phases} onSubmit={onSubmit} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '市場フェーズ・Bチーム' }))
+    expect(screen.getByRole('button', { name: 'たなか（代表）' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'すずき' }))
+    await userEvent.click(screen.getByRole('button', { name: 'この内容で確定する' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      { phaseId: 'phase-sentinel-999', inputId: 'input-team-2', onBehalfOfParticipantId: 'participant-member-2' },
+      { level: 'TEAM', teamId: 'team-quorum' },
+    )
   })
 })

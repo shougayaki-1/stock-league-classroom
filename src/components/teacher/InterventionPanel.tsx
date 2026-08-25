@@ -1,12 +1,16 @@
 import { useState } from 'react'
 import { Box, Button, Drawer, List, ListItemButton, ListItemText, Stack, TextField, Typography } from '@mui/material'
-import { canApplyIntervention, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
+import { canApplyIntervention, type InterventionImpactScope, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
+import type { LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
+import type { LessonTeamView } from '../../lib/lessonRuns/teams'
+import type { PhaseWithDisplayConfig } from '../../lib/lessonRuns/phaseLabel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { ExtendTimeForm } from './interventionForms/ExtendTimeForm'
 import { DisplayModeForm } from './interventionForms/DisplayModeForm'
 import { HideInformationForm } from './interventionForms/HideInformationForm'
 import { CorrectStateForm } from './interventionForms/CorrectStateForm'
+import { ProxyConfirmForm } from './interventionForms/ProxyConfirmForm'
 
 interface DetailFieldSpec {
   key: string
@@ -36,7 +40,7 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
   },
   PROXY_CONFIRM: {
     label: '代理確定', description: '生徒に代わって回答を確定します',
-    fields: [{ key: 'phaseId', label: 'フェーズID' }, { key: 'inputId', label: '入力ID' }, { key: 'onBehalfOfParticipantId', label: '対象参加者ID' }],
+    fields: [],
   },
   CHANGE_REPRESENTATIVE: {
     label: '代表者変更', description: 'チームの代表者を変更します',
@@ -77,6 +81,7 @@ export interface InterventionApplyInput {
   type: LessonInterventionType
   reason: string
   detail: Record<string, unknown>
+  impactScope?: InterventionImpactScope
 }
 
 export interface InterventionPanelProps {
@@ -89,7 +94,9 @@ export interface InterventionPanelProps {
   informationItems: Array<{ id: string; body: string }>
   hiddenInformationIds: string[]
   participants: Array<{ id: string; displayName: string }>
-  teams: Array<{ teamId: string; displayName: string }>
+  teams: LessonTeamView[]
+  responses: LessonResponseView[]
+  phases?: PhaseWithDisplayConfig[]
   onApply: (input: InterventionApplyInput) => void
 }
 
@@ -114,6 +121,8 @@ export function InterventionPanel({
   hiddenInformationIds,
   participants,
   teams,
+  responses,
+  phases,
   onApply,
 }: InterventionPanelProps) {
   const [selected, setSelected] = useState<LessonInterventionType | null>(null)
@@ -178,8 +187,17 @@ export function InterventionPanel({
             {selected === 'CORRECT_STATE' && (
               <CorrectStateForm
                 participants={participants}
-                teams={teams}
+                teams={teams.map((team) => ({ teamId: team.id, displayName: team.displayName }))}
                 onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+              />
+            )}
+            {selected === 'PROXY_CONFIRM' && (
+              <ProxyConfirmForm
+                responses={responses}
+                participants={participants}
+                teams={teams}
+                phases={phases}
+                onSubmit={(detail, impactScope) => { onApply({ type: selected, reason, detail, impactScope }); resetForm() }}
               />
             )}
             {selected === 'EMERGENCY_STOP' && (

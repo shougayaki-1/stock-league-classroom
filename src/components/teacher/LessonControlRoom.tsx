@@ -8,6 +8,8 @@ import { canControlLesson, type LessonRunRole } from '../../lib/lessonRuns/autho
 import { subscribeDisplayRun, subscribePublicRun } from '../../lib/lessonRuns/liveRepository'
 import type { LessonRunDisplayState, LessonRunPublicState } from '../../lib/lessonRuns/liveTypes'
 import { subscribeLessonParticipants, type LessonParticipantView } from '../../lib/lessonRuns/participants'
+import { subscribeLessonTeams, type LessonTeamView } from '../../lib/lessonRuns/teams'
+import { subscribeLessonResponses, type LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
 import { completeLesson, interruptLesson, resumeLesson } from '../../lib/lessonRuns/lifecycle'
 import { LessonStatusHeader } from './LessonStatusHeader'
 import { ParticipantMonitor } from './ParticipantMonitor'
@@ -139,6 +141,8 @@ export function LessonControlRoom({
   const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
   const [displayState, setDisplayState] = useState<LessonRunDisplayState | null>(null)
   const [participants, setParticipants] = useState<LessonParticipantView[]>([])
+  const [teams, setTeams] = useState<LessonTeamView[]>([])
+  const [responses, setResponses] = useState<LessonResponseView[]>([])
   const [interventionOpen, setInterventionOpen] = useState(false)
   const [guidanceDialogOpen, setGuidanceDialogOpen] = useState(false)
   const [displayUrlDialogOpen, setDisplayUrlDialogOpen] = useState(false)
@@ -148,6 +152,8 @@ export function LessonControlRoom({
   useEffect(() => subscribePublicRun(database, lessonRunId, setPublicState), [database, lessonRunId])
   useEffect(() => subscribeDisplayRun(database, lessonRunId, setDisplayState), [database, lessonRunId])
   useEffect(() => subscribeLessonParticipants(firestore, lessonRunId, setParticipants), [firestore, lessonRunId])
+  useEffect(() => subscribeLessonTeams(firestore, lessonRunId, setTeams), [firestore, lessonRunId])
+  useEffect(() => subscribeLessonResponses(firestore, lessonRunId, setResponses), [firestore, lessonRunId])
 
   const status = publicState?.status ?? 'DRAFT'
   const interrupted = status === 'INTERRUPTED'
@@ -235,7 +241,7 @@ export function LessonControlRoom({
       reason: input.reason,
       before: null,
       after: null,
-      impactScope: { level: 'LESSON' },
+      impactScope: input.impactScope ?? { level: 'LESSON' },
       detail: input.detail,
       idempotencyKey: generateIdempotencyKey(),
     })
@@ -333,7 +339,8 @@ export function LessonControlRoom({
         informationItems={(publicState?.researchDesk?.informationItems ?? []).map((item) => ({ id: item.id, body: item.body }))}
         hiddenInformationIds={hiddenInformationIds}
         participants={participants.map((p) => ({ id: p.id, displayName: p.displayName }))}
-        teams={publicState?.teams ?? []}
+        teams={teams}
+        responses={responses}
         onApply={handleApplyIntervention}
       />
       {canEditGuidance && (

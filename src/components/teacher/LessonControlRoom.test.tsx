@@ -12,8 +12,12 @@ import type { Functions } from 'firebase/functions'
 // the actual wiring, not a re-implementation of it.
 const collectionMock = vi.fn((_firestore: unknown, path: string) => ({ __path: path }))
 let capturedParticipantsListener: ((snapshot: { docs: Array<{ data: () => unknown }> }) => void) | undefined
-const onSnapshotMock = vi.fn((_ref, onNext) => {
-  capturedParticipantsListener = onNext
+let capturedTeamsListener: ((snapshot: { docs: Array<{ data: () => unknown }> }) => void) | undefined
+let capturedResponsesListener: ((snapshot: { docs: Array<{ data: () => unknown }> }) => void) | undefined
+const onSnapshotMock = vi.fn((ref: { __path: string }, onNext) => {
+  if (ref.__path.endsWith('/participants')) capturedParticipantsListener = onNext
+  else if (ref.__path.endsWith('/teams')) capturedTeamsListener = onNext
+  else if (ref.__path.endsWith('/responses')) capturedResponsesListener = onNext
   return () => {}
 })
 vi.mock('firebase/firestore', () => ({

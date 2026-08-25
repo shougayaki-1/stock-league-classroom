@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { InterventionPanel } from './InterventionPanel'
+import type { LessonTeamView } from '../../lib/lessonRuns/teams'
+import type { LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
 
 const defaultProps = {
   open: true,
@@ -12,7 +14,8 @@ const defaultProps = {
   informationItems: [] as Array<{ id: string; body: string }>,
   hiddenInformationIds: [] as string[],
   participants: [] as Array<{ id: string; displayName: string }>,
-  teams: [] as Array<{ teamId: string; displayName: string }>,
+  teams: [] as LessonTeamView[],
+  responses: [] as LessonResponseView[],
   onClose: vi.fn(),
   onApply: vi.fn(),
 }
@@ -55,20 +58,31 @@ describe('InterventionPanel', () => {
     expect(onApply).toHaveBeenCalledWith({ type: 'EMERGENCY_STOP', reason: '不審な操作を検知', detail: {} })
   })
 
-  it('collects per-type detail fields for generic interventions like PROXY_CONFIRM and submits them', async () => {
+  it('uses bespoke ProxyConfirmForm for PROXY_CONFIRM and submits detail + impactScope from it (no manual ID entry)', async () => {
     const user = userEvent.setup()
     const onApply = vi.fn()
-    render(<InterventionPanel {...defaultProps} onApply={onApply} />)
+    const responses = [{
+      id: 'response-1', participantId: 'p-1', phaseId: 'phase-market', inputId: 'input-1', status: 'APPROVED' as const,
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      participants={[{ id: 'p-1', displayName: 'やまだ' }]}
+      responses={responses}
+      onApply={onApply}
+    />)
 
     await user.click(screen.getByRole('button', { name: /代理確定/ }))
     await user.type(screen.getByLabelText('理由'), '生徒からの要望')
-    await user.type(screen.getByLabelText('フェーズID'), 'phase-2')
-    await user.type(screen.getByLabelText('入力ID'), 'input-1')
-    await user.type(screen.getByLabelText('対象参加者ID'), 'p-1')
-    await user.click(screen.getByRole('button', { name: '実行' }))
+    expect(screen.queryByLabelText('フェーズID')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('対象参加者ID')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /やまだ/ }))
+    await user.click(screen.getByRole('button', { name: 'この内容で確定する' }))
 
     expect(onApply).toHaveBeenCalledWith({
-      type: 'PROXY_CONFIRM', reason: '生徒からの要望', detail: { phaseId: 'phase-2', inputId: 'input-1', onBehalfOfParticipantId: 'p-1' },
+      type: 'PROXY_CONFIRM',
+      reason: '生徒からの要望',
+      detail: { phaseId: 'phase-market', inputId: 'input-1', onBehalfOfParticipantId: 'p-1' },
+      impactScope: { level: 'PARTICIPANT', participantId: 'p-1' },
     })
   })
 
