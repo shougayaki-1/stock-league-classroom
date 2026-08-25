@@ -14,6 +14,7 @@ import { getOrCreateStudentUid } from './lib/auth/studentAuth'
 import { getTeacherGoogleRedirectResult, signInTeacherWithGoogle } from './lib/auth/teacherAuth'
 import type { LessonRunRole } from './lib/lessonRuns/authorization'
 import { LessonJoinPage } from './components/student/LessonJoinPage'
+import { ParticipantRecoveryPage } from './components/student/ParticipantRecoveryPage'
 import { LessonWaitingPage } from './components/student/LessonWaitingPage'
 import { LessonResultsPage } from './components/student/LessonResultsPage'
 import { LessonAnalyticsPage } from './components/teacher/LessonAnalyticsPage'
@@ -288,6 +289,7 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
     functions={services.functions}
     firestore={services.firestore}
     database={services.database}
+    phases={access.phases}
     generatingResults={generatingResults}
     onGenerateResults={async (currentPhaseId) => {
       if (!runId || !currentPhaseId) return
@@ -1515,6 +1517,31 @@ function StudentPlayRoute({ services }: { services: FirebaseServices }) {
   />
 }
 
+/**
+ * `/lessons/:runId/recover`. Deliberately outside `useStudentLessonAccess`'s
+ * membership guard: the whole point of this route is a student whose old
+ * device's membership is stale/broken reconnecting from a NEW device that
+ * is not yet a recognized member of `lessonRunMembership/{runId}/{uid}` —
+ * gating it on that membership would make the recovery flow unreachable by
+ * the exact people who need it. `ParticipantRecoveryPage` itself never
+ * takes or displays a participantId/authUid; it only accepts the teacher's
+ * bearer recovery code and calls `recoverParticipant`, which resolves the
+ * new authUid server-side from the caller's own verified auth token
+ * (mirrors `JoinRoute`'s `getOrCreateStudentUid` pattern below). Every other
+ * student/teacher route keeps its existing guard unchanged.
+ */
+function RecoverRoute({ services }: { services: FirebaseServices }) {
+  const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
+  if (!runId) return <Navigate replace to="/about" />
+  return <ParticipantRecoveryPage
+    lessonRunId={runId}
+    functions={services.functions}
+    auth={services.auth}
+    onRecovered={() => navigate(`/lessons/${runId}/waiting`)}
+  />
+}
+
 function JoinRoute({ services }: { services: FirebaseServices }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -1570,6 +1597,7 @@ const AppRoutes = ({ enabled, services }: AppRoutesProps) => {
   {Object.entries(docPages).map(([path, Page]) => <Route path={path} element={<Page />} key={path} />)}
   <Route element={<StudentShell />}>
     <Route path="/join" element={enabled && services ? <JoinRoute services={services} /> : <Navigate replace to="/about" />} />
+    <Route path="/lessons/:runId/recover" element={enabled && services ? <RecoverRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/lessons/:runId/waiting" element={enabled && services ? <StudentWaitingRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/lessons/:runId/play" element={enabled && services ? <StudentPlayRoute services={services} /> : <Navigate replace to="/about" />} />
     <Route path="/lessons/:runId/results" element={enabled && services ? <StudentResultsRoute services={services} /> : <Navigate replace to="/about" />} />

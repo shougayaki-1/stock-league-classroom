@@ -8,6 +8,8 @@ import { canControlLesson, type LessonRunRole } from '../../lib/lessonRuns/autho
 import { subscribeDisplayRun, subscribePublicRun } from '../../lib/lessonRuns/liveRepository'
 import type { LessonRunDisplayState, LessonRunPublicState } from '../../lib/lessonRuns/liveTypes'
 import { subscribeLessonParticipants, type LessonParticipantView } from '../../lib/lessonRuns/participants'
+import { subscribeLessonTeams, type LessonTeamView } from '../../lib/lessonRuns/teams'
+import { subscribeLessonResponses, type LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
 import { completeLesson, interruptLesson, resumeLesson } from '../../lib/lessonRuns/lifecycle'
 import { LessonStatusHeader } from './LessonStatusHeader'
 import { ParticipantMonitor } from './ParticipantMonitor'
@@ -16,14 +18,9 @@ import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { ClassroomMessageDialog } from './ClassroomMessageDialog'
 import { ClassroomDisplayUrlDialog } from './ClassroomDisplayUrlDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
-
-const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
-  START: '開始待機の画面',
-  LIVE: '授業中の画面',
-  END: '終了の画面',
-  EXPLANATION: '解説の画面',
-  HOUSEHOLD_COMPARISON: 'クラス比較の画面',
-}
+import { formatCurrentPhaseLabel, formatLessonDisplayMode } from '../../lib/presentation/lessonLabels'
+import type { PhaseWithDisplayConfig } from '../../lib/lessonRuns/phaseLabel'
+import { describeError } from '../../lib/monitoring/describeError'
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([
   'TEMPORARILY_DISCONNECTED',
@@ -69,6 +66,14 @@ export interface LessonControlRoomProps {
   database: Database
   /** 名簿上の想定参加者数。分かっている場合のみ ParticipantMonitor の「未参加」件数を計算する。 */
   expectedParticipantCount?: number
+  /**
+   * run自身のフェーズグラフ（`templateSnapshot.phases`、宣言順）。
+   * InterventionPanel の ProxyConfirmForm（フェーズ名表示用）と
+   * RestorePreviousPhaseForm（前フェーズ候補の絞り込み用）にそのまま渡す。
+   * 呼び出し側（TeacherControlRoute）がテンプレートアクセス時に既に
+   * 持っている値で、この画面自身はフェーズグラフを購読していない。
+   */
+  phases?: PhaseWithDisplayConfig[]
   /**
    * Invoked when the primary CTA is "授業を開始" (status DRAFT/READY/WAITING).
    * The actual `transitionPhase` call (Task 5) is left to the caller because
@@ -135,6 +140,7 @@ export function LessonControlRoom({
   firestore,
   database,
   expectedParticipantCount,
+  phases,
   onStartLesson,
   onAdvancePhase,
   startLessonLabel = '授業を開始',
@@ -146,24 +152,27 @@ export function LessonControlRoom({
   const [publicState, setPublicState] = useState<LessonRunPublicState | null>(null)
   const [displayState, setDisplayState] = useState<LessonRunDisplayState | null>(null)
   const [participants, setParticipants] = useState<LessonParticipantView[]>([])
+  const [teams, setTeams] = useState<LessonTeamView[]>([])
+  const [responses, setResponses] = useState<LessonResponseView[]>([])
   const [interventionOpen, setInterventionOpen] = useState(false)
   const [guidanceDialogOpen, setGuidanceDialogOpen] = useState(false)
   const [displayUrlDialogOpen, setDisplayUrlDialogOpen] = useState(false)
   const [displayModeOverride, setDisplayModeOverride] = useState<string | null>(null)
   const [hiddenInformationIds, setHiddenInformationIds] = useState<string[]>([])
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
 
   useEffect(() => subscribePublicRun(database, lessonRunId, setPublicState), [database, lessonRunId])
   useEffect(() => subscribeDisplayRun(database, lessonRunId, setDisplayState), [database, lessonRunId])
   useEffect(() => subscribeLessonParticipants(firestore, lessonRunId, setParticipants), [firestore, lessonRunId])
+  useEffect(() => subscribeLessonTeams(firestore, lessonRunId, setTeams), [firestore, lessonRunId])
+  useEffect(() => subscribeLessonResponses(firestore, lessonRunId, setResponses), [firestore, lessonRunId])
 
   const status = publicState?.status ?? 'DRAFT'
   const interrupted = status === 'INTERRUPTED'
 
-  // 内部IDそのものは教師に読めないので、まず projection のラベルを使う。
-  // ラベルを持たない古い run のために ID へフォールバックする。
-  const phaseLabel = publicState?.currentPhaseLabel
-    ?? publicState?.currentPhaseId
-    ?? (status === 'DRAFT' || status === 'READY' ? '未開始' : status)
+  // Presentation Boundary: currentPhaseId/raw status には絶対にフォールバックしない。
+  // ラベルが欠落した場合は固定の日本語copyへfail closedする。
+  const phaseLabel = formatCurrentPhaseLabel(publicState?.currentPhaseLabel, status)
 
   const disconnectedCount = participants.filter((p) => DISCONNECTED_STATUSES.has(p.status)).length
   const activeCount = participants.length - disconnectedCount
@@ -178,7 +187,7 @@ export function LessonControlRoom({
   }, [participants, disconnectedCount])
 
   const displayPreview = displayState
-    ? `教室表示: ${DISPLAY_MODE_LABEL[displayState.mode]}${displayState.title ? ` - ${displayState.title}` : ''}`
+    ? `教室表示: ${formatLessonDisplayMode(displayState.mode)}${displayState.title ? ` - ${displayState.title}` : ''}`
     : '教室表示: 未接続'
 
   const nextAction = useMemo(() => {
@@ -217,18 +226,25 @@ export function LessonControlRoom({
   }, [role])
 
   const handleResume = useCallback(() => {
-    void resumeLesson(functions, { lessonRunId, reason: '教師による再開', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    resumeLesson(functions, { lessonRunId, reason: '教師による再開', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を再開できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleInterrupt = useCallback(() => {
-    void interruptLesson(functions, { lessonRunId, reason: '教師による安全停止', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    interruptLesson(functions, { lessonRunId, reason: '教師による安全停止', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を安全停止できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleEndLesson = useCallback(() => {
-    void completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を終了できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleApplyIntervention = useCallback((input: InterventionApplyInput) => {
+    setRuntimeError(null)
     if (input.type === 'SWITCH_DISPLAY_MODE') {
       setDisplayModeOverride((input.detail.displayMode as string | null) ?? null)
     }
@@ -238,21 +254,28 @@ export function LessonControlRoom({
         ? (prev.includes(id) ? prev : [...prev, id])
         : prev.filter((item) => item !== id))
     }
-    void applyTeacherIntervention(functions, {
+    applyTeacherIntervention(functions, {
       lessonRunId,
       type: input.type,
       reason: input.reason,
       before: null,
       after: null,
-      impactScope: { level: 'LESSON' },
+      impactScope: input.impactScope ?? { level: 'LESSON' },
       detail: input.detail,
       idempotencyKey: generateIdempotencyKey(),
-    })
-    setInterventionOpen(false)
+    }).then(
+      () => setInterventionOpen(false),
+      (error: unknown) => setRuntimeError(describeError(error, '介入操作を実行できませんでした。')),
+    )
   }, [functions, lessonRunId])
 
   return (
     <Stack spacing={3} sx={{ width: '100%', p: 2 }}>
+      {runtimeError && (
+        <Alert severity="error" role="alert" onClose={() => setRuntimeError(null)}>
+          {runtimeError}
+        </Alert>
+      )}
       {interrupted && (
         <Alert
           severity="warning"
@@ -341,8 +364,12 @@ export function LessonControlRoom({
         displayModeOverride={displayModeOverride}
         informationItems={(publicState?.researchDesk?.informationItems ?? []).map((item) => ({ id: item.id, body: item.body }))}
         hiddenInformationIds={hiddenInformationIds}
-        participants={participants.map((p) => ({ id: p.id, displayName: p.displayName }))}
-        teams={publicState?.teams ?? []}
+        participants={participants.map((p) => ({ id: p.id, displayName: p.displayName, status: p.status }))}
+        teams={teams}
+        responses={responses}
+        phases={phases}
+        functions={functions}
+        lessonRunId={lessonRunId}
         onApply={handleApplyIntervention}
       />
       {canEditGuidance && (

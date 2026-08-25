@@ -1,70 +1,61 @@
 import { useState } from 'react'
 import { Box, Button, Drawer, List, ListItemButton, ListItemText, Stack, TextField, Typography } from '@mui/material'
-import { canApplyIntervention, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
+import type { Functions } from 'firebase/functions'
+import { canApplyIntervention, type InterventionImpactScope, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
+import type { LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
+import type { LessonTeamView } from '../../lib/lessonRuns/teams'
+import type { PhaseWithDisplayConfig } from '../../lib/lessonRuns/phaseLabel'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { ExtendTimeForm } from './interventionForms/ExtendTimeForm'
 import { DisplayModeForm } from './interventionForms/DisplayModeForm'
 import { HideInformationForm } from './interventionForms/HideInformationForm'
 import { CorrectStateForm } from './interventionForms/CorrectStateForm'
-
-interface DetailFieldSpec {
-  key: string
-  label: string
-}
+import { ProxyConfirmForm } from './interventionForms/ProxyConfirmForm'
+import { ChangeRepresentativeForm } from './interventionForms/ChangeRepresentativeForm'
+import { ReconnectParticipantForm } from './interventionForms/ReconnectParticipantForm'
+import { RestorePreviousPhaseForm } from './interventionForms/RestorePreviousPhaseForm'
 
 interface InterventionCatalogEntry {
   label: string
   description: string
-  fields: DetailFieldSpec[]
 }
 
 /**
- * The 9 §6.5 mid-lesson interventions (Task 9's `lessonInterventionTypes`),
- * with a Japanese label/description and the `detail` fields the Callable
- * requires (functions/src/lessonRuns/interventions.ts's
- * `REQUIRED_DETAIL_KEYS`) rendered generically as text fields. A bespoke
- * form per intervention type (e.g. a participant picker instead of a raw ID
- * field) is out of this task's scope — the Callable itself validates
- * `detail` server-side, so a generic field here is correct, just not the
- * most polished data-entry UX.
+ * The 9 §6.5 mid-lesson interventions, each with a Japanese label/description
+ * and a purpose-built entity-selection form rendered below (see the
+ * `selected === '...'` branches). There is no generic raw-ID `detail` field
+ * catalog here — every intervention type that needs a target selects it by
+ * human-readable name/label; the Callable itself still validates `detail`
+ * server-side.
  */
 const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEntry> = {
   EXTEND_TIME: {
     label: '時間を延ばす', description: 'いま進行中のフェーズの残り時間を延ばします',
-    fields: [],
   },
   PROXY_CONFIRM: {
     label: '代理確定', description: '生徒に代わって回答を確定します',
-    fields: [{ key: 'phaseId', label: 'フェーズID' }, { key: 'inputId', label: '入力ID' }, { key: 'onBehalfOfParticipantId', label: '対象参加者ID' }],
   },
   CHANGE_REPRESENTATIVE: {
     label: '代表者変更', description: 'チームの代表者を変更します',
-    fields: [{ key: 'teamId', label: 'チームID' }, { key: 'newRepresentativeParticipantId', label: '新代表者の参加者ID' }],
   },
   RECONNECT_PARTICIPANT: {
-    label: '参加者の再接続', description: '参加者を新しい端末に再接続します',
-    fields: [{ key: 'participantId', label: '参加者ID' }, { key: 'newAuthUid', label: '新しい認証UID' }],
+    label: '参加者の再接続', description: '参加者に再接続コードを発行します',
   },
   SWITCH_DISPLAY_MODE: {
     label: '教室表示の画面を切り替える', description: '教室に投影している画面を手動で切り替えます',
-    fields: [],
   },
   CORRECT_STATE: {
     label: '名前を直す', description: '生徒の表示名やチーム名の打ち間違いを直します',
-    fields: [],
   },
   RESTORE_PREVIOUS_PHASE: {
     label: '前フェーズへ復元', description: '直前のフェーズへ戻します',
-    fields: [{ key: 'targetPhaseId', label: '戻し先フェーズID' }],
   },
   EMERGENCY_STOP: {
     label: '緊急停止', description: '授業を直ちに安全停止します',
-    fields: [],
   },
   HIDE_INFORMATION: {
     label: '情報を隠す', description: '公開済みのニュースを一時的に非表示にします',
-    fields: [],
   },
 }
 
@@ -77,6 +68,7 @@ export interface InterventionApplyInput {
   type: LessonInterventionType
   reason: string
   detail: Record<string, unknown>
+  impactScope?: InterventionImpactScope
 }
 
 export interface InterventionPanelProps {
@@ -88,8 +80,13 @@ export interface InterventionPanelProps {
   displayModeOverride: string | null
   informationItems: Array<{ id: string; body: string }>
   hiddenInformationIds: string[]
-  participants: Array<{ id: string; displayName: string }>
-  teams: Array<{ teamId: string; displayName: string }>
+  participants: Array<{ id: string; displayName: string; status?: string }>
+  teams: LessonTeamView[]
+  responses: LessonResponseView[]
+  phases?: PhaseWithDisplayConfig[]
+  /** Only required for RECONNECT_PARTICIPANT, which calls issueRecoveryCode directly rather than going through onApply — the teacher does not know the student's new device's auth UID in advance, so there is no generic detail payload to build. */
+  functions: Functions
+  lessonRunId: string
   onApply: (input: InterventionApplyInput) => void
 }
 
@@ -114,11 +111,14 @@ export function InterventionPanel({
   hiddenInformationIds,
   participants,
   teams,
+  responses,
+  phases,
+  functions,
+  lessonRunId,
   onApply,
 }: InterventionPanelProps) {
   const [selected, setSelected] = useState<LessonInterventionType | null>(null)
   const [reason, setReason] = useState('')
-  const [detail, setDetail] = useState<Record<string, string>>({})
 
   const availableTypes = INTERVENTION_ORDER.filter((type) => canApplyIntervention(role, type))
   const selectedEntry = selected ? INTERVENTION_CATALOG[selected] : null
@@ -126,12 +126,11 @@ export function InterventionPanel({
   const resetForm = () => {
     setSelected(null)
     setReason('')
-    setDetail({})
   }
 
   const handleSubmit = () => {
     if (!selected) return
-    onApply({ type: selected, reason, detail })
+    onApply({ type: selected, reason, detail: {} })
     resetForm()
   }
 
@@ -178,8 +177,48 @@ export function InterventionPanel({
             {selected === 'CORRECT_STATE' && (
               <CorrectStateForm
                 participants={participants}
+                teams={teams.map((team) => ({ teamId: team.id, displayName: team.displayName }))}
+                onSubmit={(d) => {
+                  const impactScope: InterventionImpactScope = d.target === 'TEAM_DISPLAY_NAME'
+                    ? { level: 'TEAM', teamId: d.targetId as string }
+                    : { level: 'PARTICIPANT', participantId: d.targetId as string }
+                  onApply({ type: selected, reason, detail: d, impactScope })
+                  resetForm()
+                }}
+              />
+            )}
+            {selected === 'CHANGE_REPRESENTATIVE' && (
+              <ChangeRepresentativeForm
                 teams={teams}
-                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+                participants={participants}
+                onSubmit={(d) => {
+                  const impactScope: InterventionImpactScope = { level: 'TEAM', teamId: d.teamId as string }
+                  onApply({ type: selected, reason, detail: d, impactScope })
+                  resetForm()
+                }}
+              />
+            )}
+            {selected === 'PROXY_CONFIRM' && (
+              <ProxyConfirmForm
+                responses={responses}
+                participants={participants}
+                teams={teams}
+                phases={phases}
+                onSubmit={(detail, impactScope) => { onApply({ type: selected, reason, detail, impactScope }); resetForm() }}
+              />
+            )}
+            {selected === 'RECONNECT_PARTICIPANT' && (
+              <ReconnectParticipantForm
+                functions={functions}
+                lessonRunId={lessonRunId}
+                participants={participants}
+              />
+            )}
+            {selected === 'RESTORE_PREVIOUS_PHASE' && (
+              <RestorePreviousPhaseForm
+                phases={phases ?? []}
+                currentPhaseId={currentPhaseId}
+                onSubmit={(d, impactScope) => { onApply({ type: selected, reason, detail: d, impactScope }); resetForm() }}
               />
             )}
             {selected === 'EMERGENCY_STOP' && (
@@ -191,22 +230,6 @@ export function InterventionPanel({
               >
                 授業を緊急停止する
               </Button>
-            )}
-            {selectedEntry.fields.length > 0 && (
-              <>
-                {selectedEntry.fields.map((field) => (
-                  <TextField
-                    key={field.key}
-                    id={`intervention-detail-${field.key}`}
-                    label={field.label}
-                    value={detail[field.key] ?? ''}
-                    onChange={(e) => setDetail((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                  />
-                ))}
-                <Stack direction="row" spacing={1}>
-                  <Button variant="contained" onClick={handleSubmit} sx={{ minHeight: MIN_TOUCH_TARGET }}>実行</Button>
-                </Stack>
-              </>
             )}
             <Button variant="text" onClick={resetForm} sx={{ minHeight: MIN_TOUCH_TARGET }}>戻る</Button>
           </Stack>

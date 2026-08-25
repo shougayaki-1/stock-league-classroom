@@ -430,6 +430,18 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('renders ParticipantRecoveryPage at /lessons/:runId/recover without going through the student lesson-membership guard', async () => {
+    window.history.pushState({}, '', '/lessons/run-1/recover')
+    render(<App isLessonPlatformV2Enabled getServices={getServices} />)
+    // The recovery page renders immediately — it never subscribes to
+    // lessonRunMembership, so there is no membership guard to wait on or
+    // satisfy here, unlike /waiting above. A fixture with no established
+    // membership for this run must still reach the page successfully.
+    expect(await screen.findByRole('heading', { level: 1, name: '授業に再接続する' })).toBeInTheDocument()
+    expect(membershipListener).toBeUndefined()
+    window.history.pushState({}, '', '/')
+  })
+
   it('automatically navigates from /waiting to /play once public state status becomes RUNNING', async () => {
     window.history.pushState({}, '', '/lessons/run-1/waiting')
     render(<App isLessonPlatformV2Enabled getServices={getServices} />)

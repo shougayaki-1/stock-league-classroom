@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { InterventionPanel } from './InterventionPanel'
+import type { LessonTeamView } from '../../lib/lessonRuns/teams'
+import type { LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
 
 const defaultProps = {
   open: true,
@@ -12,7 +14,10 @@ const defaultProps = {
   informationItems: [] as Array<{ id: string; body: string }>,
   hiddenInformationIds: [] as string[],
   participants: [] as Array<{ id: string; displayName: string }>,
-  teams: [] as Array<{ teamId: string; displayName: string }>,
+  teams: [] as LessonTeamView[],
+  responses: [] as LessonResponseView[],
+  functions: {} as never,
+  lessonRunId: 'run-1',
   onClose: vi.fn(),
   onApply: vi.fn(),
 }
@@ -55,20 +60,167 @@ describe('InterventionPanel', () => {
     expect(onApply).toHaveBeenCalledWith({ type: 'EMERGENCY_STOP', reason: '不審な操作を検知', detail: {} })
   })
 
-  it('collects per-type detail fields for generic interventions like PROXY_CONFIRM and submits them', async () => {
+  it('uses bespoke ProxyConfirmForm for PROXY_CONFIRM and submits detail + impactScope from it (no manual ID entry)', async () => {
     const user = userEvent.setup()
     const onApply = vi.fn()
-    render(<InterventionPanel {...defaultProps} onApply={onApply} />)
+    const responses = [{
+      id: 'response-1', participantId: 'p-1', phaseId: 'phase-market', inputId: 'input-1', status: 'APPROVED' as const,
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      participants={[{ id: 'p-1', displayName: 'やまだ' }]}
+      responses={responses}
+      onApply={onApply}
+    />)
 
     await user.click(screen.getByRole('button', { name: /代理確定/ }))
     await user.type(screen.getByLabelText('理由'), '生徒からの要望')
-    await user.type(screen.getByLabelText('フェーズID'), 'phase-2')
-    await user.type(screen.getByLabelText('入力ID'), 'input-1')
-    await user.type(screen.getByLabelText('対象参加者ID'), 'p-1')
-    await user.click(screen.getByRole('button', { name: '実行' }))
+    expect(screen.queryByLabelText('フェーズID')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('対象参加者ID')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /やまだ/ }))
+    await user.click(screen.getByRole('button', { name: 'この内容で確定する' }))
 
     expect(onApply).toHaveBeenCalledWith({
-      type: 'PROXY_CONFIRM', reason: '生徒からの要望', detail: { phaseId: 'phase-2', inputId: 'input-1', onBehalfOfParticipantId: 'p-1' },
+      type: 'PROXY_CONFIRM',
+      reason: '生徒からの要望',
+      detail: { phaseId: 'phase-market', inputId: 'input-1', onBehalfOfParticipantId: 'p-1' },
+      impactScope: { level: 'PARTICIPANT', participantId: 'p-1' },
+    })
+  })
+
+  it('uses bespoke ChangeRepresentativeForm for CHANGE_REPRESENTATIVE and submits detail + TEAM impactScope (no manual ID entry)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    const teams = [{
+      id: 'team-1', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1', 'p-2'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE' as const,
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      teams={teams}
+      participants={[{ id: 'p-1', displayName: 'たなか' }, { id: 'p-2', displayName: 'すずき' }]}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /代表者変更/ }))
+    await user.type(screen.getByLabelText('理由'), 'チームの都合により');
+    expect(screen.queryByLabelText('チームID')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('新代表者の参加者ID')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Aチーム' }))
+    await user.click(screen.getByRole('button', { name: 'すずき' }))
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CHANGE_REPRESENTATIVE',
+      reason: 'チームの都合により',
+      detail: { teamId: 'team-1', newRepresentativeParticipantId: 'p-2' },
+      impactScope: { level: 'TEAM', teamId: 'team-1' },
+    })
+  })
+
+  it('never renders a raw-ID text input for any intervention type, for any role', async () => {
+    const idLabelPattern = /ID$|認証UID|入力ID|フェーズID|参加者ID|チームID/
+    const teams: LessonTeamView[] = [{
+      id: 'team-1', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1', 'p-2'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE',
+    }]
+    const responses: LessonResponseView[] = [{
+      id: 'response-1', participantId: 'p-1', phaseId: 'phase-market', inputId: 'input-1', status: 'APPROVED',
+    }]
+    const participants = [{ id: 'p-1', displayName: 'たなか' }, { id: 'p-2', displayName: 'すずき' }]
+
+    for (const role of ['PRIMARY', 'ASSISTANT', 'VIEWER'] as const) {
+      const user = userEvent.setup()
+      const { unmount } = render(
+        <InterventionPanel {...defaultProps} role={role} teams={teams} responses={responses} participants={participants} />,
+      )
+
+      const availableButtons = screen.queryAllByRole('button')
+      // Click through every visible top-level intervention entry point and assert no ID-labeled input appears.
+      const entryLabels = availableButtons
+        .map((btn) => btn.textContent ?? '')
+        .filter((text) => text.length > 0)
+
+      for (const label of entryLabels) {
+        const button = screen.queryByRole('button', { name: label })
+        if (!button) continue
+        await user.click(button)
+        for (const input of screen.queryAllByRole('textbox')) {
+          const accessibleLabel = input.getAttribute('aria-label')
+            ?? document.querySelector(`label[for="${input.id}"]`)?.textContent
+            ?? ''
+          expect(accessibleLabel).not.toMatch(idLabelPattern)
+        }
+        // Return to the top-level list for the next entry, if a back button exists.
+        const backButton = screen.queryByRole('button', { name: '戻る' })
+        if (backButton) await user.click(backButton)
+      }
+
+      unmount()
+    }
+  })
+
+  it('uses bespoke CorrectStateForm for CORRECT_STATE with a participant target and submits PARTICIPANT impactScope (not LESSON)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    render(<InterventionPanel
+      {...defaultProps}
+      participants={[{ id: 'participant-correct-sentinel', displayName: 'やまだ' }]}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /名前を直す/ }))
+    await user.type(screen.getByLabelText('理由'), '打ち間違い')
+    await user.click(screen.getByRole('button', { name: '生徒の表示名' }))
+    await user.click(screen.getByRole('button', { name: 'やまだ' }))
+    const field = screen.getByLabelText('新しい名前')
+    await user.clear(field)
+    await user.type(field, 'やまもと')
+    await user.click(screen.getByRole('button', { name: 'この名前に直す' }))
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('participant-correct-sentinel')
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CORRECT_STATE',
+      reason: '打ち間違い',
+      detail: { target: 'PARTICIPANT_DISPLAY_NAME', targetId: 'participant-correct-sentinel', displayName: 'やまもと' },
+      impactScope: { level: 'PARTICIPANT', participantId: 'participant-correct-sentinel' },
+    })
+  })
+
+  it('uses bespoke CorrectStateForm for CORRECT_STATE with a team target and submits TEAM impactScope (not LESSON)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    const teams: LessonTeamView[] = [{
+      id: 'team-correct-sentinel', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE',
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      teams={teams}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /名前を直す/ }))
+    await user.type(screen.getByLabelText('理由'), '打ち間違い')
+    await user.click(screen.getByRole('button', { name: 'チーム名' }))
+    await user.click(screen.getByRole('button', { name: 'Aチーム' }))
+    const field = screen.getByLabelText('新しい名前')
+    await user.clear(field)
+    await user.type(field, 'Bチーム')
+    await user.click(screen.getByRole('button', { name: 'この名前に直す' }))
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('team-correct-sentinel')
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CORRECT_STATE',
+      reason: '打ち間違い',
+      detail: { target: 'TEAM_DISPLAY_NAME', targetId: 'team-correct-sentinel', displayName: 'Bチーム' },
+      impactScope: { level: 'TEAM', teamId: 'team-correct-sentinel' },
     })
   })
 
