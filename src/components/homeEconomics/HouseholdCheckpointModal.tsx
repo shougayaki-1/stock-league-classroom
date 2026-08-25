@@ -142,7 +142,7 @@ export const HouseholdCheckpointModal: React.FC<HouseholdCheckpointModalProps> =
                       <Stack direction="row" spacing={1.5}>
                         <Typography variant="caption" color="text.secondary">作成: {new Date(cp.createdAtServerMillis).toLocaleString('ja-JP')}</Typography>
                         {cp.expectedRoundIndex !== null && <Typography variant="caption" color="text.secondary">対象ラウンド: 第{cp.expectedRoundIndex + 1}R</Typography>}
-                        {cp.restoreGeneration > 0 && <Typography variant="caption" color="text.secondary">第{cp.restoreGeneration}世代</Typography>}
+                        {cp.restoreGeneration > 0 && <Typography variant="caption" color="text.secondary">復元済み</Typography>}
                       </Stack>
                       {incompatible && (
                         <Box component="span" sx={{ display: 'inline-block', fontSize: '0.75rem', fontWeight: 600, color: 'error.dark', bgcolor: 'error.light', border: 1, borderColor: 'error.main', borderRadius: 1, px: 0.75, py: 0.25 }}>

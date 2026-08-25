@@ -114,6 +114,22 @@ describe('HouseholdTeacherDashboard (Common — single-household-per-team)', () 
     expect(screen.getByText('目標達成が1回延期されています')).toBeInTheDocument()
   })
 
+  it('never exposes the internal restoreGeneration counter as UI copy — shows fixed 復元済み copy instead', () => {
+    const dashboard = makeDashboard({ restoreGeneration: 4 })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+      />,
+    )
+
+    expect(screen.getByText('復元済み')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/第\s*4\s*世代/)
+    expect(document.body.textContent).not.toContain('世代')
+  })
+
   it('opens bulk settlement modal when clicking 一括決算', () => {
     const dashboard = makeDashboard()
     render(

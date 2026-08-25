@@ -299,7 +299,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               </Typography>
               {dashboard.restoreGeneration > 0 && (
                 <Box component="span" sx={{ px: 1.25, py: 0.25, borderRadius: 4, fontSize: '0.75rem', fontWeight: 600, bgcolor: '#f3e8fd', color: '#6a1b9a' }}>
-                  復元 第{dashboard.restoreGeneration}世代
+                  復元済み
                 </Box>
               )}
             </Stack>
