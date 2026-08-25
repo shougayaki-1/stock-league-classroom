@@ -76,3 +76,75 @@ export const formatInvoiceStatus = (value: string | null | undefined): string =>
   safeLabel(value, INVOICE_STATUS_LABELS, '請求状態を確認できません')
 export const formatAnnualArchiveJobStatus = (value: string | null | undefined): string =>
   safeLabel(value, ANNUAL_ARCHIVE_JOB_STATUS_LABELS, '処理状態を確認できません')
+
+export const ORG_VERIFICATION_STATUS_LABELS = {
+  PENDING: '確認中',
+  VERIFIED: '確認済み',
+  REJECTED: '確認できませんでした',
+} as const satisfies Record<string, string>
+
+export const PLAN_ID_LABELS = {
+  FREE: '無料プラン',
+  SCHOOL: '学校プラン',
+  PARENT_ORG: '法人プラン',
+} as const satisfies Record<string, string>
+
+export const TEMPLATE_MOVE_STATUS_LABELS = {
+  PENDING: '移動待ち',
+  RUNNING: '移動処理中',
+  FAILED: '移動処理に失敗しました',
+  COMPLETED: '移動完了',
+} as const satisfies Record<string, string>
+
+export const TEMPLATE_MOVE_PHASE_LABELS = {
+  STAGING_MATERIALS: '教材準備中',
+  MIGRATING_VERSIONS: 'バージョン移行中',
+  COMMITTING_OWNERSHIP: '所有権切替中',
+  FINALIZING_MATERIALS: '教材の最終処理中',
+  FINALIZING_FIRESTORE: 'データの最終処理中',
+} as const satisfies Record<string, string>
+
+export const AUDIT_ACTION_LABELS = {
+  EXPORT_ORG_STUDENT_DATA: '生徒データのエクスポート',
+  SEARCH_ORG_STUDENT_DATA: '生徒データの検索',
+  REQUEST_MOVE_LESSON_TEMPLATE: '教材の移動申請',
+  MOVE_LESSON_TEMPLATE_OUT: '教材の移動（送出）',
+  MOVE_LESSON_TEMPLATE_IN: '教材の移動（受入）',
+  SCHEDULE_ANNUAL_ARCHIVE: '年次アーカイブの予約',
+  CANCEL_ANNUAL_ARCHIVE: '年次アーカイブの取消',
+  CANCEL_ANNUAL_ARCHIVE_COMPLETED: '年次アーカイブ取消の完了',
+  COMPLETE_ANNUAL_ARCHIVE: '年次アーカイブの完了',
+  FAIL_ANNUAL_ARCHIVE: '年次アーカイブの失敗',
+} as const satisfies Record<string, string>
+
+export const AUDIT_RESULT_LABELS = {
+  SUCCESS: '成功',
+  FAILURE: '失敗',
+} as const satisfies Record<string, string>
+
+export const formatOrganizationVerificationStatus = (value: string | null | undefined): string =>
+  safeLabel(value, ORG_VERIFICATION_STATUS_LABELS, '確認状態を確認できません')
+export const formatPlanId = (value: string | null | undefined): string =>
+  safeLabel(value, PLAN_ID_LABELS, 'プランを確認できません')
+export const formatTemplateMoveStatus = (value: string | null | undefined): string =>
+  safeLabel(value, TEMPLATE_MOVE_STATUS_LABELS, '移動状態を確認できません')
+export const formatTemplateMovePhase = (value: string | null | undefined): string =>
+  safeLabel(value, TEMPLATE_MOVE_PHASE_LABELS, '処理内容を確認できません')
+export const formatAuditAction = (value: string | null | undefined): string =>
+  safeLabel(value, AUDIT_ACTION_LABELS, '操作内容を確認できません')
+export const formatAuditResult = (value: string | null | undefined): string =>
+  safeLabel(value, AUDIT_RESULT_LABELS, '結果を確認できません')
+
+export type OrganizationChoiceNameInput = {
+  orgId: string
+  name: string | null
+  type: 'personal' | 'school' | 'parentOrg'
+  role: 'owner' | 'admin' | 'teacher'
+}
+
+export const formatOrganizationChoiceName = (choice: OrganizationChoiceNameInput): string => {
+  const trimmed = choice.name?.trim()
+  if (trimmed) return trimmed
+  if (choice.type === 'personal') return '個人用'
+  return '組織名を確認できません'
+}
