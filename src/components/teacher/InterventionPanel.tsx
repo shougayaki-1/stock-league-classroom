@@ -14,6 +14,7 @@ import { CorrectStateForm } from './interventionForms/CorrectStateForm'
 import { ProxyConfirmForm } from './interventionForms/ProxyConfirmForm'
 import { ChangeRepresentativeForm } from './interventionForms/ChangeRepresentativeForm'
 import { ReconnectParticipantForm } from './interventionForms/ReconnectParticipantForm'
+import { RestorePreviousPhaseForm } from './interventionForms/RestorePreviousPhaseForm'
 
 interface DetailFieldSpec {
   key: string
@@ -63,7 +64,7 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
   },
   RESTORE_PREVIOUS_PHASE: {
     label: '前フェーズへ復元', description: '直前のフェーズへ戻します',
-    fields: [{ key: 'targetPhaseId', label: '戻し先フェーズID' }],
+    fields: [],
   },
   EMERGENCY_STOP: {
     label: '緊急停止', description: '授業を直ちに安全停止します',
@@ -224,6 +225,13 @@ export function InterventionPanel({
                 functions={functions}
                 lessonRunId={lessonRunId}
                 participants={participants}
+              />
+            )}
+            {selected === 'RESTORE_PREVIOUS_PHASE' && (
+              <RestorePreviousPhaseForm
+                phases={phases ?? []}
+                currentPhaseId={currentPhaseId}
+                onSubmit={(d, impactScope) => { onApply({ type: selected, reason, detail: d, impactScope }); resetForm() }}
               />
             )}
             {selected === 'EMERGENCY_STOP' && (

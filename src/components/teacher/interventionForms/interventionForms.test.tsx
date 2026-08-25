@@ -8,6 +8,7 @@ import { CorrectStateForm } from './CorrectStateForm'
 import { ProxyConfirmForm } from './ProxyConfirmForm'
 import { ChangeRepresentativeForm } from './ChangeRepresentativeForm'
 import { ReconnectParticipantForm } from './ReconnectParticipantForm'
+import { RestorePreviousPhaseForm } from './RestorePreviousPhaseForm'
 import { issueRecoveryCode } from '../../../lib/lessonRuns/recovery'
 
 vi.mock('../../../lib/lessonRuns/recovery', () => ({
@@ -344,5 +345,62 @@ describe('ReconnectParticipantForm', () => {
     const body = document.body.textContent ?? ''
     expect(body).not.toContain('raw internal leak detail')
     expect(body).not.toContain('participant-secret-id-2')
+  })
+})
+
+describe('RestorePreviousPhaseForm', () => {
+  const phases = [
+    { id: 'phase-intro-sentinel', displayConfig: { label: '導入' } },
+    { id: 'phase-market-sentinel', displayConfig: { label: '市場' } },
+    { id: 'phase-discussion-sentinel', displayConfig: { label: '討論' } },
+    { id: 'phase-reflection-sentinel', displayConfig: { label: '振り返り' } },
+  ]
+
+  it('現在フェーズより前のフェーズだけを候補にし、targetPhaseId とLESSONスコープで送信する。フェーズIDはDOMに出さない', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <RestorePreviousPhaseForm
+        phases={phases}
+        currentPhaseId="phase-discussion-sentinel"
+        onSubmit={onSubmit}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '導入' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '市場' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '討論' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '振り返り' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '市場' }))
+
+    expect(onSubmit).toHaveBeenCalledWith({ targetPhaseId: 'phase-market-sentinel' }, { level: 'LESSON' })
+
+    const body = document.body.textContent ?? ''
+    for (const sentinel of ['phase-intro-sentinel', 'phase-market-sentinel', 'phase-discussion-sentinel', 'phase-reflection-sentinel']) {
+      expect(body).not.toContain(sentinel)
+    }
+  })
+
+  it('最初のフェーズでは戻せる候補がないことを示す', () => {
+    render(
+      <RestorePreviousPhaseForm
+        phases={phases}
+        currentPhaseId="phase-intro-sentinel"
+        onSubmit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('戻せる前のフェーズがありません。')).toBeInTheDocument()
+  })
+
+  it('ラベルの無いフェーズは確認できないラベルを表示する', () => {
+    const onSubmit = vi.fn()
+    render(
+      <RestorePreviousPhaseForm
+        phases={[{ id: 'phase-nolabel' }, { id: 'phase-current' }]}
+        currentPhaseId="phase-current"
+        onSubmit={onSubmit}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'フェーズ名を確認できません' })).toBeInTheDocument()
   })
 })

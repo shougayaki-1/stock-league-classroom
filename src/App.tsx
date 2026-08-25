@@ -289,6 +289,7 @@ function TeacherControlRoute({ services }: { services: FirebaseServices }) {
     functions={services.functions}
     firestore={services.firestore}
     database={services.database}
+    phases={access.phases}
     generatingResults={generatingResults}
     onGenerateResults={async (currentPhaseId) => {
       if (!runId || !currentPhaseId) return

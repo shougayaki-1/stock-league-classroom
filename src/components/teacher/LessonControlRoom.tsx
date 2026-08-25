@@ -19,6 +19,7 @@ import { ClassroomMessageDialog } from './ClassroomMessageDialog'
 import { ClassroomDisplayUrlDialog } from './ClassroomDisplayUrlDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 import { formatCurrentPhaseLabel, formatLessonDisplayMode } from '../../lib/presentation/lessonLabels'
+import type { PhaseWithDisplayConfig } from '../../lib/lessonRuns/phaseLabel'
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([
   'TEMPORARILY_DISCONNECTED',
@@ -64,6 +65,14 @@ export interface LessonControlRoomProps {
   database: Database
   /** 名簿上の想定参加者数。分かっている場合のみ ParticipantMonitor の「未参加」件数を計算する。 */
   expectedParticipantCount?: number
+  /**
+   * run自身のフェーズグラフ（`templateSnapshot.phases`、宣言順）。
+   * InterventionPanel の ProxyConfirmForm（フェーズ名表示用）と
+   * RestorePreviousPhaseForm（前フェーズ候補の絞り込み用）にそのまま渡す。
+   * 呼び出し側（TeacherControlRoute）がテンプレートアクセス時に既に
+   * 持っている値で、この画面自身はフェーズグラフを購読していない。
+   */
+  phases?: PhaseWithDisplayConfig[]
   /**
    * Invoked when the primary CTA is "授業を開始" (status DRAFT/READY/WAITING).
    * The actual `transitionPhase` call (Task 5) is left to the caller because
@@ -130,6 +139,7 @@ export function LessonControlRoom({
   firestore,
   database,
   expectedParticipantCount,
+  phases,
   onStartLesson,
   onAdvancePhase,
   startLessonLabel = '授業を開始',
@@ -341,6 +351,7 @@ export function LessonControlRoom({
         participants={participants.map((p) => ({ id: p.id, displayName: p.displayName, status: p.status }))}
         teams={teams}
         responses={responses}
+        phases={phases}
         functions={functions}
         lessonRunId={lessonRunId}
         onApply={handleApplyIntervention}
