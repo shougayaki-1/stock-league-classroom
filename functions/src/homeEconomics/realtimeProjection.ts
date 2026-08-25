@@ -30,6 +30,15 @@ export interface HouseholdStateTeamView {
   visibleConcepts: ConceptCategory[]
   eventDisclosures: EventDisclosureView[]
   shortfallOptions: ShortfallOption[]
+  /**
+   * Presentation-boundary semantic data (Project C) — the client formats
+   * Japanese copy from these fields via `householdLabels.ts`. Never a
+   * server-composed display string.
+   */
+  profileSummary: {
+    lifeStage: string
+    family: string
+  }
 }
 
 /**
@@ -42,12 +51,17 @@ export interface HouseholdStateTeamView {
  * (same discipline as Phase C's `toMyOrdersView`, Task 20).
  */
 export const toHouseholdStateTeamView = (
+  profile: HouseholdProfile,
   household: HouseholdState,
   visibleConcepts: ConceptCategory[],
   eventDisclosures: EventDisclosureView[],
   shortfallOptions: ShortfallOption[],
 ): HouseholdStateTeamView => ({
   householdId: household.householdId,
+  profileSummary: {
+    lifeStage: profile.lifeStage,
+    family: profile.family,
+  },
   isFictional: true,
   cashYen: household.cashYen,
   assetHoldingsYen: { ...household.assetHoldingsYen },
@@ -123,7 +137,7 @@ export const toAdvancedHouseholdTeamEntryView = (
 ): AdvancedHouseholdTeamEntryView => ({
   householdId: household.householdId,
   profile: toHouseholdProfilePublicView(profile),
-  state: toHouseholdStateTeamView(household, visibleConcepts, eventDisclosures, shortfallOptions),
+  state: toHouseholdStateTeamView(profile, household, visibleConcepts, eventDisclosures, shortfallOptions),
   submittedRoundIndex,
 })
 

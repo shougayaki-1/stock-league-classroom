@@ -471,7 +471,7 @@ export const publishRealtimeStateWithAdminSdk: ProcessRoundDeps['publishRealtime
 
   // ---- lessonRunTeamState: branch on course format (see this function's doc comment) ----
   if (homeEconomics.courseFormat === 'COMMON_CONDITIONS') {
-    const householdView = toHouseholdStateTeamView(newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
+    const householdView = toHouseholdStateTeamView(profile, newHousehold, visibleConcepts, eventDisclosures, shortfallOptions)
     await rtdb.ref(`lessonRunTeamState/${input.lessonRunId}/${newHousehold.teamId}`).update({
       orgId: input.orgId,
       household: householdView,

@@ -106,4 +106,28 @@ describe('HouseholdCheckpointModal', () => {
     fireEvent.click(restoreButtons[0])
     expect(screen.queryByText('チェックポイント復元の確認')).not.toBeInTheDocument()
   })
+
+  it('never exposes the internal restoreGeneration counter as UI copy — a restored checkpoint shows fixed 復元済み copy instead', () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const onRestore = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    const checkpoints: HouseholdCheckpointManifest[] = [
+      { ...makeManifest('cp-a', '復元後のチェックポイント'), restoreGeneration: 3 },
+    ]
+
+    render(
+      <HouseholdCheckpointModal
+        isOpen={true}
+        onClose={onClose}
+        checkpoints={checkpoints}
+        onSaveManualCheckpoint={onSave}
+        onRestoreCheckpoint={onRestore}
+        isSubmitting={false}
+      />,
+    )
+
+    expect(screen.getByText('復元済み')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/第\s*3\s*世代/)
+    expect(document.body.textContent).not.toContain('世代')
+  })
 })

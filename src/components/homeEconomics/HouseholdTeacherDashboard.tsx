@@ -13,6 +13,7 @@ import type {
 import { HouseholdSettlementConfirmationModal } from './HouseholdSettlementConfirmationModal'
 import { HouseholdCheckpointModal } from './HouseholdCheckpointModal'
 import { HouseholdAssignmentPanel } from './HouseholdAssignmentPanel'
+import { formatHouseholdProfileLabel } from '../../lib/presentation/householdLabels'
 
 export interface HouseholdTeacherDashboardProps {
   dashboard: HouseholdTeacherDashboardType
@@ -82,12 +83,16 @@ const HouseholdSummaryRow: React.FC<{
       }}
     >
       <Box>
-        {/* Important I3 fix: `profileLabel` (lifeStage・family) instead of
+        {/* Important I3 fix + Project C: a translated lifeStage・family
+            label, built client-side from `row.profileSummary` (semantic
+            data, not a server-composed display string) — instead of
             bare `lifeStage` — a MULTI team's several household rows are
             otherwise only distinguishable by the opaque runtime
             householdId, since MULTI_PERSON_PER_TEAM can repeat the same
             lifeStage across its full profile set. */}
-        <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>{row.profileLabel}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
+          {formatHouseholdProfileLabel(row.profileSummary?.lifeStage, row.profileSummary?.family)}
+        </Typography>
         <Typography variant="caption" color="text.disabled">第{row.roundIndex + 1}R</Typography>
       </Box>
       <Box>
@@ -294,7 +299,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
               </Typography>
               {dashboard.restoreGeneration > 0 && (
                 <Box component="span" sx={{ px: 1.25, py: 0.25, borderRadius: 4, fontSize: '0.75rem', fontWeight: 600, bgcolor: '#f3e8fd', color: '#6a1b9a' }}>
-                  復元 第{dashboard.restoreGeneration}世代
+                  復元済み
                 </Box>
               )}
             </Stack>

@@ -177,7 +177,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
     // ---- Realtime team-broadcast projection (Task 15) never leaks internal fields ----
     const visibleConcepts = resolveVisibleConcepts(template.goalPackage)
     const eventDisclosures = buildEventDisclosureView(template.lifeEvents, round3.occurredEventIds, round3.newHouseholdState.roundIndex)
-    const teamView = toHouseholdStateTeamView(round3.newHouseholdState, visibleConcepts, eventDisclosures, round3.shortfallOptionsConsidered)
+    const teamView = toHouseholdStateTeamView(profile, round3.newHouseholdState, visibleConcepts, eventDisclosures, round3.shortfallOptionsConsidered)
     const serializedView = JSON.stringify(teamView)
     for (const forbidden of ['internalRiskFactors', 'internalClaimProbability', 'eventProbabilityOverrides']) {
       expect(serializedView).not.toContain(forbidden)
@@ -347,6 +347,7 @@ describe('Task 17: household lifecycle acceptance (spec §27.4)', () => {
 
     // 8 & 9. Safe team views restore; restoreGeneration is recorded on HouseholdState
     const restoredTeamView = toHouseholdStateTeamView(
+      profile,
       restoredHouseholds[0],
       resolveVisibleConcepts(template.goalPackage),
       [],
@@ -582,6 +583,7 @@ describe('Task 14: advanced household course formats (ROLE_VARIANT/STAGE_SPLIT/M
       kind: 'MANUAL', label: 'ラウンド1 手動チェックポイント', expectedRoundIndex: 1,
       actorUid: 'teacher-1', idempotencyKey: 'cp-v3-1', nowMillis: 3000,
       visibleConcepts: resolveVisibleConcepts(template.goalPackage),
+      profiles,
     })
     expect(checkpointResult.created).toBe(true)
     const checkpointDoc = docs.get(`lessonRuns/${lessonRunId}/checkpoints/${checkpointResult.checkpointId}`) as { snapshot: HouseholdCheckpointSnapshotV3 }

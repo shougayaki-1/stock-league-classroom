@@ -37,6 +37,8 @@ export interface HouseholdAssignmentView {
     entries: Array<{
       householdId: string
       profileId: string
+      /** Presentation-boundary semantic data (Project C) — `null` when the entry's `profileId` cannot be resolved from `profiles`. Never a server-composed display string. */
+      profileSummary: { lifeStage: string; family: string } | null
       displayOrder: number
       assignmentSource: 'AUTO' | 'MANUAL'
     }>
@@ -151,17 +153,24 @@ const preserveValidManualEntries = (
 const buildTeamsView = (
   entries: HouseholdAssignmentEntry[],
   teamDisplayNames: Record<string, string>,
+  profiles: HouseholdProfile[],
 ): HouseholdAssignmentView['teams'] => {
+  const profileById = new Map(profiles.map((profile) => [profile.householdId, profile] as const))
   const teamsMap = new Map<string, HouseholdAssignmentView['teams'][number]>()
   for (const entry of entries) {
     let team = teamsMap.get(entry.teamId)
     if (!team) {
-      team = { teamId: entry.teamId, teamDisplayName: teamDisplayNames[entry.teamId] ?? entry.teamId, entries: [] }
+      team = { teamId: entry.teamId, teamDisplayName: teamDisplayNames[entry.teamId] ?? 'チーム名を確認できません', entries: [] }
       teamsMap.set(entry.teamId, team)
     }
+    const profile = profileById.get(entry.profileId)
+    const profileSummary = profile
+      ? { lifeStage: profile.lifeStage, family: profile.family }
+      : null
     team.entries.push({
       householdId: entry.householdId,
       profileId: entry.profileId,
+      profileSummary,
       displayOrder: entry.displayOrder,
       assignmentSource: entry.assignmentSource,
     })
@@ -209,7 +218,7 @@ export const buildHouseholdAssignmentView = (input: {
     validationStatus: validation.status,
     assignmentRevision: input.config.assignmentRevision,
     warnings: validation.warnings,
-    teams: buildTeamsView(input.entries, input.teamDisplayNames),
+    teams: buildTeamsView(input.entries, input.teamDisplayNames, input.profiles),
   }
 }
 
@@ -479,7 +488,7 @@ export const getHouseholdAssignmentView = async (
       validationStatus: 'READY',
       assignmentRevision: null,
       warnings: [],
-      teams: buildTeamsView(entries, teamDisplayNames),
+      teams: buildTeamsView(entries, teamDisplayNames, input.commonProfile ? [input.commonProfile] : []),
     }
   }
 

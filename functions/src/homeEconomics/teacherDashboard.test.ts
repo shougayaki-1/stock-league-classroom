@@ -84,10 +84,11 @@ describe('normalizeTeamDisplayName', () => {
     expect(normalizeTeamDisplayName('team-1', { displayName: ' チームA ' })).toBe('チームA')
   })
 
-  it('falls back to teamId when displayName is missing, empty or non-string', () => {
-    expect(normalizeTeamDisplayName('team-1', {})).toBe('team-1')
-    expect(normalizeTeamDisplayName('team-1', { displayName: '   ' })).toBe('team-1')
-    expect(normalizeTeamDisplayName('team-1', { displayName: 123 })).toBe('team-1')
+  it('fails closed to a generic Japanese label, never the raw teamId, when displayName is missing, empty or non-string', () => {
+    expect(normalizeTeamDisplayName('team-secret-id', {})).toBe('チーム名を確認できません')
+    expect(normalizeTeamDisplayName('team-secret-id', {})).not.toContain('team-secret-id')
+    expect(normalizeTeamDisplayName('team-1', { displayName: '   ' })).toBe('チーム名を確認できません')
+    expect(normalizeTeamDisplayName('team-1', { displayName: 123 })).toBe('チーム名を確認できません')
   })
 })
 
@@ -184,10 +185,11 @@ describe('buildHouseholdTeacherRow', () => {
    * `lifeStage` or the opaque runtime `householdId` — neither disambiguates
    * two households sharing a `lifeStage` (possible under
    * MULTI_PERSON_PER_TEAM, which puts every authored profile on the same
-   * team). `profileLabel` pairs `lifeStage` with the authored profile's
-   * `family` text, resolved from the template snapshot by `state.profileId`.
+   * team). Project C: the server now projects `profileSummary` (semantic
+   * `lifeStage`/`family` data, not a composed display string) — the client
+   * builds `lifeStage・family` copy via `formatHouseholdProfileLabel`.
    */
-  it('projects profileLabel as lifeStage・family, resolved from content.households by state.profileId', () => {
+  it('projects profileSummary (lifeStage/family), resolved from content.households by state.profileId — never a server-composed display string', () => {
     const multiState: HouseholdState = { ...state, householdId: 'hh-runtime-1', profileId: 'profile-1' }
     const row = buildHouseholdTeacherRow({
       teamId: 'team-1',
@@ -200,12 +202,15 @@ describe('buildHouseholdTeacherRow', () => {
       restoreGeneration: 0,
     })
 
-    expect(row.profileLabel).toBe('INDEPENDENT・単身')
-    // Never the opaque runtime householdId.
-    expect(row.profileLabel).not.toContain('hh-runtime-1')
+    expect(row.profileSummary).toEqual({
+      lifeStage: 'INDEPENDENT',
+      family: '単身',
+    })
+    // profileSummary itself never carries the opaque runtime householdId.
+    expect(JSON.stringify(row.profileSummary)).not.toContain('hh-runtime-1')
   })
 
-  it('falls back to lifeStage alone when the profile cannot be resolved from content.households (defensive)', () => {
+  it('reports profileSummary as exactly null when the profile cannot be resolved from content.households (defensive)', () => {
     const orphanState: HouseholdState = { ...state, profileId: 'no-such-profile' }
     const row = buildHouseholdTeacherRow({
       teamId: 'team-1',
@@ -218,10 +223,10 @@ describe('buildHouseholdTeacherRow', () => {
       restoreGeneration: 0,
     })
 
-    expect(row.profileLabel).toBe('INDEPENDENT')
+    expect(row.profileSummary).toBeNull()
   })
 
-  it('reports BULK_SETTLEMENT_FAILED, keyed by the row itself (bulkItemStatus is resolved by RUNTIME householdId by the caller)', () => {
+  it('reports BULK_SETTLEMENT_FAILED with fixed Japanese copy, never forwarding bulkItemStatus.errorMessage', () => {
     const row = buildHouseholdTeacherRow({
       teamId: 'team-1',
       teamDisplayName: 'チーム1',
@@ -229,12 +234,33 @@ describe('buildHouseholdTeacherRow', () => {
       content,
       decision: null,
       lastSettlementEventPayload: null,
-      bulkItemStatus: { status: 'FAILED', errorMessage: '決算に失敗しました' },
+      bulkItemStatus: { status: 'FAILED', errorCode: 'INTERNAL_FAILURE', errorMessage: 'backend-secret-message' },
       restoreGeneration: 0,
     })
     const warningCodes = row.warnings.map((w) => w.code)
     expect(warningCodes).toContain('BULK_SETTLEMENT_FAILED')
-    expect(row.warnings.find((w) => w.code === 'BULK_SETTLEMENT_FAILED')?.message).toBe('決算に失敗しました')
+    const message = row.warnings.find((w) => w.code === 'BULK_SETTLEMENT_FAILED')?.message
+    expect(message).toBe('一括決算で処理できない家庭があります。再実行してください。')
+    expect(message).not.toContain('backend-secret-message')
+  })
+
+  it('reports RESTORED_GENERATION with fixed Japanese copy, never forwarding the raw generation number', () => {
+    const row = buildHouseholdTeacherRow({
+      teamId: 'team-1',
+      teamDisplayName: 'チーム1',
+      state,
+      content,
+      decision: null,
+      lastSettlementEventPayload: null,
+      bulkItemStatus: null,
+      restoreGeneration: 4,
+    })
+    const warningCodes = row.warnings.map((w) => w.code)
+    expect(warningCodes).toContain('RESTORED_GENERATION')
+    const message = row.warnings.find((w) => w.code === 'RESTORED_GENERATION')?.message
+    expect(message).toBe('チェックポイントから復元済みです')
+    expect(message).not.toContain('4')
+    expect(message).not.toContain('世代')
   })
 })
 
@@ -498,7 +524,9 @@ describe('buildHouseholdTeacherDashboard', () => {
     const [team] = dashboard.teams
     const rt1 = team.households.find((h) => h.householdId === 'rt-1')!
     const rt2 = team.households.find((h) => h.householdId === 'rt-2')!
-    expect(rt1.warnings.find((w) => w.code === 'BULK_SETTLEMENT_FAILED')?.message).toBe('rt-1 のエラー')
+    expect(rt1.warnings.find((w) => w.code === 'BULK_SETTLEMENT_FAILED')?.message)
+      .toBe('一括決算で処理できない家庭があります。再実行してください。')
+    expect(JSON.stringify(rt1.warnings)).not.toContain('rt-1 のエラー')
     expect(rt2.warnings.find((w) => w.code === 'BULK_SETTLEMENT_FAILED')).toBeUndefined()
   })
 })

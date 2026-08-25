@@ -11,6 +11,7 @@ export interface HouseholdTeacherWarning {
 export interface HouseholdAssignmentEntryView {
   householdId: string
   profileId: string
+  profileSummary: { lifeStage: string; family: string } | null
   displayOrder: number
   assignmentSource: 'AUTO' | 'MANUAL'
 }
@@ -40,14 +41,14 @@ export interface HouseholdTeacherRow {
   teamDisplayName: string
   lifeStage: string
   /**
-   * Important I3 fix — a human-readable label (`${lifeStage}・${family}`)
-   * for this household, distinct from the opaque runtime `householdId`
-   * above. Server-side counterpart:
+   * Project C: presentation-boundary semantic data — format via
+   * `src/lib/presentation/householdLabels.ts`'s `formatHouseholdProfileLabel`,
+   * never a server-composed display string. Server-side counterpart:
    * `functions/src/homeEconomics/teacherDashboard.ts`'s `HouseholdTeacherRow`
    * (hand-synced, same functions/src ↔ src boundary this file's sibling
    * types already document elsewhere).
    */
-  profileLabel: string
+  profileSummary: { lifeStage: string; family: string } | null
   roundIndex: number
   submittedForRoundIndex: boolean
   submittedAtServerMillis: number | null

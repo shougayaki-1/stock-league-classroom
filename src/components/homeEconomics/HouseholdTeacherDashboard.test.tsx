@@ -13,7 +13,7 @@ const makeHousehold = (overrides: Partial<HouseholdTeacherRow> = {}): HouseholdT
   teamId: 'team-a',
   teamDisplayName: 'チーム A',
   lifeStage: 'INDEPENDENT',
-  profileLabel: 'INDEPENDENT・単身',
+  profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' },
   roundIndex: 1,
   submittedForRoundIndex: true,
   submittedAtServerMillis: 1000,
@@ -112,6 +112,46 @@ describe('HouseholdTeacherDashboard (Common — single-household-per-team)', () 
     expect(screen.getByText('チーム B')).toBeInTheDocument()
     expect(screen.getByText('現在のラウンドの意思決定が未提出です')).toBeInTheDocument()
     expect(screen.getByText('目標達成が1回延期されています')).toBeInTheDocument()
+  })
+
+  it('never exposes the internal restoreGeneration counter as UI copy — shows fixed 復元済み copy instead', () => {
+    const dashboard = makeDashboard({ restoreGeneration: 4 })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+      />,
+    )
+
+    expect(screen.getByText('復元済み')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/第\s*4\s*世代/)
+    expect(document.body.textContent).not.toContain('世代')
+  })
+
+  it('renders the server-facing RESTORED_GENERATION household warning with fixed recovery copy, never the raw generation number', () => {
+    const restoredHousehold = makeHousehold({
+      warnings: [
+        { severity: 'INFO', code: 'RESTORED_GENERATION', message: 'チェックポイントから復元済みです' },
+      ],
+    })
+    const dashboard = makeDashboard({
+      restoreGeneration: 4,
+      teams: [singleHouseholdTeam(restoredHousehold)],
+    })
+
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+      />,
+    )
+
+    expect(screen.getAllByText(/復元済み/).length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toContain('第4世代')
+    expect(document.body.textContent).not.toContain('世代')
   })
 
   it('opens bulk settlement modal when clicking 一括決算', () => {
@@ -234,12 +274,12 @@ describe('HouseholdTeacherDashboard (Common — single-household-per-team)', () 
 
 describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => {
   const multiHouseholdA = makeHousehold({
-    householdId: 'team-multi-h1', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: '独身',
-    profileLabel: '独身・一人暮らし', submittedForRoundIndex: true,
+    householdId: 'team-multi-h1', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: 'INDEPENDENT',
+    profileSummary: { lifeStage: 'INDEPENDENT', family: '一人暮らし' }, submittedForRoundIndex: true,
   })
   const multiHouseholdB = makeHousehold({
-    householdId: 'team-multi-h2', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: '子育て',
-    profileLabel: '子育て・配偶者と子2人', submittedForRoundIndex: false, submittedAtServerMillis: null,
+    householdId: 'team-multi-h2', teamId: 'team-multi', teamDisplayName: 'チーム X', lifeStage: 'CHILD_REARING',
+    profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者と子2人' }, submittedForRoundIndex: false, submittedAtServerMillis: null,
     warnings: [{ severity: 'ACTION_REQUIRED', code: 'UNSUBMITTED_DECISION', message: '子育て世帯の意思決定が未提出です' }],
   })
   const multiTeam: HouseholdTeacherTeamRow = {
@@ -261,8 +301,8 @@ describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => 
     warnings: [],
     teams: [
       { teamId: 'team-multi', teamDisplayName: 'チーム X', entries: [
-        { householdId: 'team-multi-h1', profileId: 'p1', displayOrder: 0, assignmentSource: 'AUTO' },
-        { householdId: 'team-multi-h2', profileId: 'p2', displayOrder: 1, assignmentSource: 'AUTO' },
+        { householdId: 'team-multi-h1', profileId: 'p1', profileSummary: { lifeStage: 'INDEPENDENT', family: '一人暮らし' }, displayOrder: 0, assignmentSource: 'AUTO' },
+        { householdId: 'team-multi-h2', profileId: 'p2', profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者と子2人' }, displayOrder: 1, assignmentSource: 'AUTO' },
       ] },
     ],
   }
@@ -292,10 +332,11 @@ describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => 
    * Important I3 (whole-branch review): a MULTI team's several household
    * rows were previously distinguishable only by `lifeStage` (which
    * MULTI_PERSON_PER_TEAM can repeat across its full profile set) or the
-   * opaque runtime householdId. This proves `profileLabel` (lifeStage・
-   * family) is what actually renders per row.
+   * opaque runtime householdId. This proves the translated lifeStage・
+   * family label (built client-side via `formatHouseholdProfileLabel`) is
+   * what actually renders per row.
    */
-  it('renders each household row by its human-readable profileLabel, not the opaque runtime householdId', () => {
+  it('renders each household row by its human-readable translated profile label, not the opaque runtime householdId', () => {
     const dashboard = makeDashboard({
       courseFormat: 'MULTI_PERSON_PER_TEAM',
       assignment: readyAssignment,
@@ -312,10 +353,33 @@ describe('HouseholdTeacherDashboard (advanced formats — team-primary)', () => 
       />,
     )
 
-    expect(screen.getByText('独身・一人暮らし')).toBeInTheDocument()
-    expect(screen.getByText('子育て・配偶者と子2人')).toBeInTheDocument()
+    expect(screen.getAllByText('独立期・一人暮らし').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('子育て期・配偶者と子2人').length).toBeGreaterThan(0)
     expect(screen.queryByText('team-multi-h1')).not.toBeInTheDocument()
     expect(screen.queryByText('team-multi-h2')).not.toBeInTheDocument()
+  })
+
+  it('falls back to fixed Japanese copy — never the raw householdId — when a household row has no profileSummary', () => {
+    const missingProfileHousehold = makeHousehold({
+      householdId: 'runtime-secret-household', teamId: 'team-multi', teamDisplayName: 'チーム X',
+      profileSummary: undefined,
+    })
+    const dashboard = makeDashboard({
+      courseFormat: 'MULTI_PERSON_PER_TEAM',
+      assignment: readyAssignment,
+      teams: [{ ...multiTeam, households: [missingProfileHousehold] }],
+    })
+    render(
+      <HouseholdTeacherDashboard
+        dashboard={dashboard}
+        isPrimaryTeacher={true}
+        {...noopHandlers}
+        onPrepareAssignment={vi.fn()}
+        onUpdateAssignment={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('家庭プロフィールを確認できません')).toBeInTheDocument()
+    expect(screen.queryByText('runtime-secret-household')).not.toBeInTheDocument()
   })
 
   it('never renders individual settlement for advanced formats (regression)', () => {

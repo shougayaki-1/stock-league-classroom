@@ -491,6 +491,7 @@ describe('Phase B lesson platform routes (Task 17)', () => {
       household: {
         householdId: 'team-a', cashYen: 500000, lifeStage: 'CHILD_REARING', roundIndex: 0,
         assetHoldingsYen: {}, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+        profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' },
       },
     }
     // StudentPlayRoute's own detection subscription and HouseholdTeamScreen's
@@ -498,11 +499,14 @@ describe('Phase B lesson platform routes (Task 17)', () => {
     // this exact node — re-emitting under `waitFor`'s retry loop until the
     // screen's own subscription (attached asynchronously, after it mounts)
     // has actually replaced this shared test double's captured listener and
-    // received the data.
+    // received the data. Project C: the screen never displays the raw
+    // runtime `householdId`/`teamId` ('team-a') — it renders the translated
+    // profile label instead.
     await waitFor(() => {
       emitTeamState(teamState)
-      expect(screen.getByText('team-a')).toBeInTheDocument()
+      expect(screen.getByText('子育て期・配偶者・子1人')).toBeInTheDocument()
     })
+    expect(document.body.textContent).not.toContain('team-a')
     window.history.pushState({}, '', '/')
   })
 
@@ -519,17 +523,22 @@ describe('Phase B lesson platform routes (Task 17)', () => {
       households: {
         'case-a': {
           householdId: 'case-a',
+          profile: { lifeStage: 'INDEPENDENT', family: '単身' },
           state: {
-            householdId: 'case-a', cashYen: 500000, lifeStage: 'SINGLE', roundIndex: 0,
+            householdId: 'case-a', cashYen: 500000, lifeStage: 'INDEPENDENT', roundIndex: 0,
             assetHoldingsYen: {}, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+            profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' },
           },
         },
       },
     }
+    // Project C: the screen never displays the opaque runtime householdId
+    // ('case-a') — it renders the translated profile label instead.
     await waitFor(() => {
       emitTeamState(advancedState)
-      expect(screen.getByText('case-a')).toBeInTheDocument()
+      expect(screen.getByText('独立期・単身')).toBeInTheDocument()
     })
+    expect(document.body.textContent).not.toContain('case-a')
     window.history.pushState({}, '', '/')
   })
 

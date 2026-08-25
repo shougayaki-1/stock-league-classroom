@@ -127,6 +127,10 @@ describe('publishRealtimeStateWithAdminSdk', () => {
     expect(Object.keys(teamUpdate!.data).sort()).toEqual(['household', 'orgId', 'updatedAtMillis'])
     const household = teamUpdate!.data.household as Record<string, unknown>
     expect(household.householdId).toBe('case-b')
+    expect(household.profileSummary).toEqual({
+      lifeStage: 'CHILD_REARING',
+      family: '配偶者・子2人',
+    })
     expect(household.isFictional).toBe(true)
     expect(household.visibleConcepts).toEqual(['EMERGENCY_FUND', 'RISK_MANAGEMENT'])
   })

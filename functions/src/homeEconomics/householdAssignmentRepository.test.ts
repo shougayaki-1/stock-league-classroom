@@ -343,6 +343,10 @@ describe('getHouseholdAssignmentView', () => {
       teamDisplayNames: {}, profiles: [profileA, profileB], deps,
     })
     expect(view.state).toBe('STALE')
+    expect(view.teams[0].entries[0]).toMatchObject({
+      profileId: profileA.householdId,
+      profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
+    })
   })
 
   it('returns an implicit compatibility view for COMMON_CONDITIONS without persisting a document', async () => {
@@ -356,8 +360,60 @@ describe('getHouseholdAssignmentView', () => {
     expect(view.teams).toHaveLength(2)
     expect(view.teams[0].teamId).toBe('team-a')
     expect(view.teams[0].entries).toEqual([{
-      householdId: 'team-a', profileId: profileA.householdId, displayOrder: 0, assignmentSource: 'AUTO',
+      householdId: 'team-a', profileId: profileA.householdId,
+      profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
+      displayOrder: 0, assignmentSource: 'AUTO',
     }])
+  })
+
+  it('reports profileSummary as exactly null when an entry\'s profileId cannot be resolved from profiles', async () => {
+    const { firestore, docs } = makeFakeFirestore()
+    await prepareHouseholdAssignment({
+      firestore, lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT',
+      teamIds: ['team-a'], profiles: [profileA],
+      actorUid: 'teacher-1', idempotencyKey: 'key-1', now: nextNow,
+    })
+    const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+    const entriesPath = 'lessonRuns/run-1/householdAssignment/config/entries'
+    const entryDocs: Array<{ id: string; data: Record<string, unknown> }> = []
+    for (const [path, data] of docs) {
+      if (path.startsWith(`${entriesPath}/`)) entryDocs.push({ id: path.slice(entriesPath.length + 1), data })
+    }
+    collections.set(entriesPath, entryDocs)
+    const deps = makeReadDeps(docs, collections)
+
+    // Profile list at read time no longer contains the profile the entry references.
+    const view = await getHouseholdAssignmentView({
+      lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', currentTeamIds: ['team-a'],
+      teamDisplayNames: {}, profiles: [], deps,
+    })
+    expect(view.teams[0].entries[0].profileSummary).toBeNull()
+  })
+
+  it('fails closed on the team display name when the team is missing from teamDisplayNames, never exposing the raw teamId', async () => {
+    const { firestore, docs } = makeFakeFirestore()
+    await prepareHouseholdAssignment({
+      firestore, lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT',
+      teamIds: ['team-secret-id'], profiles: [profileA],
+      actorUid: 'teacher-1', idempotencyKey: 'key-1', now: nextNow,
+    })
+    const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+    const entriesPath = 'lessonRuns/run-1/householdAssignment/config/entries'
+    const entryDocs: Array<{ id: string; data: Record<string, unknown> }> = []
+    for (const [path, data] of docs) {
+      if (path.startsWith(`${entriesPath}/`)) entryDocs.push({ id: path.slice(entriesPath.length + 1), data })
+    }
+    collections.set(entriesPath, entryDocs)
+    const deps = makeReadDeps(docs, collections)
+
+    const view = await getHouseholdAssignmentView({
+      lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', currentTeamIds: ['team-secret-id'],
+      teamDisplayNames: {}, profiles: [profileA], deps,
+    })
+    expect(view.teams[0].teamDisplayName).toBe('チーム名を確認できません')
+    expect(view.teams[0].teamDisplayName).not.toContain('team-secret-id')
+    // The raw teamId must still be available internally for identity/update logic.
+    expect(view.teams[0].teamId).toBe('team-secret-id')
   })
 })
 

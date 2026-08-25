@@ -6,12 +6,15 @@ import type {
   Liability,
 } from '@stock-league/household-authoring-content'
 import type { AdvancedHouseholdTeamStateView } from '../lessonRuns/liveTypes'
+import type { HouseholdAssignmentView } from '../homeEconomics/householdAssignment'
 import { safeLabel } from './safeLabel'
 
 type HouseholdLifeStage = HouseholdProfile['lifeStage']
 type HouseholdAssetType = AssetPosition['assetType']
 type HouseholdLiabilityKind = Liability['kind']
 type HouseholdRoundStatus = AdvancedHouseholdTeamStateView['roundStatus']
+type HouseholdAssignmentState = HouseholdAssignmentView['state']
+type HouseholdAssignmentValidationStatus = HouseholdAssignmentView['validationStatus']
 
 export type HouseholdConcept =
   | 'INSURANCE'
@@ -91,3 +94,31 @@ export const formatHouseholdConcept = (value: string | null | undefined): string
   safeLabel(value, HOUSEHOLD_CONCEPT_LABELS, '学習項目を確認できません')
 export const formatHouseholdRoundStatus = (value: string | null | undefined): string =>
   safeLabel(value, HOUSEHOLD_ROUND_STATUS_LABELS, 'ラウンド状態を確認できません')
+
+export const HOUSEHOLD_ASSIGNMENT_STATE_LABELS = {
+  UNPREPARED: '未準備',
+  DRAFT: '編集中',
+  STALE: '要再確認',
+  FROZEN: 'ロック済み',
+} satisfies Record<HouseholdAssignmentState, string>
+
+export const HOUSEHOLD_ASSIGNMENT_VALIDATION_STATUS_LABELS = {
+  READY: '準備完了',
+  INVALID: '要修正',
+} satisfies Record<HouseholdAssignmentValidationStatus, string>
+
+export const formatHouseholdProfileLabel = (
+  lifeStage: string | null | undefined,
+  family: string | null | undefined,
+): string => {
+  const familyLabel = family?.trim()
+  if (!lifeStage && !familyLabel) return '家庭プロフィールを確認できません'
+  const stageLabel = formatHouseholdLifeStage(lifeStage)
+  return familyLabel ? `${stageLabel}・${familyLabel}` : stageLabel
+}
+
+export const formatHouseholdAssignmentState = (value: string | null | undefined): string =>
+  safeLabel(value, HOUSEHOLD_ASSIGNMENT_STATE_LABELS, '割り当て状態を確認できません')
+
+export const formatHouseholdAssignmentValidationStatus = (value: string | null | undefined): string =>
+  safeLabel(value, HOUSEHOLD_ASSIGNMENT_VALIDATION_STATUS_LABELS, '検証状況を確認できません')

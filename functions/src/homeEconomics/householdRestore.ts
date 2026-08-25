@@ -746,6 +746,7 @@ export const restoreHouseholdCheckpointV3DepsWithAdminSdk = (): HouseholdRestore
         idempotencyKey: input.idempotencyKey,
         nowMillis: input.nowMillis,
         visibleConcepts,
+        profiles: homeEconomics.households,
       })
     },
     syncRtdbProjections: async (updates) => {

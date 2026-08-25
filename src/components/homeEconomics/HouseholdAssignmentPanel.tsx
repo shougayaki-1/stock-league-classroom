@@ -6,6 +6,12 @@ import type {
   HouseholdAssignmentView,
 } from '../../lib/homeEconomics/householdAssignment'
 import type { UpdateHouseholdAssignmentInput } from '../../lib/homeEconomics/householdAssignment'
+import {
+  formatHouseholdAssignmentState,
+  formatHouseholdAssignmentValidationStatus,
+  formatHouseholdCourseFormat,
+  formatHouseholdProfileLabel,
+} from '../../lib/presentation/householdLabels'
 
 export interface HouseholdAssignmentPanelProps {
   assignment: HouseholdAssignmentView
@@ -18,20 +24,6 @@ export interface HouseholdAssignmentPanelProps {
 interface LocalEntryState {
   profileId: string
   displayOrder: number
-}
-
-const STATE_LABEL: Record<HouseholdAssignmentView['state'], string> = {
-  UNPREPARED: '未準備',
-  DRAFT: '編集中',
-  STALE: '要再確認',
-  FROZEN: 'ロック済み',
-}
-
-const COURSE_FORMAT_LABEL: Record<HouseholdAssignmentView['courseFormat'], string> = {
-  COMMON_CONDITIONS: '共通条件',
-  ROLE_VARIANT: '役割バリエーション',
-  STAGE_SPLIT: 'ライフステージ別',
-  MULTI_PERSON_PER_TEAM: '複数人同時プレイ',
 }
 
 const buildLocalEntries = (assignment: HouseholdAssignmentView): Record<string, LocalEntryState> => {
@@ -91,13 +83,25 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
 
   const busy = isBusy || isLocalSubmitting
 
-  const knownProfileIds = useMemo(() => {
-    const set = new Set<string>()
+  const knownProfiles = useMemo(() => {
+    const map = new Map<string, HouseholdAssignmentView['teams'][number]['entries'][number]['profileSummary']>()
     for (const team of assignment.teams) {
-      for (const entry of team.entries) set.add(entry.profileId)
+      for (const entry of team.entries) {
+        if (!map.has(entry.profileId)) map.set(entry.profileId, entry.profileSummary)
+      }
     }
-    return [...set].sort()
+    return map
   }, [assignment])
+
+  const knownProfileIds = useMemo(
+    () => [...knownProfiles.keys()].sort(),
+    [knownProfiles],
+  )
+
+  const profileLabel = (profileId: string): string => {
+    const summary = knownProfiles.get(profileId) ?? null
+    return formatHouseholdProfileLabel(summary?.lifeStage, summary?.family)
+  }
 
   const currentlyUsedProfileIds = useMemo(
     () => new Set(Object.values(localEntries).map((v) => v.profileId)),
@@ -184,7 +188,7 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
       <Stack spacing={1.5} sx={{ bgcolor: 'background.paper', borderRadius: '12px', boxShadow: 1, border: 1, borderColor: 'grey.200', p: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 700 }}>家庭の割り当て</Typography>
         <Typography variant="body2" color="text.secondary">
-          このコース形式（{COURSE_FORMAT_LABEL[assignment.courseFormat]}）では、授業開始前にチームへの家庭プロフィール割り当てを準備する必要があります。
+          このコース形式（{formatHouseholdCourseFormat(assignment.courseFormat)}）では、授業開始前にチームへの家庭プロフィール割り当てを準備する必要があります。
         </Typography>
         {isPrimaryTeacher ? (
           <Button
@@ -207,9 +211,9 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
       <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>家庭の割り当て</Typography>
-          <StatusChip label={STATE_LABEL[assignment.state]} tone="neutral" />
+          <StatusChip label={formatHouseholdAssignmentState(assignment.state)} tone="neutral" />
           <StatusChip
-            label={`検証状況: ${assignment.validationStatus === 'READY' ? '準備完了' : '要修正'}`}
+            label={`検証状況: ${formatHouseholdAssignmentValidationStatus(assignment.validationStatus)}`}
             tone={assignment.validationStatus === 'READY' ? 'success' : 'error'}
           />
         </Stack>
@@ -248,7 +252,9 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
       )}
 
       {unusedProfileIds.length > 0 && (
-        <NoticeBanner tone="warning">未使用のプロフィール: {unusedProfileIds.join(', ')}</NoticeBanner>
+        <NoticeBanner tone="warning">
+          未使用のプロフィール: {unusedProfileIds.map((id) => profileLabel(id)).join(', ')}
+        </NoticeBanner>
       )}
 
       {stageSplitCoverageWarnings.length > 0 && (
@@ -280,12 +286,12 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
                     >
                       {assignment.courseFormat === 'MULTI_PERSON_PER_TEAM' ? (
                         <>
-                          <Box component="span" sx={{ flex: 1 }}>{entry.profileId}</Box>
+                          <Box component="span" sx={{ flex: 1 }}>{profileLabel(entry.profileId)}</Box>
                           {canEdit && (
                             <Stack direction="row" spacing={0.5}>
                               <IconButton
                                 size="small"
-                                aria-label={`${team.teamDisplayName} ${entry.profileId} を上に移動`}
+                                aria-label={`${team.teamDisplayName} ${profileLabel(entry.profileId)} を上に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'up')}
                                 disabled={busy || index === 0}
                                 sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1 }}
@@ -294,7 +300,7 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
                               </IconButton>
                               <IconButton
                                 size="small"
-                                aria-label={`${team.teamDisplayName} ${entry.profileId} を下に移動`}
+                                aria-label={`${team.teamDisplayName} ${profileLabel(entry.profileId)} を下に移動`}
                                 onClick={() => handleMove(team.teamId, entry.householdId, 'down')}
                                 disabled={busy || index === sortedEntries.length - 1}
                                 sx={{ border: 1, borderColor: 'grey.300', borderRadius: 1 }}
@@ -319,12 +325,12 @@ export const HouseholdAssignmentPanel: React.FC<HouseholdAssignmentPanelProps> =
                             }}
                           >
                             {knownProfileIds.map((profileId) => (
-                              <option key={profileId} value={profileId}>{profileId}</option>
+                              <option key={profileId} value={profileId}>{profileLabel(profileId)}</option>
                             ))}
                           </Box>
                         </Stack>
                       ) : (
-                        <Box component="span" sx={{ flex: 1 }}>{entry.profileId}</Box>
+                        <Box component="span" sx={{ flex: 1 }}>{profileLabel(entry.profileId)}</Box>
                       )}
                     </Stack>
                   )

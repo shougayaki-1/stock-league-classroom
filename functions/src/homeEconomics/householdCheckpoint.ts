@@ -1,6 +1,6 @@
 import { getFirestore } from 'firebase-admin/firestore'
 import { getDatabase } from 'firebase-admin/database'
-import type { HomeEconomicsContent } from '@stock-league/household-authoring-content'
+import type { HomeEconomicsContent, HouseholdProfile } from '@stock-league/household-authoring-content'
 import { idempotencyDocumentId, requestDigest } from '../lib/idempotency'
 import type { HouseholdFirestoreDeps, HouseholdState } from '../lessonRuns/households/repository'
 import { toHouseholdStateTeamView, type HouseholdStateTeamView } from './realtimeProjection'
@@ -148,6 +148,15 @@ export interface BuildHouseholdCheckpointSnapshotV3Input {
    * one `HouseholdState` per id in `householdIds`, sorted, no duplicates.
    */
   householdStates: HouseholdState[]
+  /**
+   * Real authored profiles for every household in `householdStates`
+   * (matched by `HouseholdProfile.householdId === HouseholdState.profileId`)
+   * — the caller's already-loaded `HomeEconomicsContent.households` /
+   * template snapshot, NOT a new Firestore/RTDB read. Used to build each
+   * entry's `profileSummary` for real, instead of fabricating one (see
+   * this function's doc comment history / review finding 3).
+   */
+  profiles: HouseholdProfile[]
   visibleConcepts: ConceptCategory[]
   createdAtServerMillis: number
 }
@@ -179,9 +188,18 @@ export interface BuildHouseholdCheckpointSnapshotV3Input {
 export const buildHouseholdCheckpointSnapshotV3 = (
   input: BuildHouseholdCheckpointSnapshotV3Input,
 ): HouseholdCheckpointSnapshotV3 => {
+  const profileById = new Map(input.profiles.map((profile) => [profile.householdId, profile] as const))
   const teamViews: Record<string, HouseholdCheckpointTeamViewV3> = {}
   for (const household of input.householdStates) {
-    const view = toHouseholdStateTeamView(household, input.visibleConcepts, [], [])
+    // Real authored profile, resolved from the caller's already-loaded
+    // template content (`input.profiles` — no new Firestore/RTDB read here).
+    // Fail closed rather than fabricate: a household whose `profileId`
+    // cannot be resolved means the caller's profile list is incomplete,
+    // which is a caller bug, not something to paper over with invented
+    // semantic data (see review finding 3).
+    const profile = profileById.get(household.profileId)
+    if (!profile) throw new Error(`Missing profile for household ${household.householdId} (profileId: ${household.profileId})`)
+    const view = toHouseholdStateTeamView(profile, household, input.visibleConcepts, [], [])
     const existing = teamViews[household.teamId] ?? { households: {}, householdOrder: [] }
     existing.households[household.householdId] = view
     if (!existing.householdOrder.includes(household.householdId)) {
@@ -362,6 +380,8 @@ export interface WriteHouseholdCheckpointV3Input {
   idempotencyKey: string
   nowMillis: number
   visibleConcepts: ConceptCategory[]
+  /** See `BuildHouseholdCheckpointSnapshotV3Input.profiles` — propagated straight through, no new read here either. */
+  profiles: HouseholdProfile[]
 }
 
 /**
@@ -449,6 +469,7 @@ export const writeHouseholdCheckpointV3 = (
       expectedRoundIndex: input.expectedRoundIndex,
       householdIds: sortedHouseholdIds,
       householdStates: households,
+      profiles: input.profiles,
       visibleConcepts: input.visibleConcepts,
       createdAtServerMillis: input.nowMillis,
     })
@@ -486,7 +507,9 @@ export const readTeamViewWithAdminSdk = async (
 
   if (household.roundIndex === 0) {
     const visibleConcepts = resolveVisibleConcepts(content.goalPackage)
-    return toHouseholdStateTeamView(household, visibleConcepts, [], [])
+    const profile = content.households.find((candidate) => candidate.householdId === household.profileId)
+    if (!profile) throw new Error(`Missing profile for household ${household.householdId}`)
+    return toHouseholdStateTeamView(profile, household, visibleConcepts, [], [])
   }
 
   throw new Error(`Missing team projection for team ${teamId} at round ${household.roundIndex}`)
@@ -628,6 +651,7 @@ export const saveManualAdvancedHouseholdCheckpointWithAdminSdk = async (
     idempotencyKey: input.idempotencyKey,
     nowMillis: Date.now(),
     visibleConcepts,
+    profiles: homeEconomics.households,
   })
 }
 

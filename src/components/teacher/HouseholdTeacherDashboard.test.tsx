@@ -73,7 +73,7 @@ describe('HouseholdTeacherDashboard (Container)', () => {
             teamId: 'team-1',
             teamDisplayName: 'チーム1',
             lifeStage: 'INDEPENDENT',
-            profileLabel: 'INDEPENDENT',
+            profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' },
             roundIndex: 0,
             submittedForRoundIndex: true,
             submittedAtServerMillis: 500,
@@ -156,8 +156,8 @@ describe('HouseholdTeacherDashboard (Container)', () => {
     })
   })
 
-  it('renders error state when load fails', async () => {
-    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockRejectedValue(new Error('Network error'))
+  it('renders error state when load fails, mapping the raw backend error through describeError rather than displaying it verbatim', async () => {
+    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockRejectedValue(new Error('backend-secret-message'))
     const functions = {} as Functions
 
     render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
@@ -165,7 +165,29 @@ describe('HouseholdTeacherDashboard (Container)', () => {
     await waitFor(() => {
       expect(screen.getByText('ダッシュボードの読み込みエラー')).toBeInTheDocument()
     })
-    expect(screen.getByText('Network error')).toBeInTheDocument()
+    expect(screen.getByText('ダッシュボードの取得に失敗しました')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+  })
+
+  it('maps a bulk-settlement action failure through describeError, never displaying the raw backend error verbatim', async () => {
+    vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard).mockResolvedValue(mockDashboardData)
+    const functions = {} as Functions
+    render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={functions} database={database} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('家庭経済・ライフプラン管理ダッシュボード')).toBeInTheDocument()
+    })
+
+    vi.mocked(bulkSettlementLib.processHouseholdRoundBatch)
+      .mockRejectedValue(new Error('INTERNAL_BATCH_FAILURE_DETAIL'))
+
+    fireEvent.click(screen.getByRole('button', { name: '一括決算' }))
+    fireEvent.click(screen.getByRole('button', { name: '決算を実行' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('一括決算の実行に失敗しました')).toBeInTheDocument()
+    })
+    expect(document.body.textContent).not.toContain('INTERNAL_BATCH_FAILURE_DETAIL')
   })
 
   it('wires the assignment panel prepare action to prepareHouseholdAssignment and reloads', async () => {
@@ -216,10 +238,10 @@ describe('HouseholdTeacherDashboard (Container)', () => {
       warnings: [],
       teams: [
         { teamId: 'team-a', teamDisplayName: 'チーム A', entries: [
-          { householdId: 'h-a', profileId: 'p1', displayOrder: 0, assignmentSource: 'AUTO' },
+          { householdId: 'h-a', profileId: 'p1', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }, displayOrder: 0, assignmentSource: 'AUTO' },
         ] },
         { teamId: 'team-b', teamDisplayName: 'チーム B', entries: [
-          { householdId: 'h-b', profileId: 'p2', displayOrder: 0, assignmentSource: 'AUTO' },
+          { householdId: 'h-b', profileId: 'p2', profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' }, displayOrder: 0, assignmentSource: 'AUTO' },
         ] },
       ],
     }

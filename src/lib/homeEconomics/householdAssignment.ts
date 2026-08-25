@@ -35,6 +35,10 @@ export interface HouseholdAssignmentView {
     entries: Array<{
       householdId: string
       profileId: string
+      profileSummary: {
+        lifeStage: string
+        family: string
+      } | null
       displayOrder: number
       assignmentSource: 'AUTO' | 'MANUAL'
     }>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import type { Database } from 'firebase/database'
 import type { Functions } from 'firebase/functions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
+import { describeError } from '../../lib/monitoring/describeError'
 import {
   getHouseholdTeacherDashboard,
   type HouseholdTeacherDashboard as HouseholdTeacherDashboardData,
@@ -62,7 +63,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       const data = await getHouseholdTeacherDashboard(functions, { lessonRunId })
       setDashboard(data)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'ダッシュボードの取得に失敗しました')
+      setError(describeError(err, 'ダッシュボードの取得に失敗しました'))
     } finally {
       setIsLoading(false)
     }
@@ -95,8 +96,8 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '一括決算の実行に失敗しました')
       await loadDashboard()
+      setError(describeError(err, '一括決算の実行に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -112,8 +113,8 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '一括決算の再試行に失敗しました')
       await loadDashboard()
+      setError(describeError(err, '一括決算の再試行に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -130,8 +131,8 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '個別決算の実行に失敗しました')
       await loadDashboard()
+      setError(describeError(err, '個別決算の実行に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -148,7 +149,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'チェックポイントの保存に失敗しました')
+      setError(describeError(err, 'チェックポイントの保存に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -166,7 +167,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'チェックポイントの復元に失敗しました')
+      setError(describeError(err, 'チェックポイントの復元に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -182,7 +183,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '割り当ての準備に失敗しました')
+      setError(describeError(err, '割り当ての準備に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -201,7 +202,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
       })
       await loadDashboard()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '割り当ての更新に失敗しました')
+      setError(describeError(err, '割り当ての更新に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }
@@ -213,7 +214,7 @@ export const HouseholdTeacherDashboard: React.FC<HouseholdTeacherDashboardProps>
     try {
       await showHouseholdComparisonOnDisplay(functions, { lessonRunId })
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'クラス比較の教室画面表示に失敗しました')
+      setError(describeError(err, 'クラス比較の教室画面表示に失敗しました'))
     } finally {
       setIsActionInProgress(false)
     }

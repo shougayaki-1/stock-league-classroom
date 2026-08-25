@@ -71,6 +71,7 @@ describe('LessonRunPublicState / LessonRunPrivateState field separation', () => 
             householdId: 'household-a', isFictional: true, cashYen: 100000, assetHoldingsYen: {},
             activeInsuranceContractYearsRemaining: {}, activeLiabilities: {}, lifeStage: 'INDEPENDENT',
             roundIndex: 2, goalDelayedRounds: 0, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+            profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
           },
           submittedRoundIndex: null,
         },
