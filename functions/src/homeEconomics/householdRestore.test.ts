@@ -41,6 +41,7 @@ describe('householdRestore v2', () => {
     visibleConcepts: ['ASSET_DIVERSIFICATION'],
     eventDisclosures: [],
     shortfallOptions: [],
+    profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
   })
 
   const snapshotHouseholds = [

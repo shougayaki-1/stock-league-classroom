@@ -106,6 +106,7 @@ describe('householdCheckpoint v2 codec & manifest', () => {
     visibleConcepts: ['ASSET_DIVERSIFICATION'],
     eventDisclosures: [],
     shortfallOptions: [],
+    profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
   }
 
   it('validates v2 snapshot with isHouseholdCheckpointSnapshotV2', () => {
@@ -194,6 +195,7 @@ describe('writeHouseholdCheckpointV2 idempotency & persistence', () => {
     visibleConcepts: ['ASSET_DIVERSIFICATION'],
     eventDisclosures: [],
     shortfallOptions: [],
+    profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' },
   }
 
   const baseInput = {
