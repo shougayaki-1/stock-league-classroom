@@ -160,7 +160,7 @@ const buildTeamsView = (
   for (const entry of entries) {
     let team = teamsMap.get(entry.teamId)
     if (!team) {
-      team = { teamId: entry.teamId, teamDisplayName: teamDisplayNames[entry.teamId] ?? entry.teamId, entries: [] }
+      team = { teamId: entry.teamId, teamDisplayName: teamDisplayNames[entry.teamId] ?? 'チーム名を確認できません', entries: [] }
       teamsMap.set(entry.teamId, team)
     }
     const profile = profileById.get(entry.profileId)

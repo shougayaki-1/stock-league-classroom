@@ -259,4 +259,26 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.getByText('家庭プロフィールを確認できません')).toBeInTheDocument()
     expect(document.body.textContent).not.toContain('profile-unresolved')
   })
+
+  it('never renders a raw teamId as the team heading — the server-projected fallback label is shown instead', () => {
+    const assignment = baseAssignment({
+      state: 'FROZEN',
+      teams: [
+        { teamId: 'team-secret-id', teamDisplayName: 'チーム名を確認できません', entries: [
+          { householdId: 'h-a', profileId: 'profile-1', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }, displayOrder: 0, assignmentSource: 'AUTO' },
+        ] },
+      ],
+    })
+    render(
+      <HouseholdAssignmentPanel
+        assignment={assignment}
+        isPrimaryTeacher={true}
+        isBusy={false}
+        onPrepare={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('チーム名を確認できません')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('team-secret-id')
+  })
 })

@@ -389,6 +389,32 @@ describe('getHouseholdAssignmentView', () => {
     })
     expect(view.teams[0].entries[0].profileSummary).toBeNull()
   })
+
+  it('fails closed on the team display name when the team is missing from teamDisplayNames, never exposing the raw teamId', async () => {
+    const { firestore, docs } = makeFakeFirestore()
+    await prepareHouseholdAssignment({
+      firestore, lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT',
+      teamIds: ['team-secret-id'], profiles: [profileA],
+      actorUid: 'teacher-1', idempotencyKey: 'key-1', now: nextNow,
+    })
+    const collections = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>()
+    const entriesPath = 'lessonRuns/run-1/householdAssignment/config/entries'
+    const entryDocs: Array<{ id: string; data: Record<string, unknown> }> = []
+    for (const [path, data] of docs) {
+      if (path.startsWith(`${entriesPath}/`)) entryDocs.push({ id: path.slice(entriesPath.length + 1), data })
+    }
+    collections.set(entriesPath, entryDocs)
+    const deps = makeReadDeps(docs, collections)
+
+    const view = await getHouseholdAssignmentView({
+      lessonRunId: 'run-1', courseFormat: 'ROLE_VARIANT', currentTeamIds: ['team-secret-id'],
+      teamDisplayNames: {}, profiles: [profileA], deps,
+    })
+    expect(view.teams[0].teamDisplayName).toBe('チーム名を確認できません')
+    expect(view.teams[0].teamDisplayName).not.toContain('team-secret-id')
+    // The raw teamId must still be available internally for identity/update logic.
+    expect(view.teams[0].teamId).toBe('team-secret-id')
+  })
 })
 
 describe('transaction read/write ordering', () => {
