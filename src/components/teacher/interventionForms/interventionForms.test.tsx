@@ -323,11 +323,58 @@ describe('ReconnectParticipantForm', () => {
     expect(body).toContain('SENTINEL-CODE-1234')
   })
 
+  it('ACTIVE等、再接続と無関係なステータスの参加者は候補から除外し選択不可にする', () => {
+    const participants = [
+      { id: 'participant-active-sentinel', displayName: 'いのうえ', status: 'ACTIVE' },
+      { id: 'participant-disconnected-sentinel', displayName: 'たなか', status: 'TEMPORARILY_DISCONNECTED' },
+      { id: 'participant-migrating-sentinel', displayName: 'すずき', status: 'MIGRATING_DEVICE' },
+      { id: 'participant-absent-sentinel', displayName: 'やまだ', status: 'ABSENT' },
+      { id: 'participant-observer-sentinel', displayName: 'さとう', status: 'OBSERVER' },
+    ]
+    render(
+      <ReconnectParticipantForm
+        functions={fakeFunctions}
+        lessonRunId="run-sentinel-filter"
+        participants={participants}
+      />,
+    )
+
+    // Only the reconnect-relevant statuses render as selectable candidates.
+    expect(screen.getByRole('button', { name: /たなか/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /すずき/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /やまだ/ })).toBeInTheDocument()
+
+    // ACTIVE and other irrelevant statuses must not be rendered at all — not
+    // as DOM text, not as a selectable option.
+    expect(screen.queryByRole('button', { name: /いのうえ/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('いのうえ')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /さとう/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('さとう')).not.toBeInTheDocument()
+  })
+
+  it('表示名が空/欠落の参加者はIDへフォールバックせず固定の代替文言を表示する', () => {
+    const participants = [
+      { id: 'participant-blank-sentinel', displayName: '', status: 'ABSENT' },
+      { id: 'participant-whitespace-sentinel', displayName: '   ', status: 'MIGRATING_DEVICE' },
+    ]
+    render(
+      <ReconnectParticipantForm
+        functions={fakeFunctions}
+        lessonRunId="run-sentinel-blank"
+        participants={participants}
+      />,
+    )
+
+    expect(screen.queryByText('participant-blank-sentinel')).not.toBeInTheDocument()
+    expect(screen.queryByText('participant-whitespace-sentinel')).not.toBeInTheDocument()
+    expect(screen.getAllByText('生徒名を確認できません').length).toBeGreaterThan(0)
+  })
+
   it('発行に失敗した場合は describeError 経由の安全なメッセージを表示し、生の error.message は出さない', async () => {
     const mockIssue = vi.mocked(issueRecoveryCode)
     mockIssue.mockRejectedValue({ code: 'functions/internal', message: 'raw internal leak detail' })
 
-    const participants = [{ id: 'participant-secret-id-2', displayName: 'やまだ', status: 'ACTIVE' }]
+    const participants = [{ id: 'participant-secret-id-2', displayName: 'やまだ', status: 'ABSENT' }]
 
     render(
       <ReconnectParticipantForm

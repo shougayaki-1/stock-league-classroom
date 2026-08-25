@@ -20,8 +20,10 @@ export interface ReconnectParticipantFormProps {
   generateIdempotencyKey?: () => string
 }
 
-/** Statuses where a reconnect is plausibly needed — used only to sort/highlight, never to filter out other participants. */
+/** Statuses where a reconnect is plausibly needed — participants outside this set (e.g. ACTIVE) are filtered out entirely, never rendered. */
 const RECONNECT_RELEVANT_STATUSES = new Set(['TEMPORARILY_DISCONNECTED', 'MIGRATING_DEVICE', 'ABSENT'])
+
+const UNKNOWN_DISPLAY_NAME_LABEL = '生徒名を確認できません'
 
 const defaultIdempotencyKey = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `key-${Date.now()}-${Math.random()}`
@@ -46,16 +48,15 @@ export function ReconnectParticipantForm({
   const [issuing, setIssuing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const sorted = [...participants].sort((a, b) => {
-    const aRelevant = a.status && RECONNECT_RELEVANT_STATUSES.has(a.status) ? 0 : 1
-    const bRelevant = b.status && RECONNECT_RELEVANT_STATUSES.has(b.status) ? 0 : 1
-    return aRelevant - bRelevant
-  })
+  const relevantParticipants = participants.filter((participant) => participant.status && RECONNECT_RELEVANT_STATUSES.has(participant.status))
+
+  const displayLabel = (participant: ReconnectParticipantFormParticipant): string =>
+    participant.displayName.trim() || UNKNOWN_DISPLAY_NAME_LABEL
 
   if (selected && code) {
     return (
       <Stack spacing={1}>
-        <Alert severity="success">{selected.displayName} の再接続コードを発行しました。</Alert>
+        <Alert severity="success">{displayLabel(selected)} の再接続コードを発行しました。</Alert>
         <Typography
           variant="h4"
           component="p"
@@ -64,7 +65,7 @@ export function ReconnectParticipantForm({
           {code}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          このコードを{selected.displayName}さんに伝えてください。新しい端末でこの授業の再接続ページを開き、コードを入力すると元の状態に戻れます。
+          このコードを{displayLabel(selected)}さんに伝えてください。新しい端末でこの授業の再接続ページを開き、コードを入力すると元の状態に戻れます。
         </Typography>
         <Button
           variant="text"
@@ -78,29 +79,25 @@ export function ReconnectParticipantForm({
   }
 
   if (!selected) {
-    if (participants.length === 0) {
-      return <Typography variant="body2" color="text.secondary">参加者情報がありません。</Typography>
+    if (relevantParticipants.length === 0) {
+      return <Typography variant="body2" color="text.secondary">再接続が必要な参加者がいません。</Typography>
     }
     return (
       <Stack spacing={1}>
         <Typography variant="body2" color="text.secondary">再接続する生徒を選んでください。</Typography>
         <List>
-          {sorted.map((participant) => {
-            const relevant = participant.status ? RECONNECT_RELEVANT_STATUSES.has(participant.status) : false
-            return (
-              <ListItemButton
-                key={participant.id}
-                sx={{ minHeight: MIN_TOUCH_TARGET }}
-                onClick={() => { setSelected(participant); setError(null) }}
-              >
-                <ListItemText
-                  primary={participant.displayName}
-                  secondary={participant.status ? formatParticipantStatus(participant.status) : undefined}
-                  slotProps={relevant ? { primary: { sx: { fontWeight: 700 } } } : undefined}
-                />
-              </ListItemButton>
-            )
-          })}
+          {relevantParticipants.map((participant) => (
+            <ListItemButton
+              key={participant.id}
+              sx={{ minHeight: MIN_TOUCH_TARGET }}
+              onClick={() => { setSelected(participant); setError(null) }}
+            >
+              <ListItemText
+                primary={displayLabel(participant)}
+                secondary={participant.status ? formatParticipantStatus(participant.status) : undefined}
+              />
+            </ListItemButton>
+          ))}
         </List>
       </Stack>
     )
@@ -126,7 +123,7 @@ export function ReconnectParticipantForm({
   return (
     <Stack spacing={1}>
       <Typography variant="body2" color="text.secondary">
-        {selected.displayName}さんの再接続コードを発行します。よろしいですか？
+        {displayLabel(selected)}さんの再接続コードを発行します。よろしいですか？
       </Typography>
       {error && <Alert severity="error">{error}</Alert>}
       <Button variant="contained" sx={{ minHeight: MIN_TOUCH_TARGET }} onClick={() => { void handleIssue() }} disabled={issuing}>
