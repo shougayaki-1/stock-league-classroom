@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 .worktrees/
+.claude/worktrees/
 .env.local
 .firebase
 firebase-debug.log
