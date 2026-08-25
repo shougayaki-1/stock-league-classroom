@@ -12,10 +12,10 @@ const baseAssignment = (overrides: Partial<HouseholdAssignmentView> = {}): House
   warnings: [],
   teams: [
     { teamId: 'team-a', teamDisplayName: 'チーム A', entries: [
-      { householdId: 'h-a', profileId: 'profile-1', displayOrder: 0, assignmentSource: 'AUTO' },
+      { householdId: 'h-a', profileId: 'profile-1', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }, displayOrder: 0, assignmentSource: 'AUTO' },
     ] },
     { teamId: 'team-b', teamDisplayName: 'チーム B', entries: [
-      { householdId: 'h-b', profileId: 'profile-2', displayOrder: 0, assignmentSource: 'AUTO' },
+      { householdId: 'h-b', profileId: 'profile-2', profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' }, displayOrder: 0, assignmentSource: 'AUTO' },
     ] },
   ],
   ...overrides,
@@ -54,7 +54,7 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.queryByRole('button', { name: '割り当てを準備する' })).not.toBeInTheDocument()
   })
 
-  it('DRAFT + READY: shows editable profile selectors and status indicator, saves via onUpdate', async () => {
+  it('DRAFT + READY: shows editable profile selectors labeled with translated profile summaries and status indicator, saves via onUpdate with the raw profileId (Project C)', async () => {
     const assignment = baseAssignment({ state: 'DRAFT', validationStatus: 'READY' })
     const onUpdate = vi.fn().mockResolvedValue(undefined)
     render(
@@ -69,6 +69,8 @@ describe('HouseholdAssignmentPanel', () => {
 
     expect(screen.getByText('検証状況: 準備完了')).toBeInTheDocument()
     const select = screen.getByLabelText('チーム A のプロフィール')
+    expect(screen.getAllByRole('option', { name: '独立期・単身' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('option', { name: '子育て期・配偶者・子1人' }).length).toBeGreaterThan(0)
     fireEvent.change(select, { target: { value: 'profile-2' } })
 
     const saveBtn = screen.getByRole('button', { name: '変更を保存' })
@@ -78,6 +80,8 @@ describe('HouseholdAssignmentPanel', () => {
       expectedRevision: 1,
       changes: [{ householdId: 'h-a', profileId: 'profile-2' }],
     })
+    expect(document.body.textContent).not.toContain('profile-1')
+    expect(document.body.textContent).not.toContain('profile-2')
   })
 
   it('STALE + INVALID: shows stale notice, invalid status, and warnings', () => {
@@ -101,7 +105,7 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.getByText('割り当て件数が一致しません。')).toBeInTheDocument()
   })
 
-  it('FROZEN: read-only, no selectors or save button rendered', () => {
+  it('FROZEN: read-only, no selectors or save button rendered, and shows a translated profile label instead of the raw profileId', () => {
     const assignment = baseAssignment({ state: 'FROZEN' })
     render(
       <HouseholdAssignmentPanel
@@ -116,7 +120,8 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.getByText(/ロックされ/)).toBeInTheDocument()
     expect(screen.queryByLabelText('チーム A のプロフィール')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '変更を保存' })).not.toBeInTheDocument()
-    expect(screen.getByText('profile-1')).toBeInTheDocument()
+    expect(screen.getByText('独立期・単身')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('profile-1')
   })
 
   it('role-gated: non-primary teacher sees read-only view even while DRAFT', () => {
@@ -131,7 +136,8 @@ describe('HouseholdAssignmentPanel', () => {
       />,
     )
     expect(screen.queryByLabelText('チーム A のプロフィール')).not.toBeInTheDocument()
-    expect(screen.getByText('profile-1')).toBeInTheDocument()
+    expect(screen.getByText('独立期・単身')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('profile-1')
   })
 
   it('isBusy disables editing controls', () => {
@@ -148,7 +154,7 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.getByLabelText('チーム A のプロフィール')).toBeDisabled()
   })
 
-  it('ROLE_VARIANT: shows an unused-profile warning after editing removes the last reference to a profile', () => {
+  it('ROLE_VARIANT: shows an unused-profile warning with a translated label after editing removes the last reference to a profile', () => {
     const assignment = baseAssignment({ state: 'DRAFT' })
     render(
       <HouseholdAssignmentPanel
@@ -165,7 +171,8 @@ describe('HouseholdAssignmentPanel', () => {
     const selectB = screen.getByLabelText('チーム B のプロフィール')
     fireEvent.change(selectB, { target: { value: 'profile-1' } })
 
-    expect(screen.getByText('未使用のプロフィール: profile-2')).toBeInTheDocument()
+    expect(screen.getByText('未使用のプロフィール: 子育て期・配偶者・子1人')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('profile-2')
   })
 
   it('STAGE_SPLIT: shows a coverage warning when STAGE_SPLIT_INSUFFICIENT_TEAMS is present', () => {
@@ -185,7 +192,7 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.getByTestId('stage-coverage-warning')).toBeInTheDocument()
   })
 
-  it('MULTI_PERSON_PER_TEAM: allows reordering displayOrder via up/down controls but offers no add/remove control', () => {
+  it('MULTI_PERSON_PER_TEAM: allows reordering displayOrder via up/down controls (labeled with a translated profile, not the raw profileId) but offers no add/remove control', () => {
     const assignment: HouseholdAssignmentView = {
       lessonRunId: 'run-1',
       courseFormat: 'MULTI_PERSON_PER_TEAM',
@@ -195,8 +202,8 @@ describe('HouseholdAssignmentPanel', () => {
       warnings: [],
       teams: [
         { teamId: 'team-a', teamDisplayName: 'チーム A', entries: [
-          { householdId: 'h-a1', profileId: 'profile-1', displayOrder: 0, assignmentSource: 'AUTO' },
-          { householdId: 'h-a2', profileId: 'profile-2', displayOrder: 1, assignmentSource: 'AUTO' },
+          { householdId: 'h-a1', profileId: 'profile-1', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }, displayOrder: 0, assignmentSource: 'AUTO' },
+          { householdId: 'h-a2', profileId: 'profile-2', profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' }, displayOrder: 1, assignmentSource: 'AUTO' },
         ] },
       ],
     }
@@ -214,7 +221,7 @@ describe('HouseholdAssignmentPanel', () => {
     expect(screen.queryByRole('button', { name: /削除/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /追加/ })).not.toBeInTheDocument()
 
-    const downBtn = screen.getByRole('button', { name: 'チーム A profile-1 を下に移動' })
+    const downBtn = screen.getByRole('button', { name: 'チーム A 独立期・単身 を下に移動' })
     fireEvent.click(downBtn)
 
     const saveBtn = screen.getByRole('button', { name: '変更を保存' })
@@ -227,5 +234,29 @@ describe('HouseholdAssignmentPanel', () => {
         { householdId: 'h-a2', displayOrder: 0 },
       ]),
     })
+    expect(document.body.textContent).not.toContain('profile-1')
+    expect(document.body.textContent).not.toContain('profile-2')
+  })
+
+  it('shows the fixed fallback copy, never the raw profileId, when profileSummary is null (Project C fail-closed)', () => {
+    const assignment = baseAssignment({
+      state: 'FROZEN',
+      teams: [
+        { teamId: 'team-a', teamDisplayName: 'チーム A', entries: [
+          { householdId: 'h-a', profileId: 'profile-unresolved', profileSummary: null, displayOrder: 0, assignmentSource: 'AUTO' },
+        ] },
+      ],
+    })
+    render(
+      <HouseholdAssignmentPanel
+        assignment={assignment}
+        isPrimaryTeacher={true}
+        isBusy={false}
+        onPrepare={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('家庭プロフィールを確認できません')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('profile-unresolved')
   })
 })
