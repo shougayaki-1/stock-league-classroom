@@ -8,6 +8,8 @@ import { HouseholdSummaryCard, type HouseholdEventDisclosureView, type Household
 import { HouseholdClassComparisonView } from './HouseholdClassComparisonView'
 import type { HouseholdClassComparisonPublicView } from '../../lib/lessonRuns/liveTypes'
 import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
+import { formatHouseholdProfileLabel } from '../../lib/presentation/householdLabels'
+import { describeError } from '../../lib/monitoring/describeError'
 
 /**
  * Hand-duplicated subset of `HouseholdStateTeamView`
@@ -27,6 +29,13 @@ interface HouseholdEntryStateNode {
   visibleConcepts: string[]
   eventDisclosures: HouseholdEventDisclosureView[]
   shortfallOptions: HouseholdShortfallOption[]
+  /**
+   * Optional for rollout compatibility with old RTDB nodes written before
+   * Project C's server projection change (Task 2) — a node that predates
+   * this field simply fails closed to the generic profile-missing copy
+   * rather than crashing.
+   */
+  profileSummary?: { lifeStage: string; family: string }
 }
 
 /**
@@ -182,10 +191,13 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
   // `lifeStage`'s raw enum string with no existing translation convention
   // to match, so this keeps the SAME convention rather than introducing a
   // one-off mapping found nowhere else.
-  const householdTabLabel = (id: string): string => {
-    const entry = state?.households?.[id]
-    if (!entry?.profile) return id
-    return `${entry.profile.lifeStage}・${entry.profile.family}`
+  const householdProfileLabel = (id: string): string => {
+    const advancedEntry = state?.households?.[id]
+    const summary = isAdvanced
+      ? (advancedEntry?.state.profileSummary ?? advancedEntry?.profile ?? null)
+      : (state?.household?.profileSummary ?? null)
+
+    return formatHouseholdProfileLabel(summary?.lifeStage, summary?.family)
   }
 
   const handleSubmit = useCallback(() => {
@@ -210,7 +222,7 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
       .then(() => setSubmitStatus('SUCCESS'))
       .catch((error: unknown) => {
         setSubmitStatus('ERROR')
-        setErrorMessage(error instanceof Error ? error.message : '提出に失敗しました。')
+        setErrorMessage(describeError(error, '提出に失敗しました。'))
       })
   }, [functions, lessonRunId, activeHouseholdId, household, isSettling, shortfallResolutionType, shortfallResolutionAssetType])
 
@@ -232,13 +244,13 @@ export function HouseholdTeamScreen({ lessonRunId, teamId, database, functions }
           variant="scrollable"
         >
           {householdOrder.map((id) => (
-            <Tab key={id} value={id} label={householdTabLabel(id)} />
+            <Tab key={id} value={id} label={householdProfileLabel(id)} />
           ))}
         </Tabs>
       )}
       <HouseholdSummaryCard
         householdId={household.householdId}
-        profileLabel={householdTabLabel(activeHouseholdId)}
+        profileLabel={householdProfileLabel(activeHouseholdId)}
         cashYen={household.cashYen}
         lifeStage={household.lifeStage}
         roundIndex={household.roundIndex}

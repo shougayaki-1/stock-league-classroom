@@ -41,8 +41,9 @@ function emitPublicRun(value: unknown) {
 }
 
 const household = {
-  householdId: 'team-a', cashYen: 500000, lifeStage: 'CHILD_REARING', roundIndex: 0,
+  householdId: 'team-a', cashYen: 500000, lifeStage: 'INDEPENDENT', roundIndex: 0,
   assetHoldingsYen: { DOMESTIC_STOCK: 100000 }, visibleConcepts: [], eventDisclosures: [], shortfallOptions: [],
+  profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' },
 }
 
 function renderScreen(teamId = 'team-a') {
@@ -55,13 +56,14 @@ describe('HouseholdTeamScreen — ROLE/STAGE (Common and single-household advanc
     expect(screen.queryByText('team-a')).not.toBeInTheDocument()
   })
 
-  it('renders the household once lessonRunTeamState/{runId}/{teamId} resolves (Common .household shape), and submits via the real Callable wrapper with householdId === teamId', async () => {
+  it('renders the household once lessonRunTeamState/{runId}/{teamId} resolves (Common .household shape), with a human profile label instead of the raw teamId, and submits via the real Callable wrapper with householdId === teamId', async () => {
     const user = userEvent.setup()
     renderScreen()
 
     emitTeamState({ household })
 
-    expect(screen.getByText('team-a')).toBeInTheDocument()
+    expect(screen.getByText('独立期・単身')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('team-a')
     expect(refMock).toHaveBeenCalledWith({}, 'lessonRunTeamState/run-1/team-a')
 
     await user.click(screen.getByRole('button', { name: '今回の意思決定を提出する' }))
@@ -72,7 +74,7 @@ describe('HouseholdTeamScreen — ROLE/STAGE (Common and single-household advanc
     expect(await screen.findByText('提出しました。')).toBeInTheDocument()
   })
 
-  it('renders a single-entry advanced .households shape (ROLE_VARIANT/STAGE_SPLIT) functionally identically — no tabs — reading through households[householdOrder[0]]', async () => {
+  it('renders a single-entry advanced .households shape (ROLE_VARIANT/STAGE_SPLIT) functionally identically — no tabs — reading through households[householdOrder[0]], with a human profile label instead of the runtime householdId', async () => {
     const user = userEvent.setup()
     renderScreen()
 
@@ -81,10 +83,17 @@ describe('HouseholdTeamScreen — ROLE/STAGE (Common and single-household advanc
       synchronizedRoundIndex: 0,
       roundStatus: 'OPEN',
       householdOrder: ['case-alpha'],
-      households: { 'case-alpha': { householdId: 'case-alpha', state: { ...household, householdId: 'case-alpha' } } },
+      households: {
+        'case-alpha': {
+          householdId: 'case-alpha',
+          profile: { lifeStage: 'INDEPENDENT', family: '単身' },
+          state: { ...household, householdId: 'case-alpha', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' } },
+        },
+      },
     })
 
-    expect(screen.getByText('case-alpha')).toBeInTheDocument()
+    expect(screen.getByText('独立期・単身')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('case-alpha')
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '今回の意思決定を提出する' }))
@@ -101,44 +110,47 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     households: {
       'case-a': {
         householdId: 'case-a',
-        profile: { lifeStage: 'SINGLE', family: '独身' },
-        state: { ...household, householdId: 'case-a', lifeStage: 'SINGLE' },
+        profile: { lifeStage: 'INDEPENDENT', family: '独身' },
+        state: { ...household, householdId: 'case-a', lifeStage: 'INDEPENDENT', profileSummary: { lifeStage: 'INDEPENDENT', family: '独身' } },
       },
       'case-b': {
         householdId: 'case-b',
         profile: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' },
-        state: { ...household, householdId: 'case-b', lifeStage: 'CHILD_REARING' },
+        state: { ...household, householdId: 'case-b', lifeStage: 'CHILD_REARING', profileSummary: { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' } },
       },
       'case-c': {
         householdId: 'case-c',
         profile: { lifeStage: 'RETIRED', family: '配偶者のみ' },
-        state: { ...household, householdId: 'case-c', lifeStage: 'RETIRED' },
+        state: { ...household, householdId: 'case-c', lifeStage: 'RETIRED', profileSummary: { lifeStage: 'RETIRED', family: '配偶者のみ' } },
       },
     },
   }
 
   /**
-   * Important I3 (whole-branch review): a MULTI team's tabs previously
-   * labeled themselves with `state.householdId` — an opaque
-   * `idempotencyDocumentId()` runtime hash, meaningless to a student. This
-   * proves the tab label is now human-readable (`lifeStage`・`family`,
-   * read from `.profile` — Task 9's projection already publishes it, but
-   * this screen never read it before this fix).
+   * Important I3 (whole-branch review) + Project C: a MULTI team's tabs
+   * previously labeled themselves with `state.householdId` (an opaque
+   * runtime hash), and later with the raw `lifeStage` enum token. Both leak
+   * internal values. This proves the tab label is now fully translated
+   * Japanese product vocabulary (`子育て期・配偶者・子1人`), built via
+   * `formatHouseholdProfileLabel`.
    */
-  it('labels each tab with a human-readable lifeStage・family pair from .profile, not the opaque runtime householdId (Important I3)', () => {
+  it('labels each tab with a translated lifeStage・family pair, not the opaque runtime householdId or the raw enum token (Important I3)', () => {
     renderScreen()
     emitTeamState(multiState)
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'CHILD_REARING・配偶者・子1人',
-      'SINGLE・独身',
-      'RETIRED・配偶者のみ',
+      '子育て期・配偶者・子1人',
+      '独立期・独身',
+      '退職後・配偶者のみ',
     ])
-    // None of the runtime householdId hashes leak into a tab label.
+    // None of the runtime householdId hashes or raw enum tokens leak into a tab label.
     expect(screen.queryByRole('tab', { name: 'case-a' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'case-b' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'case-c' })).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('CHILD_REARING')
+    expect(document.body.textContent).not.toContain('INDEPENDENT')
+    expect(document.body.textContent).not.toContain('RETIRED')
   })
 
   /**
@@ -158,16 +170,16 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
         'case-a': multiState.households['case-a'],
         'case-d': {
           householdId: 'case-d',
-          profile: { lifeStage: 'SINGLE', family: '同棲中のパートナーあり' },
-          state: { ...household, householdId: 'case-d', lifeStage: 'SINGLE' },
+          profile: { lifeStage: 'INDEPENDENT', family: '同棲中のパートナーあり' },
+          state: { ...household, householdId: 'case-d', lifeStage: 'INDEPENDENT', profileSummary: { lifeStage: 'INDEPENDENT', family: '同棲中のパートナーあり' } },
         },
       },
     })
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'SINGLE・独身',
-      'SINGLE・同棲中のパートナーあり',
+      '独立期・独身',
+      '独立期・同棲中のパートナーあり',
     ])
     expect(new Set(tabs.map((tab) => tab.textContent)).size).toBe(2)
   })
@@ -178,9 +190,9 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'CHILD_REARING・配偶者・子1人',
-      'SINGLE・独身',
-      'RETIRED・配偶者のみ',
+      '子育て期・配偶者・子1人',
+      '独立期・独身',
+      '退職後・配偶者のみ',
     ])
 
     // A subsequent update (e.g. cashYen changing this round) must not
@@ -195,9 +207,9 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     })
     const tabsAfter = screen.getAllByRole('tab')
     expect(tabsAfter.map((tab) => tab.textContent)).toEqual([
-      'CHILD_REARING・配偶者・子1人',
-      'SINGLE・独身',
-      'RETIRED・配偶者のみ',
+      '子育て期・配偶者・子1人',
+      '独立期・独身',
+      '退職後・配偶者のみ',
     ])
   })
 
@@ -207,10 +219,10 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     emitTeamState(multiState)
 
     // First tab (case-b) selected by default.
-    expect(screen.getByText('ライフステージ: CHILD_REARING')).toBeInTheDocument()
+    expect(screen.getByText('ライフステージ: 子育て期')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('tab', { name: 'SINGLE・独身' }))
-    expect(screen.getByText('ライフステージ: SINGLE')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '独立期・独身' }))
+    expect(screen.getByText('ライフステージ: 独立期')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '今回の意思決定を提出する' }))
     expect(callableMock).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'case-a', lessonRunId: 'run-1' }))
@@ -221,9 +233,9 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     renderScreen()
     emitTeamState(multiState)
     expect(screen.getAllByRole('tab')).toHaveLength(3)
-    expect(screen.getByRole('tab', { name: 'SINGLE・独身' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'CHILD_REARING・配偶者・子1人' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'RETIRED・配偶者のみ' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '独立期・独身' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '子育て期・配偶者・子1人' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '退職後・配偶者のみ' })).toBeInTheDocument()
   })
 
   it('SETTLING: submission is disabled/hidden, mirroring the server-side OPEN-only guard', async () => {
@@ -233,6 +245,36 @@ describe('HouseholdTeamScreen — MULTI (multiple households per team)', () => {
     expect(screen.queryByRole('button', { name: '今回の意思決定を提出する' })).not.toBeInTheDocument()
     expect(screen.getByText(/決算処理中/)).toBeInTheDocument()
   })
+
+  it('fails closed to a generic label — and never echoes the raw token — when a household carries an unknown backend lifeStage', () => {
+    renderScreen()
+    emitTeamState({
+      ...multiState,
+      householdOrder: ['case-a'],
+      households: {
+        'case-a': {
+          householdId: 'case-a',
+          profile: { lifeStage: 'UNKNOWN_INTERNAL_STAGE', family: '単身' },
+          state: { ...household, householdId: 'case-a', profileSummary: { lifeStage: 'UNKNOWN_INTERNAL_STAGE', family: '単身' } },
+        },
+      },
+    })
+
+    expect(screen.getByText('ライフステージを確認できません・単身')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('UNKNOWN_INTERNAL_STAGE')
+  })
+
+  it('maps a submit failure through describeError to a generic Japanese message, never leaking the raw backend error string', async () => {
+    const user = userEvent.setup()
+    callableMock.mockRejectedValueOnce(new Error('backend-secret-message'))
+    renderScreen()
+    emitTeamState(multiState)
+
+    await user.click(screen.getByRole('button', { name: '今回の意思決定を提出する' }))
+
+    expect(await screen.findByText('提出に失敗しました。')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+  })
 })
 
 describe('HouseholdTeamScreen — automatic class comparison (REFLECTION)', () => {
@@ -240,9 +282,16 @@ describe('HouseholdTeamScreen — automatic class comparison (REFLECTION)', () =
     renderScreen()
     emitTeamState({
       courseFormat: 'ROLE_VARIANT', synchronizedRoundIndex: 3, roundStatus: 'OPEN',
-      householdOrder: ['case-a'], households: { 'case-a': { householdId: 'case-a', state: { ...household, householdId: 'case-a' } } },
+      householdOrder: ['case-a'],
+      households: {
+        'case-a': {
+          householdId: 'case-a',
+          profile: { lifeStage: 'INDEPENDENT', family: '単身' },
+          state: { ...household, householdId: 'case-a', profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' } },
+        },
+      },
     })
-    expect(screen.getByText('case-a')).toBeInTheDocument()
+    expect(screen.getByText('独立期・単身')).toBeInTheDocument()
 
     emitPublicRun({
       status: 'REFLECTION',
@@ -256,6 +305,6 @@ describe('HouseholdTeamScreen — automatic class comparison (REFLECTION)', () =
 
     expect(screen.getByText('クラス全体の比較')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '今回の意思決定を提出する' })).not.toBeInTheDocument()
-    expect(screen.queryByText('case-a')).not.toBeInTheDocument()
+    expect(screen.queryByText('独立期・単身')).not.toBeInTheDocument()
   })
 })
