@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every student- and teacher-facing Home Economics screen render human-readable household/profile/state vocabulary without exposing runtime household IDs, logical profile IDs, backend enum tokens, or raw backend error messages, while preserving those IDs internally for mutations, RTDB map keys, and React/DOM identity.
+**Goal:** Make every student- and teacher-facing Home Economics screen render human-readable household/profile/state vocabulary without exposing runtime household IDs, logical profile IDs, backend enum tokens, or raw backend error messages, while preserving those IDs internally for mutations, RTDB keys, React keys, and DOM identity.
 
-**Architecture:** Keep the existing server-side privacy allow-lists, but enrich three wire projections with the semantic data the client currently lacks: `profileSummary: { lifeStage, family }`. The client remains responsible for Japanese copy through Project A's `src/lib/presentation/householdLabels.ts`; server code must not compose Japanese display strings from enum values. Runtime IDs and profile IDs remain in DTOs only where required for commands and identity, and every UI fallback fails closed to generic human copy rather than echoing the internal value.
+**Architecture:** Preserve the existing server privacy allow-lists and enrich only the three projections where the client currently lacks semantic profile data: realtime team state, household assignment view, and teacher dashboard rows. Each enrichment carries `profileSummary: { lifeStage, family }`; Japanese copy remains client-side in Project A's `householdLabels.ts`. IDs remain wire/domain identity values but may not be used as presentation fallbacks.
 
 **Tech Stack:** Firebase Cloud Functions v2, TypeScript 6, React 19, Vite 8, Vitest 4, Testing Library, MUI, Firebase Realtime Database/Callable Functions.
 
@@ -13,117 +13,122 @@
 ## Global Constraints
 
 - Baseline is `codex/classroom`; do not target `main`.
-- Project A presentation/error primitives are already available and must be reused rather than duplicated.
-- A value being safe in a public/team projection does **not** make it safe to render directly to a human.
-- Student/teacher UI must not render runtime `householdId`, `teamId`, `profileId`, raw UID, backend enum/state token, revision/idempotency metadata, or raw `Error.message` as normal UI copy.
-- Internal IDs remain valid for API payloads, RTDB map keys, React keys, DOM ids, and domain logic when they are not rendered as user-facing text.
-- Never use `LABELS[value] ?? value`, `label ?? internalId`, or `error instanceof Error ? error.message : fallback` in user-facing Home Economics code.
-- Unknown wire values must fail closed to fixed generic Japanese copy and must never echo the unknown input.
-- Server DTO enrichment is allowed only when the client lacks semantic data needed to form a human label. Do not add N+1 reads; all enrichments in this plan use profile/template data already in memory at the current projection point.
-- Do not replace internal IDs with Japanese strings in mutation inputs. `householdId` and `profileId` must continue to reach existing submit/update Callables unchanged.
-- Do not expose private household authoring fields such as `internalRiskFactors`, event probabilities, insurance claim probabilities, seeds, or teacher-private computation logs.
+- Reuse Project A's `safeLabel`, household formatters, and `describeError`; do not create parallel presentation/error systems.
+- A DTO being public/team-safe does not make its values human-readable.
+- Student/teacher UI must not render runtime `householdId`, `teamId`, `profileId`, raw UID, backend enum/state token, revision/idempotency metadata, or raw `Error.message` as normal copy.
+- IDs remain valid for API payloads, RTDB map keys, React keys, DOM ids, and domain/control logic when they are not rendered as text.
+- Never introduce `LABELS[value] ?? value`, `label ?? internalId`, or `error instanceof Error ? error.message : fallback` in user-facing Home Economics code.
+- Unknown wire values fail closed to fixed Japanese copy and never echo the input token.
+- Do not add N+1 reads. Every server enrichment in this plan uses profile/template data already present at the current builder/publisher call site.
+- Keep `householdId` and `profileId` unchanged in submit/update Callable payloads.
+- Do not expose `internalRiskFactors`, claim/event probabilities, random seeds, or teacher-private computation logs.
 - Do not broaden scope into Projects B, D, E, or F.
-- Every behavior change follows RED → GREEN → focused test → commit.
-- Required invariant: if an opaque household/profile ID, unknown enum token, or backend error string is injected into a fixture, that exact raw value must not appear in rendered student/teacher UI.
+- Each task follows RED → verify failure → minimal implementation → verify pass → commit.
+- Required regression invariant: injecting an opaque ID, unknown enum token, or backend-secret error string into a fixture must not make that exact raw value appear in rendered student/teacher UI.
 
 ---
 
 ## File Structure
 
-The implementation intentionally keeps formatting, semantic projection, and UI consumption separate.
-
-- `src/lib/presentation/householdLabels.ts`: single client-side source of Japanese Home Economics labels and composite profile formatting.
-- `functions/src/homeEconomics/realtimeProjection.ts`: team-safe realtime household projection; gains semantic `profileSummary` without removing runtime identity.
-- `src/lib/lessonRuns/liveTypes.ts`: hand-synced client counterpart of the realtime DTO.
-- `functions/src/homeEconomics/householdAssignmentRepository.ts`: assignment wire view; gains semantic profile summary from `profiles` already passed to the builder.
-- `src/lib/homeEconomics/householdAssignment.ts`: hand-synced assignment client DTO.
-- `functions/src/homeEconomics/teacherDashboard.ts`: teacher DTO; stops manufacturing `profileLabel` and stops forwarding raw bulk error text.
-- `src/lib/homeEconomics/teacherDashboard.ts`: hand-synced teacher DTO.
-- `src/components/homeEconomics/*`: presentation-only household/assignment/comparison views.
-- `src/components/teacher/HouseholdTeacherDashboard.tsx`: orchestration/error container; converts failures through Project A's `describeError`.
+- `src/lib/presentation/householdLabels.ts`: Japanese labels and composite household-profile formatter.
+- `functions/src/homeEconomics/realtimeProjection.ts` + `src/lib/lessonRuns/liveTypes.ts`: server/client hand-synced team-state projection.
+- `functions/src/homeEconomics/householdAssignmentRepository.ts` + `src/lib/homeEconomics/householdAssignment.ts`: server/client hand-synced assignment projection.
+- `functions/src/homeEconomics/teacherDashboard.ts` + `src/lib/homeEconomics/teacherDashboard.ts`: server/client hand-synced teacher projection.
+- `src/components/homeEconomics/*`: student/teacher presentational components.
+- `src/components/teacher/HouseholdTeacherDashboard.tsx`: household teacher orchestration and user-facing error boundary.
 
 ---
 
-### Task 1: Extend the household presentation vocabulary with composite profile and assignment formatters
+### Task 1: Extend the household presentation vocabulary
 
 **Files:**
 - Modify: `src/lib/presentation/householdLabels.ts`
 - Modify: `src/lib/presentation/householdLabels.test.ts`
 
 **Interfaces:**
-- Consumes: Project A `safeLabel()` and the existing `formatHouseholdLifeStage()` / `formatHouseholdAssetType()` / `formatHouseholdCourseFormat()` helpers.
+- Consumes: Project A `safeLabel()` and existing household formatters.
 - Produces:
-  - `formatHouseholdProfileLabel(lifeStage: string | null | undefined, family: string | null | undefined): string`
-  - `formatHouseholdAssignmentState(value: string | null | undefined): string`
-  - `formatHouseholdAssignmentValidationStatus(value: string | null | undefined): string`
-  - exhaustive assignment state/validation label maps.
+  - `formatHouseholdProfileLabel(lifeStage, family): string`
+  - `formatHouseholdAssignmentState(value): string`
+  - `formatHouseholdAssignmentValidationStatus(value): string`
 
-- [ ] **Step 1: Write failing tests for composite profile formatting and assignment statuses**
+- [ ] **Step 1: Write the failing tests**
 
-Add tests that prove known values become Japanese copy and unknown/internal values never echo:
+Add these cases to `householdLabels.test.ts`:
 
 ```ts
-it('formats household profile from a translated life stage plus authored family text', () => {
+it('formats a household profile from translated stage plus authored family text', () => {
   expect(formatHouseholdProfileLabel('CHILD_REARING', ' 配偶者・子1人 '))
     .toBe('子育て期・配偶者・子1人')
 })
 
-it('never echoes an unknown life-stage token from a profile label', () => {
-  const result = formatHouseholdProfileLabel('UNKNOWN_INTERNAL_STAGE', '単身')
-  expect(result).toBe('ライフステージを確認できません・単身')
-  expect(result).not.toContain('UNKNOWN_INTERNAL_STAGE')
+it('fails closed when profile semantics are entirely missing', () => {
+  expect(formatHouseholdProfileLabel(undefined, undefined))
+    .toBe('家庭プロフィールを確認できません')
 })
 
-it('does not require an internal id when family text is unavailable', () => {
-  expect(formatHouseholdProfileLabel('INDEPENDENT', '   ')).toBe('独立期')
+it('never echoes an unknown life-stage token', () => {
+  const value = formatHouseholdProfileLabel('UNKNOWN_INTERNAL_STAGE', '単身')
+  expect(value).toBe('ライフステージを確認できません・単身')
+  expect(value).not.toContain('UNKNOWN_INTERNAL_STAGE')
 })
 
-it('fails closed for unknown assignment state and validation status', () => {
-  expect(formatHouseholdAssignmentState('BACKEND_ONLY_STATE')).toBe('割り当て状態を確認できません')
-  expect(formatHouseholdAssignmentValidationStatus('RAW_VALIDATION_TOKEN')).toBe('検証状況を確認できません')
+it('fails closed for assignment state and validation status', () => {
+  expect(formatHouseholdAssignmentState('BACKEND_ONLY_STATE'))
+    .toBe('割り当て状態を確認できません')
+  expect(formatHouseholdAssignmentValidationStatus('RAW_VALIDATION_TOKEN'))
+    .toBe('検証状況を確認できません')
 })
 ```
 
-- [ ] **Step 2: Run the focused test and confirm RED**
-
-Run:
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test -- src/lib/presentation/householdLabels.test.ts
 ```
 
-Expected: FAIL because the new formatters/maps do not yet exist.
+Expected: FAIL because the new APIs do not exist.
 
-- [ ] **Step 3: Add exhaustive maps and the fail-closed composite formatter**
+- [ ] **Step 3: Add exact assignment types and formatters**
 
-Use the actual assignment wire unions already present in `src/lib/homeEconomics/householdAssignment.ts` via type-only imports, or equivalent exact local unions if importing would introduce an unwanted runtime dependency:
+Use a type-only import, not a second handwritten union:
 
 ```ts
+import type { HouseholdAssignmentView } from '../homeEconomics/householdAssignment'
+
+type HouseholdAssignmentState = HouseholdAssignmentView['state']
+type HouseholdAssignmentValidationStatus = HouseholdAssignmentView['validationStatus']
+
 export const HOUSEHOLD_ASSIGNMENT_STATE_LABELS = {
   UNPREPARED: '未準備',
   DRAFT: '編集中',
   STALE: '要再確認',
   FROZEN: 'ロック済み',
-} satisfies Record<'UNPREPARED' | 'DRAFT' | 'STALE' | 'FROZEN', string>
+} satisfies Record<HouseholdAssignmentState, string>
 
 export const HOUSEHOLD_ASSIGNMENT_VALIDATION_STATUS_LABELS = {
   READY: '準備完了',
   INVALID: '要修正',
-} satisfies Record<'READY' | 'INVALID', string>
+} satisfies Record<HouseholdAssignmentValidationStatus, string>
 
 export const formatHouseholdProfileLabel = (
   lifeStage: string | null | undefined,
   family: string | null | undefined,
 ): string => {
-  const stageLabel = formatHouseholdLifeStage(lifeStage)
   const familyLabel = family?.trim()
+  if (!lifeStage && !familyLabel) return '家庭プロフィールを確認できません'
+  const stageLabel = formatHouseholdLifeStage(lifeStage)
   return familyLabel ? `${stageLabel}・${familyLabel}` : stageLabel
 }
+
+export const formatHouseholdAssignmentState = (value: string | null | undefined): string =>
+  safeLabel(value, HOUSEHOLD_ASSIGNMENT_STATE_LABELS, '割り当て状態を確認できません')
+
+export const formatHouseholdAssignmentValidationStatus = (value: string | null | undefined): string =>
+  safeLabel(value, HOUSEHOLD_ASSIGNMENT_VALIDATION_STATUS_LABELS, '検証状況を確認できません')
 ```
 
-Both assignment formatter functions must call `safeLabel`; neither may use the raw input as a fallback.
-
-- [ ] **Step 4: Run the focused test and confirm GREEN**
+- [ ] **Step 4: Verify GREEN**
 
 ```bash
 npm test -- src/lib/presentation/householdLabels.test.ts
@@ -131,7 +136,7 @@ npm test -- src/lib/presentation/householdLabels.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the presentation primitive**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/lib/presentation/householdLabels.ts src/lib/presentation/householdLabels.test.ts
@@ -140,7 +145,7 @@ git commit -m "feat: add household presentation formatters"
 
 ---
 
-### Task 2: Enrich realtime household state with semantic profile data already available at publish time
+### Task 2: Add semantic profile data to realtime household state
 
 **Files:**
 - Modify: `functions/src/homeEconomics/realtimeProjection.ts`
@@ -150,21 +155,13 @@ git commit -m "feat: add household presentation formatters"
 - Modify: `src/lib/lessonRuns/liveTypes.ts`
 
 **Interfaces:**
-- Produces the hand-synced wire field on server and client:
+- Adds required `profileSummary: { lifeStage: string; family: string }` to server/client `HouseholdStateTeamView`.
+- Changes `toHouseholdStateTeamView` to receive the already-resolved `HouseholdProfile` before `HouseholdState`.
+- Does not remove `householdId` or any existing state needed for decisions.
 
-```ts
-profileSummary: {
-  lifeStage: string
-  family: string
-}
-```
+- [ ] **Step 1: Write the failing projection test**
 
-- Changes `toHouseholdStateTeamView` so it receives the already-resolved `HouseholdProfile` in addition to the runtime `HouseholdState`.
-- Keeps `householdId`, `assetHoldingsYen`, and other existing state fields intact for command identity/domain behavior.
-
-- [ ] **Step 1: Add RED projection tests for `profileSummary` and private-field exclusion**
-
-In `functions/src/homeEconomics/realtimeProjection.test.ts`, update the fixture to pass a valid authored profile and assert:
+In `functions/src/homeEconomics/realtimeProjection.test.ts`, pass a profile fixture with `lifeStage: 'CHILD_REARING'`, `family: '配偶者・子1人'` and assert:
 
 ```ts
 expect(view.profileSummary).toEqual({
@@ -174,30 +171,30 @@ expect(view.profileSummary).toEqual({
 expect(JSON.stringify(view)).not.toContain('internalRiskFactors')
 ```
 
-Also keep the existing allow-list/privacy assertions. Do not add the full authored profile to `HouseholdStateTeamView`.
+Keep all existing allow-list/privacy assertions.
 
-- [ ] **Step 2: Run the realtime projection test and confirm RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test --workspace=functions -- src/homeEconomics/realtimeProjection.test.ts
 ```
 
-Expected: FAIL because `profileSummary` is absent and/or the helper signature has not changed.
+Expected: FAIL because `profileSummary` is absent.
 
-- [ ] **Step 3: Change the server projection signature and advanced helper wiring**
+- [ ] **Step 3: Enrich the pure server projection**
 
-Use the profile already passed into `toAdvancedHouseholdTeamEntryView`:
+Add to `HouseholdStateTeamView`:
 
 ```ts
-export interface HouseholdStateTeamView {
-  householdId: string
-  profileSummary: {
-    lifeStage: string
-    family: string
-  }
-  // existing fields unchanged
+profileSummary: {
+  lifeStage: string
+  family: string
 }
+```
 
+Change the helper signature to:
+
+```ts
 export const toHouseholdStateTeamView = (
   profile: HouseholdProfile,
   household: HouseholdState,
@@ -210,26 +207,41 @@ export const toHouseholdStateTeamView = (
     lifeStage: profile.lifeStage,
     family: profile.family,
   },
-  // existing allow-listed fields
+  isFictional: true,
+  cashYen: household.cashYen,
+  assetHoldingsYen: { ...household.assetHoldingsYen },
+  activeInsuranceContractYearsRemaining: { ...household.activeInsuranceContracts },
+  activeLiabilities: Object.fromEntries(
+    Object.entries(household.activeLiabilities).map(([id, state]) => [
+      id,
+      { remainingPrincipalYen: state.remainingPrincipalYen, remainingYears: state.remainingYears },
+    ]),
+  ),
+  lifeStage: household.lifeStage,
+  roundIndex: household.roundIndex,
+  goalDelayedRounds: household.goalDelayedRounds,
+  visibleConcepts,
+  eventDisclosures,
+  shortfallOptions,
 })
 ```
 
-Then update `toAdvancedHouseholdTeamEntryView()` to call `toHouseholdStateTeamView(profile, household, ...)`.
+Update `toAdvancedHouseholdTeamEntryView()` to call `toHouseholdStateTeamView(profile, household, ...)`.
 
-- [ ] **Step 4: Add RED publisher coverage for COMMON_CONDITIONS**
+- [ ] **Step 4: Add the Common publisher RED assertion**
 
-In `functions/src/homeEconomics/processRound.publishRealtimeState.test.ts`, assert that the Common team-state write contains semantic profile data and does not require another read:
+In `processRound.publishRealtimeState.test.ts`, assert the Common team write contains:
 
 ```ts
 expect(teamUpdate.household.profileSummary).toEqual({
-  lifeStage: input.profile.lifeStage,
-  family: input.profile.family,
+  lifeStage: 'INDEPENDENT',
+  family: '単身',
 })
 ```
 
-- [ ] **Step 5: Pass the existing `input.profile` into the Common projection**
+- [ ] **Step 5: Pass the profile already in memory**
 
-The production path already receives `profile` in `ProcessRoundDeps['publishRealtimeState']`; change only the projection call:
+In `publishRealtimeStateWithAdminSdk`, change the Common call to:
 
 ```ts
 const householdView = toHouseholdStateTeamView(
@@ -241,13 +253,22 @@ const householdView = toHouseholdStateTeamView(
 )
 ```
 
-Do **not** add a Firestore lookup. `processRound()` already resolved `profile` from the lesson-run template snapshot before `publishRealtimeState()` is called.
+Do not add a read: `ProcessRoundDeps.publishRealtimeState` already receives `profile`, resolved from the template snapshot by `processRound()`.
 
-- [ ] **Step 6: Hand-sync the client live type**
+- [ ] **Step 6: Hand-sync the client type**
 
-Add the same required `profileSummary` field to `src/lib/lessonRuns/liveTypes.ts`'s `HouseholdStateTeamView`. Keep the existing advanced entry `.profile` field for compatibility; Project C does not remove or redesign it.
+Add the same required field to `src/lib/lessonRuns/liveTypes.ts`:
 
-- [ ] **Step 7: Run focused server tests and root typecheck**
+```ts
+profileSummary: {
+  lifeStage: string
+  family: string
+}
+```
+
+Keep the existing advanced entry `.profile` field unchanged for compatibility.
+
+- [ ] **Step 7: Verify**
 
 ```bash
 npm test --workspace=functions -- src/homeEconomics/realtimeProjection.test.ts src/homeEconomics/processRound.publishRealtimeState.test.ts
@@ -256,7 +277,7 @@ npm run typecheck
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the realtime semantic projection**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add functions/src/homeEconomics/realtimeProjection.ts functions/src/homeEconomics/realtimeProjection.test.ts functions/src/homeEconomics/processRound.ts functions/src/homeEconomics/processRound.publishRealtimeState.test.ts src/lib/lessonRuns/liveTypes.ts
@@ -265,63 +286,72 @@ git commit -m "feat: project household profile summaries"
 
 ---
 
-### Task 3: Make `HouseholdSummaryCard` human-readable while preserving internal asset values for decisions
+### Task 3: Humanize `HouseholdSummaryCard` without changing decision values
 
 **Files:**
 - Modify: `src/components/homeEconomics/HouseholdSummaryCard.tsx`
 - Modify: `src/components/homeEconomics/HouseholdSummaryCard.test.tsx`
 
 **Interfaces:**
-- Consumes Task 1 `formatHouseholdLifeStage`, `formatHouseholdAssetType`, `formatHouseholdConcept`.
-- `householdId` remains an internal prop for DOM/input identity only.
-- Make `profileLabel` required user-facing copy; remove the visual `profileLabel ?? householdId` fallback.
-- Ranking/choice controls display Japanese asset labels while callbacks continue to emit the original asset-type wire values.
+- Consumes Task 1 household formatters.
+- `householdId` remains for DOM/input identity only.
+- `profileLabel` becomes required and is the only heading source.
+- Asset widgets display Japanese labels but callbacks emit original asset-type values.
 
-- [ ] **Step 1: Reverse the tests that currently expect raw asset tokens**
+- [ ] **Step 1: Write RED presentation tests**
 
-Replace raw-token expectations such as `DOMESTIC_STOCK`/`FOREIGN_BOND` with assertions that:
+Use a valid known-asset fixture:
 
 ```ts
+const knownAssets = { DOMESTIC_STOCK: 300000, FOREIGN_STOCK: 100000 }
+```
+
+Render a SELL_ASSETS card with:
+
+```tsx
+<HouseholdSummaryCard
+  householdId="runtime-secret-id"
+  profileLabel="子育て期・配偶者・子1人"
+  cashYen={1500000}
+  lifeStage="CHILD_REARING"
+  roundIndex={0}
+  visibleConcepts={['ASSET_DIVERSIFICATION']}
+  assetHoldingsYen={knownAssets}
+  shortfallOptions={[{ type: 'SELL_ASSETS', description: '資産を売却する', resolvesYen: 100000 }]}
+  shortfallResolutionValue="SELL_ASSETS"
+  onShortfallResolutionAssetTypeChange={onAssetTypeChange}
+/>
+```
+
+Assert:
+
+```ts
+expect(screen.getByText('ライフステージ: 子育て期')).toBeInTheDocument()
+expect(screen.getByText('第1ラウンド')).toBeInTheDocument()
 expect(screen.getByRole('radio', { name: '国内株式' })).toBeInTheDocument()
 expect(document.body.textContent).not.toContain('DOMESTIC_STOCK')
+expect(document.body.textContent).not.toContain('runtime-secret-id')
 ```
 
-Add a callback test proving the user-visible label does not change the domain value:
+Click `国内株式` and assert `onAssetTypeChange` receives `DOMESTIC_STOCK`.
 
-```ts
-await user.click(screen.getByRole('radio', { name: '国内株式' }))
-expect(onAssetTypeChange).toHaveBeenCalledWith('DOMESTIC_STOCK')
-```
+Add a second fixture with `UNKNOWN_BACKEND_ASSET` and assert the raw token is absent while `一部の資産種別を確認できません。` is visible.
 
-Add an unknown sentinel:
-
-```ts
-const assetHoldingsYen = {
-  DOMESTIC_STOCK: 300000,
-  UNKNOWN_BACKEND_ASSET: 100000,
-}
-render(/* SELL_ASSETS card */)
-expect(document.body.textContent).not.toContain('UNKNOWN_BACKEND_ASSET')
-expect(screen.getByText('一部の資産種別を確認できません。')).toBeInTheDocument()
-```
-
-Also assert `CHILD_REARING` renders as `子育て期` and round index `0` renders as `第1ラウンド`.
-
-- [ ] **Step 2: Run the component test and confirm RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdSummaryCard.test.tsx
 ```
 
-Expected: FAIL on raw life-stage/asset output and current zero-based round copy.
+Expected: FAIL on raw life-stage/asset output and the ID fallback.
 
-- [ ] **Step 3: Remove duplicate concept copy and use Project A formatters**
+- [ ] **Step 3: Remove duplicate concept copy**
 
-Delete the local `CONCEPT_LABELS`. Keep a deterministic concept order, but render each known concept through `formatHouseholdConcept()`; if a wire value is unknown, show at most one fixed `学習項目を確認できません` chip and never the raw token.
+Delete local `CONCEPT_LABELS`. Render known concepts through `formatHouseholdConcept()`. If `visibleConcepts` contains any unknown value, render one generic `学習項目を確認できません` chip and never the raw value.
 
-- [ ] **Step 4: Translate asset labels without translating mutation values**
+- [ ] **Step 4: Build a reversible asset label map**
 
-Build label/value pairs from known keys in `assetHoldingsYen`:
+Use the Project A map to admit only known asset types:
 
 ```ts
 const isKnownAssetType = (value: string): value is keyof typeof HOUSEHOLD_ASSET_TYPE_LABELS =>
@@ -338,23 +368,21 @@ const assetValueByLabel = new Map(
 )
 ```
 
-Feed labels to `RankingInput`/`SingleChoiceInput`, translate current values from wire value → label, and translate `onChange` back from label → wire value before invoking `onAssetAllocationOrderChange` / `onShortfallResolutionAssetTypeChange`.
+Feed label strings into `RankingInput` / `SingleChoiceInput`. Convert current internal values to labels before passing `value`; convert labels back through `assetValueByLabel` before calling `onAssetAllocationOrderChange` or `onShortfallResolutionAssetTypeChange`. Unknown asset types are not selectable and trigger the generic notice.
 
-Unknown asset keys must not become selectable raw options. If any exist, render only `一部の資産種別を確認できません。`.
+- [ ] **Step 5: Remove visible ID fallback and normalize stage/round**
 
-- [ ] **Step 5: Remove visible ID fallback and normalize life-stage/round copy**
-
-Render:
+Make `profileLabel: string` required and render:
 
 ```tsx
-<Typography variant="h6">{profileLabel}</Typography>
+<Typography variant="h6" sx={{ fontWeight: 700 }}>{profileLabel}</Typography>
 <Typography variant="body2">ライフステージ: {formatHouseholdLifeStage(lifeStage)}</Typography>
 <Typography variant="body2">第{roundIndex + 1}ラウンド</Typography>
 ```
 
-`householdId` may remain in component input `id` attributes because that value is not rendered as user-facing copy.
+Keep `householdId` only inside component input ids.
 
-- [ ] **Step 6: Run tests and confirm GREEN**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdSummaryCard.test.tsx
@@ -362,7 +390,7 @@ npm test -- src/components/homeEconomics/HouseholdSummaryCard.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the summary-card presentation boundary**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/components/homeEconomics/HouseholdSummaryCard.tsx src/components/homeEconomics/HouseholdSummaryCard.test.tsx
@@ -371,66 +399,62 @@ git commit -m "fix: humanize household summary presentation"
 
 ---
 
-### Task 4: Stop `HouseholdTeamScreen` from falling back to runtime IDs or raw backend errors
+### Task 4: Remove runtime-ID and raw-error fallbacks from `HouseholdTeamScreen`
 
 **Files:**
 - Modify: `src/components/homeEconomics/HouseholdTeamScreen.tsx`
 - Modify: `src/components/homeEconomics/HouseholdTeamScreen.test.tsx`
 
 **Interfaces:**
-- Consumes Task 1 `formatHouseholdProfileLabel` and Project A `describeError`.
-- Consumes Task 2 `HouseholdStateTeamView.profileSummary` semantics.
-- Keeps runtime `activeHouseholdId` unchanged for `submitHouseholdDecision()`.
+- Consumes `formatHouseholdProfileLabel` and Project A `describeError`.
+- Consumes Task 2 `profileSummary`.
+- Keeps `activeHouseholdId` unchanged at the `submitHouseholdDecision` command boundary.
 
-- [ ] **Step 1: Rewrite the leakage assertions as RED tests**
+- [ ] **Step 1: Reverse the existing leakage tests**
 
-For Common, provide:
+For Common state, include:
 
 ```ts
 profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }
 ```
 
-and assert:
+Assert `独立期・単身` is visible and `team-a` is absent from rendered text.
+
+For MULTI state, use valid stages and expect translated tabs:
 
 ```ts
-expect(screen.getByText('独立期・単身')).toBeInTheDocument()
-expect(document.body.textContent).not.toContain('team-a')
+expect(tabs.map((tab) => tab.textContent)).toEqual([
+  '子育て期・配偶者・子1人',
+  '独立期・独身',
+  '退職後・配偶者のみ',
+])
 ```
 
-For advanced/MULTI, expect translated tabs such as `子育て期・配偶者・子1人`, while still asserting the Callable receives `householdId: 'case-a'`.
+Keep the submit assertion that selecting the second tab sends `householdId: 'case-a'`.
 
-Inject an unknown life-stage sentinel such as `UNKNOWN_INTERNAL_STAGE` and assert the tab/card contains `ライフステージを確認できません` but not the sentinel.
+Add an unknown stage `UNKNOWN_INTERNAL_STAGE` and assert `ライフステージを確認できません` is shown but the token is absent.
 
-Inject a rejected Callable with `new Error('backend-secret-message')` and assert:
+Configure the Callable mock to reject once with `new Error('backend-secret-message')`, submit, and assert `提出に失敗しました。` is shown while the secret text is absent.
 
-```ts
-expect(await screen.findByRole('alert')).toHaveTextContent('提出に失敗しました。')
-expect(document.body.textContent).not.toContain('backend-secret-message')
-```
-
-- [ ] **Step 2: Run the focused test and confirm RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx
 ```
 
-Expected: FAIL because Common currently falls back to `teamId`, advanced fallback can echo `householdId`, and raw `Error.message` is displayed.
+Expected: FAIL because Common/advanced fallbacks can expose IDs, stage enums are raw, and `Error.message` is shown.
 
-- [ ] **Step 3: Add `profileSummary` to the screen's local RTDB subset type**
+- [ ] **Step 3: Extend the local subscriber subset**
+
+Add to `HouseholdEntryStateNode`:
 
 ```ts
-interface HouseholdEntryStateNode {
-  householdId: string
-  profileSummary?: { lifeStage: string; family: string }
-  // existing fields
-}
+profileSummary?: { lifeStage: string; family: string }
 ```
 
-Keep it optional in this local subscriber type so an already-running old RTDB node fails closed rather than crashing during rollout.
+Keep it optional so old RTDB nodes fail closed rather than crash during rollout.
 
-- [ ] **Step 4: Replace `householdTabLabel(id)` with semantic-only lookup**
-
-Use the state-level summary as the canonical source; the existing advanced `.profile` can be a backward-compatible semantic fallback, but the final fallback must be generic copy:
+- [ ] **Step 4: Replace `householdTabLabel` with semantic-only formatting**
 
 ```ts
 const householdProfileLabel = (id: string): string => {
@@ -443,9 +467,9 @@ const householdProfileLabel = (id: string): string => {
 }
 ```
 
-Never return `id`, `teamId`, `householdId`, or `profileId` from this formatter.
+Never return `id`, `teamId`, `householdId`, or `profileId` from this function.
 
-- [ ] **Step 5: Replace raw error display with Project A error mapping**
+- [ ] **Step 5: Map submit failures through Project A**
 
 ```ts
 .catch((error: unknown) => {
@@ -454,17 +478,9 @@ Never return `id`, `teamId`, `householdId`, or `profileId` from this formatter.
 })
 ```
 
-- [ ] **Step 6: Pass the semantic profile label to `HouseholdSummaryCard` and retain identity only for commands**
+Pass `profileLabel={householdProfileLabel(activeHouseholdId)}` to `HouseholdSummaryCard`. Continue sending `householdId: activeHouseholdId` to the Callable.
 
-Continue to submit:
-
-```ts
-householdId: activeHouseholdId
-```
-
-but render only `householdProfileLabel(activeHouseholdId)`.
-
-- [ ] **Step 7: Run tests and confirm GREEN**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/components/homeEconomics/HouseholdSummaryCard.test.tsx
@@ -472,7 +488,7 @@ npm test -- src/components/homeEconomics/HouseholdTeamScreen.test.tsx src/compon
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the student household boundary**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/components/homeEconomics/HouseholdTeamScreen.tsx src/components/homeEconomics/HouseholdTeamScreen.test.tsx
@@ -481,7 +497,7 @@ git commit -m "fix: hide household runtime details from students"
 
 ---
 
-### Task 5: Enrich the household assignment DTO with semantic profile summaries
+### Task 5: Enrich the assignment DTO with profile summaries
 
 **Files:**
 - Modify: `functions/src/homeEconomics/householdAssignmentRepository.ts`
@@ -490,7 +506,54 @@ git commit -m "fix: hide household runtime details from students"
 - Modify: `src/lib/homeEconomics/householdAssignment.test.ts`
 
 **Interfaces:**
-- Adds to every assignment entry:
+- Adds `profileSummary: { lifeStage: string; family: string } | null` to every assignment entry.
+- Keeps `profileId` and `householdId` unchanged as mutation/identity values.
+
+- [ ] **Step 1: Write RED repository tests**
+
+For a known profile, assert:
+
+```ts
+expect(view.teams[0].entries[0]).toMatchObject({
+  profileId: 'profile-1',
+  profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' },
+})
+```
+
+For an entry whose `profileId` is absent from `profiles`, assert `profileSummary` is exactly `null`.
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+npm test --workspace=functions -- src/homeEconomics/householdAssignmentRepository.test.ts
+```
+
+Expected: FAIL because the entry view lacks `profileSummary`.
+
+- [ ] **Step 3: Project summaries from `profiles` already passed to the builder**
+
+Change `buildTeamsView` to accept `profiles: HouseholdProfile[]` and build one lookup map:
+
+```ts
+const profileById = new Map(profiles.map((profile) => [profile.householdId, profile] as const))
+```
+
+When pushing an entry, add:
+
+```ts
+const profile = profileById.get(entry.profileId)
+const profileSummary = profile
+  ? { lifeStage: profile.lifeStage, family: profile.family }
+  : null
+```
+
+Return `profileSummary` alongside the existing `householdId`, `profileId`, `displayOrder`, and `assignmentSource`. Change `buildHouseholdAssignmentView()` to call `buildTeamsView(input.entries, input.teamDisplayNames, input.profiles)`.
+
+Do not add a database read: `buildHouseholdAssignmentView` already receives `profiles`.
+
+- [ ] **Step 4: Hand-sync the client DTO**
+
+Add:
 
 ```ts
 profileSummary: {
@@ -499,61 +562,9 @@ profileSummary: {
 } | null
 ```
 
-- Keeps `profileId` as the mutation value and `householdId` as the entry identity.
-- `null` means the server could not resolve a referenced profile; the UI must render generic copy, never `profileId`.
+to each entry in `src/lib/homeEconomics/householdAssignment.ts`, then update `householdAssignment.test.ts` response fixtures/assertions.
 
-- [ ] **Step 1: Add RED repository projection tests**
-
-In `functions/src/homeEconomics/householdAssignmentRepository.test.ts`, assert a known entry is enriched from the already-supplied `profiles` array:
-
-```ts
-expect(view.teams[0].entries[0]).toMatchObject({
-  profileId: 'profile-1',
-  profileSummary: {
-    lifeStage: 'INDEPENDENT',
-    family: '単身',
-  },
-})
-```
-
-Add an orphan-profile fixture and assert `profileSummary === null`; do not substitute `profileId`.
-
-- [ ] **Step 2: Run the repository test and confirm RED**
-
-```bash
-npm test --workspace=functions -- src/homeEconomics/householdAssignmentRepository.test.ts
-```
-
-Expected: FAIL because the view does not contain `profileSummary`.
-
-- [ ] **Step 3: Enrich `buildTeamsView` from the `profiles` already in memory**
-
-Change the helper to receive `profiles: HouseholdProfile[]`, build a map once, and project only semantic fields:
-
-```ts
-const profileById = new Map(profiles.map((profile) => [profile.householdId, profile] as const))
-
-const profile = profileById.get(entry.profileId)
-team.entries.push({
-  householdId: entry.householdId,
-  profileId: entry.profileId,
-  profileSummary: profile
-    ? { lifeStage: profile.lifeStage, family: profile.family }
-    : null,
-  displayOrder: entry.displayOrder,
-  assignmentSource: entry.assignmentSource,
-})
-```
-
-Update `buildHouseholdAssignmentView()` to call `buildTeamsView(input.entries, input.teamDisplayNames, input.profiles)`.
-
-No database lookup is permitted: `buildHouseholdAssignmentView` already receives `profiles`.
-
-- [ ] **Step 4: Hand-sync the client DTO and wrapper tests**
-
-Add the same nullable `profileSummary` field to `src/lib/homeEconomics/householdAssignment.ts` and update `src/lib/homeEconomics/householdAssignment.test.ts` fixtures/response assertions.
-
-- [ ] **Step 5: Run server/client tests and typecheck**
+- [ ] **Step 5: Verify**
 
 ```bash
 npm test --workspace=functions -- src/homeEconomics/householdAssignmentRepository.test.ts
@@ -563,7 +574,7 @@ npm run typecheck
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the assignment DTO enrichment**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add functions/src/homeEconomics/householdAssignmentRepository.ts functions/src/homeEconomics/householdAssignmentRepository.test.ts src/lib/homeEconomics/householdAssignment.ts src/lib/homeEconomics/householdAssignment.test.ts
@@ -572,20 +583,19 @@ git commit -m "feat: enrich household assignment profiles"
 
 ---
 
-### Task 6: Make `HouseholdAssignmentPanel` display profile semantics instead of profile IDs
+### Task 6: Replace assignment profile IDs with semantic labels in the UI
 
 **Files:**
 - Modify: `src/components/homeEconomics/HouseholdAssignmentPanel.tsx`
 - Modify: `src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx`
 
 **Interfaces:**
-- Consumes Task 1 `formatHouseholdProfileLabel`, `formatHouseholdCourseFormat`, `formatHouseholdAssignmentState`, and `formatHouseholdAssignmentValidationStatus`.
-- Consumes Task 5 `entry.profileSummary`.
-- `profileId` remains the `<option value>` and update payload value, but never the visible option text, warning text, read-only text, or accessible move-control name.
+- Consumes Task 1 assignment/profile/course formatters and Task 5 `profileSummary`.
+- Keeps `profileId` as `<option value>` / update payload and `householdId` as update identity.
 
-- [ ] **Step 1: Update assignment fixtures to include semantic summaries and add RED no-ID assertions**
+- [ ] **Step 1: Update fixtures and write RED no-ID assertions**
 
-Use fixtures such as:
+Every assignment entry fixture gains a summary, for example:
 
 ```ts
 {
@@ -597,9 +607,14 @@ Use fixtures such as:
 }
 ```
 
-Assert editable options contain `独立期・単身`, frozen/read-only rows contain the same, and the rendered DOM does not contain `profile-1` or `profile-2`.
+Assert:
+- editable options show `独立期・単身` / `子育て期・配偶者・子1人`;
+- frozen/read-only rows show the same labels;
+- MULTI move controls use human labels in their accessible names;
+- unused-profile warning shows `未使用のプロフィール: 子育て期・配偶者・子1人`;
+- `profile-1` and `profile-2` are absent from rendered text.
 
-Keep the save assertion unchanged at the command boundary:
+Keep the existing save contract assertion:
 
 ```ts
 expect(onUpdate).toHaveBeenCalledWith({
@@ -608,21 +623,17 @@ expect(onUpdate).toHaveBeenCalledWith({
 })
 ```
 
-For the unused-profile warning, assert human copy such as `未使用のプロフィール: 子育て期・配偶者・子1人`, not `profile-2`.
+Add one entry with `profileSummary: null` and assert `家庭プロフィールを確認できません` is shown while its `profileId` is absent.
 
-Add a missing-summary fixture and assert `家庭プロフィールを確認できません` (or the Task 1 generic profile result) without the raw `profileId`.
-
-- [ ] **Step 2: Run the panel test and confirm RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx
 ```
 
-Expected: FAIL because the component currently derives choices from `profileId` and renders profile IDs in several branches.
+Expected: FAIL because the current component renders `profileId` in options/read-only rows/warnings/control names.
 
-- [ ] **Step 3: Replace `knownProfileIds` with an internal id → semantic summary map**
-
-Derive choices without losing command identity:
+- [ ] **Step 3: Replace `knownProfileIds` with an internal summary map**
 
 ```ts
 const knownProfiles = useMemo(() => {
@@ -637,28 +648,17 @@ const knownProfiles = useMemo(() => {
 
 const profileLabel = (profileId: string): string => {
   const summary = knownProfiles.get(profileId) ?? null
-  return summary
-    ? formatHouseholdProfileLabel(summary.lifeStage, summary.family)
-    : '家庭プロフィールを確認できません'
+  return formatHouseholdProfileLabel(summary?.lifeStage, summary?.family)
 }
 ```
 
-The `profileId` argument is lookup identity only and must never be returned.
+The helper must never return `profileId`.
 
 - [ ] **Step 4: Humanize every assignment display branch**
 
-Use formatter output for:
-- `<option>` text while preserving `value={profileId}`.
-- frozen/read-only profile text.
-- MULTI profile rows.
-- up/down `aria-label`s.
-- unused-profile warning.
-- course-format explanatory copy.
-- state and validation status chips.
+Use `profileLabel(profileId)` for `<option>` text, frozen/read-only text, MULTI rows, up/down accessible names, and the unused-profile warning. Use `formatHouseholdCourseFormat`, `formatHouseholdAssignmentState`, and `formatHouseholdAssignmentValidationStatus` instead of local/raw token rendering. Preserve raw IDs only in `value`, keys, local draft state, and update payloads.
 
-Keep `householdId`, `teamId`, `profileId`, and `assignmentRevision` internal to selection/update logic.
-
-- [ ] **Step 5: Run tests and confirm GREEN**
+- [ ] **Step 5: Verify GREEN**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx
@@ -666,7 +666,7 @@ npm test -- src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the assignment presentation**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/components/homeEconomics/HouseholdAssignmentPanel.tsx src/components/homeEconomics/HouseholdAssignmentPanel.test.tsx
@@ -675,7 +675,7 @@ git commit -m "fix: humanize household assignment controls"
 
 ---
 
-### Task 7: Replace teacher-dashboard server display strings with semantic DTO data and sanitize warning/team fallbacks
+### Task 7: Replace teacher-dashboard server display strings with semantic data
 
 **Files:**
 - Modify: `functions/src/homeEconomics/teacherDashboard.ts`
@@ -683,22 +683,13 @@ git commit -m "fix: humanize household assignment controls"
 - Modify: `src/lib/homeEconomics/teacherDashboard.ts`
 
 **Interfaces:**
-- Replaces `HouseholdTeacherRow.profileLabel: string` with:
+- Replaces `HouseholdTeacherRow.profileLabel` with `profileSummary: { lifeStage: string; family: string } | null`.
+- `normalizeTeamDisplayName` fails closed to `チーム名を確認できません`.
+- `BULK_SETTLEMENT_FAILED` warning copy never forwards `bulkItemStatus.errorMessage`.
 
-```ts
-profileSummary: {
-  lifeStage: string
-  family: string
-} | null
-```
+- [ ] **Step 1: Rewrite the server tests as RED tests**
 
-- Keeps `lifeStage`, `householdId`, `teamId`, and all existing operational fields for domain/control logic.
-- `normalizeTeamDisplayName()` returns fixed human fallback `チーム名を確認できません` when `displayName` is absent instead of `teamId`.
-- `BULK_SETTLEMENT_FAILED` warnings never use `bulkItemStatus.errorMessage` as presentation copy.
-
-- [ ] **Step 1: Rewrite the current profile-label/fallback tests as RED tests**
-
-Change the existing expectations from server-generated strings:
+Change the profile-label test to:
 
 ```ts
 expect(row.profileSummary).toEqual({
@@ -707,20 +698,16 @@ expect(row.profileSummary).toEqual({
 })
 ```
 
-For an unresolved `state.profileId`:
+For unresolved `state.profileId`, assert `row.profileSummary` is `null`.
 
-```ts
-expect(row.profileSummary).toBeNull()
-```
-
-Change `normalizeTeamDisplayName` tests to expect:
+Change `normalizeTeamDisplayName` fallback tests to:
 
 ```ts
 expect(normalizeTeamDisplayName('team-secret-id', {})).toBe('チーム名を確認できません')
 expect(normalizeTeamDisplayName('team-secret-id', {})).not.toContain('team-secret-id')
 ```
 
-Inject a bulk failure:
+For bulk failure, pass:
 
 ```ts
 bulkItemStatus: {
@@ -730,35 +717,36 @@ bulkItemStatus: {
 }
 ```
 
-and assert the user-facing warning contains fixed recovery copy but not `backend-secret-message`.
+and assert the matching warning message is exactly:
 
-- [ ] **Step 2: Run the server test and confirm RED**
+```ts
+'一括決算で処理できない家庭があります。再実行してください。'
+```
+
+and does not contain `backend-secret-message`.
+
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test --workspace=functions -- src/homeEconomics/teacherDashboard.test.ts
 ```
 
-Expected: FAIL on the current `profileLabel`, `teamId` fallback, and raw `errorMessage` forwarding.
+Expected: FAIL on server-composed `profileLabel`, ID team fallback, and raw bulk error forwarding.
 
-- [ ] **Step 3: Project semantic profile data rather than composing display copy server-side**
+- [ ] **Step 3: Project profile semantics, not Japanese copy**
 
-Replace:
-
-```ts
-const profileLabel = authoredProfile ? `${state.lifeStage}・${authoredProfile.family}` : state.lifeStage
-```
-
-with:
+Replace the current server composition with:
 
 ```ts
+const authoredProfile = content.households.find((profile) => profile.householdId === state.profileId)
 const profileSummary = authoredProfile
   ? { lifeStage: authoredProfile.lifeStage, family: authoredProfile.family }
   : null
 ```
 
-The client, not Functions, owns the Japanese life-stage translation.
+Return `profileSummary` in `HouseholdTeacherRow` and remove `profileLabel` from the interface/output.
 
-- [ ] **Step 4: Sanitize team and bulk-failure presentation fallbacks**
+- [ ] **Step 4: Fail closed for team name and bulk errors**
 
 Use:
 
@@ -771,19 +759,19 @@ export const normalizeTeamDisplayName = (_teamId: string, data: Record<string, u
 }
 ```
 
-For bulk failures, keep error details in the operational bulk-operation structure/logging but emit only fixed warning copy from `buildHouseholdTeacherRow`, for example:
+For `bulkItemStatus.status === 'FAILED'`, always emit:
 
 ```ts
 message: '一括決算で処理できない家庭があります。再実行してください。'
 ```
 
-Do not branch user-facing copy on raw `errorMessage` text.
+Keep `errorCode`/`errorMessage` only in the operational bulk-operation object/logging path; do not copy them into `HouseholdTeacherWarning.message`.
 
 - [ ] **Step 5: Hand-sync the client teacher DTO**
 
-Replace `profileLabel` with the nullable `profileSummary` shape in `src/lib/homeEconomics/teacherDashboard.ts`.
+Replace client `profileLabel` with the same nullable `profileSummary` shape in `src/lib/homeEconomics/teacherDashboard.ts`.
 
-- [ ] **Step 6: Run focused tests and typecheck**
+- [ ] **Step 6: Verify**
 
 ```bash
 npm test --workspace=functions -- src/homeEconomics/teacherDashboard.test.ts
@@ -792,7 +780,7 @@ npm run typecheck
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the teacher DTO boundary**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add functions/src/homeEconomics/teacherDashboard.ts functions/src/homeEconomics/teacherDashboard.test.ts src/lib/homeEconomics/teacherDashboard.ts
@@ -801,7 +789,7 @@ git commit -m "fix: separate household teacher data from copy"
 
 ---
 
-### Task 8: Humanize teacher household dashboard UI and route every household action error through `describeError`
+### Task 8: Humanize teacher household UI and sanitize every container error
 
 **Files:**
 - Modify: `src/components/homeEconomics/HouseholdTeacherDashboard.tsx`
@@ -810,48 +798,65 @@ git commit -m "fix: separate household teacher data from copy"
 - Modify: `src/components/teacher/HouseholdTeacherDashboard.test.tsx`
 
 **Interfaces:**
-- Presentational view consumes Task 7 `row.profileSummary` and Task 1 `formatHouseholdProfileLabel`.
-- Container consumes Project A `describeError(error, fallback)` for every load/action failure.
-- No Callable signature changes.
+- Presentational view consumes Task 7 `profileSummary` and Task 1 `formatHouseholdProfileLabel`.
+- Container maps all failures through Project A `describeError(error, fallback)`.
+- Callable signatures remain unchanged.
 
-- [ ] **Step 1: Add RED presentational tests for profile and ID fail-closed behavior**
+- [ ] **Step 1: Write RED presentational tests**
 
-Update teacher-row fixtures to contain:
+Update teacher row fixtures to:
 
 ```ts
 profileSummary: { lifeStage: 'INDEPENDENT', family: '単身' }
 ```
 
-Assert the view renders `独立期・単身` and not the raw enum or runtime household ID. Add a `profileSummary: null` fixture with a sentinel `householdId: 'runtime-secret-household'` and assert the UI shows generic profile copy without the sentinel.
+Assert `独立期・単身` is visible while `INDEPENDENT` and the runtime `householdId` are absent from rendered text. Add a row with `profileSummary: null` and `householdId: 'runtime-secret-household'`; assert `家庭プロフィールを確認できません` appears and the sentinel ID does not.
 
-Keep `householdId` in callback assertions for individual settlement; the control must still call `onProcessIndividualRound(runtimeId, ...)`.
+Keep an interaction assertion that the individual-settlement callback still receives that row's raw `householdId`.
 
-- [ ] **Step 2: Add RED container tests for raw backend errors**
+- [ ] **Step 2: Write exact RED container error tests**
 
-Replace the current `Network error` visibility expectation with:
+Replace the current load-error expectation with:
 
 ```ts
-vi.mocked(getHouseholdTeacherDashboard)
+vi.mocked(teacherDashboardLib.getHouseholdTeacherDashboard)
   .mockRejectedValue(new Error('backend-secret-message'))
 
-expect(await screen.findByText('ダッシュボードの読み込みエラー')).toBeInTheDocument()
-expect(document.body.textContent).toContain('ダッシュボードの取得に失敗しました')
+render(<HouseholdTeacherDashboard lessonRunId="run-1" role="PRIMARY" functions={{} as Functions} database={database} />)
+
+await waitFor(() => {
+  expect(screen.getByText('ダッシュボードの読み込みエラー')).toBeInTheDocument()
+})
+expect(screen.getByText('ダッシュボードの取得に失敗しました')).toBeInTheDocument()
 expect(document.body.textContent).not.toContain('backend-secret-message')
 ```
 
-Add at least one action-path sentinel (for example `processHouseholdRoundBatch`) to prove action failures also pass through the common mapper.
+Add this exact batch-action case after loading a valid dashboard:
 
-- [ ] **Step 3: Run both teacher dashboard tests and confirm RED**
+```ts
+vi.mocked(bulkSettlementLib.processHouseholdRoundBatch)
+  .mockRejectedValue(new Error('backend-batch-secret'))
+
+fireEvent.click(screen.getByRole('button', { name: '一括決算' }))
+fireEvent.click(screen.getByRole('button', { name: '決算を実行' }))
+
+await waitFor(() => {
+  expect(screen.getByText('一括決算の実行に失敗しました')).toBeInTheDocument()
+})
+expect(document.body.textContent).not.toContain('backend-batch-secret')
+```
+
+- [ ] **Step 3: Verify RED**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/components/teacher/HouseholdTeacherDashboard.test.tsx
 ```
 
-Expected: FAIL because the presentational component expects `profileLabel` and the container currently displays raw `Error.message`.
+Expected: FAIL because the presentational view expects `profileLabel` and the container currently exposes raw `Error.message`.
 
-- [ ] **Step 4: Format teacher profile summaries on the client**
+- [ ] **Step 4: Format profile summaries in the presentational dashboard**
 
-In the presentational dashboard, replace `row.profileLabel` with:
+Replace `row.profileLabel` with:
 
 ```ts
 formatHouseholdProfileLabel(
@@ -860,42 +865,42 @@ formatHouseholdProfileLabel(
 )
 ```
 
-Keep the existing human round numbering (`row.roundIndex + 1`) and authored warning/event text.
+Keep existing human round numbering (`row.roundIndex + 1`) and authored event/warning copy.
 
-- [ ] **Step 5: Replace every raw catch branch in the teacher container**
+- [ ] **Step 5: Replace all raw catch branches in the teacher container**
 
-Import Project A's compatibility API:
+Import:
 
 ```ts
 import { describeError } from '../../lib/monitoring/describeError'
 ```
 
-Convert all current branches of the form:
+Use these exact fallbacks:
 
 ```ts
-setError(err instanceof Error ? err.message : '...')
-```
-
-to:
-
-```ts
+// loadDashboard
 setError(describeError(err, 'ダッシュボードの取得に失敗しました'))
+// process batch
+setError(describeError(err, '一括決算の実行に失敗しました'))
+// retry batch
+setError(describeError(err, '一括決算の再試行に失敗しました'))
+// individual settlement
+setError(describeError(err, '個別決算の実行に失敗しました'))
+// checkpoint save
+setError(describeError(err, 'チェックポイントの保存に失敗しました'))
+// checkpoint restore
+setError(describeError(err, 'チェックポイントの復元に失敗しました'))
+// assignment prepare
+setError(describeError(err, '割り当ての準備に失敗しました'))
+// assignment update
+setError(describeError(err, '割り当ての更新に失敗しました'))
+// class comparison display
+setError(describeError(err, 'クラス比較の教室画面表示に失敗しました'))
 ```
 
-with the existing operation-specific fallback for:
-- dashboard load,
-- batch settlement,
-- retry,
-- individual settlement,
-- checkpoint save,
-- checkpoint restore,
-- assignment prepare,
-- assignment update,
-- classroom comparison display.
+Do not inspect or substring-match `err.message`.
 
-Do not parse `err.message` and do not add message-substring branching.
-
-- [ ] **Step 6: Run tests and confirm GREEN**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/components/teacher/HouseholdTeacherDashboard.test.tsx
@@ -903,7 +908,7 @@ npm test -- src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the teacher presentation/error boundary**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/components/homeEconomics/HouseholdTeacherDashboard.tsx src/components/homeEconomics/HouseholdTeacherDashboard.test.tsx src/components/teacher/HouseholdTeacherDashboard.tsx src/components/teacher/HouseholdTeacherDashboard.test.tsx
@@ -912,50 +917,49 @@ git commit -m "fix: hide household teacher implementation details"
 
 ---
 
-### Task 9: Humanize the class comparison without changing its privacy-safe DTO
+### Task 9: Humanize class comparison without changing its DTO
 
 **Files:**
 - Modify: `src/components/homeEconomics/HouseholdClassComparisonView.tsx`
 - Modify: `src/components/homeEconomics/HouseholdClassComparisonView.test.tsx`
 
 **Interfaces:**
-- Consumes existing `HouseholdClassComparisonPublicView.profile.lifeStage` and `.family`.
-- Consumes Task 1 `formatHouseholdProfileLabel`.
-- No server or DTO change is required because the comparison already carries the semantic public profile.
+- Uses existing public `profile.lifeStage` and `profile.family`.
+- No server or wire change.
+- `profileId` remains React-key identity only.
 
-- [ ] **Step 1: Change comparison fixtures to actual enum-shaped wire data and add RED leakage assertions**
+- [ ] **Step 1: Write RED comparison tests**
 
-Use:
+Change the primary fixture profile to actual wire vocabulary:
 
 ```ts
 profile: {
-  ...,
-  lifeStage: 'CHILD_REARING',
+  householdId: 'profile-parent',
+  age: 40,
+  householdIncomeYen: 5000000,
+  annualLivingExpensesYen: 3000000,
+  cashSavingsYen: 1000000,
   family: '夫婦+子2人',
+  housing: '賃貸',
+  lifeGoal: '住宅購入',
+  lifeStage: 'CHILD_REARING',
+  isFictional: true,
 }
 ```
 
-and expect `子育て期・夫婦+子2人`, not `CHILD_REARING`.
+Assert `子育て期・夫婦+子2人` appears, while `CHILD_REARING` and `profile-parent` do not appear in rendered text.
 
-Add an unknown sentinel:
+Add a cloned comparison with `lifeStage: 'UNKNOWN_COMPARISON_STAGE'`; assert `ライフステージを確認できません・夫婦+子2人` appears and the raw sentinel does not.
 
-```ts
-lifeStage: 'UNKNOWN_COMPARISON_STAGE'
-```
-
-and assert the fixed fallback appears while the sentinel and `profileId` are absent from rendered text.
-
-- [ ] **Step 2: Run the comparison test and confirm RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdClassComparisonView.test.tsx
 ```
 
-Expected: FAIL because the component currently renders `profile.lifeStage` directly.
+Expected: FAIL because the component renders `profile.lifeStage` directly.
 
-- [ ] **Step 3: Render the composite profile formatter**
-
-Replace the raw life-stage cell with:
+- [ ] **Step 3: Render the composite formatter**
 
 ```tsx
 <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 96 }}>
@@ -963,9 +967,9 @@ Replace the raw life-stage cell with:
 </Typography>
 ```
 
-Continue using `profileId` only as a React key.
+Keep `key={household.profileId}`; do not render the ID.
 
-- [ ] **Step 4: Run the focused test and confirm GREEN**
+- [ ] **Step 4: Verify GREEN**
 
 ```bash
 npm test -- src/components/homeEconomics/HouseholdClassComparisonView.test.tsx
@@ -973,7 +977,7 @@ npm test -- src/components/homeEconomics/HouseholdClassComparisonView.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the comparison presentation**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/components/homeEconomics/HouseholdClassComparisonView.tsx src/components/homeEconomics/HouseholdClassComparisonView.test.tsx
@@ -982,17 +986,12 @@ git commit -m "fix: humanize household class comparison"
 
 ---
 
-### Task 10: Run the Project C regression audit and full verification
+### Task 10: Project C regression audit and full verification
 
 **Files:**
-- Verify only; modify only Project C files if a failure proves a Project C regression.
+- Verification only. Modify only files already in Tasks 1-9 if a failure proves a Project C regression.
 
-**Interfaces:**
-- Verifies the full presentation invariant across student, assignment, teacher, server projection, and comparison paths.
-
-- [ ] **Step 1: Scan Project C UI files for forbidden user-facing fallbacks**
-
-Run:
+- [ ] **Step 1: Scan forbidden Home Economics presentation fallbacks**
 
 ```bash
 rg -n "error instanceof Error \? error\.message|profileLabel \?\? householdId|\?\? entry\.profileId|\?\? profileId|\?\? householdId|\?\? teamId" \
@@ -1000,11 +999,9 @@ rg -n "error instanceof Error \? error\.message|profileLabel \?\? householdId|\?
   src/components/teacher/HouseholdTeacherDashboard.tsx
 ```
 
-Expected: no user-facing occurrence. Internal key/value logic is allowed only after manual inspection confirms it is not rendered.
+Expected: no user-facing fallback. Inspect any internal match and confirm it is key/value/control logic only.
 
-- [ ] **Step 2: Scan for known Home Economics backend tokens in JSX/user copy**
-
-Run:
+- [ ] **Step 2: Inspect enum-token matches rather than assuming the scan is clean**
 
 ```bash
 rg -n "DOMESTIC_STOCK|FOREIGN_STOCK|INVESTMENT_TRUST|CHILD_REARING|INDEPENDENT|MULTI_PERSON_PER_TEAM|ROLE_VARIANT|STAGE_SPLIT|SETTLING|OPEN" \
@@ -1012,9 +1009,9 @@ rg -n "DOMESTIC_STOCK|FOREIGN_STOCK|INVESTMENT_TRUST|CHILD_REARING|INDEPENDENT|M
   src/components/teacher/HouseholdTeacherDashboard.tsx
 ```
 
-Expected: occurrences may remain in comparisons/control flow/test fixtures, but no occurrence may be directly rendered as normal user-facing copy. Inspect every match rather than treating the scan itself as proof.
+Expected: tokens may remain in tests and control-flow comparisons; none may be directly rendered as normal user-facing text.
 
-- [ ] **Step 3: Run all focused Project C client tests**
+- [ ] **Step 3: Run focused client tests**
 
 ```bash
 npm test -- \
@@ -1030,7 +1027,7 @@ npm test -- \
 
 Expected: PASS.
 
-- [ ] **Step 4: Run all focused Project C Functions tests**
+- [ ] **Step 4: Run focused Functions tests**
 
 ```bash
 npm test --workspace=functions -- \
@@ -1042,7 +1039,7 @@ npm test --workspace=functions -- \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run repository verification gates**
+- [ ] **Step 5: Run repository gates**
 
 ```bash
 npm run lint
@@ -1052,9 +1049,9 @@ npm run build
 npm run verify --workspace=functions
 ```
 
-Expected: all PASS. Do not claim Project C complete if any command fails.
+Expected: every command PASS. Do not claim completion if any command fails.
 
-- [ ] **Step 6: Review the final diff for scope**
+- [ ] **Step 6: Review final scope**
 
 ```bash
 git status --short
@@ -1062,37 +1059,37 @@ git diff --stat codex/classroom...HEAD
 git diff --name-only codex/classroom...HEAD
 ```
 
-Expected: only the files named by Tasks 1-9 (plus this plan if the implementation branch includes it). No market/research, lesson-intervention, organization/admin, operator, dependency, lockfile, or unrelated formatting changes.
+Expected: only files named in Tasks 1-9. No market/research, lesson-intervention, organization/admin, operator, dependency, lockfile, or unrelated formatting changes.
 
-- [ ] **Step 7: Commit any verification-only test correction, if one was required by a genuine Project C regression**
+- [ ] **Step 7: Commit only a real Project C verification correction**
 
-If no file changed during verification, do not create an empty commit. If a Project C test/code correction was necessary, commit only the affected Project C files with a specific message describing that correction.
+If verification changed no file, create no commit. If a Project C regression required a correction, stage only the affected Task 1-9 files and use a commit message naming that exact correction.
 
 ---
 
 ## Project C Completion Criteria
 
-Project C is complete only when all of the following are true:
+Project C is complete only when all of these are true:
 
-1. Common and advanced team-state projections carry semantic profile data without any additional profile lookup.
+1. Common and advanced team-state projections carry `profileSummary` with no additional database lookup.
 2. Student household tabs/cards never use `teamId`, runtime `householdId`, or `profileId` as display fallbacks.
-3. Life-stage, concept, asset, course-format, assignment-state, validation-state, and round-status values shown in UI use human presentation copy.
-4. Asset controls show human labels but still send the original asset-type wire value to submission callbacks.
-5. Assignment controls show semantic profile labels but still send the original `profileId`/`householdId` in updates.
-6. Teacher rows receive semantic profile data instead of a server-generated `lifeStage・family` string.
-7. Missing team/profile semantics fail closed to fixed Japanese copy, never an internal ID.
-8. Bulk-settlement internal `errorMessage` is never copied into a teacher warning.
+3. Life-stage, concept, asset, course-format, assignment-state, validation-state, and round-status values shown in UI are human-readable and fail closed.
+4. Asset controls show Japanese labels but return original asset-type values to decision callbacks.
+5. Assignment controls show semantic labels but preserve original `profileId`/`householdId` in update payloads.
+6. Teacher rows carry semantic `profileSummary`, not server-generated `lifeStage・family` copy.
+7. Missing team/profile semantics produce fixed Japanese fallback text rather than IDs.
+8. Bulk-settlement internal `errorMessage` never becomes teacher warning text.
 9. Student and teacher household containers never display raw `Error.message`.
-10. Class comparison formats its already-public profile semantics client-side and does not show `profileId`.
-11. Sentinel tests prove unknown enum values, opaque IDs, and backend-secret error messages do not appear verbatim.
+10. Class comparison formats its existing public profile semantics client-side and never renders `profileId`.
+11. Sentinel tests prove opaque IDs, unknown enum values, and backend-secret error strings do not appear verbatim.
 12. `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, and `npm run verify --workspace=functions` all pass.
 
 ## Explicit Non-Goals
 
-- Do not redesign household simulation rules, settlement math, assignments, checkpoints, or final-comparison scoring.
-- Do not remove runtime `householdId` or logical `profileId` from domain/API contracts where they are required for identity.
-- Do not redesign the advanced RTDB `.profile` payload; retaining it alongside the new state-level `profileSummary` is acceptable for compatibility.
-- Do not change Firestore/RTDB authorization rules unless a failing existing rule test proves this narrowly-scoped DTO enrichment requires it; the added profile summary contains only fictional/public semantic fields already available to the same team in advanced mode.
-- Do not add new Firebase reads to construct presentation labels.
+- Do not redesign simulation rules, settlement math, assignments, checkpoints, or comparison scoring.
+- Do not remove runtime `householdId` or logical `profileId` from domain/API contracts that require identity.
+- Do not remove the existing advanced RTDB `.profile` payload; retaining it alongside `state.profileSummary` is intentional compatibility.
+- Do not change Firestore/RTDB authorization rules for this project; the added summary contains only fictional/public semantic fields already available to the same team in advanced mode.
+- Do not add Firebase reads to construct labels.
 - Do not move Japanese UI copy into Cloud Functions.
-- Do not implement Project D teacher lesson-runtime/intervention work, Project E organization/template work, or Project F operator/audit work.
+- Do not implement Projects B, D, E, or F.
