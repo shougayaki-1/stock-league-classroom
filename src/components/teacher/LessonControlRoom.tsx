@@ -16,14 +16,7 @@ import { MIN_TOUCH_TARGET } from '../lessonInputs/lessonInputA11y'
 import { ClassroomMessageDialog } from './ClassroomMessageDialog'
 import { ClassroomDisplayUrlDialog } from './ClassroomDisplayUrlDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
-
-const DISPLAY_MODE_LABEL: Record<LessonRunDisplayState['mode'], string> = {
-  START: '開始待機の画面',
-  LIVE: '授業中の画面',
-  END: '終了の画面',
-  EXPLANATION: '解説の画面',
-  HOUSEHOLD_COMPARISON: 'クラス比較の画面',
-}
+import { formatCurrentPhaseLabel, formatLessonDisplayMode } from '../../lib/presentation/lessonLabels'
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([
   'TEMPORARILY_DISCONNECTED',
@@ -159,11 +152,9 @@ export function LessonControlRoom({
   const status = publicState?.status ?? 'DRAFT'
   const interrupted = status === 'INTERRUPTED'
 
-  // 内部IDそのものは教師に読めないので、まず projection のラベルを使う。
-  // ラベルを持たない古い run のために ID へフォールバックする。
-  const phaseLabel = publicState?.currentPhaseLabel
-    ?? publicState?.currentPhaseId
-    ?? (status === 'DRAFT' || status === 'READY' ? '未開始' : status)
+  // Presentation Boundary: currentPhaseId/raw status には絶対にフォールバックしない。
+  // ラベルが欠落した場合は固定の日本語copyへfail closedする。
+  const phaseLabel = formatCurrentPhaseLabel(publicState?.currentPhaseLabel, status)
 
   const disconnectedCount = participants.filter((p) => DISCONNECTED_STATUSES.has(p.status)).length
   const activeCount = participants.length - disconnectedCount
@@ -178,7 +169,7 @@ export function LessonControlRoom({
   }, [participants, disconnectedCount])
 
   const displayPreview = displayState
-    ? `教室表示: ${DISPLAY_MODE_LABEL[displayState.mode]}${displayState.title ? ` - ${displayState.title}` : ''}`
+    ? `教室表示: ${formatLessonDisplayMode(displayState.mode)}${displayState.title ? ` - ${displayState.title}` : ''}`
     : '教室表示: 未接続'
 
   const nextAction = useMemo(() => {

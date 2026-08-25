@@ -395,13 +395,15 @@ describe('LessonControlRoom', () => {
     expect(screen.queryByText('market')).not.toBeInTheDocument()
   })
 
-  it('ラベルが無ければフェーズIDにフォールバックする', () => {
+  it('ラベルが無ければフェーズIDを表示せず固定copyへfail closedする', () => {
     render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
-    emitPublic({ status: 'RUNNING', currentPhaseId: 'market', currentPhaseLabel: null })
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'UNKNOWN_INTERNAL_PHASE', currentPhaseLabel: null })
     emitDisplay({ mode: 'LIVE', title: 'テスト授業' })
     emitParticipants([])
 
-    expect(screen.getByText('market')).toBeInTheDocument()
+    expect(screen.getByText('フェーズ名を確認できません')).toBeInTheDocument()
+    expect(screen.queryByText('UNKNOWN_INTERNAL_PHASE')).not.toBeInTheDocument()
+    expect(screen.queryByText('RUNNING')).not.toBeInTheDocument()
   })
 
   it('制限時間のあるフェーズでは残り時間を表示する', () => {
