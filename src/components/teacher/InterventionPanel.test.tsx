@@ -16,6 +16,8 @@ const defaultProps = {
   participants: [] as Array<{ id: string; displayName: string }>,
   teams: [] as LessonTeamView[],
   responses: [] as LessonResponseView[],
+  functions: {} as never,
+  lessonRunId: 'run-1',
   onClose: vi.fn(),
   onApply: vi.fn(),
 }

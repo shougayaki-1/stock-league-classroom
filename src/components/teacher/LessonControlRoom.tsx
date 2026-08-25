@@ -338,9 +338,11 @@ export function LessonControlRoom({
         displayModeOverride={displayModeOverride}
         informationItems={(publicState?.researchDesk?.informationItems ?? []).map((item) => ({ id: item.id, body: item.body }))}
         hiddenInformationIds={hiddenInformationIds}
-        participants={participants.map((p) => ({ id: p.id, displayName: p.displayName }))}
+        participants={participants.map((p) => ({ id: p.id, displayName: p.displayName, status: p.status }))}
         teams={teams}
         responses={responses}
+        functions={functions}
+        lessonRunId={lessonRunId}
         onApply={handleApplyIntervention}
       />
       {canEditGuidance && (

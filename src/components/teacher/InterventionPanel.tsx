@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Box, Button, Drawer, List, ListItemButton, ListItemText, Stack, TextField, Typography } from '@mui/material'
+import type { Functions } from 'firebase/functions'
 import { canApplyIntervention, type InterventionImpactScope, type LessonInterventionType } from '../../lib/lessonRuns/interventions'
 import type { LessonRunRole } from '../../lib/lessonRuns/authorization'
 import type { LessonResponseView } from '../../lib/lessonRuns/teacherResponses'
@@ -12,6 +13,7 @@ import { HideInformationForm } from './interventionForms/HideInformationForm'
 import { CorrectStateForm } from './interventionForms/CorrectStateForm'
 import { ProxyConfirmForm } from './interventionForms/ProxyConfirmForm'
 import { ChangeRepresentativeForm } from './interventionForms/ChangeRepresentativeForm'
+import { ReconnectParticipantForm } from './interventionForms/ReconnectParticipantForm'
 
 interface DetailFieldSpec {
   key: string
@@ -48,8 +50,8 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
     fields: [],
   },
   RECONNECT_PARTICIPANT: {
-    label: '参加者の再接続', description: '参加者を新しい端末に再接続します',
-    fields: [{ key: 'participantId', label: '参加者ID' }, { key: 'newAuthUid', label: '新しい認証UID' }],
+    label: '参加者の再接続', description: '参加者に再接続コードを発行します',
+    fields: [],
   },
   SWITCH_DISPLAY_MODE: {
     label: '教室表示の画面を切り替える', description: '教室に投影している画面を手動で切り替えます',
@@ -94,10 +96,13 @@ export interface InterventionPanelProps {
   displayModeOverride: string | null
   informationItems: Array<{ id: string; body: string }>
   hiddenInformationIds: string[]
-  participants: Array<{ id: string; displayName: string }>
+  participants: Array<{ id: string; displayName: string; status?: string }>
   teams: LessonTeamView[]
   responses: LessonResponseView[]
   phases?: PhaseWithDisplayConfig[]
+  /** Only required for RECONNECT_PARTICIPANT, which calls issueRecoveryCode directly rather than going through onApply — the teacher does not know the student's new device's auth UID in advance, so there is no generic detail payload to build. */
+  functions: Functions
+  lessonRunId: string
   onApply: (input: InterventionApplyInput) => void
 }
 
@@ -124,6 +129,8 @@ export function InterventionPanel({
   teams,
   responses,
   phases,
+  functions,
+  lessonRunId,
   onApply,
 }: InterventionPanelProps) {
   const [selected, setSelected] = useState<LessonInterventionType | null>(null)
@@ -210,6 +217,13 @@ export function InterventionPanel({
                 teams={teams}
                 phases={phases}
                 onSubmit={(detail, impactScope) => { onApply({ type: selected, reason, detail, impactScope }); resetForm() }}
+              />
+            )}
+            {selected === 'RECONNECT_PARTICIPANT' && (
+              <ReconnectParticipantForm
+                functions={functions}
+                lessonRunId={lessonRunId}
+                participants={participants}
               />
             )}
             {selected === 'EMERGENCY_STOP' && (

@@ -7,6 +7,12 @@ import { HideInformationForm } from './HideInformationForm'
 import { CorrectStateForm } from './CorrectStateForm'
 import { ProxyConfirmForm } from './ProxyConfirmForm'
 import { ChangeRepresentativeForm } from './ChangeRepresentativeForm'
+import { ReconnectParticipantForm } from './ReconnectParticipantForm'
+import { issueRecoveryCode } from '../../../lib/lessonRuns/recovery'
+
+vi.mock('../../../lib/lessonRuns/recovery', () => ({
+  issueRecoveryCode: vi.fn(),
+}))
 
 describe('ExtendTimeForm', () => {
   it('+3分でフェーズIDと秒数を組み立てる', async () => {
@@ -275,5 +281,68 @@ describe('ChangeRepresentativeForm', () => {
     expect(screen.getByText('Bチームには現在の代表者以外のメンバーがいないため、代表者を変更できません。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'この代表者に変更する' })).toBeDisabled()
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+})
+
+describe('ReconnectParticipantForm', () => {
+  const fakeFunctions = {} as never
+
+  it('生徒を選んで発行すると issueRecoveryCode を正しい引数で呼び、コードのみ表示し参加者IDはDOMに出さない', async () => {
+    const mockIssue = vi.mocked(issueRecoveryCode)
+    mockIssue.mockResolvedValue({ code: 'SENTINEL-CODE-1234', deduplicated: false })
+
+    const participants = [
+      { id: 'participant-secret-id', displayName: 'たなか', status: 'TEMPORARILY_DISCONNECTED' },
+      { id: 'participant-other', displayName: 'すずき', status: 'ACTIVE' },
+    ]
+
+    render(
+      <ReconnectParticipantForm
+        functions={fakeFunctions}
+        lessonRunId="run-sentinel-1"
+        participants={participants}
+        generateIdempotencyKey={() => 'idem-key-1'}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /たなか/ }))
+    await userEvent.click(screen.getByRole('button', { name: '再接続コードを発行する' }))
+
+    expect(await screen.findByText('SENTINEL-CODE-1234')).toBeInTheDocument()
+
+    expect(mockIssue).toHaveBeenCalledWith(fakeFunctions, {
+      lessonRunId: 'run-sentinel-1',
+      participantId: 'participant-secret-id',
+      idempotencyKey: 'idem-key-1',
+    })
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('participant-secret-id')
+    expect(body).not.toContain('participant-other')
+    expect(body).toContain('SENTINEL-CODE-1234')
+  })
+
+  it('発行に失敗した場合は describeError 経由の安全なメッセージを表示し、生の error.message は出さない', async () => {
+    const mockIssue = vi.mocked(issueRecoveryCode)
+    mockIssue.mockRejectedValue({ code: 'functions/internal', message: 'raw internal leak detail' })
+
+    const participants = [{ id: 'participant-secret-id-2', displayName: 'やまだ', status: 'ACTIVE' }]
+
+    render(
+      <ReconnectParticipantForm
+        functions={fakeFunctions}
+        lessonRunId="run-sentinel-2"
+        participants={participants}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /やまだ/ }))
+    await userEvent.click(screen.getByRole('button', { name: '再接続コードを発行する' }))
+
+    await screen.findByRole('alert')
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('raw internal leak detail')
+    expect(body).not.toContain('participant-secret-id-2')
   })
 })
