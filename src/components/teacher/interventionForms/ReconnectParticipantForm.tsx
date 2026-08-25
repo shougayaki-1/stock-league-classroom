@@ -96,7 +96,7 @@ export function ReconnectParticipantForm({
                 <ListItemText
                   primary={participant.displayName}
                   secondary={participant.status ? formatParticipantStatus(participant.status) : undefined}
-                  primaryTypographyProps={relevant ? { sx: { fontWeight: 700 } } : undefined}
+                  slotProps={relevant ? { primary: { sx: { fontWeight: 700 } } } : undefined}
                 />
               </ListItemButton>
             )

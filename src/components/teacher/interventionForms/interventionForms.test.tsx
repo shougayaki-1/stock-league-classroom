@@ -169,7 +169,7 @@ describe('ProxyConfirmForm', () => {
       id: 'response-sentinel-111',
       participantId: 'participant-sentinel-abc',
       phaseId: 'phase-sentinel-999',
-      inputId: 'input-sentinel-222',
+      inputId: 'input-secret-id',
       status: 'APPROVED' as const,
     }]
     render(<ProxyConfirmForm responses={responses} participants={participants} teams={teams} phases={phases} onSubmit={onSubmit} />)
@@ -179,12 +179,12 @@ describe('ProxyConfirmForm', () => {
     await userEvent.click(screen.getByRole('button', { name: 'この内容で確定する' }))
 
     const body = document.body.textContent ?? ''
-    for (const sentinel of ['response-sentinel-111', 'participant-sentinel-abc', 'phase-sentinel-999', 'input-sentinel-222']) {
+    for (const sentinel of ['response-sentinel-111', 'participant-sentinel-abc', 'phase-sentinel-999', 'input-secret-id']) {
       expect(body).not.toContain(sentinel)
     }
 
     expect(onSubmit).toHaveBeenCalledWith(
-      { phaseId: 'phase-sentinel-999', inputId: 'input-sentinel-222', onBehalfOfParticipantId: 'participant-sentinel-abc' },
+      { phaseId: 'phase-sentinel-999', inputId: 'input-secret-id', onBehalfOfParticipantId: 'participant-sentinel-abc' },
       { level: 'PARTICIPANT', participantId: 'participant-sentinel-abc' },
     )
   })
