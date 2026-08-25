@@ -86,6 +86,36 @@ describe('InterventionPanel', () => {
     })
   })
 
+  it('uses bespoke ChangeRepresentativeForm for CHANGE_REPRESENTATIVE and submits detail + TEAM impactScope (no manual ID entry)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    const teams = [{
+      id: 'team-1', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1', 'p-2'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE' as const,
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      teams={teams}
+      participants={[{ id: 'p-1', displayName: 'たなか' }, { id: 'p-2', displayName: 'すずき' }]}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /代表者変更/ }))
+    await user.type(screen.getByLabelText('理由'), 'チームの都合により');
+    expect(screen.queryByLabelText('チームID')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('新代表者の参加者ID')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Aチーム' }))
+    await user.click(screen.getByRole('button', { name: 'すずき' }))
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CHANGE_REPRESENTATIVE',
+      reason: 'チームの都合により',
+      detail: { teamId: 'team-1', newRepresentativeParticipantId: 'p-2' },
+      impactScope: { level: 'TEAM', teamId: 'team-1' },
+    })
+  })
+
   it('uses bespoke form for EXTEND_TIME and submits it', async () => {
     const user = userEvent.setup()
     const onApply = vi.fn()

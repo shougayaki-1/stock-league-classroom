@@ -11,6 +11,7 @@ import { DisplayModeForm } from './interventionForms/DisplayModeForm'
 import { HideInformationForm } from './interventionForms/HideInformationForm'
 import { CorrectStateForm } from './interventionForms/CorrectStateForm'
 import { ProxyConfirmForm } from './interventionForms/ProxyConfirmForm'
+import { ChangeRepresentativeForm } from './interventionForms/ChangeRepresentativeForm'
 
 interface DetailFieldSpec {
   key: string
@@ -44,7 +45,7 @@ const INTERVENTION_CATALOG: Record<LessonInterventionType, InterventionCatalogEn
   },
   CHANGE_REPRESENTATIVE: {
     label: '代表者変更', description: 'チームの代表者を変更します',
-    fields: [{ key: 'teamId', label: 'チームID' }, { key: 'newRepresentativeParticipantId', label: '新代表者の参加者ID' }],
+    fields: [],
   },
   RECONNECT_PARTICIPANT: {
     label: '参加者の再接続', description: '参加者を新しい端末に再接続します',
@@ -189,6 +190,17 @@ export function InterventionPanel({
                 participants={participants}
                 teams={teams.map((team) => ({ teamId: team.id, displayName: team.displayName }))}
                 onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+              />
+            )}
+            {selected === 'CHANGE_REPRESENTATIVE' && (
+              <ChangeRepresentativeForm
+                teams={teams}
+                participants={participants}
+                onSubmit={(d) => {
+                  const impactScope: InterventionImpactScope = { level: 'TEAM', teamId: d.teamId as string }
+                  onApply({ type: selected, reason, detail: d, impactScope })
+                  resetForm()
+                }}
               />
             )}
             {selected === 'PROXY_CONFIRM' && (

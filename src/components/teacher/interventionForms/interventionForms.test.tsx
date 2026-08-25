@@ -6,6 +6,7 @@ import { DisplayModeForm } from './DisplayModeForm'
 import { HideInformationForm } from './HideInformationForm'
 import { CorrectStateForm } from './CorrectStateForm'
 import { ProxyConfirmForm } from './ProxyConfirmForm'
+import { ChangeRepresentativeForm } from './ChangeRepresentativeForm'
 
 describe('ExtendTimeForm', () => {
   it('+3分でフェーズIDと秒数を組み立てる', async () => {
@@ -223,5 +224,56 @@ describe('ProxyConfirmForm', () => {
       { phaseId: 'phase-sentinel-999', inputId: 'input-team-2', onBehalfOfParticipantId: 'participant-member-2' },
       { level: 'TEAM', teamId: 'team-quorum' },
     )
+  })
+})
+
+describe('ChangeRepresentativeForm', () => {
+  const participants = [
+    { id: 'participant-rep-sentinel', displayName: 'たなか（代表）' },
+    { id: 'participant-cand-sentinel', displayName: 'すずき' },
+    { id: 'participant-lone-sentinel', displayName: 'ひとりだけ' },
+  ]
+
+  it('sentinelなteamId/participantIdをDOMに一切出さないが、送信ペイロードには含める', async () => {
+    const onSubmit = vi.fn()
+    const teams = [{
+      id: 'team-sentinel-777',
+      displayName: 'Aチーム',
+      memberParticipantIds: ['participant-rep-sentinel', 'participant-cand-sentinel'],
+      representativeParticipantId: 'participant-rep-sentinel',
+      confirmationMode: 'REPRESENTATIVE' as const,
+    }]
+    render(<ChangeRepresentativeForm teams={teams} participants={participants} onSubmit={onSubmit} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Aチーム' }))
+    expect(screen.queryByRole('button', { name: 'たなか（代表）' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'すずき' }))
+
+    const body = document.body.textContent ?? ''
+    for (const sentinel of ['team-sentinel-777', 'participant-rep-sentinel', 'participant-cand-sentinel']) {
+      expect(body).not.toContain(sentinel)
+    }
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      teamId: 'team-sentinel-777', newRepresentativeParticipantId: 'participant-cand-sentinel',
+    })
+  })
+
+  it('候補が現在の代表者しかいないチームは理由を示し送信を無効化する', async () => {
+    const onSubmit = vi.fn()
+    const teams = [{
+      id: 'team-lone',
+      displayName: 'Bチーム',
+      memberParticipantIds: ['participant-lone-sentinel'],
+      representativeParticipantId: 'participant-lone-sentinel',
+      confirmationMode: 'REPRESENTATIVE' as const,
+    }]
+    render(<ChangeRepresentativeForm teams={teams} participants={participants} onSubmit={onSubmit} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bチーム' }))
+
+    expect(screen.getByText('Bチームには現在の代表者以外のメンバーがいないため、代表者を変更できません。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'この代表者に変更する' })).toBeDisabled()
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })
