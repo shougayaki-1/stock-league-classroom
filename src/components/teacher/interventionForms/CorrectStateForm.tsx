@@ -30,9 +30,10 @@ export function CorrectStateForm({ participants, teams, onSubmit }: CorrectState
     )
   }
 
+  const fallbackLabel = target === 'PARTICIPANT_DISPLAY_NAME' ? '生徒名を確認できません' : 'チーム名を確認できません'
   const options = target === 'PARTICIPANT_DISPLAY_NAME'
-    ? participants.map((item) => ({ id: item.id, label: item.displayName }))
-    : teams.map((item) => ({ id: item.teamId, label: item.displayName }))
+    ? participants.map((item) => ({ id: item.id, label: item.displayName.trim() || fallbackLabel }))
+    : teams.map((item) => ({ id: item.teamId, label: item.displayName.trim() || fallbackLabel }))
 
   if (!targetId) {
     return (
@@ -43,7 +44,7 @@ export function CorrectStateForm({ participants, teams, onSubmit }: CorrectState
             <ListItemButton
               key={option.id}
               sx={{ minHeight: MIN_TOUCH_TARGET }}
-              onClick={() => { setTargetId(option.id); setDisplayName(option.label) }}
+              onClick={() => { setTargetId(option.id); setDisplayName(option.label === fallbackLabel ? '' : option.label) }}
             >
               <ListItemText primary={option.label} />
             </ListItemButton>

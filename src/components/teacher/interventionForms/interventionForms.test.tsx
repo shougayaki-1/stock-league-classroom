@@ -108,4 +108,24 @@ describe('CorrectStateForm', () => {
     render(<CorrectStateForm participants={participants} teams={teams} onSubmit={vi.fn()} />)
     expect(screen.queryByLabelText('対象パス')).not.toBeInTheDocument()
   })
+
+  it('表示名が空のときIDを表示せず固定の代替文言を出す。送信時は実IDを渡す', async () => {
+    const onSubmit = vi.fn()
+    const blankParticipants = [{ id: 'participant-secret-id', displayName: '' }]
+    const blankTeams = [{ teamId: 'team-secret-id', displayName: '' }]
+    render(<CorrectStateForm participants={blankParticipants} teams={blankTeams} onSubmit={onSubmit} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '生徒の表示名' }))
+    expect(screen.queryByText('participant-secret-id')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '生徒名を確認できません' }))
+    const field = screen.getByLabelText('新しい名前')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'たろう')
+    await userEvent.click(screen.getByRole('button', { name: 'この名前に直す' }))
+
+    expect(screen.queryByText('participant-secret-id')).not.toBeInTheDocument()
+    expect(onSubmit).toHaveBeenCalledWith({
+      target: 'PARTICIPANT_DISPLAY_NAME', targetId: 'participant-secret-id', displayName: 'たろう',
+    })
+  })
 })
