@@ -3,25 +3,18 @@ import type { RankingConfig, SingleChoiceConfig } from '@stock-league/lesson-inp
 import { StudentSurfaceCard } from '../ui/StudentUi'
 import { RankingInput } from '../lessonInputs/RankingInput'
 import { SingleChoiceInput } from '../lessonInputs/SingleChoiceInput'
+import {
+  formatHouseholdAssetType,
+  formatHouseholdConcept,
+  formatHouseholdLifeStage,
+  HOUSEHOLD_ASSET_TYPE_LABELS,
+} from '../../lib/presentation/householdLabels'
 
-/**
- * Client-side mirror of `ConceptCategory`
- * (`functions/src/homeEconomics/goalPackage.ts`) — kept as a plain string
- * union here rather than imported, matching this repo's established
- * functions/src ↔ src hand-sync boundary (see
- * `src/lib/lessonRuns/liveTypes.ts`'s `HouseholdStateTeamView` JSDoc).
- */
-const CONCEPT_LABELS: Record<string, string> = {
-  INSURANCE: '保険',
-  HOUSING: '住宅ローン',
-  ASSET_DIVERSIFICATION: '資産分散',
-  RETIREMENT_PLANNING: '老後資金',
-  EMERGENCY_FUND: '緊急資金',
-  EDUCATION_FUND: '教育資金',
-  RISK_MANAGEMENT: 'リスク管理',
-}
 /** Fixed display order, independent of the (unordered) `visibleConcepts` array the caller passes in. */
 const CONCEPT_ORDER = ['EMERGENCY_FUND', 'HOUSING', 'EDUCATION_FUND', 'RETIREMENT_PLANNING', 'ASSET_DIVERSIFICATION', 'INSURANCE', 'RISK_MANAGEMENT']
+
+const isKnownAssetType = (value: string): value is keyof typeof HOUSEHOLD_ASSET_TYPE_LABELS =>
+  Object.prototype.hasOwnProperty.call(HOUSEHOLD_ASSET_TYPE_LABELS, value)
 
 export interface HouseholdEventDisclosureView {
   eventId: string
@@ -38,8 +31,8 @@ export interface HouseholdShortfallOption {
 
 export interface HouseholdSummaryCardProps {
   householdId: string
-  /** Human-readable heading (e.g. `${lifeStage}・${family}`) — falls back to the opaque `householdId` when the caller doesn't have one yet. */
-  profileLabel?: string
+  /** Human-readable heading (e.g. `${lifeStage}・${family}`), built by the caller via `formatHouseholdProfileLabel`. The sole heading source — never falls back to the opaque `householdId`. */
+  profileLabel: string
   cashYen: number
   lifeStage: string
   roundIndex: number
@@ -105,9 +98,24 @@ export function HouseholdSummaryCard({
 }: HouseholdSummaryCardProps) {
   const visibleSet = new Set(visibleConcepts)
   const orderedVisibleConcepts = CONCEPT_ORDER.filter((concept) => visibleSet.has(concept))
-  const assetTypes = assetHoldingsYen ? Object.keys(assetHoldingsYen) : []
-  const showAssetAllocation = visibleSet.has('ASSET_DIVERSIFICATION') && assetTypes.length > 0
-  const rankingConfig: RankingConfig = { type: 'RANKING', items: assetTypes }
+  const hasUnknownVisibleConcept = visibleConcepts.some((concept) => !CONCEPT_ORDER.includes(concept))
+
+  const rawAssetTypes = assetHoldingsYen ? Object.keys(assetHoldingsYen) : []
+  const knownAssetTypes = rawAssetTypes.filter(isKnownAssetType)
+  const hasUnknownAssetType = rawAssetTypes.some((value) => !isKnownAssetType(value))
+  const assetLabelByValue = new Map<string, string>(
+    knownAssetTypes.map((value) => [value, formatHouseholdAssetType(value)] as const),
+  )
+  const assetValueByLabel = new Map<string, string>(
+    knownAssetTypes.map((value) => [formatHouseholdAssetType(value), value] as const),
+  )
+  const assetLabels = knownAssetTypes.map((value) => assetLabelByValue.get(value) as string)
+
+  const showAssetAllocation = visibleSet.has('ASSET_DIVERSIFICATION') && knownAssetTypes.length > 0
+  const rankingConfig: RankingConfig = { type: 'RANKING', items: assetLabels }
+  const assetAllocationOrderLabels = (assetAllocationOrder ?? [])
+    .filter(isKnownAssetType)
+    .map((value) => assetLabelByValue.get(value) as string)
   const shortfallConfig: SingleChoiceConfig = { type: 'SINGLE_CHOICE', options: (shortfallOptions ?? []).map((option) => option.description) }
   const descriptionByChoice = new Map((shortfallOptions ?? []).map((option) => [option.description, option]))
   const selectedShortfallDescription = (shortfallOptions ?? []).find((option) => option.type === shortfallResolutionValue)?.description
@@ -116,8 +124,11 @@ export function HouseholdSummaryCard({
   // currently-held asset types, revealed only once SELL_ASSETS is the
   // selected shortfall resolution — never shown for any other resolution
   // type, and never shown when there is nothing held to sell.
-  const showAssetSalePicker = shortfallResolutionValue === 'SELL_ASSETS' && assetTypes.length > 0
-  const assetSaleConfig: SingleChoiceConfig = { type: 'SINGLE_CHOICE', options: assetTypes }
+  const showAssetSalePicker = shortfallResolutionValue === 'SELL_ASSETS' && knownAssetTypes.length > 0
+  const assetSaleConfig: SingleChoiceConfig = { type: 'SINGLE_CHOICE', options: assetLabels }
+  const selectedAssetSaleLabel = shortfallResolutionAssetType
+    ? assetLabelByValue.get(shortfallResolutionAssetType)
+    : undefined
 
   return (
     <StudentSurfaceCard>
@@ -128,19 +139,26 @@ export function HouseholdSummaryCard({
           variant="outlined"
           sx={{ alignSelf: 'flex-start', fontWeight: 700 }}
         />
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>{profileLabel ?? householdId}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>{profileLabel}</Typography>
         <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
           <Typography variant="body2">現在の貯蓄: {yenFormatter.format(cashYen)}円</Typography>
-          <Typography variant="body2">ライフステージ: {lifeStage}</Typography>
-          <Typography variant="body2">ラウンド: {roundIndex}</Typography>
+          <Typography variant="body2">ライフステージ: {formatHouseholdLifeStage(lifeStage)}</Typography>
+          <Typography variant="body2">第{roundIndex + 1}ラウンド</Typography>
         </Stack>
 
-        {orderedVisibleConcepts.length > 0 && (
+        {(orderedVisibleConcepts.length > 0 || hasUnknownVisibleConcept) && (
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
             {orderedVisibleConcepts.map((concept) => (
-              <Chip key={concept} label={CONCEPT_LABELS[concept] ?? concept} size="small" />
+              <Chip key={concept} label={formatHouseholdConcept(concept)} size="small" />
             ))}
+            {hasUnknownVisibleConcept && (
+              <Chip label="学習項目を確認できません" size="small" />
+            )}
           </Stack>
+        )}
+
+        {hasUnknownAssetType && (
+          <Typography variant="body2" color="text.secondary">一部の資産種別を確認できません。</Typography>
         )}
 
         {revealedEvents.length > 0 && (
@@ -159,9 +177,11 @@ export function HouseholdSummaryCard({
             id={`${householdId}-asset-allocation`}
             label="資産配分の優先順位"
             config={rankingConfig}
-            value={assetAllocationOrder}
+            value={assetAllocationOrderLabels}
             errors={[]}
-            onChange={(value) => onAssetAllocationOrderChange?.(value)}
+            onChange={(labels) => onAssetAllocationOrderChange?.(
+              labels.map((label) => assetValueByLabel.get(label)).filter((v): v is string => Boolean(v)),
+            )}
           />
         )}
 
@@ -184,9 +204,12 @@ export function HouseholdSummaryCard({
             id={`${householdId}-shortfall-sell-asset`}
             label="売却する資産を選んでください"
             config={assetSaleConfig}
-            value={shortfallResolutionAssetType}
+            value={selectedAssetSaleLabel}
             errors={[]}
-            onChange={(assetType) => onShortfallResolutionAssetTypeChange?.(assetType)}
+            onChange={(label) => {
+              const assetType = assetValueByLabel.get(label)
+              if (assetType) onShortfallResolutionAssetTypeChange?.(assetType)
+            }}
           />
         )}
       </Stack>
