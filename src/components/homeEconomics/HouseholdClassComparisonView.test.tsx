@@ -22,7 +22,7 @@ const comparison: HouseholdClassComparisonPublicView = {
             family: '夫婦+子2人',
             housing: '賃貸',
             lifeGoal: '住宅購入',
-            lifeStage: '子育て期',
+            lifeStage: 'CHILD_REARING',
             isFictional: true,
           },
           cashYen: 1200000,
@@ -37,17 +37,19 @@ const comparison: HouseholdClassComparisonPublicView = {
 }
 
 describe('HouseholdClassComparisonView', () => {
-  it('renders team display names and each household safe value (rendering test)', () => {
+  it('renders team display names and each household safe value, translating lifeStage・family into human-readable copy (rendering test)', () => {
     render(<HouseholdClassComparisonView comparison={comparison} />)
 
     expect(screen.getByText('チームA')).toBeInTheDocument()
-    expect(screen.getByText('子育て期')).toBeInTheDocument()
+    expect(screen.getByText('子育て期・夫婦+子2人')).toBeInTheDocument()
     expect(screen.getByText(/1,200,000円/)).toBeInTheDocument()
     expect(screen.getByText(/3,400,000円/)).toBeInTheDocument()
     expect(screen.getByText(/500,000円/)).toBeInTheDocument()
     expect(screen.getByText(/1回/)).toBeInTheDocument()
     expect(screen.getByText(/72/)).toBeInTheDocument()
     expect(screen.getByText(/全4ラウンド/)).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('CHILD_REARING')
+    expect(document.body.textContent).not.toContain('profile-parent')
   })
 
   it('never renders a member name or a runtime householdId (privacy test — this component only ever receives the already-safe server-projected view)', () => {
@@ -87,7 +89,11 @@ describe('HouseholdClassComparisonView', () => {
         {
           teamDisplayName: 'チームB',
           households: [
-            { ...comparison.teams[0]!.households[0]!, profileId: 'profile-single', profile: { ...comparison.teams[0]!.households[0]!.profile, lifeStage: '独身期' } },
+            {
+              ...comparison.teams[0]!.households[0]!,
+              profileId: 'profile-single',
+              profile: { ...comparison.teams[0]!.households[0]!.profile, lifeStage: 'INDEPENDENT', family: '独身' },
+            },
           ],
         },
       ],
@@ -95,6 +101,28 @@ describe('HouseholdClassComparisonView', () => {
     render(<HouseholdClassComparisonView comparison={multi} />)
     expect(screen.getByText('チームA')).toBeInTheDocument()
     expect(screen.getByText('チームB')).toBeInTheDocument()
-    expect(screen.getByText('独身期')).toBeInTheDocument()
+    expect(screen.getByText('独立期・独身')).toBeInTheDocument()
+  })
+
+  it('fails closed — and never echoes the raw sentinel token or the profileId — when a household carries an unknown backend lifeStage', () => {
+    const unknownStage: HouseholdClassComparisonPublicView = {
+      ...comparison,
+      teams: [
+        {
+          teamDisplayName: 'チームC',
+          households: [
+            {
+              ...comparison.teams[0]!.households[0]!,
+              profileId: 'profile-unknown',
+              profile: { ...comparison.teams[0]!.households[0]!.profile, lifeStage: 'UNKNOWN_COMPARISON_STAGE', family: '夫婦+子2人' },
+            },
+          ],
+        },
+      ],
+    }
+    render(<HouseholdClassComparisonView comparison={unknownStage} />)
+    expect(screen.getByText('ライフステージを確認できません・夫婦+子2人')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('UNKNOWN_COMPARISON_STAGE')
+    expect(document.body.textContent).not.toContain('profile-unknown')
   })
 })

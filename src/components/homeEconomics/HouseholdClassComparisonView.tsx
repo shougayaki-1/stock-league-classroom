@@ -1,6 +1,7 @@
 import { Stack, Typography } from '@mui/material'
 import { StudentSurfaceCard } from '../ui/StudentUi'
 import type { HouseholdClassComparisonPublicView } from '../../lib/lessonRuns/liveTypes'
+import { formatHouseholdProfileLabel } from '../../lib/presentation/householdLabels'
 
 export interface HouseholdClassComparisonViewProps {
   comparison: HouseholdClassComparisonPublicView
@@ -50,7 +51,9 @@ export function HouseholdClassComparisonView({ comparison }: HouseholdClassCompa
                   spacing={2}
                   sx={{ flexWrap: 'wrap', borderTop: '1px solid', borderColor: 'divider', pt: 1 }}
                 >
-                  <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 96 }}>{household.profile.lifeStage}</Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 96 }}>
+                    {formatHouseholdProfileLabel(household.profile.lifeStage, household.profile.family)}
+                  </Typography>
                   <Typography variant="body2">現金: {yenFormatter.format(household.cashYen)}円</Typography>
                   <Typography variant="body2">総資産: {yenFormatter.format(household.totalAssetsYen)}円</Typography>
                   <Typography variant="body2">負債: {yenFormatter.format(household.totalLiabilitiesYen)}円</Typography>
