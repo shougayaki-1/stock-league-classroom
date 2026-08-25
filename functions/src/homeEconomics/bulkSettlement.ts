@@ -578,6 +578,7 @@ export const bulkSettlementDepsWithAdminSdk = (): BulkSettlementDeps => {
           idempotencyKey: input.idempotencyKey,
           nowMillis: input.nowMillis,
           visibleConcepts: resolveVisibleConcepts(homeEconomics.goalPackage),
+          profiles: homeEconomics.households,
         })
       }
 

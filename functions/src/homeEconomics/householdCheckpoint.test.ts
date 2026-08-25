@@ -13,6 +13,7 @@ import {
 } from './householdCheckpoint'
 import type { HouseholdState } from '../lessonRuns/households/repository'
 import type { HouseholdStateTeamView } from './realtimeProjection'
+import type { HouseholdProfile } from '@stock-league/household-authoring-content'
 
 /**
  * Backing store for `saveManualAdvancedHouseholdCheckpointWithAdminSdk`'s
@@ -319,6 +320,16 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
     updatedAtServerMillis: 1000,
   })
 
+  const makeProfile = (householdId: string, overrides: Partial<HouseholdProfile> = {}): HouseholdProfile => ({
+    householdId: `profile-${householdId}`,
+    lifeStage: 'INDEPENDENT',
+    family: '独身',
+    ...overrides,
+  } as HouseholdProfile)
+
+  const profilesFor = (households: HouseholdState[]): HouseholdProfile[] =>
+    households.map((h) => makeProfile(h.householdId))
+
   describe('buildHouseholdCheckpointSnapshotV3', () => {
     it('includes every runtime household exactly once', () => {
       const households = [
@@ -333,6 +344,7 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
         expectedRoundIndex: 1,
         householdIds: households.map((h) => h.householdId),
         householdStates: households,
+        profiles: profilesFor(households),
         visibleConcepts: ['ASSET_DIVERSIFICATION'],
         createdAtServerMillis: 5000,
       })
@@ -358,6 +370,7 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
         expectedRoundIndex: 0,
         householdIds: households.map((h) => h.householdId),
         householdStates: households,
+        profiles: profilesFor(households),
         visibleConcepts: [],
         createdAtServerMillis: 1000,
       })
@@ -390,6 +403,7 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
         expectedRoundIndex: 2,
         householdIds: households.map((h) => h.householdId),
         householdStates: households,
+        profiles: profilesFor(households),
         visibleConcepts: [],
         createdAtServerMillis: 4000,
       })
@@ -419,6 +433,50 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
       expect(team2View.households['team1-hh-a']).toBeUndefined()
       expect(team2View.households['team1-hh-b']).toBeUndefined()
     })
+
+    it('propagates the real authored profile (lifeStage + family) into profileSummary instead of fabricating one', () => {
+      const household = makeHousehold('hh-a', 'team-1')
+      const profile = makeProfile('hh-a', { lifeStage: 'CHILD_REARING', family: '配偶者・子1人' })
+
+      const snapshot = buildHouseholdCheckpointSnapshotV3({
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 1,
+        restoreGeneration: 0,
+        expectedRoundIndex: 1,
+        householdIds: [household.householdId],
+        householdStates: [household],
+        profiles: [profile],
+        visibleConcepts: [],
+        createdAtServerMillis: 1000,
+      })
+
+      const view = snapshot.teamViews['team-1'].households['hh-a']
+      expect(view.profileSummary).toEqual({ lifeStage: 'CHILD_REARING', family: '配偶者・子1人' })
+      // Allow-list projection: no private profile fields (e.g. anything
+      // beyond householdId/lifeStage/family on HouseholdProfile) leak
+      // through onto HouseholdStateTeamView.
+      expect(Object.keys(view)).toEqual([
+        'householdId', 'profileSummary', 'isFictional', 'cashYen', 'assetHoldingsYen',
+        'activeInsuranceContractYearsRemaining', 'activeLiabilities', 'lifeStage', 'roundIndex',
+        'goalDelayedRounds', 'visibleConcepts', 'eventDisclosures', 'shortfallOptions',
+      ])
+    })
+
+    it('fails closed (throws) rather than fabricating a profile when a household\'s profileId cannot be resolved from profiles', () => {
+      const household = makeHousehold('hh-a', 'team-1')
+
+      expect(() => buildHouseholdCheckpointSnapshotV3({
+        courseFormat: 'ROLE_VARIANT',
+        assignmentRevision: 1,
+        restoreGeneration: 0,
+        expectedRoundIndex: 1,
+        householdIds: [household.householdId],
+        householdStates: [household],
+        profiles: [],
+        visibleConcepts: [],
+        createdAtServerMillis: 1000,
+      })).toThrow(/profile/i)
+    })
   })
 
   describe('isHouseholdCheckpointSnapshotV3', () => {
@@ -442,6 +500,7 @@ describe('householdCheckpoint v3 codec (advanced formats)', () => {
       idempotencyKey: 'idemp-v3-1',
       nowMillis: 2000,
       visibleConcepts: ['ASSET_DIVERSIFICATION'] as const,
+      profiles: [makeProfile('hh-a'), makeProfile('hh-b'), makeProfile('hh-c')],
     }
 
     const setUpFakeHouseholds = (fake: ReturnType<typeof makeFakeFirestore>) => {
@@ -571,7 +630,16 @@ describe('saveManualAdvancedHouseholdCheckpointWithAdminSdk (production wiring)'
   }
 
   const validRunDoc = {
-    templateSnapshot: { homeEconomics: { courseFormat: 'ROLE_VARIANT', households: [], goalPackage: 'EMERGENCY_FUND' } },
+    templateSnapshot: {
+      homeEconomics: {
+        courseFormat: 'ROLE_VARIANT',
+        households: [
+          { householdId: 'profile-hh-a', lifeStage: 'INDEPENDENT', family: '独身' },
+          { householdId: 'profile-hh-b', lifeStage: 'CHILD_REARING', family: '配偶者・子1人' },
+        ],
+        goalPackage: 'EMERGENCY_FUND',
+      },
+    },
   }
 
   const entryDoc = (householdId: string, teamId: string) => ({

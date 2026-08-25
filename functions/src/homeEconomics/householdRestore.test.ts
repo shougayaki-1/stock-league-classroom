@@ -11,6 +11,7 @@ import { buildHouseholdCheckpointSnapshotV2, buildHouseholdCheckpointSnapshotV3 
 import type { HouseholdStateTeamView } from './realtimeProjection'
 import type { HouseholdRuntimeControl } from './statusTransition'
 import type { HouseholdAssignmentConfig } from './householdAssignmentRepository'
+import type { HouseholdProfile } from '@stock-league/household-authoring-content'
 
 describe('householdRestore v2', () => {
   const makeBaseHousehold = (teamId: string, cash = 1000000, roundIndex = 1): HouseholdState => ({
@@ -368,6 +369,7 @@ describe('householdRestore v3 (advanced formats)', () => {
       makeHousehold('hh-a', 'team-a', 2000000, 1),
       makeHousehold('hh-b', 'team-b', 3000000, 1),
     ],
+    profiles: [{ householdId: 'profile-1', lifeStage: 'INDEPENDENT', family: '独身' } as HouseholdProfile],
     visibleConcepts: ['ASSET_DIVERSIFICATION'],
     createdAtServerMillis: 1000,
   })
@@ -670,6 +672,7 @@ describe('restoreHouseholdCheckpoint (schema-version dispatcher)', () => {
         goalDelayedRounds: 0,
         updatedAtServerMillis: 1000,
       }],
+      profiles: [{ householdId: 'profile-1', lifeStage: 'INDEPENDENT', family: '独身' } as HouseholdProfile],
       visibleConcepts: ['ASSET_DIVERSIFICATION'],
       createdAtServerMillis: 1000,
     })

@@ -583,6 +583,7 @@ describe('Task 14: advanced household course formats (ROLE_VARIANT/STAGE_SPLIT/M
       kind: 'MANUAL', label: 'ラウンド1 手動チェックポイント', expectedRoundIndex: 1,
       actorUid: 'teacher-1', idempotencyKey: 'cp-v3-1', nowMillis: 3000,
       visibleConcepts: resolveVisibleConcepts(template.goalPackage),
+      profiles,
     })
     expect(checkpointResult.created).toBe(true)
     const checkpointDoc = docs.get(`lessonRuns/${lessonRunId}/checkpoints/${checkpointResult.checkpointId}`) as { snapshot: HouseholdCheckpointSnapshotV3 }
