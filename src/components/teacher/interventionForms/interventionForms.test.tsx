@@ -350,13 +350,13 @@ describe('ReconnectParticipantForm', () => {
 
 describe('RestorePreviousPhaseForm', () => {
   const phases = [
-    { id: 'phase-intro-sentinel', displayConfig: { label: '導入' } },
-    { id: 'phase-market-sentinel', displayConfig: { label: '市場' } },
-    { id: 'phase-discussion-sentinel', displayConfig: { label: '討論' } },
-    { id: 'phase-reflection-sentinel', displayConfig: { label: '振り返り' } },
+    { id: 'phase-intro-sentinel', displayConfig: { label: '導入' }, nextPhaseIds: ['phase-market-sentinel'] },
+    { id: 'phase-market-sentinel', displayConfig: { label: '市場' }, nextPhaseIds: ['phase-discussion-sentinel'] },
+    { id: 'phase-discussion-sentinel', displayConfig: { label: '討論' }, nextPhaseIds: ['phase-reflection-sentinel'] },
+    { id: 'phase-reflection-sentinel', displayConfig: { label: '振り返り' }, nextPhaseIds: [] },
   ]
 
-  it('現在フェーズより前のフェーズだけを候補にし、targetPhaseId とLESSONスコープで送信する。フェーズIDはDOMに出さない', async () => {
+  it('現フェーズへ直接リンクする直前フェーズだけを候補にし、targetPhaseId とLESSONスコープで送信する。フェーズIDはDOMに出さない', async () => {
     const onSubmit = vi.fn()
     render(
       <RestorePreviousPhaseForm
@@ -366,8 +366,11 @@ describe('RestorePreviousPhaseForm', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: '導入' })).toBeInTheDocument()
+    // Only the direct graph predecessor of the current phase (市場, which
+    // links via nextPhaseIds) is a candidate — not 導入, which is earlier in
+    // declaration order but does not directly link to the current phase.
     expect(screen.getByRole('button', { name: '市場' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '導入' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '討論' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '振り返り' })).not.toBeInTheDocument()
 
@@ -396,11 +399,39 @@ describe('RestorePreviousPhaseForm', () => {
     const onSubmit = vi.fn()
     render(
       <RestorePreviousPhaseForm
-        phases={[{ id: 'phase-nolabel' }, { id: 'phase-current' }]}
+        phases={[{ id: 'phase-nolabel', nextPhaseIds: ['phase-current'] }, { id: 'phase-current' }]}
         currentPhaseId="phase-current"
         onSubmit={onSubmit}
       />,
     )
     expect(screen.getByRole('button', { name: 'フェーズ名を確認できません' })).toBeInTheDocument()
+  })
+
+  it('宣言順では現在フェーズより前にあるが nextPhaseIds でリンクしていない分岐フェーズは候補に出さない', async () => {
+    const onSubmit = vi.fn()
+    // Declared BEFORE the current phase in the array, but its nextPhaseIds
+    // points elsewhere (a sibling branch), not to the current phase — must
+    // not be selectable as a "previous phase" candidate.
+    const branchingPhases = [
+      { id: 'phase-branch-a-sentinel', displayConfig: { label: '分岐A' }, nextPhaseIds: ['phase-branch-a-end-sentinel'] },
+      { id: 'phase-branch-a-end-sentinel', displayConfig: { label: '分岐A終了' }, nextPhaseIds: [] },
+      { id: 'phase-real-predecessor-sentinel', displayConfig: { label: '本当の前フェーズ' }, nextPhaseIds: ['phase-current-sentinel'] },
+      { id: 'phase-current-sentinel', displayConfig: { label: '現在' }, nextPhaseIds: [] },
+    ]
+    render(
+      <RestorePreviousPhaseForm
+        phases={branchingPhases}
+        currentPhaseId="phase-current-sentinel"
+        onSubmit={onSubmit}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '本当の前フェーズ' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '分岐A' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '分岐A終了' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '現在' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '本当の前フェーズ' }))
+    expect(onSubmit).toHaveBeenCalledWith({ targetPhaseId: 'phase-real-predecessor-sentinel' }, { level: 'LESSON' })
   })
 })

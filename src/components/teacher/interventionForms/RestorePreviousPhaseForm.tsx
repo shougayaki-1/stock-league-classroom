@@ -13,11 +13,12 @@ const UNKNOWN_PHASE_LABEL = 'フェーズ名を確認できません'
 
 /**
  * 前フェーズへ復元する専用フォーム。フェーズIDの手入力は無く、教師は
- * フェーズ名の一覧から選ぶだけ。候補は `phases`（テンプレートの宣言順、
- * `phases[0]` が最初のフェーズ — `validation.ts`の
- * `lesson.initialPhaseId ?? lesson.phases[0]?.id` と同じ前提）のうち
- * 現在のフェーズより前のものだけに絞る。現在のフェーズ自身と、まだ来て
- * いない後続フェーズは候補に出さない。
+ * フェーズ名の一覧から選ぶだけ。候補は `phases` の宣言順（配列上の位置）
+ * では決めない — フェーズgrpahは分岐しうるため、配列上早いフェーズが
+ * 必ずしも現在のフェーズの実際の前段とは限らない。代わりに、実際の
+ * graphで現在のフェーズへ直接つながるフェーズ（`nextPhaseIds` に
+ * currentPhaseId を含むフェーズ）だけを直前候補として絞る。現在のフェーズ
+ * 自身と、無関係な分岐・まだ来ていない後続フェーズは候補に出さない。
  *
  * REFLECTION 到達後は復元できない、というサーバー側の一方通行の制約
  * （functions/src/lessonRuns/interventions.ts の
@@ -27,8 +28,9 @@ const UNKNOWN_PHASE_LABEL = 'フェーズ名を確認できません'
  * 前後関係についての別の制約だけを担当する。
  */
 export function RestorePreviousPhaseForm({ phases, currentPhaseId, onSubmit }: RestorePreviousPhaseFormProps) {
-  const currentIndex = currentPhaseId ? phases.findIndex((phase) => phase.id === currentPhaseId) : -1
-  const candidates = currentIndex > 0 ? phases.slice(0, currentIndex) : []
+  const candidates = currentPhaseId
+    ? phases.filter((phase) => phase.nextPhaseIds?.includes(currentPhaseId))
+    : []
 
   if (candidates.length === 0) {
     return (
