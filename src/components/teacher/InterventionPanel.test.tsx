@@ -161,6 +161,69 @@ describe('InterventionPanel', () => {
     }
   })
 
+  it('uses bespoke CorrectStateForm for CORRECT_STATE with a participant target and submits PARTICIPANT impactScope (not LESSON)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    render(<InterventionPanel
+      {...defaultProps}
+      participants={[{ id: 'participant-correct-sentinel', displayName: 'やまだ' }]}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /名前を直す/ }))
+    await user.type(screen.getByLabelText('理由'), '打ち間違い')
+    await user.click(screen.getByRole('button', { name: '生徒の表示名' }))
+    await user.click(screen.getByRole('button', { name: 'やまだ' }))
+    const field = screen.getByLabelText('新しい名前')
+    await user.clear(field)
+    await user.type(field, 'やまもと')
+    await user.click(screen.getByRole('button', { name: 'この名前に直す' }))
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('participant-correct-sentinel')
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CORRECT_STATE',
+      reason: '打ち間違い',
+      detail: { target: 'PARTICIPANT_DISPLAY_NAME', targetId: 'participant-correct-sentinel', displayName: 'やまもと' },
+      impactScope: { level: 'PARTICIPANT', participantId: 'participant-correct-sentinel' },
+    })
+  })
+
+  it('uses bespoke CorrectStateForm for CORRECT_STATE with a team target and submits TEAM impactScope (not LESSON)', async () => {
+    const user = userEvent.setup()
+    const onApply = vi.fn()
+    const teams: LessonTeamView[] = [{
+      id: 'team-correct-sentinel', displayName: 'Aチーム',
+      memberParticipantIds: ['p-1'], representativeParticipantId: 'p-1',
+      confirmationMode: 'REPRESENTATIVE',
+    }]
+    render(<InterventionPanel
+      {...defaultProps}
+      teams={teams}
+      onApply={onApply}
+    />)
+
+    await user.click(screen.getByRole('button', { name: /名前を直す/ }))
+    await user.type(screen.getByLabelText('理由'), '打ち間違い')
+    await user.click(screen.getByRole('button', { name: 'チーム名' }))
+    await user.click(screen.getByRole('button', { name: 'Aチーム' }))
+    const field = screen.getByLabelText('新しい名前')
+    await user.clear(field)
+    await user.type(field, 'Bチーム')
+    await user.click(screen.getByRole('button', { name: 'この名前に直す' }))
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('team-correct-sentinel')
+
+    expect(onApply).toHaveBeenCalledWith({
+      type: 'CORRECT_STATE',
+      reason: '打ち間違い',
+      detail: { target: 'TEAM_DISPLAY_NAME', targetId: 'team-correct-sentinel', displayName: 'Bチーム' },
+      impactScope: { level: 'TEAM', teamId: 'team-correct-sentinel' },
+    })
+  })
+
   it('uses bespoke form for EXTEND_TIME and submits it', async () => {
     const user = userEvent.setup()
     const onApply = vi.fn()

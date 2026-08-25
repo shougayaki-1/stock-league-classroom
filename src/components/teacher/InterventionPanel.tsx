@@ -178,7 +178,13 @@ export function InterventionPanel({
               <CorrectStateForm
                 participants={participants}
                 teams={teams.map((team) => ({ teamId: team.id, displayName: team.displayName }))}
-                onSubmit={(d) => { onApply({ type: selected, reason, detail: d }); resetForm() }}
+                onSubmit={(d) => {
+                  const impactScope: InterventionImpactScope = d.target === 'TEAM_DISPLAY_NAME'
+                    ? { level: 'TEAM', teamId: d.targetId as string }
+                    : { level: 'PARTICIPANT', participantId: d.targetId as string }
+                  onApply({ type: selected, reason, detail: d, impactScope })
+                  resetForm()
+                }}
               />
             )}
             {selected === 'CHANGE_REPRESENTATIVE' && (
