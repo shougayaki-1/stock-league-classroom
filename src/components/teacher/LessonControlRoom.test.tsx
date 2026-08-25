@@ -268,6 +268,72 @@ describe('LessonControlRoom', () => {
     )
   })
 
+  it('surfaces a safe fallback message (never the raw backend error) when completeLesson rejects', async () => {
+    const user = userEvent.setup()
+    callableMock.mockRejectedValueOnce(new Error('backend-secret-message'))
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    await user.click(screen.getByRole('button', { name: '授業を終了' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/終了できませんでした/)
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+  })
+
+  it('surfaces a safe fallback message when interruptLesson rejects', async () => {
+    const user = userEvent.setup()
+    callableMock.mockRejectedValueOnce(new Error('backend-secret-message'))
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    await user.click(screen.getByRole('button', { name: '授業を安全停止' }))
+
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts.some((a) => /安全停止できませんでした/.test(a.textContent ?? ''))).toBe(true)
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+  })
+
+  it('surfaces a safe fallback message when resumeLesson rejects', async () => {
+    const user = userEvent.setup()
+    callableMock.mockRejectedValueOnce(new Error('backend-secret-message'))
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'INTERRUPTED', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    await user.click(screen.getByRole('button', { name: /授業を再開/ }))
+
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts.some((a) => /再開できませんでした/.test(a.textContent ?? ''))).toBe(true)
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+  })
+
+  it('surfaces a safe fallback message (and keeps the drawer open for retry) when applyTeacherIntervention rejects', async () => {
+    const user = userEvent.setup()
+    callableMock.mockRejectedValueOnce(new Error('backend-secret-message'))
+    render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
+    emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })
+    emitDisplay()
+    emitParticipants([])
+
+    await user.click(screen.getByRole('button', { name: /介入操作/ }))
+    await user.click(await screen.findByRole('button', { name: /緊急停止/ }))
+    await user.type(screen.getByLabelText('理由'), '不審な操作')
+    await user.click(screen.getByRole('button', { name: '授業を緊急停止する' }))
+
+    // The MUI Drawer marks the rest of the tree aria-hidden while open, so query with hidden:true.
+    const alert = await screen.findByRole('alert', { hidden: true })
+    expect(alert).toHaveTextContent(/実行できませんでした/)
+    expect(document.body.textContent).not.toContain('backend-secret-message')
+    // Drawer stays open for retry rather than closing on a failed apply.
+    expect(screen.getByRole('heading', { name: '介入操作', hidden: true })).toBeInTheDocument()
+  })
+
   it('flags participant issues (imbalance/duplicate/disconnect) in the top-level open-issues list, with icon + text', () => {
     render(<LessonControlRoom lessonRunId="run-1" role="PRIMARY" functions={functions} firestore={firestore} database={database} />)
     emitPublic({ status: 'RUNNING', currentPhaseId: 'phase-1' })

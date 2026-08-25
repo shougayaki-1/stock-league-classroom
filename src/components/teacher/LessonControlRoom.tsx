@@ -20,6 +20,7 @@ import { ClassroomDisplayUrlDialog } from './ClassroomDisplayUrlDialog'
 import { HouseholdTeacherDashboard } from './HouseholdTeacherDashboard'
 import { formatCurrentPhaseLabel, formatLessonDisplayMode } from '../../lib/presentation/lessonLabels'
 import type { PhaseWithDisplayConfig } from '../../lib/lessonRuns/phaseLabel'
+import { describeError } from '../../lib/monitoring/describeError'
 
 const DISCONNECTED_STATUSES: ReadonlySet<LessonParticipantView['status']> = new Set([
   'TEMPORARILY_DISCONNECTED',
@@ -158,6 +159,7 @@ export function LessonControlRoom({
   const [displayUrlDialogOpen, setDisplayUrlDialogOpen] = useState(false)
   const [displayModeOverride, setDisplayModeOverride] = useState<string | null>(null)
   const [hiddenInformationIds, setHiddenInformationIds] = useState<string[]>([])
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
 
   useEffect(() => subscribePublicRun(database, lessonRunId, setPublicState), [database, lessonRunId])
   useEffect(() => subscribeDisplayRun(database, lessonRunId, setDisplayState), [database, lessonRunId])
@@ -224,18 +226,25 @@ export function LessonControlRoom({
   }, [role])
 
   const handleResume = useCallback(() => {
-    void resumeLesson(functions, { lessonRunId, reason: '教師による再開', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    resumeLesson(functions, { lessonRunId, reason: '教師による再開', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を再開できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleInterrupt = useCallback(() => {
-    void interruptLesson(functions, { lessonRunId, reason: '教師による安全停止', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    interruptLesson(functions, { lessonRunId, reason: '教師による安全停止', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を安全停止できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleEndLesson = useCallback(() => {
-    void completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
+    setRuntimeError(null)
+    completeLesson(functions, { lessonRunId, reason: '教師による授業終了操作', idempotencyKey: generateIdempotencyKey() })
+      .catch((error: unknown) => setRuntimeError(describeError(error, '授業を終了できませんでした。')))
   }, [functions, lessonRunId])
 
   const handleApplyIntervention = useCallback((input: InterventionApplyInput) => {
+    setRuntimeError(null)
     if (input.type === 'SWITCH_DISPLAY_MODE') {
       setDisplayModeOverride((input.detail.displayMode as string | null) ?? null)
     }
@@ -245,7 +254,7 @@ export function LessonControlRoom({
         ? (prev.includes(id) ? prev : [...prev, id])
         : prev.filter((item) => item !== id))
     }
-    void applyTeacherIntervention(functions, {
+    applyTeacherIntervention(functions, {
       lessonRunId,
       type: input.type,
       reason: input.reason,
@@ -254,12 +263,19 @@ export function LessonControlRoom({
       impactScope: input.impactScope ?? { level: 'LESSON' },
       detail: input.detail,
       idempotencyKey: generateIdempotencyKey(),
-    })
-    setInterventionOpen(false)
+    }).then(
+      () => setInterventionOpen(false),
+      (error: unknown) => setRuntimeError(describeError(error, '介入操作を実行できませんでした。')),
+    )
   }, [functions, lessonRunId])
 
   return (
     <Stack spacing={3} sx={{ width: '100%', p: 2 }}>
+      {runtimeError && (
+        <Alert severity="error" role="alert" onClose={() => setRuntimeError(null)}>
+          {runtimeError}
+        </Alert>
+      )}
       {interrupted && (
         <Alert
           severity="warning"
