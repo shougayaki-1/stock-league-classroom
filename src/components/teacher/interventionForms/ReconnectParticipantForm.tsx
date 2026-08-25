@@ -47,6 +47,16 @@ export function ReconnectParticipantForm({
   const [code, setCode] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const recoveryPagePath = `/lessons/${lessonRunId}/recover`
+  const recoveryPageUrl = typeof window !== 'undefined' ? `${window.location.origin}${recoveryPagePath}` : recoveryPagePath
+
+  const handleCopyRecoveryUrl = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(recoveryPageUrl).then(() => setCopied(true))
+    }
+  }
 
   const relevantParticipants = participants.filter((participant) => participant.status && RECONNECT_RELEVANT_STATUSES.has(participant.status))
 
@@ -68,9 +78,27 @@ export function ReconnectParticipantForm({
           このコードを{displayLabel(selected)}さんに伝えてください。新しい端末でこの授業の再接続ページを開き、コードを入力すると元の状態に戻れます。
         </Typography>
         <Button
+          component="a"
+          href={recoveryPagePath}
+          target="_blank"
+          rel="noopener noreferrer"
+          variant="outlined"
+          sx={{ minHeight: MIN_TOUCH_TARGET }}
+        >
+          再接続ページを開く
+        </Button>
+        <Button
+          variant="outlined"
+          sx={{ minHeight: MIN_TOUCH_TARGET }}
+          onClick={handleCopyRecoveryUrl}
+        >
+          再接続ページのURLをコピー
+        </Button>
+        {copied && <Alert severity="success">URLをコピーしました。</Alert>}
+        <Button
           variant="text"
           sx={{ minHeight: MIN_TOUCH_TARGET }}
-          onClick={() => { setSelected(null); setCode(null); setError(null) }}
+          onClick={() => { setSelected(null); setCode(null); setError(null); setCopied(false) }}
         >
           別の参加者を再接続する
         </Button>

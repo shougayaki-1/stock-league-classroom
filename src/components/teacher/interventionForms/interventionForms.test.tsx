@@ -370,6 +370,42 @@ describe('ReconnectParticipantForm', () => {
     expect(screen.getAllByText('生徒名を確認できません').length).toBeGreaterThan(0)
   })
 
+  it('発行後に再接続ページを開くリンクとURLコピー操作を出し、lessonRunIdは可視テキストとして出さない', async () => {
+    const mockIssue = vi.mocked(issueRecoveryCode)
+    mockIssue.mockResolvedValue({ code: 'SENTINEL-CODE-OPEN', deduplicated: false })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const participants = [{ id: 'participant-open-id', displayName: 'かとう', status: 'ABSENT' }]
+
+    render(
+      <ReconnectParticipantForm
+        functions={fakeFunctions}
+        lessonRunId="run-secret-open-id"
+        participants={participants}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /かとう/ }))
+    await userEvent.click(screen.getByRole('button', { name: '再接続コードを発行する' }))
+    await screen.findByText('SENTINEL-CODE-OPEN')
+
+    const openLink = screen.getByRole('link', { name: '再接続ページを開く' })
+    expect(openLink).toHaveAttribute('href', '/lessons/run-secret-open-id/recover')
+    expect(openLink).toHaveAttribute('target', '_blank')
+
+    await userEvent.click(screen.getByRole('button', { name: '再接続ページのURLをコピー' }))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/lessons/run-secret-open-id/recover'))
+
+    // The raw lessonRunId may live in the href/copied URL, but must never
+    // appear as visible DOM text content.
+    const visibleText = Array.from(document.body.querySelectorAll('*'))
+      .filter((el) => el.children.length === 0)
+      .map((el) => el.textContent ?? '')
+      .join('\n')
+    expect(visibleText).not.toContain('run-secret-open-id')
+  })
+
   it('発行に失敗した場合は describeError 経由の安全なメッセージを表示し、生の error.message は出さない', async () => {
     const mockIssue = vi.mocked(issueRecoveryCode)
     mockIssue.mockRejectedValue({ code: 'functions/internal', message: 'raw internal leak detail' })
